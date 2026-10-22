@@ -825,3 +825,93 @@ boot = "level:L1_E1"
 skip_cinematics = true
 dev_lua_file = "private/luadec/check.lua"
 expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]', 'LUADEC \d+ error'], log_contains = ['LUADEC done'] }
+
+[profiles.console_dev]
+description = "DEV: o console de desenvolvedor no L1_E1: abre com a tecla antes do 1, help, unlock all, mojo 500, god on, bighead, lua com erro, Tab, skin hulk now (reinicia a fase com a Crash_Hulk), skin ratcicle now e level L1_E2"
+test = true
+timeout = 110
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_console = [
+    ["@gameplay_ready+1", "!toggle"],
+    ["@gameplay_ready+1.5", "help"],
+    ["@gameplay_ready+3", "unlock all"],
+    ["@gameplay_ready+4", "mojo 500"],
+    ["@gameplay_ready+4.5", "god on"],
+    ["@gameplay_ready+5", "lua =dev.mojo()"],
+    ["@gameplay_ready+5.5", "lua x.y = 1"],
+    ["@gameplay_ready+6", "!type:sk"],
+    ["@gameplay_ready+6.3", "!tab"],
+    ["@gameplay_ready+6.6", "!type:hu"],
+    ["@gameplay_ready+6.9", "!tab"],
+    ["@gameplay_ready+7.2", "!type:now"],
+    ["@gameplay_ready+7.5", "!enter"],
+    ["@gameplay_ready#2+2.5", "skin"],
+    ["@gameplay_ready#2+3", "bighead on"],
+    ["@gameplay_ready#2+3.5", "pos"],
+    ["@gameplay_ready#2+4", "!esc"],
+    ["@gameplay_ready#2+6", "!toggle"],
+    ["@gameplay_ready#2+6.5", "skin ratcicle now"],
+    ["@gameplay_ready#3+3", "level L1_E2"],
+]
+input = [["@gameplay_ready"], [5.2, "SHOT"], [7.4, "SHOT"], ["@gameplay_ready#2"], [1, "SHOT"], [3.8, "SHOT"], [5, "SHOT"], ["@gameplay_ready#3"], [2, "SHOT"], [8, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "console_open", "console_cmd"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[console\] > unlock all', 'dev.unlock_all queued', 'dev.mojo 500', 'invincible on', 'skin 22 \(Crash_Hulk \(unused\)\) applied', 'Crash_Hulk: physics ellipsoid', 'skin 9 \(Ratcicle\) applied', 'level L1_E2: UberManager SetLevelIndex\(1\) \+ ForceReload', 'event level_start .*L1_E2'] }
+
+[profiles.console_hulk]
+description = "DEV: a skin Crash_Hulk (não usada no jogo original) pelo console no L1_E1: skin hulk now reinicia a fase com ela; o Crash tem de ficar no chão (pos com y perto de 0) e aparecer nas capturas"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_console = [
+    ["@gameplay_ready+1", "!toggle"],
+    ["@gameplay_ready+1.5", "skin hulk now"],
+    ["@gameplay_ready#2+3", "pos"],
+    ["@gameplay_ready#2+3.5", "!esc"],
+]
+input = [["@gameplay_ready#2"], [1, "SHOT"], [5, "SHOT"], [6, "LS", 0, 1, 2], [9, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "console_cmd"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['skin 22 \(Crash_Hulk \(unused\)\) applied', 'Crash_Hulk: physics ellipsoid'] }
+
+[profiles.console_skin_menu]
+description = "DEV: a Crash_Hulk no menu de skins do jogo: no L1_E1 o console desbloqueia a Hulk e a Chiratta (Ratnician), sai da fase, no HUB abre o boneco RATNICIAN SKIN, direita/esquerda percorrem as skins (Ratnician -> Hulk -> Crash -> Hulk), veste a Hulk (YES) e CONTINUE STORY entra na fase com ela"
+test = true
+timeout = 110
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_console = [
+    ["@gameplay_ready+1", "!toggle"],
+    ["@gameplay_ready+1.5", "unlock skin hulk"],
+    ["@gameplay_ready+2", "unlock skin chiratta"],
+    ["@gameplay_ready+3", "!esc"],
+    ["@gameplay_ready#2+2", "!toggle"],
+    ["@gameplay_ready#2+2.5", "skin"],
+    ["@gameplay_ready#2+3", "pos"],
+]
+input = [["@gameplay_ready"], [5, "START"], [6.5, "DOWN"], [7, "DOWN"], [8, "A"], [9, "LEFT"], [10, "A"], [13, "A"], [15.5, "A"], [18, "A"],
+         ["@hub"], [2, "DOWN"], [3, "RIGHT"], [4.5, "RIGHT"], [6, "RIGHT"], [7.5, "RIGHT"], [9, "RIGHT"], [10.5, "RIGHT"], [11.3, "SHOT"], [12, "A"],
+         [14, "SHOT"], [14.5, "RIGHT"], [16, "SHOT"], [16.5, "RIGHT"], [18, "SHOT"], [18.5, "LEFT"], [20, "SHOT"], [20.5, "A"], [21.5, "LEFT"], [22.2, "SHOT"], [22.7, "A"], [25, "SHOT"], [27, "Y"],
+         ["@gameplay_ready#2"], [1, "SHOT"], [4, "SHOT"]]
+env = { CRASH_FRONTEND_TRACE = "1" }
+expect = { exit = ["timeout"], events = ["hub", "gameplay_ready", "console_cmd"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['frontend node 1058', 'skin atual: Crash_Hulk', 'Crash_Hulk: physics ellipsoid'] }
+
+[profiles.console_level_hub]
+description = "DEV: o comando level do console fora de uma fase: LOAD GAME até o HUB e 'level L1_E3' (Frontend:StartLevel + a saída SkipToLevel da árvore, como o boot direto)"
+test = true
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "load:1:hub"
+skip_cinematics = true
+dev_console = [
+    ["@hub+2", "!toggle"],
+    ["@hub+2.5", "level L1_E3"],
+    ["@hub+3", "!esc"],
+]
+input = [["@hub"], [2.8, "SHOT"], ["@gameplay_ready"], [2, "SHOT"]]
+expect = { exit = ["timeout"], events = ["hub", "level_ready", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['StartLevel \+ SkipToLevel from node 575', 'event level_start .*L1_E3'] }

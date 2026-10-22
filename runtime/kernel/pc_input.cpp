@@ -8,6 +8,7 @@
 #include "../settings/settings.h"
 #include "../settings/menu_mouse.h"
 #include "../settings/settings_menu.h"
+#include "../dev/dev_console.h"
 
 #include <algorithm>
 #include <array>
@@ -349,7 +350,7 @@ namespace input::pc
     {
         if (!g_focused)
             return CursorMode::Visible;
-        if (!InMenus() && !settings::menu::IsOpen())
+        if (!InMenus() && !settings::menu::IsOpen() && !dev::console::IsOpen())
         {
             settings::Controls controls = Controls();
             return controls.mouseCamera ? CursorMode::Captured : CursorMode::Hidden;
@@ -756,7 +757,7 @@ namespace input::pc
     void MouseLookDelta(float& dx, float& dy)
     {
         int x = g_lookX.exchange(0), y = g_lookY.exchange(0);
-        bool live = g_focused && !InMenus() && !settings::menu::IsOpen();
+        bool live = g_focused && !InMenus() && !settings::menu::IsOpen() && !dev::console::IsOpen();
         dx = live ? float(x) : 0.0f;
         dy = live ? float(y) : 0.0f;
     }

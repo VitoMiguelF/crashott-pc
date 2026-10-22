@@ -98,14 +98,14 @@ namespace
         Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay,
         Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, HdTextures,
         Language, CoopMode, InvertAxis, Autosave,
-        MojoColors, HdRemaster, FreeCamera, CameraSensitivity, CameraInvertY, CameraDistance,
+        MojoColors, HdRemaster, FreeCamera, CameraSensitivity, CameraInvertY, CameraDistance, DevConsole,
         Prompts, MouseCamera, MouseSensitivity, MouseInvertY, WalkSpeed, MouseMenus,
         GameFolder, ModsFolder, SavesFolder, ExtraData,
-        HeaderSubtitles, HeaderCamera, HeaderKeys,
+        HeaderSubtitles, HeaderCamera, HeaderKeys, HeaderDev,
         Bind0,
     };
 
-    bool IsHeader(Item item) { return item == Item::HeaderSubtitles || item == Item::HeaderCamera || item == Item::HeaderKeys; }
+    bool IsHeader(Item item) { return item == Item::HeaderSubtitles || item == Item::HeaderCamera || item == Item::HeaderKeys || item == Item::HeaderDev; }
     bool IsBinding(Item item) { return int(item) >= int(Item::Bind0) && int(item) < int(Item::Bind0) + int(settings::ACTION_COUNT); }
     Action ActionOf(Item item) { return Action(int(item) - int(Item::Bind0)); }
 
@@ -139,7 +139,7 @@ namespace
             { { "CONTROLS", "CONTROLES" }, controls },
             { { "DEFINITIVE EDITION", "DEFINITIVE EDITION" },
               { Item::MojoColors, Item::HdRemaster, Item::HeaderCamera, Item::FreeCamera, Item::CameraSensitivity, Item::CameraInvertY,
-                Item::CameraDistance } },
+                Item::CameraDistance, Item::HeaderDev, Item::DevConsole } },
             { { "SETUP", "INSTALAÇÃO" }, { Item::GameFolder, Item::ModsFolder, Item::SavesFolder, Item::ExtraData } },
         };
     }
@@ -274,6 +274,8 @@ namespace
         case Item::HeaderSubtitles: return T({ "SUBTITLES", "LEGENDAS" });
         case Item::HeaderCamera: return T({ "THIRD-PERSON CAMERA", "CÂMERA EM TERCEIRA PESSOA" });
         case Item::HeaderKeys: return T({ "KEYBOARD AND MOUSE", "TECLADO E MOUSE" });
+        case Item::HeaderDev: return T({ "DEVELOPER", "DESENVOLVEDOR" });
+        case Item::DevConsole: return T({ "DEVELOPER CONSOLE", "CONSOLE DE DESENVOLVEDOR" });
         default: return "";
         }
     }
@@ -384,6 +386,7 @@ namespace
             return g_values.subtitles && !HaveSubtitles() ? T({ "ON (NO TEXT)", "LIGADO (SEM TEXTO)" }) : OnOff(g_values.subtitles);
         case Item::FreeCamera: return OnOff(g_values.freeCamera);
         case Item::CameraInvertY: return OnOff(g_values.cameraInvertY);
+        case Item::DevConsole: return OnOff(g_values.devConsole);
         case Item::Prompts:
             switch (g_values.controls.prompts)
             {
@@ -498,6 +501,7 @@ namespace
         case Item::CameraSensitivity: return { T({ "Turn speed of the free camera.", "Velocidade de giro da câmera livre." }), T({ "100% = default.", "100% = padrão." }) };
         case Item::CameraInvertY: return { T({ "Up on the stick / mouse looks down.", "Para cima no analógico / mouse olha para baixo." }), T({ "Free camera only.", "Só na câmera livre." }) };
         case Item::CameraDistance: return { T({ "Distance from the camera to the character.", "Distância da câmera ao personagem." }), T({ "Walls bring it closer by themselves.", "Paredes a aproximam sozinhas." }) };
+        case Item::DevConsole: return { T({ "The key left of 1 (or F10) opens a console:", "A tecla antes do 1 (ou F10) abre um console:" }), T({ "unlock all, mojo, god, skin, level, lua... (help).", "unlock all, mojo, god, skin, level, lua... (help)." }) };
         case Item::Prompts:
             return { T({ "Icons in menus and hints: the last device used,", "Ícones nos menus e dicas: o último aparelho usado," }),
                      T({ "or always Xbox / PlayStation / keyboard.", "ou sempre Xbox / PlayStation / teclado." }) };
@@ -634,6 +638,7 @@ namespace
         case Item::Subtitles: g_values.subtitles = !g_values.subtitles; break;
         case Item::FreeCamera: g_values.freeCamera = !g_values.freeCamera; break;
         case Item::CameraInvertY: g_values.cameraInvertY = !g_values.cameraInvertY; break;
+        case Item::DevConsole: g_values.devConsole = !g_values.devConsole; break;
         case Item::Prompts: g_values.controls.prompts = Cycle(g_values.controls.prompts, 4, direction); break;
         case Item::MouseCamera: g_values.controls.mouseCamera = !g_values.controls.mouseCamera; break;
         case Item::MouseInvertY: g_values.controls.invertY = !g_values.controls.invertY; break;

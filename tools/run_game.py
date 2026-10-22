@@ -26,7 +26,10 @@ game's own code, `skip_intros = true` (CRASH_SKIP_INTROS) only skips the logos a
 Dev features (runtime/dev/dev_tools.h, docs/dev_features.md): `dev_lua = "<lua>"`,
 `dev_lua_file = "path"`, `dev_lua_at = "gameplay_ready+2"`, `dev_invincible = true`,
 `dev_teleport = [x, y, z]`, `dev_mojo = 500`, `dev_unlock_all = true`, `dev_shadow = true`,
-`dev_gamelink = true`; each block logs the event dev_lua_<n>. The
+`dev_gamelink = true`; each block logs the event dev_lua_<n>. The developer console
+(runtime/dev/dev_console.h): `dev_console = [["@gameplay_ready+1", "!toggle"], [..., "god on"]]`
+types each entry into the window at its time (a command + Enter, or !toggle / !esc / !tab / !up /
+!down / !enter / !type:<text>) and turns the console on; events console_<n> and console_cmd. The
 runtime logs milestones as "[test] event <name> (...)": title, main_menu, save_slots, load_complete,
 hub, level_start, level_ready, cinematic, skip_prompt (the "hold to skip" prompt of a cutscene or
 an intro video appears), cinematic_skipped, video_skipped, cinematic_done, gameplay_ready, pause,
@@ -389,6 +392,11 @@ def environment(settings, run_dir, profile=None):
         env["CRASH_DEV_SHADOW"] = "1"
     if settings.get("dev_gamelink"):
         env["CRASH_DEV_GAMELINK"] = "1"
+    if settings.get("dev_console") is not None:
+        env["CRASH_DEV_CONSOLE"] = "1"
+        script = run_dir / "console_script.txt"
+        script.write_text("".join(f"{str(t).lstrip('@')}|{text}\n" for t, text in settings["dev_console"]), encoding="utf-8")
+        env["CRASH_DEV_CONSOLE_SCRIPT"] = str(script)
     if settings.get("replay"):
         replay = run_dir / REPLAY_FILE
         replay.write_text("# replay de " + str(profile) + " (tick = segundos do jogo x 30)\n" +

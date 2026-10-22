@@ -13,6 +13,7 @@
 #include "quit_game.h"
 #include "save_screens.h"
 #include "settings_menu.h"
+#include "../dev/dev_console.h"
 #include "../kernel/kernel.h"
 #include "../kernel/pc_input.h"
 #include "../kernel/memory.h"
@@ -99,6 +100,8 @@ PPC_FUNC(sub_820F9BA8)
         exit = boot::OverrideExit(ctx, base, tree, node, exit);  // --skip-intros / CRASH_BOOT
     if (t_conditionDepth == 1)
         exit = settings::save_screens::OverrideExit(node, exit);  // the slots read again after a delete
+    if (t_conditionDepth == 1)
+        exit = dev::console::OverrideExit(ctx, base, tree, node, exit);  // the console's "level" from the HUB / main menu
     ctx.r3.s64 = exit;
     t_conditionDepth--;
 }

@@ -1,5 +1,6 @@
 #include "window.h"
 #include "../diagnostics.h"
+#include "../dev/dev_console.h"
 #include "../kernel/hid_pads.h"
 #include "../kernel/input.h"
 #include "../kernel/pc_input.h"
@@ -193,7 +194,8 @@ namespace gpu::window
                 uint32_t key = message <= WM_LBUTTONUP ? VK_LBUTTON : message <= WM_RBUTTONUP ? VK_RBUTTON
                              : message <= WM_MBUTTONUP ? VK_MBUTTON : (HIWORD(wParam) == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2);
                 input::pc::OnCursor(GET_X_LPARAM_(lParam), GET_Y_LPARAM_(lParam), int(g_clientWidth.load()), int(g_clientHeight.load()));
-                input::pc::OnKey(key, down);
+                if (!down || !dev::console::IsOpen())  // the developer console has the mouse
+                    input::pc::OnKey(key, down);
                 if (down)
                     SetCapture(hwnd);
                 else if (!(wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2)))
@@ -201,6 +203,8 @@ namespace gpu::window
                 return message >= WM_XBUTTONDOWN ? TRUE : 0;
             }
             case WM_MOUSEWHEEL:
+                if (dev::console::OnWheel(GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA))
+                    return 0;
                 input::pc::OnWheel(GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA);
                 return 0;
             case WM_DEVICECHANGE:
@@ -230,7 +234,14 @@ namespace gpu::window
                 SetWindowPos(hwnd, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
                 return 0;
             }
+            case WM_CHAR:
+            case WM_DEADCHAR:
+                dev::console::OnChar(wchar_t(wParam), lParam, message == WM_DEADCHAR);
+                return 0;
             case WM_KEYDOWN:
+                // The developer console (dev/dev_console.h) takes the keyboard while it is open.
+                if (dev::console::OnKeyDown(wParam, lParam))
+                    return 0;
                 if (!(lParam & (1 << 30)))
                     input::pc::OnKey(KeyOf(wParam, lParam), true);
                 if (wParam == VK_F12)
@@ -252,6 +263,8 @@ namespace gpu::window
                 ApplyMode(hwnd, settings::WindowMode(wParam));
                 return 0;
             case WM_SYSKEYDOWN:
+                if (wParam == VK_F10 && dev::console::OnKeyDown(wParam, lParam))
+                    return 0;
                 if (!(lParam & (1 << 30)))
                     input::pc::OnKey(KeyOf(wParam, lParam), true);
                 if (wParam == VK_MENU || wParam == VK_F10)
@@ -272,6 +285,8 @@ namespace gpu::window
             }
         }
     }
+
+    void* Handle() { return g_window.load(); }
 
     void* Create(uint32_t clientWidth, uint32_t clientHeight, const wchar_t* title)
     {

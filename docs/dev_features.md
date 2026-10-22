@@ -5,9 +5,14 @@ do jogo que serve para automação de testes, mods e depuração, e o que o runt
 disso. Build do jogo, segundo o próprio jogo: `g_bakedBuildData` = "Built by: hmillar ... 2007-07-26",
 `g_bakedP4Data` = 37008 (globais Lua).
 
-Como usar está no README, "Recursos DEV (Lua, invencibilidade, teleporte...)". Código: `runtime/dev/`
-(`dev_tools.cpp`, `dev_cheats.cpp`, `dev_library.lua.inc`). Provas: perfis `dev_*` do `config/run.toml`, capturas em
-`build\dev\`.
+Como usar está no guia (docs/GUIA_DO_PROJETO.md), "Recursos DEV (Lua, invencibilidade, teleporte...)" e "Console
+de desenvolvedor". Código: `runtime/dev/` (`dev_tools.cpp`, `dev_cheats.cpp`, `dev_library.lua.inc`, `dev_console.cpp`,
+`dev_skins.cpp`). Provas: perfis `dev_*` e `console_*` do `config/run.toml`, capturas em `build\dev\` e `build\console\`.
+
+**Console de desenvolvedor** (2026-10-22): tudo isso com o jogo aberto, por comandos (`unlock all`, `mojo 500`,
+`god on`, `tp`, `pos`, `shadow`, `bighead`, `skin <nome> [now]`, `level <nome>`, `reload`, `lua <código>`, `help`).
+Desligado por padrão: SETTINGS > DEFINITIVE EDITION > CONSOLE DE DESENVOLVEDOR, `--dev-console` ou
+`CRASH_DEV_CONSOLE=1`; abre com a tecla antes do 1 ou F10.
 
 ## Ranking
 
@@ -21,7 +26,7 @@ Do mais útil para testes automatizados e mods ao menos útil.
 | 4 | **Teleporte** | `CPhysicsBehaviour.Teleport(Vector)` `sub_82142338`; `CObjective.DO_TeleportPlayer(locator, jogador)` | Só pelos scripts | `CRASH_DEV_TELEPORT=x,y,z`, `dev.teleport`, `dev.pos` | sim (`dev_teleporte`) |
 | 5 | **Estatísticas** (mojo, mortes, combos, medalhas, idolos) | `CStatsManager` (`Managers.StatsManager`) | Só pelos scripts | `CRASH_DEV_MOJO=n`, `dev.give_mojo` | sim (`dev_mojo`, HUD mostra 500) |
 | 6 | **Objetivos de designer** (`DO_*` / `WAIT_*`: spawn, skip point, unlocks, mensagens) | `CObjective`, 138 métodos; `NewObjective` | Só pelos scripts | `dev.objective(nome, fn)` | parcial (unlocks sim; `DO_SkipAhead` sem efeito na vila) |
-| 7 | **Desbloquear** (as 20 skins do retail **+ a não usada Crash_Hulk = 22**; fases; golpes e upgrades) | `DO_UnlockSkin/Level/Move`; skins em `0x824A8218` (20 ints, -1 = livre) | Só pelos scripts | `CRASH_DEV_UNLOCK_ALL=1`, `dev.unlock_all({ESkin_Crash_Hulk})`, `dev.unlock_skin` | sim no estado do jogo (`dev_desbloquear`: lista `21 22 10 5 ... 23`); falta ver no menu de skins |
+| 7 | **Desbloquear** (as 20 skins do retail **+ a não usada Crash_Hulk = 22**; fases; golpes e upgrades) | `DO_UnlockSkin/Level/Move`; skins em `0x824A8218` (20 ints, -1 = livre) | Só pelos scripts | `CRASH_DEV_UNLOCK_ALL=1`, `dev.unlock_all({ESkin_Crash_Hulk})`, `dev.unlock_skin` | sim (`dev_desbloquear`); console `unlock all` / `unlock skin hulk`; a Crash_Hulk no menu de skins e vestida em jogo (`console_skin_menu`, seção 5) |
 | 8 | **GameLink** (depurador remoto da Radical: `DumpValues`, `GetObjectChildren`, `GetFieldList`, `ToggleField`, `ReloadProps`, `ReloadRoom`, `ReloadNPCs`, `ScreenShot`, `PrintStack`, `CommandCompletion`, `GetNPCs`) | `script/gamelinkutil.lua` (o `init.lua` pula quando `RAD_RELEASE`) | Não | `CRASH_DEV_GAMELINK=1`, `dev.gamelink()` | carrega e lista a árvore de objetos; as outras funções esperam argumentos do PC (formato a descobrir) |
 | 9 | **Cheats de aparência** (Big Head / Shadow Crash) | `SettingsDatabase` `m_CheatBigHeadCrash` (+94) / `m_CheatShadowCrash` (+93); verificador `sub_821DB680` no update do `CFrontendManager` | **Sim**: pausa, segura RT, X X Y A (Big Head) / Y X Y A (Shadow) | `CRASH_DEV_SHADOW=1`; Big Head pelo código | sim (`dev_sombra`, `dev_cheat_cabecao`) |
 | 10 | **SettingsDatabase** (o "Watcher"/tweak da Radical: câmera, debug, memória, desenho, som) | instância estática `0x824A8B80`, classe Lua `getobj(":SettingsDatabase")` | Não | `dev.setting(nome, valor)` | Shadow sim; o resto ver tabela abaixo |
@@ -132,6 +137,51 @@ Cortex (1), Yuktopus (18), Uka Uka (19), Nina SpiderBot (20) e **Crash_Hulk (22)
 nem têm nome na tabela da ação (crash). A Crash_Hulk tem nome e boneco vodu no menu (`c_voodooFE_ball_crashhulk`)
 e entra na lista com `dev.unlock_skin(ESkin_Crash_Hulk)`.
 
+**Como o jogo aplica a skin** (2026-10-22, `runtime/dev/dev_skins.cpp`):
+
+| O quê | Onde |
+|---|---|
+| ESkin → nome | `sub_82215548` (tabela: 0 Chiratta ... 17 Scorporilla, 21 Crash, 22 Crash_Hulk, 23 Valentine, 24 Skeleton = Halloween; 18-20 sem nome) |
+| ESkin → template | `sub_82215730`: hash `"Characters:" + ("Crash_" exceto 21) + nome` (o hash de nomes do jogo, `sub_822846C0`, h = h*31 + c): o template `Characters:Crash_Ratcicle` etc. de `levels\GlobalPackages.p3d` |
+| skin atual | `0x824A8270`, o hash do template (lê `sub_822159E8`, grava `sub_822159C0`; `Characters:Crash` no boot, `sub_82421420`); não vai para o save |
+| `Frontend:SelectSkin` (VESTIR) | `sub_820F6180` → `sub_821D9270(frontend, skin)`: troca a skin atual, carrega o pacote do template novo (`CStreamManager` `sub_8224D3C8`) e solta o antigo (`sub_8224CEC8`) |
+| tela de skins | `CSkinScreenAction` (`sub_820BBB68(tela, skin)`: um switch próprio ESkin → template de pré-visualização e índice dos textos; skin mostrada em `0x82497508` {skin, índice, hash}); esquerda/direita = `sub_822159F8` (a próxima/anterior da lista de desbloqueadas) |
+| carregar/soltar fase | `CStreamManager::vf05` (`sub_8224E068`) carrega o template do jogador 2 e o da skin atual; `vf04` (`sub_8224FAD8`) solta |
+| nascer | `CActionSpawnPlayer` (construtor `sub_822114E8`) guarda o hash da skin atual (+8) e cria aquele template |
+| golpes | a árvore de luta do Crash (`HLSkinWeapon`, ramos `ContentX`): `Crash:CheckSkinType(ESkin)` (`sub_821534A0` = `sub_82215730(skin) == atual`) → `self:SetWeaponType("Crash_X")` |
+| cenas | `CCinematicActorAction::vf04` (`sub_821B6388`): o ator do Crash na cena é `hash atual + "_nis_NN"` |
+
+**Trocar com o jogo aberto** (`skin <nome>` no console): no frontend (HUB, menus) o runtime chama o mesmo
+`sub_821D9270` do VESTIR. Dentro de uma fase, trocar o template do jogador vivo não é seguro (o pacote antigo está
+em uso); a skin fica pendente e entra logo antes do `vf05` da próxima carga (o `vf04` já soltou a antiga e o
+`vf05` carrega a nova); `skin <nome> now` faz isso e reinicia a fase (`UberManager:ForceReload`, que passa por
+`vf04`/`vf05`). Provado com Ratcicle e Crash_Hulk no L1_E1 (`console_dev`, `console_hulk`).
+
+**A Crash_Hulk (22) ficou pela metade no jogo** e o runtime completa:
+
+1. **Nome do template errado**: `sub_82215730` monta `Characters:Crash_Crash_Hulk` (prefixo `Crash_` + nome
+   `Crash_Hulk`), que não existe; o template é `Characters:Crash_Hulk` (pacote `ab4cc04a`, com o modelo
+   `344a15f9` = `Crash_HulkShape`). O gancho devolve o hash certo para 22 (e o do Crash normal para 1, 18, 19 e
+   20, que antes davam crash ou nada).
+2. **Sem colisão**: o objeto `crash` dos pacotes da Hulk não tem `crashEllipsoidShape` nem
+   `Interactor_VolumeShape` (os das outras 20 skins têm): o Crash nascia e **atravessava o chão**. O
+   `CPhysicsBehaviour::vf12` (`sub_82147568`) e o `CIntersectionBehaviour::vf12` (`sub_8211EA88`) procuram as
+   partes na entrada de pacotes do template (r5, a entrada do `CStreamManager` em `*0x824A90CC`, hash em +20); para
+   a Hulk o runtime passa a entrada do `Characters:Crash` normal (sempre carregada: é o template do jogador 2).
+3. **Tela de skins**: o switch de `sub_820BBB68` manda 1, 18-20 e 22 para "nenhum", que soltava a
+   pré-visualização anterior e depois a lia já solta (crash ao chegar na Hulk com esquerda/direita). Para 22 o
+   gancho faz o que o switch faz com as outras, com o template da Hulk e os textos 22 do próprio jogo ("CRASH
+   HULK" / "CRASH!": as listas de textos têm as 25).
+4. **Desbloqueio sem vaga**: a lista de 20 já é ocupada pelas 20 do retail. Com `[dev] hulk_skin = true`
+   (`unlock skin hulk`/`unlock all` no console) `IsSkinUnlocked` (`sub_82215900`) responde sim para 22 e
+   esquerda/direita da tela de skins (`sub_822159F8`) passam pela Hulk depois da última da lista. Ela não tem boneco
+   próprio no HUB: aparece ao abrir qualquer skin desbloqueada e andar com esquerda/direita.
+5. **Cenas**: não há `Characters:Crash_Hulk_nis_NN`; enquanto ela é a skin atual, o ator das cenas usa o do Crash
+   normal (o gancho troca o hash atual só durante `sub_821B6388`).
+
+Prova: `console_skin_menu` (HUB → RATNICIAN SKIN → direita: CRASH HULK → VESTIR → CONTINUE STORY → a fase com a
+Hulk), capturas em `build\console\`.
+
 ## 6. Outros achados
 
 - **Fases fora da campanha** no disco: `levels\SoundTest` (está na lista do jogo como índice 20; faltam
@@ -155,7 +205,12 @@ e entra na lista com `dev.unlock_skin(ESkin_Crash_Hulk)`.
 - Objetivos (`NewObjective`) têm limites que derrubam o jogo ou somem em silêncio: um objetivo de ~200 passos
   nunca roda; 9 objetivos criados no mesmo quadro crasham (`sub_82200E60`); valores de enum sem nome na tabela
   da ação crasham (skins 18 Yuktopus, 19 Uka Uka, 20 Nina; concept art 20-24; enemy info 1 Cortex). A lista de
-  skins guarda 20: com a Crash_Hulk a última do retail (Ratcicle) não cabe.
+  skins guarda 20: com a Crash_Hulk a última do retail (Ratcicle) não cabe (por isso o console guarda a Hulk em
+  `[dev] hulk_skin`, fora da lista).
+- Console: `unlock all` grava no save quando o jogo salvar (é o progresso do jogo); `level` numa fase reinicia
+  pela fase nova (`UberManager:SetLevelIndex` + `ForceReload`; o `StartLevelByName` em jogo deixa o jogo
+  esperando o menu e trava), fora dela vai pelo HUB ou pelo menu principal; outras telas esperam até chegar num
+  dos dois.
 
 ## Follow-ups (promissores, não terminados)
 
@@ -164,13 +219,13 @@ e entra na lista com `dev.unlock_skin(ESkin_Crash_Hulk)`.
 2. **Implementar o `testManager`** que o `TestLevels.lua` espera (`SendControllerChange`, `TestGetMicroseconds`,
    `IsFrontEndLoaded`) em cima do input do runtime: os scripts de teste dos devs voltariam a rodar.
 3. **GameLink completo**: descobrir o formato dos argumentos (ids `@@OBJ:n@@`) de `GetFieldList`/`DumpValues`/
-   `ToggleField` e ligar um console (pipe/porta local) para mandar Lua com o jogo aberto, como o GameLink do PC.
+   `ToggleField`. (Mandar Lua com o jogo aberto já dá: console de desenvolvedor, `lua <código>`; falta um canal
+   de fora do jogo, pipe/porta local, como o GameLink do PC.)
 4. **Desbloquear o resto** (play zones, mojo rooms, concept art 0-19, enemy info, tutoriais): objetivos pequenos, um
    por bloco, devem funcionar (não verificado); e ler o estado do save para provar.
-5. **Skin Crash_Hulk em jogo**: confirmar no menu de skins depois do `dev.unlock_all` e achar como a skin
-   escolhida é aplicada (`Frontend:SelectSkin`, `Crash.CheckSkinType`).
-6. **Big Head só pela flag**: chamar a mesma aplicação de escala do verificador (`sub_821DB2A0` e o laço dos jogadores)
-   para um `CRASH_DEV_BIGHEAD`.
+5. ~~**Skin Crash_Hulk em jogo**~~: feito (2026-10-22, seção 5): no menu de skins, vestida, com colisão.
+6. ~~**Big Head só pela flag**~~: feito pelo console (`bighead on|off`, `dev::SetBigHead`, a mesma escala do
+   verificador); falta só a variável `CRASH_DEV_BIGHEAD` para os perfis (hoje: `dev_console = [..., "bighead on"]`).
 7. **Invencibilidade contra poços**: hook no `CDeathTriggerVolumeBehaviour` / respawn.
 8. **Teleporte para checkpoints**: listar os locators de cada fase (`CWorldManager`, skip points) e usar
    `DO_TeleportPlayer` / `DO_SkipAhead`; o skip ahead não fez nada na vila do L1_E1.

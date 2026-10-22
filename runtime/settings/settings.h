@@ -26,6 +26,8 @@
 //   [lighting] the lighting remaster (gpu/lighting.h), all off by default: ssao = "off" | "low" |
 //             "high", gi = true|false, gi_intensity = 0..200 (%), contact_shadows = true|false,
 //             soft_shadows = true|false (the game's stencil shadows with a wider filter)
+//   [dev]     console = true|false (the developer console, dev/dev_console.h), hulk_skin =
+//             true|false (the unused Crash_Hulk skin unlocked by the console, dev/dev_skins.cpp)
 //
 // Live: master volume, music/effects/voice volume (through the game's own volume categories,
 // audio/game_volumes.h), window mode, V-Sync, frame limit, FPS overlay, anti-aliasing, sharpness,
@@ -128,11 +130,11 @@ namespace settings
         bool coopLeapfrog = true;  // co-op mode: LEAPFROG (the game's default) or PIGGYBACK
         bool invertAxis = false;   // INVERT AXIS: the camera's axis, as the game's option
         bool autosave = true;      // AUTOSAVE: off = never; on = when the game has a save slot
-        Controls controls;          // [controls]: keyboard and mouse bindings (controls.h, kernel/pc_input.cpp), live
-        // [camera]: the free third-person camera (camera/free_camera.h), experimental, live
         // skip_cutscenes: "hold to skip" over the cutscenes and the intro videos, with a prompt in
         // a corner (skip_cinematics.h), live
         bool skipCutscenes = true;
+        Controls controls;          // [controls]: keyboard and mouse bindings (controls.h, kernel/pc_input.cpp), live
+        // [camera]: the free third-person camera (camera/free_camera.h), experimental, live
         bool freeCamera = false;      // free_camera: orbit camera around the player instead of the game's
         int cameraSensitivity = 100;  // sensitivity: % of the stick / mouse turn speed (25..300)
         bool cameraInvertY = false;   // invert_y
@@ -143,6 +145,9 @@ namespace settings
         int giIntensity = 100;            // gi_intensity: % (0..200)
         bool contactShadows = false;      // contact_shadows: short shadows towards the game's key light
         bool softShadows = false;         // soft_shadows: wider rotated-disk filter on the game's stencil shadows
+        // [dev]: developer tools (dev/dev_console.h), live
+        bool devConsole = false;  // console: the developer console (the key left of 1, or F10)
+        bool hulkSkin = false;    // hulk_skin: the unused Crash_Hulk skin is in the skin menu (console "unlock skin hulk")
         // [paths] game: the game folder (UTF-8), when it is not next to the exe (paths.h); set by the
         // folder picker on the first run.
         std::string gamePath;

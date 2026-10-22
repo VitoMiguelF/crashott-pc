@@ -107,13 +107,14 @@ namespace settings::menu
             FreeCamera, CameraSensitivity, CameraInvertY, CameraDistance,
             LightSsao, LightGi, LightGiIntensity, LightContactShadows, LightSoftShadows,
             Prompts, MouseCamera, MouseSensitivity, MouseInvertY, WalkSpeed, MouseMenus,
-            HeaderSubtitles, HeaderCamera, HeaderLighting,  // sub-group headings inside a tab (not selectable)
+            DevConsole,
+            HeaderSubtitles, HeaderCamera, HeaderLighting, HeaderDev,  // sub-group headings inside a tab (not selectable)
             Bind0,  // + settings::Action: the key bindings (controls.h), one row per action
         };
 
         bool IsHeader(Item item)
         {
-            return item == Item::HeaderSubtitles || item == Item::HeaderCamera || item == Item::HeaderLighting;
+            return item == Item::HeaderSubtitles || item == Item::HeaderCamera || item == Item::HeaderLighting || item == Item::HeaderDev;
         }
 
         // The CONTROLS tab's binding rows.
@@ -170,7 +171,7 @@ namespace settings::menu
             { "definitive", { "DEFINITIVE EDITION", "DEFINITIVE EDITION" },
               { Item::MojoColors, Item::HdRemaster, Item::HeaderLighting, Item::LightSsao, Item::LightGi, Item::LightGiIntensity,
                 Item::LightContactShadows, Item::LightSoftShadows, Item::HeaderCamera, Item::FreeCamera, Item::CameraSensitivity,
-                Item::CameraInvertY, Item::CameraDistance } },
+                Item::CameraInvertY, Item::CameraDistance, Item::HeaderDev, Item::DevConsole } },
         };
         constexpr int TAB_COUNT = int(std::size(TABS));
         constexpr int GAME_TAB = 0, DEFINITIVE_TAB = 5;
@@ -283,8 +284,8 @@ namespace settings::menu
             case Item::CoopMode: return "game.coop_mode";
             case Item::InvertAxis: return "game.invert_axis";
             case Item::Autosave: return "game.autosave";
-            case Item::Storage: return "game.storage";
             case Item::SkipCutscenes: return "game.skip_cutscenes";
+            case Item::Storage: return "game.storage";
             case Item::Subtitles: return "game.subtitles";
             case Item::SubtitleSize: return "game.subtitle_size";
             case Item::SubtitleBackground: return "game.subtitle_background";
@@ -292,6 +293,7 @@ namespace settings::menu
             case Item::CameraSensitivity: return "camera.sensitivity";
             case Item::CameraInvertY: return "camera.invert_y";
             case Item::CameraDistance: return "camera.distance";
+            case Item::DevConsole: return "dev.console";
             case Item::LightSsao: return "lighting.ssao";
             case Item::LightGi: return "lighting.gi";
             case Item::LightGiIntensity: return "lighting.gi_intensity";
@@ -338,9 +340,9 @@ namespace settings::menu
             case Item::CoopMode: return T({ "CO-OP", "COOPERATIVO" });
             case Item::InvertAxis: return T({ "INVERT AXIS", "INVERTER EIXO" });
             case Item::Autosave: return T({ "AUTOSAVE", "SALVAMENTO AUTOMÁTICO" });
+            case Item::SkipCutscenes: return T({ "SKIP CUTSCENES", "PULAR CENAS" });
             case Item::Storage: return T({ "STORAGE", "ARMAZENAMENTO" });
             case Item::Subtitles: return T({ "SUBTITLES", "LEGENDAS" });
-            case Item::SkipCutscenes: return T({ "SKIP CUTSCENES", "PULAR CENAS" });
             case Item::SubtitleSize: return T({ "SUBTITLE SIZE", "TAMANHO DA LEGENDA" });
             case Item::SubtitleBackground: return T({ "SUBTITLE BACKGROUND", "FUNDO DA LEGENDA" });
             case Item::FreeCamera: return T({ "FREE CAMERA (EXPERIMENTAL)", "CÂMERA LIVRE (EXPERIMENTAL)" });
@@ -361,6 +363,8 @@ namespace settings::menu
             case Item::HeaderSubtitles: return T({ "SUBTITLES", "LEGENDAS" });
             case Item::HeaderCamera: return T({ "THIRD-PERSON CAMERA", "CÂMERA EM TERCEIRA PESSOA" });
             case Item::HeaderLighting: return T({ "LIGHTING (REMASTER)", "ILUMINAÇÃO (REMASTER)" });
+            case Item::HeaderDev: return T({ "DEVELOPER", "DESENVOLVEDOR" });
+            case Item::DevConsole: return T({ "DEVELOPER CONSOLE", "CONSOLE DE DESENVOLVEDOR" });
             default: break;
             }
             return "";
@@ -509,13 +513,13 @@ namespace settings::menu
             case Item::Autosave:
                 return { T({ "Saves the game in the slot chosen for it.", "Salva o jogo no slot escolhido para ele." }),
                          T({ "Off: the game does not save by itself.", "Desligado: o jogo não salva sozinho." }) };
+            case Item::SkipCutscenes:
+                return { T({ "Hold B (ESC, SPACE, ENTER) during a cutscene or video", "Segure B (ESC, ESPAÇO, ENTER) numa cena ou vídeo" }),
+                         T({ "to skip it; a prompt shows in the corner.", "para pulá-la; um aviso aparece no canto." }) };
             case Item::Storage:
                 return { T({ "Saves are kept on the PC, in the userdata folder.", "Os saves ficam no PC, na pasta userdata." }),
                          T({ "The Y button of the main menu picks it.", "O botão Y do menu principal o escolhe." }) };
             case Item::Subtitles:
-            case Item::SkipCutscenes:
-                return { T({ "Hold B (ESC, SPACE, ENTER) during a cutscene or video", "Segure B (ESC, ESPAÇO, ENTER) numa cena ou vídeo" }),
-                         T({ "to skip it; a prompt shows in the corner.", "para pulá-la; um aviso aparece no canto." }) };
                 if (!subtitles::SoundCount())
                     return { T({ "No subtitles for this language: see", "Sem legendas para este idioma: veja" }),
                              T({ "tools/subtitles.py (README, Legendas).", "tools/subtitles.py (README, Legendas)." }) };
@@ -537,6 +541,9 @@ namespace settings::menu
             case Item::CameraDistance:
                 return { T({ "Distance from the camera to the character.", "Distância da câmera ao personagem." }),
                          T({ "Walls bring it closer by themselves.", "Paredes a aproximam sozinhas." }) };
+            case Item::DevConsole:
+                return { T({ "The key left of 1 (or F10) opens a console:", "A tecla antes do 1 (ou F10) abre um console:" }),
+                         T({ "unlock all, mojo, god, skin, level, lua... (help).", "unlock all, mojo, god, skin, level, lua... (help)." }) };
             case Item::LightSsao:
                 return { T({ "Darkens corners, contacts and creases of the scene.", "Escurece cantos, contatos e dobras da cena." }),
                          T({ "LOW: half resolution, HIGH: full. F8 toggles it all.", "BAIXA: meia resolução, ALTA: cheia. F8 liga/desliga." }) };
@@ -684,14 +691,15 @@ namespace settings::menu
             case Item::CoopMode: return g_values.coopLeapfrog ? T({ "LEAPFROG", "PULA-SELA" }) : T({ "PIGGYBACK", "CAVALINHO" });
             case Item::InvertAxis: return OnOff(g_values.invertAxis);
             case Item::Autosave: return OnOff(g_values.autosave);
+            case Item::SkipCutscenes: return OnOff(g_values.skipCutscenes);
             case Item::Subtitles:
                 return g_values.subtitles && !subtitles::SoundCount() ? T({ "ON (NO TEXT)", "LIGADO (SEM TEXTO)" }) : OnOff(g_values.subtitles);
             case Item::Storage: return "HARD DRIVE";
             case Item::FreeCamera: return OnOff(g_values.freeCamera);
             case Item::CameraInvertY: return OnOff(g_values.cameraInvertY);
+            case Item::DevConsole: return OnOff(g_values.devConsole);
             case Item::LightSsao:
                 switch (g_values.ssao)
-            case Item::SkipCutscenes: return OnOff(g_values.skipCutscenes);
                 {
                 case AoQuality::Low: return T({ "LOW", "BAIXA" });
                 case AoQuality::High: return T({ "HIGH", "ALTA" });
@@ -1185,6 +1193,9 @@ namespace settings::menu
                 case Item::Autosave:
                     g_values.autosave = !g_values.autosave;
                     break;
+                case Item::SkipCutscenes:
+                    g_values.skipCutscenes = !g_values.skipCutscenes;
+                    break;
                 case Item::HdRemaster:
                     if (!HdRemasterAvailable())
                         return;  // shown as unavailable; the saved value is kept for when the data is back
@@ -1193,14 +1204,14 @@ namespace settings::menu
                 case Item::Subtitles:
                     g_values.subtitles = !g_values.subtitles;
                     break;
-                case Item::SkipCutscenes:
-                    g_values.skipCutscenes = !g_values.skipCutscenes;
-                    break;
                 case Item::FreeCamera:
                     g_values.freeCamera = !g_values.freeCamera;
                     break;
                 case Item::CameraInvertY:
                     g_values.cameraInvertY = !g_values.cameraInvertY;
+                    break;
+                case Item::DevConsole:
+                    g_values.devConsole = !g_values.devConsole;
                     break;
                 case Item::LightSsao:
                     g_values.ssao = Cycle(g_values.ssao, 3, direction);

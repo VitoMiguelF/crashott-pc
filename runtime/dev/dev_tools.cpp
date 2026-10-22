@@ -31,6 +31,7 @@
 // docs/dev_features.md lists it, dumped from the running game with dev/lua/dump_globals.lua.
 
 #include "dev_tools.h"
+#include "dev_console.h"
 #include "../kernel/input.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
@@ -173,6 +174,8 @@ namespace
             if (*p == '\n')
             {
                 Log("[lua]%s %s", error ? " (stderr)" : "", state.stdoutLine.c_str());
+                const std::string& line = state.stdoutLine;
+                dev::console::Print(line, error || line.rfind("erro: ", 0) == 0 ? dev::console::Tone::Error : dev::console::Tone::Lua);
                 state.stdoutLine.clear();
             }
             else if (state.stdoutLine.size() < 4096)
@@ -183,7 +186,7 @@ namespace
 
 namespace dev
 {
-    bool RunLua(PPCContext& ctx, uint8_t* base, const char* code, const char* chunkName)
+    bool RunLua(PPCContext& ctx, uint8_t* base, const char* code, const char* chunkName, std::string* error)
     {
         State& state = TheState();
         uint32_t L = LuaState();
@@ -265,13 +268,34 @@ namespace dev
             call.r4.u64 = uint64_t(-1);
             call.r5.u64 = 0;
             sub_822989A0(call, base);
-            Log("[dev] lua error (%d) in %s: %s", status, name.c_str() + 1, GuestCString(call.r3.u32).c_str());
+            std::string message = GuestCString(call.r3.u32);
+            Log("[dev] lua error (%d) in %s: %s", status, name.c_str() + 1, message.c_str());
+            if (error)
+                *error = message;
         }
         call = ctx;
         call.r3.u64 = L;
         call.r4.u64 = top;
         sub_82298450(call, base);
         return status == 0;
+    }
+
+    std::vector<std::string> Levels()
+    {
+        // The managers object (0x824A7A24, sub_821FB4F0): level objects at +156, count at +316,
+        // a level's name at +32 (as settings/direct_boot.cpp reads them).
+        constexpr uint32_t MANAGERS = 0x824A7A24, LEVELS = 156, LEVEL_COUNT = 316, LEVEL_NAME = 32;
+        std::vector<std::string> names;
+        uint32_t count = LoadBE32(MANAGERS + LEVEL_COUNT);
+        if (count > (LEVEL_COUNT - LEVELS) / 4)
+            return names;
+        for (uint32_t i = 0; i < count; i++)
+        {
+            uint32_t level = LoadBE32(MANAGERS + LEVELS + 4 * i);
+            uint32_t name = level ? LoadBE32(level + LEVEL_NAME) : 0;
+            names.push_back(name ? GuestCString(name) : std::string("?"));
+        }
+        return names;
     }
 
     void RunPendingLua(PPCContext& ctx, uint8_t* base)
@@ -308,6 +332,7 @@ PPC_FUNC(sub_82230DE0)
     PPCContext saved = ctx;
     __imp__sub_82230DE0(ctx, base);
     dev::RunPendingLua(saved, base);
+    dev::console::RunPending(saved, base);
 }
 
 // fputs(text, stream): the guest's stdout/stderr (Lua print) to the log.

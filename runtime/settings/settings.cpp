@@ -282,6 +282,10 @@ namespace settings
                 if (ok)
                     values.cameraDistance = percent;
             }
+            else if (name == "dev.console")
+                ok = ParseBool(lower, values.devConsole);
+            else if (name == "dev.hulk_skin")
+                ok = ParseBool(lower, values.hulkSkin);
             else
             {
                 Log("[settings] %s:%d: unknown setting %s (ignored)", g_path.filename().string().c_str(), line, name.c_str());
@@ -348,6 +352,9 @@ namespace settings
                 << "gi_intensity = " << v.giIntensity << "   # 0-200 %, intensidade da luz indireta\n"
                 << "contact_shadows = " << (v.contactShadows ? "true" : "false") << "   # sombras de contato sob personagens, objetos e beiradas, vale na hora\n"
                 << "soft_shadows = " << (v.softShadows ? "true" : "false") << "   # sombras do jogo com filtro mais largo e suave (disco girado), vale na hora\n";
+            out << "\n[dev]\n"
+                << "console = " << (v.devConsole ? "true" : "false") << "   # console de desenvolvedor (tecla antes do 1 ou F10; guia, \"Console de desenvolvedor\"), vale na hora\n"
+                << "hulk_skin = " << (v.hulkSkin ? "true" : "false") << "   # a skin Crash_Hulk (nao usada no jogo original) no menu de skins; o console liga com \"unlock skin hulk\"\n";
             return out.str();
         }
     }

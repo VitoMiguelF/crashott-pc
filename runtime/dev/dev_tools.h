@@ -26,6 +26,8 @@
 // Every block logs "[dev] lua block N at <time>: ok" (or the error) and the event "dev_lua_<N>".
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 struct PPCContext;
 
@@ -33,6 +35,36 @@ namespace dev
 {
     // Called once per frame by the hook on the game's script update (game thread).
     void RunPendingLua(PPCContext& ctx, uint8_t* base);
-    // Runs `code` now in the game's Lua state (game thread only). False on a compile/run error.
-    bool RunLua(PPCContext& ctx, uint8_t* base, const char* code, const char* chunkName);
+    // Runs `code` now in the game's Lua state (game thread only). False on a compile/run error
+    // (its message in `error`, also logged).
+    bool RunLua(PPCContext& ctx, uint8_t* base, const char* code, const char* chunkName, std::string* error = nullptr);
+
+    // dev_cheats.cpp: invincibility on / off (CRASH_DEV_INVINCIBLE sets it at startup; the console).
+    void SetInvincible(bool on);
+    bool Invincible();
+    // The game's Big Head cheat (SettingsDatabase m_CheatBigHeadCrash + the head scale of the
+    // players, as its cheat code does). Returns how many players got it.
+    int SetBigHead(PPCContext& ctx, uint8_t* base, bool on);
+
+    // The game's level list (the managers object), e.g. "L1_E1"; empty before it is loaded.
+    std::vector<std::string> Levels();
+
+    // dev_skins.cpp: Crash's skins (ESkin numbers).
+    namespace skins
+    {
+        constexpr int CRASH = 21, HULK = 22;
+        int ByName(const std::string& name);  // "ratcicle", "hulk", "ESkin_Koala", "9"...; -1 unknown
+        const char* Label(int skin);
+        bool Wearable(int skin);               // not 18-20 (no name: crash) or Cortex 1 (no model)
+        std::vector<std::string> Names();      // the wearable ones, for completion
+        std::string List();                    // every name, for help
+        int Current(PPCContext& ctx, uint8_t* base);  // the skin worn now, -1 if unknown
+        int Pending();                          // waiting for the next level load, -1 none
+        bool InLevel();                         // in a level (loaded, with a player 1), not the HUB / menus
+        // [dev] hulk_skin: Crash_Hulk counts as unlocked (skin menu). True if it changed.
+        bool UnlockHulk(bool on);
+        // Wears `skin`: in the frontend at once (the game's SelectSkin), in a level at the next
+        // level load (`now`: restarts the level). Returns the message for the console.
+        std::string Select(PPCContext& ctx, uint8_t* base, int skin, bool now);
+    }
 }

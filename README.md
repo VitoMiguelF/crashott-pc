@@ -34,7 +34,9 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 - **Modding**: mods folder with load order, HD texture packs, and tools that export the game's sounds,
   videos, textures and 3D models to open formats (WAV, MP4, PNG, glTF) and build them back into mods.
 - **Dev tools for automation**: test profiles with direct boot into any level, event-anchored input
-  scripts, screenshots, input recording (F5), a Lua console into the game's own scripting, benchmarks.
+  scripts, screenshots, input recording (F5), Lua inside the game's own scripting, benchmarks, and an
+  optional **in-game developer console** (unlock all, mojo, god mode, teleport, level select, live skin
+  switching, including the unused green **Crash Hulk** skin the game never shipped).
 
 | Settings | Launcher |
 |---|---|
@@ -85,7 +87,8 @@ checked by SHA-256 (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 `dist\` is the game folder: `CrashLauncher.exe`, `CrashRecomp.exe`, `game\` (your dump, if copied),
 `mods\`, `userdata\` (saves, `settings.toml`, shader cache), `languages\`, `data\` (subtitles, HD AI
 Remaster). Nothing depends on where the project is. Shortcuts in game: F1 overlay, F12 screenshot,
-Alt+Enter fullscreen, F8 lighting remaster on/off.
+Alt+Enter fullscreen, F8 lighting remaster on/off, and with **DEFINITIVE EDITION > DEVELOPER CONSOLE** on
+(off by default, or `--dev-console`), the key left of 1 or F10 opens the developer console (`help`).
 
 Default settings are the original experience (1280x720, 30 fps, no upscaler, extras off). Turn things on
 in **SETTINGS** (main menu or pause > OPTIONS) or in the launcher; for the HD AI Remaster, install it and
@@ -118,7 +121,7 @@ Mods made from the game's files are derived content: share them with care.
   hand, test profiles (`tools\run_game.py`), every feature and setting, performance, modding, reading
   the game's code.
 - [runtime/NOTES.md](runtime/NOTES.md): the runtime's development notes (PT-BR), step by step.
-- [docs/dev_features.md](docs/dev_features.md): Lua console, invincibility, teleport, unlocks.
+- [docs/dev_features.md](docs/dev_features.md): developer console, Lua, invincibility, teleport, unlocks, skins.
 
 ## Credits and licenses
 
@@ -166,8 +169,10 @@ de PC.
   sons, vídeos, texturas e modelos 3D do jogo para formatos abertos (WAV, MP4, PNG, glTF) e os montam de
   volta em mods.
 - **Ferramentas de desenvolvimento e automação**: perfis de teste com boot direto em qualquer fase,
-  roteiros de botões ancorados em eventos, capturas, gravação de controle (F5), console Lua dentro dos
-  scripts do jogo, benchmarks.
+  roteiros de botões ancorados em eventos, capturas, gravação de controle (F5), Lua dentro dos scripts do
+  jogo, benchmarks e um **console de desenvolvedor** opcional dentro do jogo (unlock all, mojo, invencível,
+  teleporte, escolher fase, trocar de skin na hora, inclusive a skin verde **Crash Hulk**, que o jogo nunca
+  usou).
 
 ## Requisitos
 
@@ -206,7 +211,8 @@ SHA-256 (veja [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 `dist\` é a pasta do jogo: `CrashLauncher.exe`, `CrashRecomp.exe`, `game\` (o seu jogo, se copiado),
 `mods\`, `userdata\` (saves, `settings.toml`, cache de shaders), `languages\` e `data\` (legendas, HD AI
 Remaster). Nada depende de onde o projeto está. Atalhos no jogo: F1 overlay, F12 captura, Alt+Enter tela
-cheia, F8 liga/desliga o remaster da iluminação.
+cheia, F8 liga/desliga o remaster da iluminação e, com **DEFINITIVE EDITION > CONSOLE DE DESENVOLVEDOR** ligado
+(desligado por padrão, ou `--dev-console`), a tecla antes do 1 ou F10 abre o console de desenvolvedor (`help`).
 
 As opções padrão são a experiência original (1280x720, 30 fps, sem upscaler, extras desligados). Ligue o
 que quiser em **SETTINGS** (menu principal ou pausa > OPÇÕES) ou no launcher. Para o HD AI Remaster,
@@ -239,7 +245,7 @@ partir dos arquivos do jogo são conteúdo derivado: compartilhe com cuidado.
   mão, perfis de teste (`tools\run_game.py`), cada recurso e opção, desempenho, mods, leitura do código
   do jogo.
 - [runtime/NOTES.md](runtime/NOTES.md): as notas de desenvolvimento do runtime, passo a passo.
-- [docs/dev_features.md](docs/dev_features.md): console Lua, invencibilidade, teleporte, desbloqueios.
+- [docs/dev_features.md](docs/dev_features.md): console de desenvolvedor, Lua, invencibilidade, teleporte, desbloqueios, skins.
 
 ## Créditos e licenças
 

@@ -11,6 +11,7 @@ namespace gpu::window
 {
     // Returns the HWND (as void*) or null.
     void* Create(uint32_t clientWidth, uint32_t clientHeight, const wchar_t* title);
+    void* Handle();  // the HWND (as void*), null before Create
     void GetClientSize(uint32_t& width, uint32_t& height);
     bool ConsumeScreenshotRequest();
     uint32_t ConsumeOverlayToggles(); // F1 presses since the last call (each one: next overlay mode)

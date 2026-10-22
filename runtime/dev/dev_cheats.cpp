@@ -15,12 +15,17 @@
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <cstring>
 
 extern "C" PPC_FUNC(__imp__sub_82110448);  // CDamageableBehaviour::AdjustHitpoints(delta, damager)
+PPC_EXTERN_FUNC(sub_82234188);             // CSettingsDatabase: the cheat flags (+5 shadow, +6 big head)
+PPC_EXTERN_FUNC(sub_82142608);             // actor: behaviour by index (38 = the render behaviour)
+PPC_EXTERN_FUNC(sub_822845A0);             // joint name hash
+PPC_EXTERN_FUNC(sub_822EE2B0);             // drawable: joint index by hash
 
 namespace
 {
@@ -35,9 +40,9 @@ namespace
         return value && *value && strcmp(value, "0") != 0;
     }
 
-    bool Invincible()
+    std::atomic<bool>& InvincibleFlag()
     {
-        static bool value = Enabled("CRASH_DEV_INVINCIBLE");
+        static std::atomic<bool> value{ Enabled("CRASH_DEV_INVINCIBLE") };
         return value;
     }
 
@@ -73,6 +78,69 @@ namespace
     }
 }
 
+namespace dev
+{
+    void SetInvincible(bool on)
+    {
+        InvincibleFlag() = on;
+        Log("[dev] invincible %s", on ? "on" : "off");
+    }
+
+    bool Invincible() { return InvincibleFlag(); }
+
+    // What the cheat checker (sub_821DB680) does on RT + X X Y A: flips m_CheatBigHeadCrash, then for
+    // each player's render behaviour (behaviour 38) scales the joint "Head" by 2.2 (the drawable's
+    // scale at +32/+36/+40, the joint index at +44; 0xFFFF = none, scale 1).
+    int SetBigHead(PPCContext& ctx, uint8_t* base, bool on)
+    {
+        constexpr uint32_t HEAD_NAME = 0x8200E258;  // "Head"
+        constexpr float BIG = 2.2f, NORMAL = 1.0f;
+        PPCContext call = ctx;
+        sub_82234188(call, base);
+        uint32_t cheats = call.r3.u32;
+        if (cheats)
+            g_memory.Translate(cheats)[6] = on ? 1 : 0;
+        auto storeFloat = [](uint32_t address, float value) {
+            uint32_t bits;
+            memcpy(&bits, &value, 4);
+            StoreBE32(address, bits);
+        };
+        int players = 0;
+        for (uint32_t slot = 0; slot < 2; slot++)
+        {
+            uint32_t actor = LoadBE32(GAME_DATABASE + GAME_DATABASE_PLAYERS + 4 * slot);
+            if (!PlausibleObject(actor))
+                continue;
+            call = ctx;
+            call.r3.u64 = actor;
+            call.r4.u64 = 38;
+            sub_82142608(call, base);
+            uint32_t behaviour = call.r3.u32;
+            uint32_t drawable = PlausibleObject(behaviour) ? LoadBE32(behaviour) : 0;
+            if (!PlausibleObject(drawable))
+                continue;
+            uint32_t joint = 0xFFFF;
+            if (on)
+            {
+                call = ctx;
+                call.r3.u64 = HEAD_NAME;
+                call.r4.u64 = 0;
+                sub_822845A0(call, base);
+                call.r4.u64 = call.r3.u32;
+                call.r3.u64 = drawable;
+                sub_822EE2B0(call, base);
+                joint = call.r3.u32;
+            }
+            for (uint32_t axis = 0; axis < 3; axis++)
+                storeFloat(drawable + 32 + 4 * axis, on ? BIG : NORMAL);
+            StoreBE32(drawable + 44, joint);
+            players++;
+        }
+        Log("[dev] big head %s (%d players)", on ? "on" : "off", players);
+        return players;
+    }
+}
+
 PPC_FUNC(sub_82110448)
 {
     if (getenv("CRASH_DEV_DAMAGE_DEBUG") && ctx.f1.f64 < 0.0)
@@ -89,7 +157,7 @@ PPC_FUNC(sub_82110448)
         }
         Log("[dev] damage %.2f to 0x%08X:%s", -ctx.f1.f64, d, words.c_str());
     }
-    if (Invincible() && ctx.f1.f64 < 0.0 && IsPlayerDamageable(ctx.r3.u32))
+    if (InvincibleFlag() && ctx.f1.f64 < 0.0 && IsPlayerDamageable(ctx.r3.u32))
     {
         static int blocked = 0;
         if (blocked++ < 20)

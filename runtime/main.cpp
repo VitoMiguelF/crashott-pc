@@ -24,6 +24,7 @@
 #include "audio/audio_output.h"
 #include "audio/game_volumes.h"
 #include "cpu/guest_thread.h"
+#include "dev/dev_console.h"
 #include "diagnostics.h"
 #include "fs/vfs.h"
 #include "gpu/gpu.h"
@@ -57,6 +58,7 @@ int main(int argc, char** argv)
     // After a restart from the settings screen: the previous process may still be exiting.
     settings::HandleRestartArguments(argc, argv);
     boot::HandleArguments(argc, argv);  // --skip-intros, --boot (settings/direct_boot.h)
+    dev::console::HandleArguments(argc, argv);  // --dev-console (dev/dev_console.h)
 
     if (!g_memory.Init())
     {

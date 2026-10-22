@@ -319,6 +319,31 @@ devprint("fase " .. dev.level() .. ", mojo " .. dev.mojo())
 
 Provas (um perfil por recurso, capturas em `build\dev\`): `dev_api` (lista a API do jogo no log), `dev_invencivel`, `dev_mojo`, `dev_teleporte`, `dev_sombra`, `dev_cheat_cabecao` (o código original do X360, sem nada do runtime: pausa, segura RT, X X Y A = Big Head; Y X Y A = Shadow), `dev_desbloquear` e `dev_soundtest` (a fase escondida `SoundTest`, que precisa do mod de teste `private\assets\test_mods\dev`; não é `test`).
 
+#### Console de desenvolvedor (comandos com o jogo aberto)
+
+Desligado por padrão. Liga em **SETTINGS > DEFINITIVE EDITION > CONSOLE DE DESENVOLVEDOR** (ou no launcher; `[dev] console = true` no `settings.toml`, vale na hora), com `--dev-console` ou `CRASH_DEV_CONSOLE=1`. Aí a **tecla antes do 1** (`'` no ABNT2, `` ` `` no teclado americano; vale a posição, qualquer layout) ou **F10** abre o console por cima do jogo; Esc, F10 ou a mesma tecla com a linha vazia fecham. Aberto, ele fica com o teclado e o mouse e o jogo vê um controle parado (o jogo continua rodando).
+
+Enter roda a linha; setas para cima/baixo andam no histórico (guardado em `userdata\console_history.txt`); Tab completa o comando, a skin, a fase ou on/off (Tab de novo passa para a próxima opção); PageUp/PageDown e a roda rolam a saída; Ctrl+V cola, Ctrl+L limpa a saída, Ctrl+C/Ctrl+U limpa a linha. O `devprint` do Lua e os erros de Lua aparecem no console (em vermelho) e no log (`[console] ...`).
+
+| Comando | O que faz |
+|---|---|
+| `help [comando]` | lista os comandos ou explica um |
+| `unlock all` | as 20 skins do jogo, fases e golpes (os objetivos do próprio jogo; o jogo grava no save quando salvar) + a Crash_Hulk no menu de skins |
+| `unlock skin <nome>` | uma skin (`hulk` não ocupa vaga da lista de 20 do jogo: fica em `[dev] hulk_skin`) |
+| `mojo <n>` | +n de mojo (o HUD acompanha) |
+| `god [on\|off]` | invencibilidade (o HP não desce; poços ainda matam) |
+| `tp <x> <y> <z>` / `pos` | teleporta o jogador 1 / mostra a posição (y = altura) |
+| `shadow [on\|off]` / `bighead [on\|off]` | os cheats Shadow Crash e Big Head do jogo |
+| `skin` / `skin <nome> [now]` | lista as skins e a atual / veste uma: no menu, na hora (o "vestir" da tela de skins); numa fase, na próxima carga, e `now` reinicia a fase com ela |
+| `level` / `level <nome>` | lista as fases / vai para uma: numa fase, reinicia já na nova (`UberManager:SetLevelIndex` + `ForceReload`); no HUB ou no menu principal, pelo `Frontend:StartLevel` + a saída SkipToLevel da árvore (como o boot direto) |
+| `reload` | reinicia a fase (`UberManager:ForceReload`) |
+| `lua <código>` / `lua =<expressão>` | Lua no estado do jogo / mostra o valor |
+| `clear` | limpa a saída |
+
+Skins: `crash`, `hulk` (a Crash_Hulk verde, que o jogo nunca usou), `chiratta`, `koala`, `monkey`, `rabbit`, `bratgirl`, `spike`, `shurtle`, `sludge`, `ratcicle`, `battler`, `grizzly`, `roller`, `parafox`, `stinky`, `eelectric`, `shellephant`, `scorporilla`, `valentine`, `halloween`; também o nome do enum (`ESkin_Koala`) ou o número. `cortex` (sem modelo no disco), `yuktopus`, `ukauka` e `nina` (sem nome na tabela do jogo: derrubavam o jogo) são recusadas.
+
+Nos perfis, `dev_console = [["@gameplay_ready+1", "!toggle"], ["@gameplay_ready+1.5", "god on"]]` digita cada entrada na janela (pelas mesmas mensagens de teclado de uma tecla de verdade; `!toggle`, `!esc`, `!tab`, `!up`, `!down`, `!enter`, `!type:<texto>` sem Enter) e liga o console; eventos `console_<n>`, `console_open`, `console_close` e `console_cmd`. Perfis (`test = true`): `console_dev` (abre, help, unlock all, mojo 500, god on, erro de Lua, Tab, `skin hulk now`, bighead, pos, `skin ratcicle now`, `level L1_E2`), `console_hulk` (a Crash_Hulk no chão e andando), `console_skin_menu` (a Crash_Hulk no menu de skins do jogo: HUB → RATNICIAN SKIN → direita → CRASH HULK → VESTIR → CONTINUE STORY) e `console_level_hub` (`level` a partir do HUB). Capturas em `build\console\`. Como a troca de skin e a Crash_Hulk funcionam por dentro: [docs/dev_features.md](docs/dev_features.md), "Skins".
+
 **Ler os scripts do jogo** (`tools/luadec.py`): os `.lua`/`.blua` de `default.rcf` (objetivos, IA, HUD, árvores de luta, fases) são bytecode do "Lua 5.1 (work)" da Radical, que na prática é o formato do Lua 5.0 (números `float`, line info em u16) com o `FORPREP` e os laços `for` do 5.1. `python tools\luadec.py dec private\assets\raw\default\script\util.lua` mostra o script reconstruído em pseudo-Lua (`if/elseif`, `while`, `for`, `and/or`, tabelas, métodos, closures, `do ... end`), `dis` mostra funções, constantes, locais e instruções, e `python tools\luadec.py all` faz os 723 scripts compilados de uma vez em `private\scripts_dec\` (`*.dec.lua` e `*.dis.txt`; os 42 que já são texto ficam de fora). A saída usa os nomes de locais e parâmetros que vêm no bytecode e serve para ler e como base de mods (copie o trecho para um `dev_lua_file`); não é idêntica ao fonte original. Para conferir: `python tools\luadec.py check`, depois `python tools\run_game.py dev_luadec` e `python tools\luadec.py check --log build\runs\<pasta>\run.log`, que compila cada script reconstruído com o compilador do próprio jogo (`loadstring`, sem rodar) e lista os que não compilam (hoje: nenhum). Comparar o bytecode dentro do jogo não dá: o `string.dump` do retail derruba o jogo.
 
 ### Overlay de desempenho, marcas e gravação de perfis

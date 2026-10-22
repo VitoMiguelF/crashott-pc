@@ -14,6 +14,7 @@
 #include "../settings/save_screens.h"
 #include "../settings/skip_cinematics.h"
 #include "../settings/settings_menu.h"
+#include "../dev/dev_console.h"
 
 #include <windows.h>
 #include <xinput.h>
@@ -381,7 +382,7 @@ namespace
             settings::save_screens::FilterGameInput(state.Gamepad, poll);
             // Hold to skip a cutscene or a video (skip_cinematics.h).
             cutscenes::FilterGameInput(state.Gamepad, poll);
-            if (settings::menu::BlocksGameInput())
+            if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput())
                 state.Gamepad = {};
             state.Gamepad.wButtons |= settings::menu::GameButtons();  // B when it closes
             static DWORD packet;

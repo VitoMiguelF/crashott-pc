@@ -44,6 +44,7 @@
 #include "../settings/save_screens.h"
 #include "../settings/skip_cinematics.h"
 #include "../settings/settings_menu.h"
+#include "../dev/dev_console.h"
 #include "../subtitles/subtitle_draw.h"
 
 #include <windows.h>
@@ -5035,13 +5036,14 @@ float4 main(float4 position : SV_Position) : SV_Target
 
         // Subtitles (subtitles/subtitle_draw.h): part of the image, so screenshots have them.
         subtitles::Draw(g_list.Get(), g_backBufferRtvs[index], g_backBufferWidth, g_backBufferHeight);
-
         // The "hold to skip" prompt of the cutscenes and videos (skip_cinematics.h).
         cutscenes::Draw(g_list.Get(), g_backBufferRtvs[index], g_backBufferWidth, g_backBufferHeight);
+
         // The name entry's keyboard and the slot screen's DELETE (save_screens.h), then the settings
         // screen (settings_menu.h), drawn at the window's resolution.
         settings::save_screens::Draw(g_list.Get(), g_backBufferRtvs[index], g_backBufferWidth, g_backBufferHeight);
         settings::menu::Draw(g_list.Get(), g_backBufferRtvs[index], g_backBufferWidth, g_backBufferHeight);
+        dev::console::Draw(g_list.Get(), g_backBufferRtvs[index], g_backBufferWidth, g_backBufferHeight);  // the developer console
 
         // Screenshots are taken before the overlay is drawn unless CRASH_SCREENSHOT_OVERLAY is set.
         uint64_t frame = g_stats.swaps;
