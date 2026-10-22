@@ -1881,3 +1881,8 @@ Pedido: mandar comandos com o jogo aberto (unlock all, mojo, trocar de skin...).
 - **Release** (`tools/make_release.py <tag>`): `CrashRecomp-<tag>.zip` (git archive + `CrashSetup.exe`), `-legendas.zip`, `-HD-AI-Remaster.partN.zip` (≤ 1,9 GB de entrada por parte, limite de 2 GB do GitHub) e `SHA256SUMS.txt`.
 - **HD AI Remaster do jogo todo testado no jogo** pela primeira vez: L1_E1, L3_E2 e L5_E3 por boot direto com `graphics.hd_remaster=true`, ~30 fps, sem crash, 1 720 texturas HD + pacotes de modelos. Continua experimental.
 - **Limpeza** (com o OK do usuário, 43 GB): runs e capturas de teste, `private/assets` (export), scripts decompilados, intermediários do remaster (`fonte`, `hd_src`, `modelos`), exes antigos, caches de shader e de IA (huggingface, pip, uv). Saves e `settings.toml` do jogador copiados para `Downloads\CrashRecomp_backups`; `settings.toml` voltou ao padrão. O dump foi movido para `dist\game` a pedido do usuário.
+
+## v1.01 (2026-10-22): pular cenas e console de desenvolvedor
+
+- O que entrou: pular cenas e vídeos de abertura segurando B/Esc, com aviso no canto (commit 54a73bd, seção "Pular as cenas") e o console de desenvolvedor com troca de skin e a Crash_Hulk (67767a1, seção "Console de desenvolvedor e troca de skin").
+- A release publica só `CrashRecomp-v1.01.zip` (código + `CrashSetup.exe`) e o seu `SHA256SUMS.txt` (`tools/make_release.py v1.01 --only source`). As legendas e o HD AI Remaster são os mesmos da v1.0 e continuam lá: o `tools/setup.py` baixa os dados da release em `RELEASE_TAG` (`v1.0`), que só muda quando esses assets forem refeitos.

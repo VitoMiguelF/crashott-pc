@@ -52,6 +52,9 @@ XENON_PATCH = ROOT / "patches" / "XenonRecomp.patch"
 XEX_SHA256 = "e76824b242c6c628738c373bdf052d456945d8e343eb934100617fd423e86373"
 GAME_FILES = ["default.xex", "default.rcf", "english.rcf", "sound1.rcf", "sound2.rcf"]
 
+# The release that holds the data assets (subtitles, HD AI Remaster) and their SHA256SUMS.txt.
+# They haven't changed since v1.0: later releases (v1.01) only publish the source + installer zip,
+# and setup keeps downloading the data from v1.0. Bump it only when the data assets are rebuilt.
 RELEASE_TAG = "v1.0"
 RELEASE_URL = f"https://github.com/VitoMiguelF/crashott-pc/releases/download/{RELEASE_TAG}/"
 RELEASE_SUMS = "SHA256SUMS.txt"

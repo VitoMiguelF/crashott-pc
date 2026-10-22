@@ -64,7 +64,7 @@ checked by SHA-256 (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 ## Install
 
-1. Download **`CrashRecomp-v1.0.zip`** from the [releases](https://github.com/VitoMiguelF/crashott-pc/releases)
+1. Download **`CrashRecomp-v1.01.zip`** (the latest) from the [releases](https://github.com/VitoMiguelF/crashott-pc/releases)
    and unzip it (or `git clone` this repository).
 2. Run **`CrashSetup.exe`**. Choose your game folder, check the prerequisites, pick the options
    (subtitles, HD AI Remaster, asset export for modding, copying the game into the folder) and click
@@ -190,7 +190,7 @@ SHA-256 (veja [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 ## Instalação
 
-1. Baixe **`CrashRecomp-v1.0.zip`** nas [releases](https://github.com/VitoMiguelF/crashott-pc/releases) e
+1. Baixe **`CrashRecomp-v1.01.zip`** (a mais recente) nas [releases](https://github.com/VitoMiguelF/crashott-pc/releases) e
    descompacte (ou faça `git clone` deste repositório).
 2. Abra o **`CrashSetup.exe`**. Escolha a pasta do jogo, confira os pré-requisitos, escolha as opções
    (legendas, HD AI Remaster, assets para modding, copiar o jogo para a pasta) e clique em **INSTALAR**.
