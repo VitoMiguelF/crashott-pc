@@ -27,7 +27,8 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
   (English transcript + PT-BR translation, optional download).
 - **Definitive Edition extras**: PS2 mojo colours, an experimental **free third-person camera**, a
   **lighting remaster** (SSAO, one-bounce indirect light, contact and soft shadows), EXIT GAME, an
-  on-screen keyboard for names and save deletion.
+  on-screen keyboard for names and save deletion, and **skippable cutscenes and intro videos** (hold
+  B / Esc; a small prompt shows in the corner).
 - **HD AI Remaster** (optional download, ~4.5 GB): AI-upscaled textures and smoothed models for the
   whole game.
 - **Modding**: mods folder with load order, HD texture packs, and tools that export the game's sounds,
@@ -157,7 +158,8 @@ de PC.
   em inglês + tradução PT-BR, download opcional).
 - **Extras da Definitive Edition**: cores do mojo do PS2, **câmera livre em terceira pessoa**
   (experimental), **remaster da iluminação** (SSAO, luz indireta, sombras de contato e suaves), SAIR DO
-  JOGO, teclado na tela para o nome e apagar saves.
+  JOGO, teclado na tela para o nome e apagar saves, e **cenas e vídeos de abertura que dá para pular**
+  (segure B / Esc; um aviso pequeno aparece no canto).
 - **HD AI Remaster** (download opcional, ~4,5 GB): texturas ampliadas por IA e modelos suavizados no jogo
   todo.
 - **Mods**: pasta de mods com ordem de carregamento, pacotes de texturas HD e ferramentas que exportam

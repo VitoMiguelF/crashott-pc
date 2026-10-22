@@ -102,7 +102,7 @@ namespace settings::menu
             Master, Music, Effects, Voice,
             Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay,
             Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, ShadowResolution, HdRemaster,
-            Language, MojoColors, CoopMode, InvertAxis, Autosave, Storage,
+            Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Storage,
             Subtitles, SubtitleSize, SubtitleBackground,
             FreeCamera, CameraSensitivity, CameraInvertY, CameraDistance,
             LightSsao, LightGi, LightGiIntensity, LightContactShadows, LightSoftShadows,
@@ -158,7 +158,7 @@ namespace settings::menu
             std::vector<Item> items;
         };
         const Tab TABS[] = {
-            { "game", { "GAME", "JOGO" }, { Item::Language, Item::CoopMode, Item::InvertAxis, Item::Autosave, Item::Storage } },
+            { "game", { "GAME", "JOGO" }, { Item::Language, Item::CoopMode, Item::InvertAxis, Item::Autosave, Item::SkipCutscenes, Item::Storage } },
             { "audio", { "AUDIO", "ÁUDIO" },
               { Item::Master, Item::Music, Item::Effects, Item::Voice, Item::HeaderSubtitles, Item::Subtitles, Item::SubtitleSize,
                 Item::SubtitleBackground } },
@@ -284,6 +284,7 @@ namespace settings::menu
             case Item::InvertAxis: return "game.invert_axis";
             case Item::Autosave: return "game.autosave";
             case Item::Storage: return "game.storage";
+            case Item::SkipCutscenes: return "game.skip_cutscenes";
             case Item::Subtitles: return "game.subtitles";
             case Item::SubtitleSize: return "game.subtitle_size";
             case Item::SubtitleBackground: return "game.subtitle_background";
@@ -339,6 +340,7 @@ namespace settings::menu
             case Item::Autosave: return T({ "AUTOSAVE", "SALVAMENTO AUTOMÁTICO" });
             case Item::Storage: return T({ "STORAGE", "ARMAZENAMENTO" });
             case Item::Subtitles: return T({ "SUBTITLES", "LEGENDAS" });
+            case Item::SkipCutscenes: return T({ "SKIP CUTSCENES", "PULAR CENAS" });
             case Item::SubtitleSize: return T({ "SUBTITLE SIZE", "TAMANHO DA LEGENDA" });
             case Item::SubtitleBackground: return T({ "SUBTITLE BACKGROUND", "FUNDO DA LEGENDA" });
             case Item::FreeCamera: return T({ "FREE CAMERA (EXPERIMENTAL)", "CÂMERA LIVRE (EXPERIMENTAL)" });
@@ -511,6 +513,9 @@ namespace settings::menu
                 return { T({ "Saves are kept on the PC, in the userdata folder.", "Os saves ficam no PC, na pasta userdata." }),
                          T({ "The Y button of the main menu picks it.", "O botão Y do menu principal o escolhe." }) };
             case Item::Subtitles:
+            case Item::SkipCutscenes:
+                return { T({ "Hold B (ESC, SPACE, ENTER) during a cutscene or video", "Segure B (ESC, ESPAÇO, ENTER) numa cena ou vídeo" }),
+                         T({ "to skip it; a prompt shows in the corner.", "para pulá-la; um aviso aparece no canto." }) };
                 if (!subtitles::SoundCount())
                     return { T({ "No subtitles for this language: see", "Sem legendas para este idioma: veja" }),
                              T({ "tools/subtitles.py (README, Legendas).", "tools/subtitles.py (README, Legendas)." }) };
@@ -686,6 +691,7 @@ namespace settings::menu
             case Item::CameraInvertY: return OnOff(g_values.cameraInvertY);
             case Item::LightSsao:
                 switch (g_values.ssao)
+            case Item::SkipCutscenes: return OnOff(g_values.skipCutscenes);
                 {
                 case AoQuality::Low: return T({ "LOW", "BAIXA" });
                 case AoQuality::High: return T({ "HIGH", "ALTA" });
@@ -1186,6 +1192,9 @@ namespace settings::menu
                     break;
                 case Item::Subtitles:
                     g_values.subtitles = !g_values.subtitles;
+                    break;
+                case Item::SkipCutscenes:
+                    g_values.skipCutscenes = !g_values.skipCutscenes;
                     break;
                 case Item::FreeCamera:
                     g_values.freeCamera = !g_values.freeCamera;

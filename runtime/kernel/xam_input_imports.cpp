@@ -12,6 +12,7 @@
 #include "../settings/direct_boot.h"
 #include "../settings/settings.h"
 #include "../settings/save_screens.h"
+#include "../settings/skip_cinematics.h"
 #include "../settings/settings_menu.h"
 
 #include <windows.h>
@@ -378,6 +379,8 @@ namespace
             // The settings screen has the controller: the game sees nothing pressed.
             // The name keyboard / delete question (save_screens.h) read it here, then hide it.
             settings::save_screens::FilterGameInput(state.Gamepad, poll);
+            // Hold to skip a cutscene or a video (skip_cinematics.h).
+            cutscenes::FilterGameInput(state.Gamepad, poll);
             if (settings::menu::BlocksGameInput())
                 state.Gamepad = {};
             state.Gamepad.wButtons |= settings::menu::GameButtons();  // B when it closes

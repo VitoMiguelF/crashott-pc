@@ -530,6 +530,15 @@ namespace subtitles
         }
     }
 
+    void EndCutscenes()
+    {
+        std::lock_guard lock(g_mutex);
+        size_t before = g_tracks.size();
+        std::erase_if(g_tracks, [](const Track& t) { return g_sounds[t.sound].key.find('/') == std::string::npos; });
+        if (g_trace && g_tracks.size() != before)
+            Log("[subtitles] cutscene skipped: %zu track(s) ended", before - g_tracks.size());
+    }
+
     std::wstring CurrentText(uint64_t& version, bool& gameplay)
     {
         if (!g_testText.empty())

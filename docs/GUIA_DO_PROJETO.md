@@ -247,7 +247,9 @@ Nada é apertado por horário: o runtime toma, em cada tela, a saída que o jogo
 | `level_start` | Uma fase vai começar, com o nome (`level_start ...: L1_E2 (index 1)`), de qualquer jeito (boot, CONTINUE STORY, NEW GAME) |
 | `level_ready` | A fase terminou de carregar |
 | `cinematic` | Começou uma cena (a de abertura da fase ou uma no meio dela) |
-| `cinematic_skipped` | O `skip_cinematics` encerrou uma cena (com o quadro em que ela estava) |
+| `skip_prompt` | Apareceu o aviso de pular de uma cena ou de um vídeo de abertura (detalhe `cutscene` / `video`) |
+| `cinematic_skipped` | Uma cena foi pulada: pelo `skip_cinematics` (com o quadro em que ela estava) ou segurando o botão (`held, cutscene frame N`) |
+| `video_skipped` | Um vídeo de abertura foi pulado segurando o botão |
 | `cinematic_done` | Uma cena terminou (sozinha ou pulada): o jogo marca a cena como concluída |
 | `gameplay_ready` | O jogador tem o controle (1,5 s de jogo seguido, depois da cena de abertura se tiver) |
 | `pause`, `game_over` | Menu de pausa, tela de game over |
@@ -271,7 +273,7 @@ expect = { exit = ["timeout"], events = ["hub", "gameplay_ready"] }
 
 **No `replay`** (relógio do jogo, perfis gravados): `[t, "EVENT", "gameplay_ready"]` segura o replay até o evento e realinha a linha do tempo nele (mais cedo ou mais tarde, como o `SYNC` dos carregamentos), então o que vem depois mantém a distância até aquele momento do jogo. A gravação com F5 escreve sozinha os `EVENT` de `main_menu`, `hub`, `level_ready` e `gameplay_ready`, e o `boot`/`skip_intros` da execução gravada: grave com `python tools\run_game.py gravar --set 'boot="load:1"'` e o perfil gravado já começa na fase.
 
-**Pular as cenas** (`skip_cinematics = true` no perfil, `CRASH_SKIP_CINEMATICS=1` ou `--skip-cinematics`): toda cena dentro da fase (NIS) termina assim que começa a tocar, pelo mesmo caminho do fim natural dela (o som para, fade, o jogador volta ao lugar, a cena fica marcada como concluída e o frontend segue sozinho). Junto com `boot = "level:L1_E1"` (o perfil `vila_sem_cena`), a vila do L1_E1 fica jogável em **~14 s** em vez de ~115 s, com a pausa funcionando. Não é opção do jogador: a cena não sai com botão no jogo original (nenhum botão pula), e forçar a saída dela na árvore do frontend deixa o jogo em LOADING para sempre. Detalhes em `runtime/NOTES.md`, "Pular as cenas".
+**Pular as cenas** (`skip_cinematics = true` no perfil, `CRASH_SKIP_CINEMATICS=1` ou `--skip-cinematics`): toda cena dentro da fase (NIS) termina assim que começa a tocar, pelo mesmo caminho do fim natural dela (o som para, fade, o jogador volta ao lugar, a cena fica marcada como concluída e o frontend segue sozinho). Junto com `boot = "level:L1_E1"` (o perfil `vila_sem_cena`), a vila do L1_E1 fica jogável em **~14 s** em vez de ~115 s, com a pausa funcionando. O jogador pula segurando um botão (veja "Pular cenas e vídeos"); no jogo original nenhum botão pula, e forçar a saída da cena na árvore do frontend deixa o jogo em LOADING para sempre. Detalhes em `runtime/NOTES.md`, "Pular as cenas".
 
 **Gravações antigas**: `python tools\convert_recording.py gravado_20261020_221744 --boot load:1` escreve `config\recorded\gravado_20261020_221744_boot.toml` (a gravação original não é mexida): o mesmo jogo gravado, mas começando pelo boot direto e realinhando em `gameplay_ready` em vez de repetir o caminho pelos menus. Como as gravações antigas não têm eventos, o conversor roda a original uma vez para ver em que momento dela o jogador ganhou o controle (`--no-calibrate` usa o último carregamento antes do F5, menos preciso).
 
@@ -571,6 +573,7 @@ mojo_colors = "ps2"      # ps2 | xbox360 (reinicia o jogo; veja "Cores do mojo")
 coop_mode = "leapfrog"   # leapfrog (pula-sela) | piggyback (cavalinho)
 invert_axis = false      # inverter eixo da câmera (a opção do jogo)
 autosave = true          # salvamento automático no slot escolhido; false = o jogo não salva sozinho
+skip_cutscenes = true    # segurar B / Esc pula cenas e vídeos, com um aviso no canto (veja "Pular cenas e vídeos")
 [camera]
 free_camera = false      # camera livre em terceira pessoa (experimental; veja "Camera livre")
 sensitivity = 100        # 25-300 %
@@ -620,6 +623,17 @@ Os arquivos do jogo não mudam, e **XBOX 360** volta ao original. Vale depois do
 **Limitações conhecidas** (é experimental): as fases foram feitas para as câmeras fixas, então olhando em volta aparecem **paredes invisíveis** (a câmera bate nelas como numa parede de verdade; atrás do ponto de partida do episódio 2 ela para a 1,4 do Crash), bordas e fundos sem acabamento, e objetos que surgem de repente (**culling/LOD** pensados para o enquadramento original). O **som** continua posicionado pela câmera do jogo e o **FOV** é o do volume da fase. **Perfis gravados** com a câmera do jogo desincronizam com a câmera livre (o analógico esquerdo vira outra direção); para testes, `CRASH_CAMERA_FREE_AFTER=<segundos>` liga a câmera livre só a partir desse ponto do replay. Com dois jogadores ela segue o primeiro. `CRASH_CAMERA_PROBE=1` registra no log o estado da câmera e o vetor de movimento.
 
 Capturas em `docs\capturas\camera\` (veja o `LEIA.txt` de lá).
+
+### Pular cenas e vídeos
+
+O jogo original não deixa pular as cenas (nenhum botão faz nada durante elas). Aqui, quando uma **cena** começa (as cinemáticas com faixas pretas, na abertura das fases ou no meio delas) ou um dos **vídeos de abertura** (os logos e o teatro de sombras, em Bink), aparece um aviso pequeno no canto de baixo à direita, dentro da faixa preta: o botão e **PULAR CENA** / **SKIP SCENE** (**PULAR VÍDEO** / **SKIP VIDEO** nos vídeos), com a fonte e os ícones do próprio jogo. Ele some depois de 4 s e volta quando qualquer botão, tecla ou o mouse mexe.
+
+- **Segure** por 0,8 s para pular (um anel em volta do botão enche enquanto isso; no teclado, a borda da tecla): **B** no controle Xbox (○ no PlayStation; START/Options e A/✕ também valem), **Esc**, **Espaço** ou **Enter** no teclado, ou o botão esquerdo do mouse em cima do aviso. O ícone segue o último aparelho usado (`prompts` em `[controls]`).
+- Enquanto a cena ou o vídeo passa, esses botões não chegam ao jogo (nada no jogo os usa ali; nos vídeos, o toque que já pulava vira o "segurar", contra pulos sem querer), e depois do pulo continuam escondidos até serem soltos: o Esc segurado não abre a pausa, o A não faz o Crash pular.
+- **Como pula**: a cena termina pelo **mesmo caminho do fim natural dela**, chamado pelo runtime (o som para, o fade, o jogador volta ao lugar, a cena fica marcada como concluída e o jogo segue sozinho); o vídeo recebe um START, o pulo do próprio jogo. A vila do L1_E1 depois do pulo fica igual à do fim da cena. As **legendas** da cena somem na hora.
+- **Desligar**: **SETTINGS > JOGO > PULAR CENAS** (`skip_cutscenes = true` em `[game]`, ligado por padrão; vale na hora). Desligado, não há aviso e os botões passam para o jogo como no original. O vídeo "attract" (o que passa sozinho quando o título fica parado) continua saindo com qualquer botão, como no original.
+
+Testes: `pular_cena` (Xbox, inglês, L1_E1: aviso, aviso apagado, B segurado, vila e pausa), `pular_cena_teclado` (Esc em PT-BR), `pular_cena_ps` (○, L1_E3), `pular_cena_chefe` (L4_E4), `pular_cena_fim` (L5_E1) e `pular_videos` (os vídeos de abertura até o título). Eventos: `skip_prompt`, `cinematic_skipped` (`held, cutscene frame N`), `video_skipped`, `cinematic_done`. `CRASH_SKIP_TRACE=1` registra cada leitura do controle enquanto o aviso está na tela. Capturas em `build\pular_cena\`. Detalhes em `runtime/NOTES.md`, "Pular as cenas".
 
 ## Desempenho
 

@@ -20,7 +20,8 @@
 //             mojo_colors = "ps2" | "xbox360" (mojo_colors.cpp), subtitles = true|false,
 //             subtitle_size = 50..200 (%), subtitle_background = 0..100 (%) (subtitles/subtitles.h),
 //             coop_mode = "leapfrog" | "piggyback", invert_axis = true|false, autosave = true|false
-//             (the game's own options, game_options.cpp)
+//             (the game's own options, game_options.cpp), skip_cutscenes = true|false (hold to
+//             skip a cutscene, skip_cinematics.h)
 //   [controls] keyboard / mouse bindings and options (controls.h)
 //   [lighting] the lighting remaster (gpu/lighting.h), all off by default: ssao = "off" | "low" |
 //             "high", gi = true|false, gi_intensity = 0..200 (%), contact_shadows = true|false,
@@ -129,6 +130,9 @@ namespace settings
         bool autosave = true;      // AUTOSAVE: off = never; on = when the game has a save slot
         Controls controls;          // [controls]: keyboard and mouse bindings (controls.h, kernel/pc_input.cpp), live
         // [camera]: the free third-person camera (camera/free_camera.h), experimental, live
+        // skip_cutscenes: "hold to skip" over the cutscenes and the intro videos, with a prompt in
+        // a corner (skip_cinematics.h), live
+        bool skipCutscenes = true;
         bool freeCamera = false;      // free_camera: orbit camera around the player instead of the game's
         int cameraSensitivity = 100;  // sensitivity: % of the stick / mouse turn speed (25..300)
         bool cameraInvertY = false;   // invert_y

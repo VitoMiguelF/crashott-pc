@@ -53,4 +53,8 @@ namespace subtitles
     // number that changes whenever the text does, and whether a line comes from an in-game clip
     // (drawn higher, clear of the game's own hint box) rather than a cutscene.
     std::wstring CurrentText(uint64_t& version, bool& gameplay);
+
+    // A cutscene was skipped (settings/skip_cinematics.h): its lines go away at once instead of
+    // after the stream stops decoding. In-game clips (keys with a '/') stay.
+    void EndCutscenes();
 }

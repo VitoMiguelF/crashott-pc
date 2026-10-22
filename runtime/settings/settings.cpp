@@ -239,6 +239,8 @@ namespace settings
                 ok = ParseBool(lower, values.invertAxis);
             else if (name == "game.autosave")
                 ok = ParseBool(lower, values.autosave);
+            else if (name == "game.skip_cutscenes")
+                ok = ParseBool(lower, values.skipCutscenes);
             else if (section == "controls" && ApplyControl(values.controls, key, value, ok))
                 ;
             else if (name == "paths.game")
@@ -332,7 +334,8 @@ namespace settings
                 << "subtitle_background = " << v.subtitleBackground << "   # 0-100 %, opacidade da caixa atras das legendas (0 = so contorno)\n"
                 << "coop_mode = \"" << (v.coopLeapfrog ? "leapfrog" : "piggyback") << "\"   # leapfrog (pula-sela) | piggyback (cavalinho), vale na hora\n"
                 << "invert_axis = " << (v.invertAxis ? "true" : "false") << "   # inverter eixo (a opcao do jogo), vale na hora\n"
-                << "autosave = " << (v.autosave ? "true" : "false") << "   # salvamento automatico no slot escolhido; false = nunca\n\n";
+                << "autosave = " << (v.autosave ? "true" : "false") << "   # salvamento automatico no slot escolhido; false = nunca\n"
+                << "skip_cutscenes = " << (v.skipCutscenes ? "true" : "false") << "   # segurar B (ou ESC) pula cenas e videos, com aviso no canto; vale na hora\n\n";
             out << SerializeControls(v.controls);
             out << "\n[camera]\n"
                 << "free_camera = " << (v.freeCamera ? "true" : "false") << "   # camera livre em terceira pessoa (experimental; README \"Camera livre\"), vale na hora\n"

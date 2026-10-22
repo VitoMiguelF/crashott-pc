@@ -28,7 +28,8 @@ Dev features (runtime/dev/dev_tools.h, docs/dev_features.md): `dev_lua = "<lua>"
 `dev_teleport = [x, y, z]`, `dev_mojo = 500`, `dev_unlock_all = true`, `dev_shadow = true`,
 `dev_gamelink = true`; each block logs the event dev_lua_<n>. The
 runtime logs milestones as "[test] event <name> (...)": title, main_menu, save_slots, load_complete,
-hub, level_start, level_ready, cinematic, cinematic_skipped, cinematic_done, gameplay_ready, pause,
+hub, level_start, level_ready, cinematic, skip_prompt (the "hold to skip" prompt of a cutscene or
+an intro video appears), cinematic_skipped, video_skipped, cinematic_done, gameplay_ready, pause,
 game_over, boot_done, boot_failed. In `input`, an
 entry ["@<event>"] (or ["@<event>#n"], the n-th one) makes the following times relative to that
 event; ["@start"] goes back to the input clock. [t, "SHOT"] takes a screenshot. In `replay`,

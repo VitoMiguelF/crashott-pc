@@ -227,6 +227,61 @@ input = [
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "save_slots", "hub", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[settings\] tab -> definitive', 'lighting\.ssao -> HIGH', 'lighting\.gi -> ON', 'lighting\.gi_intensity -> 110%', 'lighting\.contact_shadows -> ON', 'lighting\.soft_shadows -> ON', '\[settings\] saved', '\[lighting\] targets'] }
 
+[profiles.pular_cena]
+description = "Botão de pular cena: boot no L1_E1, o aviso aparece no canto, some, volta com o B e segurar B pula a cena de abertura; a vila jogável e a pausa"
+test = true
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+env = { CRASH_SETTINGS = "controls.prompts=xbox", CRASH_SUBTITLE_TRACE = "1" }
+# skip_prompt = o aviso começou a aparecer; capturas: aviso, aviso apagado (5 s), B segurado (anel enchendo)
+input = [["@skip_prompt"], [1, "SHOT"], [5.5, "SHOT"], [7, "B", 1.5], [7.45, "SHOT"], ["@gameplay_ready"], [0.5, "SHOT"], [1, "LS", 0, 1, 2], [4, "START"], [5.5, "SHOT"], [7, "START"]]
+expect = { exit = ["timeout"], events = ["level_start", "cinematic", "skip_prompt", "cinematic_skipped", "cinematic_done", "gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['cinematic_skipped .*held, cutscene', 'subtitles\] cutscene skipped'] }
+
+[profiles.pular_cena_teclado]
+description = "Pular cena pelo teclado em PT-BR: ícone ESC, Esc segurado pula a cena de abertura do L1_E1"
+test = true
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+env = { CRASH_SETTINGS = "game.language=pt-br;controls.prompts=keyboard" }
+input = [["@skip_prompt"], [1, "SHOT"], [2, "KEY_ESCAPE", 1.5], [2.45, "SHOT"], ["@gameplay_ready"], [0.5, "SHOT"], [4, "KEY_ESCAPE"], [5.5, "SHOT"], [7, "KEY_ESCAPE"]]
+expect = { exit = ["timeout"], events = ["skip_prompt", "cinematic_skipped", "cinematic_done", "gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['cinematic_skipped .*held, cutscene'] }
+
+[profiles.pular_cena_ps]
+description = "Pular cena com ícones de PlayStation (o círculo) e em inglês: L1_E3, a cena de abertura da fase"
+test = true
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E3"
+env = { CRASH_SETTINGS = "controls.prompts=playstation" }
+input = [["@skip_prompt"], [1, "SHOT"], [2, "B", 1.5], [2.45, "SHOT"], ["@gameplay_ready"], [0.5, "SHOT"], [1, "LS", 0, 1, 2], [4, "SHOT"]]
+expect = { exit = ["timeout"], events = ["skip_prompt", "cinematic_skipped", "cinematic_done", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['cinematic_skipped .*held, cutscene'] }
+
+[profiles.pular_cena_fim]
+description = "Pular cena no último mundo (L5_E1, episódio 18: a cena de abertura, nó 1017) segurando B; depois, na fase, as sequências de câmera que o jogo repete (CMasterCinematicAction com o frontend em 638) não têm aviso nem pulo"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+boot = "level:L5_E1"
+env = { CRASH_SETTINGS = "controls.prompts=xbox" }
+input = [["@skip_prompt"], [1, "SHOT"], [1.5, "B", 1.2], ["@gameplay_ready"], [1, "SHOT"], [1.5, "LS", 0, 1, 2], [4, "SHOT"], [8, "B", 1.5], [9, "SHOT"]]
+expect = { exit = ["timeout"], events = ["skip_prompt", "cinematic_skipped", "cinematic_done", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.pular_videos]
+description = "Pular os vídeos de abertura (Bink) segurando B: os logos e o teatro de sombras, até o título"
+test = true
+timeout = 60
+audio = false
+userdata_mode = "copy"
+env = { CRASH_SETTINGS = "controls.prompts=xbox" }
+input = [["@skip_prompt#1"], [1, "SHOT"], [1.5, "B", 1.2], ["@skip_prompt#2"], [1, "SHOT"], [1.5, "B", 1.2], ["@skip_prompt#3"], [1, "SHOT"], [1.5, "B", 1.2], ["@title"], [1, "SHOT"]]
+expect = { exit = ["timeout"], events = ["skip_prompt", "video_skipped", "title"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
 [profiles.configuracoes]
 description = "SETTINGS (antigo CALIBRATION) no menu: muda volume e anti-aliasing, passa por todas as abas (LB/RB), fecha e faz LOAD GAME"
 test = true

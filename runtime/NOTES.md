@@ -1760,8 +1760,7 @@ Pular a cena de abertura do L1_E1 (nó 756 `R1_NIS01`, ~100 s) forçando a saíd
 
 O jogo não tem como pular (não há parâmetro "skippable" na trilha; os nomes dos parâmetros estão em `0x8201AACC..`: `pre/postCinematicFade`, `player1ShowLocatorName`, `disabledPlayerControl`...). O runtime chama `SetState(4)` na primeira atualização em estado 3 (`CRASH_SKIP_CINEMATICS_AFTER=n` espera n atualizações): o mesmo caminho do fim natural, então o som para, o fade e as trilhas de depois rodam, a cena fica concluída e o frontend sai do nó sozinho. O log ganha `[cinematic] 0x... state a -> b (frame F, tick T)` em toda troca (com ou sem a opção) e os eventos `cinematic_skipped` e `cinematic_done` (este também no fim natural).
 
-Medido (`build
-uns61022-0120*` a `-0124*`, uma instância por vez):
+Medido (`build\runs\20261022-0120*` a `-0124*`, uma instância por vez):
 
 | | Sem a opção | Com a opção |
 |---|---|---|
@@ -1770,6 +1769,30 @@ uns61022-0120*` a `-0124*`, uma instância por vez):
 | L1_E3 (`fase_direta`): `gameplay_ready` | 18–22 s (`build\testes_auto\rodada1`) | 12,4 s (4 → 6, sem fade de saída) |
 
 A vila depois do pulo fica igual à do fim natural (Crash no mesmo lugar, Crunch no bloco de gelo, mesma HUD e dica); só o título "EPISODE 1 / A NEW HOP" aparece por alguns segundos já com o controle, porque no fim natural ele passa durante a cena.
+
+#### O botão do jogador (`settings/skip_cinematics.*`, 2026-10-22)
+
+Pedido: pular qualquer cena (começo ou meio do jogo) por um botão, com um aviso pequeno no canto. Uso: guia, "Pular cenas e vídeos".
+
+- **Quando há uma cena**: o update (`vf05`) roda em estado 3 **e** o frontend está num nó de cena (633 ou 655–1051, os mesmos do evento `cinematic`). A segunda condição é necessária: o L5_E1 roda `CMasterCinematicAction`s durante o jogo (frontend em 638, uma depois da outra, 157–257 quadros cada, até o fim da fase); sem ela o aviso ficava na tela jogando e o B segurado "pulava" essas sequências. O `CRASH_SKIP_CINEMATICS` dos testes segue a mesma regra.
+- **Vídeos**: `PlayMovie` (`sub_8214ABD0`, hook do `direct_boot.cpp`, que chama `cutscenes::NoteMovie`) começa um, o callback `CMoviePlayerBehaviour::CMovieCallback::vf00` (`sub_8214B210`) roda quando ele acaba e começa o próximo; por segurança, um vídeo também acaba quando o nó do frontend muda. O pulo aperta START por 4 leituras (o pulo do próprio jogo). Sierra (2, não existe no disco) e attract (4, o que passa no título parado; continua saindo com qualquer botão) não têm aviso. Cada vídeo e cada cena tem o seu aviso (um contador por vídeo; a ação por cena), senão o logo da Radical, que começa logo depois do da Dolby, herdava o aviso já apagado.
+- **Entrada** (`cutscenes::FilterGameInput`, chamado em `ReadController` logo depois do `save_screens`): segurar B, START ou A (o teclado chega como esses botões: Esc = START em jogo e B nos menus, Espaço = A), Enter (`GetAsyncKeyState`, só com a janela em primeiro plano) ou o botão esquerdo com o cursor no aviso por 0,8 s. Durante a cena/vídeo esses três botões não chegam ao jogo; depois do pulo continuam escondidos até serem soltos. Primeira versão errada: a checagem "solto?" olhava os botões já escondidos e liberava na mesma leitura; com Esc (START em 638) a pausa abria ao soltar (`20261022-142238_pular_cena_teclado`, achado com `CRASH_SKIP_TRACE=1`).
+- **Desenho** (`cutscenes::Draw`, no presenter logo depois das legendas, canal `BITMAP_SKIP_PROMPT` do overlay): placa escura arredondada no canto de baixo à direita (dentro da faixa preta das cenas), ícone `menu_art::DrawIcon(ICON_B)` (que segue o aparelho: B do jogo, ○ desenhado, ou no teclado uma tecla ESC desenhada aqui) com um anel que enche, e o texto na Titans_Large. Some depois de 4 s sem entrada (fade de 0,5 s) e volta com qualquer botão, tecla ou movimento do mouse.
+- **Legendas**: `subtitles::EndCutscenes()` apaga na hora as trilhas das cenas (chaves sem `/`); antes elas ficavam até o stream parar de decodificar (3,5 s).
+- **Opção**: `[game] skip_cutscenes` (padrão ligado), SETTINGS > JOGO > PULAR CENAS.
+
+Medido (`build\runs\20261022-14*`, `build\pular_cena\` com as capturas):
+
+| Perfil | Cena | Pulo | Jogável |
+|---|---|---|---|
+| `pular_cena` (Xbox, EN) | L1_E1 NIS01 (nó 756), aviso aos 10,6 s, apagado aos 5 s, B segurado | 18,4 s (quadro 234 de 3103) | 20,5 s, pausa ok |
+| `pular_cena_teclado` (PT-BR) | L1_E1, Esc segurado | 13,7 s | 15,8 s, Esc pausa depois |
+| `pular_cena_ps` (EN) | L1_E3 (abertura), ○ | 13,2 s | 14,8 s |
+| `pular_cena_fim` | L5_E1 (Doominator, nó 1017) | 12,6 s | 14,7 s; nenhum aviso depois, B segurado na fase não pula nada |
+| `pular_videos` | Dolby, Radical, teatro de sombras | 11,0 / 13,8 / 16,6 s | título aos 17,3 s (24,5 s sem pular a Radical) |
+| `pular_cena` com `skip_cutscenes=false` | L1_E1 | nenhum aviso, a cena segue | — |
+
+O L4_E4 (episódio de chefe) não tem cena no começo da fase (a NIS11 vem depois), e as cenas de chefe/final (`L1_E4_R8`, `L3_E4_R4`, `L5_E3_R4`) só aparecem jogando até elas: não testadas, mas usam a mesma ação.
 
 ## Teclado do nome e apagar saves (`settings/save_screens.*`, `kernel/xam_content.h`, `kernel/pc_input.*`)
 

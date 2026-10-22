@@ -40,6 +40,7 @@
 #include "direct_boot.h"
 #include "pc_frontend.h"
 #include "settings.h"
+#include "skip_cinematics.h"
 #include "../diagnostics.h"
 #include "../kernel/input.h"
 #include "../kernel/kernel.h"
@@ -421,6 +422,7 @@ namespace boot
 
     void NoteFrontendNode(uint32_t node)
     {
+        cutscenes::NoteFrontendNode(node);
         Progress& p = g_progress;
         if (node == p.node)
         {
@@ -571,6 +573,7 @@ PPC_FUNC(sub_8214ABD0)
         Log("[test] skip intros: logo video %d skipped", movie);
         ctx.r4.s64 = MOVIE_SIERRA;
     }
+    cutscenes::NoteMovie(ctx.r4.s32);  // the skip prompt
     __imp__sub_8214ABD0(ctx, base);
 }
 
