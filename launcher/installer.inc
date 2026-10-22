@@ -4,10 +4,12 @@
 //
 // It is a front end for tools\setup.py (next to the exe, in the release bundle or a clone):
 //   - choose the game folder (then it starts again with --game to load the art);
-//   - check the prerequisites (setup.py --check) and install the missing ones with winget;
+//   - check the prerequisites (setup.py --check) and install the missing ones with winget, and the
+//     Python packages of tools\requirements.txt (only the asset export needs them) with pip;
 //   - options: subtitles, HD AI Remaster, asset export for modding, copy the dump into dist\game;
 //   - run setup.py, showing its steps ("@@step"), progress ("@@progress", "@@download") and log;
-//   - at the end, open dist\CrashLauncher.exe.
+//   - at the end, open dist\CrashLauncher.exe. When only the asset export failed, the game is
+//     playable and TRY AGAIN runs just that step (setup.py --assets-only).
 // Release zips placed next to CrashSetup.exe are used instead of downloading (setup.py --assets-dir).
 // Included inside launcher.cpp's anonymous namespace: its headers (<mutex>, <thread>) are at the top there.
 
@@ -53,6 +55,7 @@ struct Installer
     std::wstring python;  // command prefix: "py -3" or a python.exe path
     bool checking = false, checked = false;
     std::vector<Prereq> prereqs;
+    std::vector<Prereq> packages;  // tools\requirements.txt ("@@pypkg"): never block the install
     bool subtitles = true, remaster = false, extractAssets = false, copyGame = false;
     int selected = 0;
     bool mouseMode = false;
@@ -65,7 +68,8 @@ struct Installer
     std::string stepDetail;
     float progress = -1.0f;        // of the current step, -1 = unknown
     std::string download;          // "name 12/80 MB"
-    std::string error, finishedDir;
+    std::string error, hint, finishedDir;
+    bool gameReady = false;        // "@@game-ready": dist\ can be played even if a later step fails
     bool processDone = false;
     DWORD exitCode = 0;
     HANDLE job = nullptr, process = nullptr;
@@ -75,6 +79,7 @@ struct Installer
 Installer g_inst;
 
 fs::path SetupScript() { return paths::ExeDir() / "tools" / "setup.py"; }
+fs::path Requirements() { return paths::ExeDir() / "tools" / "requirements.txt"; }
 
 std::wstring Widen(const std::string& text)
 {
@@ -122,12 +127,19 @@ int RunHidden(std::wstring command, DWORD timeoutMs = 60000)
     return int(code);
 }
 
-// Python 3.11+ (setup.py needs tomllib): the py launcher, else python.exe on PATH (not the
-// Microsoft Store alias, which only opens the Store).
+// Python 3.11+ (setup.py needs tomllib): an activated virtual environment (CrashSetup started from
+// its prompt), else the py launcher, else python.exe on PATH (not the Microsoft Store alias, which
+// only opens the Store).
 std::wstring FindPython()
 {
     const wchar_t* test = L" -c \"import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)\"";
     wchar_t found[MAX_PATH];
+    if (GetEnvironmentVariableW(L"VIRTUAL_ENV", found, MAX_PATH))
+    {
+        fs::path venv = fs::path(found) / L"Scripts" / L"python.exe";
+        if (Exists(venv) && RunHidden(L"\"" + venv.wstring() + L"\"" + test) == 0)
+            return L"\"" + venv.wstring() + L"\"";
+    }
     if (SearchPathW(nullptr, L"py.exe", nullptr, MAX_PATH, found, nullptr) && RunHidden(L"\"" + std::wstring(found) + L"\" -3" + test) == 0)
         return L"\"" + std::wstring(found) + L"\" -3";
     if (SearchPathW(nullptr, L"python.exe", nullptr, MAX_PATH, found, nullptr) && !wcsstr(found, L"\\WindowsApps\\") &&
@@ -175,18 +187,24 @@ void HandleLine(const std::string& line)
             g_inst.download = text;
         }
     }
-    else if (line.rfind("@@prereq ", 0) == 0)
+    else if (line.rfind("@@prereq ", 0) == 0 || line.rfind("@@pypkg ", 0) == 0)
     {
-        // "@@prereq ok|missing <name> | <path>"
+        // "@@prereq ok|missing <name> | <path>", "@@pypkg ok|missing <name>>=<min> | <version>"
+        bool package = line[2] == 'p' && line[3] == 'y';
+        size_t at = line.find(' ') + 1;
         Prereq p;
-        p.ok = line.compare(9, 2, "ok") == 0;
-        size_t start = line.find(' ', 9) + 1, bar = line.find(" | ");
+        p.ok = line.compare(at, 2, "ok") == 0;
+        size_t start = line.find(' ', at) + 1, bar = line.find(" | ");
         p.name = line.substr(start, bar == std::string::npos ? std::string::npos : bar - start);
         p.path = bar == std::string::npos ? "" : line.substr(bar + 3);
-        g_inst.prereqs.push_back(p);
+        (package ? g_inst.packages : g_inst.prereqs).push_back(p);
     }
     else if (line.rfind("@@error ", 0) == 0)
         g_inst.error = line.substr(8);
+    else if (line.rfind("@@hint ", 0) == 0)
+        g_inst.hint = line.substr(7);
+    else if (line.rfind("@@game-ready ", 0) == 0)
+        g_inst.gameReady = true, g_inst.finishedDir = line.substr(13);
     else if (line.rfind("@@finished ", 0) == 0)
         g_inst.finishedDir = line.substr(11);
 }
@@ -233,8 +251,9 @@ bool StartSetup(const std::wstring& args, bool check)
         g_inst.process = pi.hProcess;
         g_inst.processDone = false;
         g_inst.error.clear();
+        g_inst.hint.clear();
         if (check)
-            g_inst.prereqs.clear();
+            g_inst.prereqs.clear(), g_inst.packages.clear();
         else
         {
             g_inst.log.clear();
@@ -305,8 +324,21 @@ int MissingCount()
     return n;
 }
 
-// Opens a console that installs the missing prerequisites with winget (the user sees and answers
-// the prompts); CHECK AGAIN afterwards.
+// The missing Python packages ("numpy, Pillow"), empty when all are there.
+std::string MissingPackages()
+{
+    std::string names;
+    for (const Prereq& p : g_inst.packages)
+        if (!p.ok)
+            names += (names.empty() ? "" : ", ") + p.name.substr(0, p.name.find(">="));
+    return names;
+}
+
+// pip with the same Python setup.py runs with.
+std::wstring PipCommand() { return g_inst.python + L" -m pip install -r \"" + Requirements().wstring() + L"\""; }
+
+// Opens a console that installs the missing prerequisites with winget and the missing Python
+// packages with pip (the user sees and answers the prompts); CHECK AGAIN afterwards.
 void InstallMissing()
 {
     std::wstring commands;
@@ -318,6 +350,8 @@ void InstallMissing()
             if (p.name.find(w.prereq) != std::string::npos)
                 commands += (commands.empty() ? L"" : L" & ") + std::wstring(w.command);
     }
+    if (!g_inst.python.empty() && !MissingPackages().empty())
+        commands += (commands.empty() ? L"" : L" & ") + PipCommand();
     if (commands.empty())
         return;
     std::wstring command = L"cmd.exe /k \"" + commands + L" & echo. & echo " +
@@ -331,15 +365,22 @@ void InstallMissing()
     }
 }
 
-void StartInstall()
+// assetsOnly: TRY AGAIN after only the asset export failed (the game is already installed).
+void StartInstall(bool assetsOnly = false)
 {
     fs::path game = GameFolder();
     std::wstring args = L"--game \"" + game.wstring() + L"\"";
-    if (g_inst.subtitles) args += L" --subtitles";
-    if (g_inst.remaster) args += L" --remaster";
-    if (g_inst.extractAssets) args += L" --extract-assets";
-    if (g_inst.copyGame) args += L" --copy-game";
-    args += L" --assets-dir \"" + paths::ExeDir().wstring() + L"\"";
+    if (assetsOnly)
+        args += L" --assets-only";
+    else
+    {
+        if (g_inst.subtitles) args += L" --subtitles";
+        if (g_inst.remaster) args += L" --remaster";
+        if (g_inst.extractAssets) args += L" --extract-assets";
+        if (g_inst.copyGame) args += L" --copy-game";
+        args += L" --assets-dir \"" + paths::ExeDir().wstring() + L"\"";
+        g_inst.gameReady = false;
+    }
     if (StartSetup(args, false))
         g_inst.phase = Phase::Running;
     else
@@ -413,10 +454,11 @@ std::vector<InstallRow> InstallRows()
                        T({ "and recompiles it on this PC. No game file is downloaded.", "e o recompila neste PC. Nenhum arquivo do jogo é baixado." }) },
                      false, false, false, RowGameStatus });
     std::string prereq;
-    std::string help0, help1;
+    std::string help0, help1, packages;
     {
         std::lock_guard lock(g_inst.mutex);
         int missing = MissingCount();
+        packages = MissingPackages();
         if (g_inst.checking || !g_inst.checked)
             prereq = T({ "CHECKING...", "VERIFICANDO..." });
         else if (!missing)
@@ -429,6 +471,9 @@ std::vector<InstallRow> InstallRows()
     if (!help0.empty())
         help0 = std::string(T({ "Missing: ", "Faltam: " })) + help0 + T({ ". Click to install with winget, then click again to check.",
                                                                           ". Clique para instalar pelo winget e depois de novo para conferir." });
+    else if (!packages.empty())
+        help0 = std::string(T({ "Python packages for ASSETS FOR MODDING: ", "Pacotes Python para ASSETS PARA MODDING: " })) + packages +
+                T({ " (pip installs them then; click to install now).", " (o pip instala na hora; clique para instalar agora)." });
     else
         help0 = T({ "Visual Studio Build Tools (C++), LLVM clang-cl, CMake, Ninja, Git and Python.",
                     "Visual Studio Build Tools (C++), LLVM clang-cl, CMake, Ninja, Git e Python." });
@@ -445,7 +490,8 @@ std::vector<InstallRow> InstallRows()
                      false, true, false, RowRemaster });
     rows.push_back({ { "ASSETS FOR MODDING", "ASSETS PARA MODDING" }, OnOff(g_inst.extractAssets),
                      { T({ "Exports the game's sounds, videos, textures and 3D models to open formats", "Exporta sons, vídeos, texturas e modelos 3D do jogo para formatos abertos" }),
-                       T({ "in private\\assets (about 8 minutes, 4 GB). Only for making mods.", "em private\\assets (cerca de 8 minutos, 4 GB). Só para fazer mods." }) },
+                       T({ "in private\\assets (about 8 minutes, 4 GB; installs numpy and Pillow with pip). Only for mods.",
+                           "em private\\assets (cerca de 8 minutos, 4 GB; instala numpy e Pillow pelo pip). Só para mods." }) },
                      false, true, false, RowAssets });
     rows.push_back({ { "COPY THE GAME INTO THE FOLDER", "COPIAR O JOGO PARA A PASTA" }, OnOff(g_inst.copyGame),
                      { T({ "On: the dump is copied to dist\\game (3 GB). Off: the game keeps", "Ligado: o jogo é copiado para dist\\game (3 GB). Desligado: o jogo usa" }),
@@ -462,7 +508,7 @@ void ActivateRow(int id, int direction)
     case RowPrereqs:
         if (!g_inst.checking)
         {
-            if (g_inst.checked && MissingCount())
+            if (g_inst.checked && (MissingCount() || !MissingPackages().empty()))
                 InstallMissing();
             CheckPrerequisites();
         }
@@ -479,6 +525,13 @@ bool CanInstall()
 {
     std::lock_guard lock(g_inst.mutex);
     return paths::IsGameFolder(GameFolder()) && g_inst.checked && !g_inst.checking && MissingCount() == 0;
+}
+
+// The install stopped at the last step (the asset export) with the game already in dist\.
+bool AssetsOnlyFailed()
+{
+    std::lock_guard lock(g_inst.mutex);
+    return g_inst.phase == Phase::Failed && g_inst.gameReady && g_inst.step == INSTALL_STEP_COUNT;
 }
 
 void DrawInstallerLeft()
@@ -503,7 +556,13 @@ void DrawInstallerLeft()
     case Phase::Setup: entries = { { { "INSTALL", "INSTALAR" }, 0, CanInstall() }, { { "EXIT", "SAIR" }, 3, true } }; break;
     case Phase::Running: entries = { { { "CANCEL", "CANCELAR" }, 1, true } }; break;
     case Phase::Done: entries = { { { "PLAY", "JOGAR" }, 2, true }, { { "OPEN FOLDER", "ABRIR PASTA" }, 4, true }, { { "EXIT", "SAIR" }, 3, true } }; break;
-    case Phase::Failed: entries = { { { "TRY AGAIN", "TENTAR DE NOVO" }, 5, true }, { { "OPEN LOG", "ABRIR LOG" }, 6, true }, { { "EXIT", "SAIR" }, 3, true } }; break;
+    case Phase::Failed:
+        if (AssetsOnlyFailed())
+            entries = { { { "TRY AGAIN", "TENTAR DE NOVO" }, 7, true }, { { "PLAY", "JOGAR" }, 2, true }, { { "OPEN LOG", "ABRIR LOG" }, 6, true },
+                        { { "EXIT", "SAIR" }, 3, true } };
+        else
+            entries = { { { "TRY AGAIN", "TENTAR DE NOVO" }, 5, true }, { { "OPEN LOG", "ABRIR LOG" }, 6, true }, { { "EXIT", "SAIR" }, 3, true } };
+        break;
     }
     float my = 384.0f;
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
@@ -529,6 +588,7 @@ void DrawInstallerLeft()
             case 4: OpenFolder(paths::ExeDir() / "dist"); break;
             case 5: g_inst.phase = Phase::Setup; CheckPrerequisites(); break;
             case 6: ShellExecuteW(nullptr, L"open", (paths::ExeDir() / L"setup.log").c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
+            case 7: StartInstall(true); break;  // only the asset export, again
             }
         }
         my += size + 18.0f;
@@ -666,6 +726,12 @@ void DrawProgress()
     g_draw->AddLine(g_view.P(PANEL_L + 90.0f, y + 2.0f), g_view.P(PANEL_R - 90.0f, y + 2.0f), IM_COL32(236, 222, 190, 70), 2.0f * g_view.s);
     DrawUi(detail, cx, y + 10.0f, 19.0f, g_inst.phase == Phase::Failed ? IM_COL32(255, 140, 100, 255) : IM_COL32(255, 236, 160, 255), 0.5f, maxW);
     float ly = y + 38.0f;
+    if (g_inst.phase == Phase::Failed && !g_inst.hint.empty())
+    {
+        // The command to run by hand (setup.py "@@hint").
+        DrawUi(g_inst.hint, cx, ly, 16.0f, IM_COL32(255, 236, 160, 255), 0.5f, maxW);
+        ly += 28.0f;
+    }
     int lines = std::max(0, int((PANEL_B - 30.0f - ly) / 17.0f));
     size_t first = g_inst.log.size() > size_t(lines) ? g_inst.log.size() - lines : 0;
     for (size_t i = first; i < g_inst.log.size(); i++, ly += 17.0f)
@@ -724,7 +790,10 @@ void DrawInstallerContents()
         break;
     case Phase::Running: DrawPanelTitle(T({ "INSTALLING...", "INSTALANDO..." })); DrawProgress(); break;
     case Phase::Done: DrawPanelTitle(T({ "INSTALLED", "INSTALADO" })); DrawProgress(); break;
-    case Phase::Failed: DrawPanelTitle(T({ "SOMETHING WENT WRONG", "ALGO DEU ERRADO" })); DrawProgress(); break;
+    case Phase::Failed:
+        DrawPanelTitle(AssetsOnlyFailed() ? T({ "THE GAME IS READY", "O JOGO ESTÁ PRONTO" }) : T({ "SOMETHING WENT WRONG", "ALGO DEU ERRADO" }));
+        DrawProgress();
+        break;
     }
     if (g_modal != Modal::None)
     {

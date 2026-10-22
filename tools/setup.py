@@ -4,6 +4,7 @@
     python tools/setup.py --game D:\\Games\\Crash --subtitles      # + subtitles (EN transcript, PT-BR)
     python tools/setup.py --game D:\\Games\\Crash --remaster       # + HD AI Remaster (4.5 GB)
     python tools/setup.py --game D:\\Games\\Crash --extract-assets # + export the game's assets for modding
+    python tools/setup.py --game D:\\Games\\Crash --assets-only    # only the asset export (retry it)
     python tools/setup.py --check                                 # only check the prerequisites
 
 Steps (each one is skipped when its result is already up to date, so running it again is cheap):
@@ -20,12 +21,16 @@ Steps (each one is skipped when its result is already up to date, so running it 
  8. tools\\make_dist.py assembles dist\\ (the folder to play), pointing it at your dump (or copying
     the dump into dist\\game with --copy-game);
  9. optional: tools\\assets.py all exports the game's sounds, videos, textures and models to
-    private\\assets for modding (README, "Extracting and modifying assets").
+    private\\assets for modding (README, "Extracting and modifying assets"). It needs the Python
+    packages of tools\\requirements.txt (numpy, Pillow): setup installs them into this same Python
+    with pip, and a failure there only fails this step (the game is installed anyway). Retry it
+    alone with --assets-only.
 
 Machine-readable progress for the graphical installer (installer/): lines starting with "@@".
 """
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import os
 import shutil
@@ -46,6 +51,7 @@ XENON = ROOT / "tools" / "XenonRecomp"
 XENON_URL = "https://github.com/hedge-dev/XenonRecomp.git"
 XENON_COMMIT = "ddd128bcca99fe8bfbb99bea583c972351fa6ace"
 XENON_PATCH = ROOT / "patches" / "XenonRecomp.patch"
+REQUIREMENTS = ROOT / "tools" / "requirements.txt"
 
 # Crash of the Titans (Xbox 360, NTSC/PAL disc release, title 565507E4): the only default.xex the
 # addresses in config/Crash.toml are for.
@@ -206,6 +212,99 @@ def check_prerequisites():
     else:
         say(f"@@prereq ok Python | {sys.executable}")
     return found
+
+
+# --- Python packages (only the asset export needs them) ----------------------------------------
+
+def python_requirements():
+    """[(name, minimum version)] of tools/requirements.txt."""
+    reqs = []
+    for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            name, _, minimum = line.partition(">=")
+            reqs.append((name.strip(), minimum.strip()))
+    return reqs
+
+
+def version_tuple(text):
+    parts = []
+    for piece in text.split("."):
+        digits = piece[:len(piece) - len(piece.lstrip("0123456789"))]
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def check_python_packages(report=True):
+    """The tools/requirements.txt packages missing (or too old) in this Python, as "name>=min".
+    report: "@@pypkg ok|missing <name>>=<min> | <installed version>" lines for the installer."""
+    importlib.invalidate_caches()
+    missing = []
+    for name, minimum in python_requirements():
+        try:
+            have = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            have = None
+        ok = have is not None and version_tuple(have) >= version_tuple(minimum)
+        if report:
+            say(f"@@pypkg {'ok' if ok else 'missing'} {name}>={minimum} | {have or ''}")
+        if not ok:
+            missing.append(f"{name}>={minimum}")
+    return missing
+
+
+def pip_command_text():
+    """What to run by hand when the automatic install fails (the same Python as setup.py)."""
+    return f'"{sys.executable}" -m pip install -r "{REQUIREMENTS}"'
+
+
+def packages_ready_in_new_process():
+    """A new Python sees packages pip put in a user site folder that didn't exist when this one started."""
+    return subprocess.run([sys.executable, str(Path(__file__).resolve()), "--check-packages"],
+                          capture_output=True).returncode == 0
+
+
+def install_python_packages():
+    """pip install -r tools/requirements.txt into this Python. Returns None when everything is
+    there, else why it failed (it never stops the setup: only the asset export needs them)."""
+    missing = check_python_packages(report=False)
+    if not missing or packages_ready_in_new_process():
+        return None
+    say("instalando os pacotes Python da exportação de assets: " + ", ".join(missing))
+    has_pip = subprocess.run([sys.executable, "-m", "pip", "--version"], capture_output=True).returncode == 0
+    if not has_pip:
+        say("este Python não tem o pip; tentando python -m ensurepip")
+        subprocess.run([sys.executable, "-m", "ensurepip", "--upgrade"], capture_output=True)
+        has_pip = subprocess.run([sys.executable, "-m", "pip", "--version"], capture_output=True).returncode == 0
+        if not has_pip:
+            return "este Python não tem o pip"
+    args = [sys.executable, "-m", "pip", "install", "-r", str(REQUIREMENTS), "--disable-pip-version-check", "--no-input"]
+    say(f"> {pip_command_text()}")
+    proc = subprocess.Popen(args, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            encoding="utf-8", errors="replace")
+    for line in proc.stdout:
+        if line.strip():
+            say("  " + line.rstrip())
+    if proc.wait() != 0:
+        return "o pip não conseguiu instalar (sem internet?)"
+    if not packages_ready_in_new_process():
+        return "o pip terminou, mas os pacotes continuam faltando"
+    say("pacotes Python ok: " + ", ".join(missing))
+    return None
+
+
+def require_python_packages():
+    """Before the asset export: install the packages, or fail this step with the command to run by hand."""
+    problem = install_python_packages()
+    if problem:
+        missing = ", ".join(name.split(">=")[0] for name in check_python_packages(report=False))
+        say("Para instalar à mão, rode num prompt e depois tente de novo (setup.py --assets-only):")
+        say("  " + pip_command_text())
+        say(f"@@hint {pip_command_text()}")
+        fail(f"faltam pacotes Python para exportar os assets ({missing}): {problem}. "
+             "O jogo já está instalado; instale-os com o comando abaixo e tente de novo.")
 
 
 def check_game(game, allow_other_xex=False):
@@ -404,17 +503,29 @@ def main():
     p.add_argument("--extract-assets", action="store_true", help="exporta sons, vídeos, texturas e modelos para private\\assets (modding)")
     p.add_argument("--jobs", type=int, help="processos de compilação em paralelo (padrão: todos os núcleos)")
     p.add_argument("--allow-other-xex", action="store_true", help="continua com um default.xex desconhecido (não suportado)")
+    p.add_argument("--assets-only", action="store_true", help="só a exportação de assets (tentar de novo depois de uma falha nela)")
     p.add_argument("--check", action="store_true", help="só confere os pré-requisitos")
+    p.add_argument("--check-packages", action="store_true", help="só confere os pacotes Python (tools/requirements.txt)")
     args = p.parse_args()
+    if args.check_packages:
+        return 1 if check_python_packages() else 0
+    args.extract_assets |= args.assets_only
 
     step(0)
     found = check_prerequisites()
+    missing_packages = check_python_packages()
     missing = [name for name, path in found.items() if not path]
     if missing:
         fail("falta instalar: " + ", ".join(missing) + " (README, \"Requisitos\")")
     if args.check:
         say("@@done")
         return 0
+    if args.extract_assets and missing_packages:
+        # Now, so a problem shows up before the long build; it only fails the asset step (9).
+        problem = install_python_packages()
+        if problem:
+            say(f"aviso: {problem}; o jogo vai ser instalado, mas a exportação de assets vai falhar "
+                f"sem eles. Para instalar à mão: {pip_command_text()}")
 
     game = Path(args.game) if args.game else buildenv.game_folder()
     if game is None:
@@ -424,20 +535,24 @@ def main():
     if not args.copy_game and game.resolve() != (ROOT / "dist" / "game").resolve():
         buildenv.write_local(game=game)
 
-    step(2)
-    setup_xenonrecomp()
-    step(3)
-    fetch_thirdparty()
-    step(4, "default.xex -> C++")
-    recompile()
-    step(5, "pode levar de 5 a 20 minutos")
-    compile_project(args.jobs)
-    step(6)
-    install_extras(args.subtitles, args.remaster, args.assets_dir)
-    step(7)
-    assemble(game, args.copy_game)
+    if not args.assets_only:
+        step(2)
+        setup_xenonrecomp()
+        step(3)
+        fetch_thirdparty()
+        step(4, "default.xex -> C++")
+        recompile()
+        step(5, "pode levar de 5 a 20 minutos")
+        compile_project(args.jobs)
+        step(6)
+        install_extras(args.subtitles, args.remaster, args.assets_dir)
+        step(7)
+        assemble(game, args.copy_game)
+    if (ROOT / "dist" / "CrashRecomp.exe").is_file():
+        say(f"@@game-ready {ROOT / 'dist'}")
     step(8)
     if args.extract_assets:
+        require_python_packages()
         extract_assets(game)
     else:
         say("exportação de assets não pedida (--extract-assets)")

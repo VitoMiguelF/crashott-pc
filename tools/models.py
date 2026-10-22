@@ -80,8 +80,11 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-import numpy as np
-from PIL import Image
+try:
+    import numpy as np
+    from PIL import Image
+except ImportError as error:  # tools/requirements.txt
+    sys.exit(f"falta o módulo Python {error.name} (numpy/Pillow); instale com:\n  \"{sys.executable}\" -m pip install -r tools/requirements.txt")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import assets  # noqa: E402

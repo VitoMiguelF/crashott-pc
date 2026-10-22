@@ -1,0 +1,7 @@
+# Third-party Python packages of the tools the installer runs. Only the asset export for modding
+# (setup.py --extract-assets -> assets.py all -> textures.py, models.py) and hd_textures.py need
+# them; building and playing the game don't. setup.py installs them with
+#     "<the python running setup.py>" -m pip install -r tools/requirements.txt
+# (tools/subtitles.py also wants faster-whisper, only to re-transcribe the voices: not listed here.)
+numpy>=1.23          # np.lib.stride_tricks, typed arrays (1.23 = first wheels for Python 3.11)
+Pillow>=9.1          # Image.Resampling / Image.Transpose / Image.Quantize enums
