@@ -1,0 +1,77 @@
+# CrashRecomp: configuracoes do runtime (tela SETTINGS no menu principal).
+# Editavel a mao com o jogo fechado; valores invalidos voltam ao padrao.
+
+[audio]
+master = 100     # 0-100, vale na hora
+music = 100      # 0-100, musica (vale na hora)
+effects = 100    # 0-100, efeitos e ambiente (vale na hora)
+voice = 100      # 0-100, dialogos (vale na hora)
+
+[video]
+window = "windowed"   # windowed | borderless | fullscreen
+vsync = false
+fps_limit = 30   # 30 (original) | 60 | 120 | 0 = sem limite
+resolution = "1280x720"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160 (vale ao sair da tela SETTINGS)
+overlay = "off"   # off | fps | frametime | full (F1 alterna)
+antialiasing = "off"   # off | fxaa | smaa (pos-processamento da imagem final)
+
+[graphics]
+upscaler = "off"   # off | dlss (DLSS/DLAA, so NVIDIA RTX) | fsr (FSR 3.1, qualquer GPU) (vale ao sair da tela SETTINGS)
+upscaler_quality = "native"   # native (DLAA / FSR Native AA) | quality | balanced | performance | ultra_performance (vale ao sair da tela SETTINGS)
+sharpness = 0   # 0-100, nitidez do FSR (RCAS); o DLSS 4 nao tem
+motion_blur = 100   # 0-100 %, 0 = sem motion blur
+depth_of_field = 100   # 0-100 %, 0 = sem profundidade de campo
+anisotropic_filtering = 16   # 1 (desligado) | 2 | 4 | 8 | 16
+shadow_softness = 100   # 0-200 %, raio do filtro das sombras (sombras por stencil: nao ha resolucao de sombra)
+hd_textures = true   # texturas HD das pastas hd_textures dos mods (tools\hd_textures.py) (ao reiniciar)
+texture_dump = false   # grava as texturas do jogo em userdata\texture_dump para o tools\hd_textures.py (ao reiniciar)
+hd_remaster = false   # HD AI Remaster: texturas e modelos remasterizados por IA (private\remaster_full, ou so a fase 1 em private\remaster_l1; README "HD AI Remaster") (reinicia o jogo)
+
+[game]
+language = "english"   # english | french | german | spanish | italian | dutch | pt-br (reinicia o jogo; os da pasta languages\ usam as vozes do idioma base)
+mojo_colors = "ps2"   # ps2 (mojo grande azul bem claro, extra grande roxo lilas) | xbox360 (todos azuis, como no original) (reinicia o jogo)
+subtitles = false   # legendas nas cenas e falas (tools\subtitles.py; README "Legendas")
+subtitle_size = 100   # 50-200 %, tamanho da letra das legendas
+subtitle_background = 50   # 0-100 %, opacidade da caixa atras das legendas (0 = so contorno)
+coop_mode = "leapfrog"   # leapfrog (pula-sela) | piggyback (cavalinho), vale na hora
+invert_axis = false   # inverter eixo (a opcao do jogo), vale na hora
+autosave = true   # salvamento automatico no slot escolhido; false = nunca
+
+[controls]
+# Teclado e mouse na gameplay. Cada acao: ate duas teclas separadas por virgula ("none" = nenhuma).
+# Nomes: A-Z, 0-9, F1-F24, SPACE, ENTER, ESC, TAB, BACKSPACE, LSHIFT, RSHIFT, LCTRL, RCTRL, LALT, RALT,
+# UP, DOWN, LEFT, RIGHT, MOUSE1 (esquerdo), MOUSE2 (direito), MOUSE3 (meio), MOUSE4, MOUSE5, WHEELUP, WHEELDOWN...
+# Nos menus as teclas sao fixas: setas/WASD navegam, Enter/Espaco = A, Esc = B (voltar), Backspace = X, Tab = Y, P = START, Q/E = LB/RB.
+move_forward = "W"
+move_back = "S"
+move_left = "A"
+move_right = "D"
+walk = "LALT"
+jump = "SPACE"
+light_attack = "MOUSE1, J"
+heavy_attack = "MOUSE2, K"
+interact = "E, L"
+block = "LSHIFT, LCTRL"
+rotate_stick = "Q"
+spin_attack = "R, MOUSE3"
+finisher = "F"
+modifier = "C"
+left_trigger = "Z"
+camera_up = "UP"
+camera_down = "DOWN"
+camera_left = "LEFT"
+camera_right = "RIGHT"
+pause = "ESC"
+map = "TAB"
+mouse_camera = true   # o mouse gira a camera na gameplay
+mouse_sensitivity = 100   # 10-400 %, mouse -> camera
+invert_y = false   # inverte o eixo vertical da camera (mouse e teclas)
+walk_speed = 40   # 10-90 %, analogico enquanto 'walk' esta apertado (andar em vez de correr)
+mouse_menus = true   # menus do jogo pelo mouse (passar por cima seleciona, clique confirma, botao direito volta)
+prompts = "auto"   # icones dos botoes: auto (o ultimo usado) | xbox | playstation | keyboard
+
+[camera]
+free_camera = false   # camera livre em terceira pessoa (experimental; README "Camera livre"), vale na hora
+sensitivity = 100   # 25-300 %, velocidade do analogico direito / mouse
+invert_y = false   # inverte o eixo vertical da camera
+distance = 100   # 50-200 %, distancia da camera ao personagem

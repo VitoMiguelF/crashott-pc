@@ -1,0 +1,4 @@
+* text=auto
+*.patch -text
+*.png binary
+*.jpg binary

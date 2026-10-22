@@ -1,0 +1,36 @@
+# CrashRecomp: controle 0 gravado com F5 em 2026-10-20 22:00:35.
+# Roda do boot com:  python tools/run_game.py gravado_20261020_220035
+#
+# Tempo: segundos do jogo (leituras do controle / 30) desde a primeira leitura, nao do relogio.
+# [t, "BOTAO", s] aperta por s segundos (sem s: 0.2); [t, "LS"/"RS", x, y] analogico (-1..1,
+# fica ate a proxima entrada); [t, "LT"/"RT", v] gatilho (0..1); [t, "SYNC", "offset#n"] fim de
+# um carregamento (o replay espera e realinha o tempo); [t, "WAIT", "texto"] espera uma linha do
+# log; [t, "SHOT"] captura; [t, "END"] fecha o jogo. Veja README, "Gravando um perfil jogando".
+[profiles.gravado_20261020_220035]
+description = "Gravado com F5 em 2026-10-20 22:00:35 no perfil graficos: 16.07 s a partir de 48.30 s do jogo"
+test = false
+timeout = 184
+audio = false
+userdata_mode = "copy"
+userdata_from = "gravado_20261020_220035/userdata"   # relativo a este arquivo: content\ e settings.toml do boot
+replay = [
+    [9.93, "SYNC", "0x4C800#1"],   # fim de carregamento
+    [14.30, "START", 0.40], [16.00, "START"], [16.93, "START", 0.23], [17.90, "START", 0.23],
+    [18.70, "SYNC", "0x10042000#1"],   # fim de carregamento
+    [19.03, "START"], [20.03, "START"], [21.03, "START"], [22.03, "START"], [27.03, "DOWN"],
+    [28.03, "A"], [34.53, "A"], [38.53, "A"], [40.53, "Y"],
+    [41.27, "SYNC", "0x12530800#1"],   # fim de carregamento
+    # --- F5: inicio da gravacao (48.30 s) ---
+    [48.30, "SHOT"],   # F5: inicio da gravacao
+    [48.60, "SYNC", "0x12E0E800#1"],   # fim de carregamento
+    [50.17, "LS", 0.45, 0.90], [52.67, "LS", 0.00, 0.00], [52.97, "RS", 0.70, 0.00],
+    [54.47, "RS", 0.00, 0.00], [54.67, "LS", -0.60, 0.50], [55.17, "RS", -0.40, 0.30],
+    [56.17, "RS", 0.00, 0.00], [56.67, "LS", 0.00, 0.00],
+    [56.87, "SHOT"],   # F2
+    [57.17, "X"], [58.17, "RT", 1.00], [58.77, "RT", 0.00], [59.17, "LS", 0.20, -0.80], [59.67, "A"],
+    [61.17, "LS", 0.00, 0.00], [61.67, "LS", 1.00, 0.35], [62.17, "RS", 0.90, -0.20],
+    [63.37, "RS", 0.00, 0.00], [63.67, "LS", 0.00, 0.00],
+    [64.37, "SHOT"],   # fim da gravacao
+    [65.37, "END"],
+]
+expect = { exit = ["ok"], log_absent = ['\[fatal\]', '\[crash\]', 'replay sync .* timed out'], log_contains = ['\[input\] replay finished'] }

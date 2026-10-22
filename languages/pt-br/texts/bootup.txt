@@ -1,0 +1,35 @@
+# bootup: textos do pacote de idioma 'pt-br' (base E, English).
+# Traduza só o texto depois de ' = '. Mantenha os ícones de botão (± ² ³ ´ µ ¶ · ¸ ¹ º » ¼ ½ ¾),
+# © ® †, os espaços das pontas e os escapes (\n quebra de linha, \\ barra, \uXXXX). Não mude
+# os hashes. Chave sem linha = texto original. Confira com: python tools\texts.py lang-check pt-br
+
+0x0000051c = JAPONÊS
+0x000013ef = NÃO
+0x00001ee4 = CONTINUAR SEM SALVAR
+0x000026fd = Crash of the Titans usa salvamento automático.  Inserir um memory card (8MB)(para†PlayStation®2) depois deste ponto pode fazer com que dados sejam sobrescritos.
+0x000027d8 = HOLANDÊS
+0x00004071 = FINLANDÊS
+0x00004238 = ITALIANO
+0x0000475f = DINAMARQUÊS
+0x00004ec5 = ALEMÃO
+0x00005b68 = ESCOLHA O IDIOMA
+0x00006fa4 = SELECIONAR  ±
+0x000086e0 = Verificando o memory card (8MB)(para†PlayStation®2) no slot de MEMORY CARD 1. Não remova o memory card (8MB)(para†PlayStation®2) do slot de MEMORY CARD 1, nem o controle, e não reinicie nem desligue o console.
+0x0000a878 = SIM
+0x0000b2ae = Não há memory card (8MB)(para†PlayStation®2) inserido no slot de MEMORY CARD 1.
+0x0000b9e2 =  
+0x0000bcc2 = CONTINUAR
+0x0000c318 = NORUEGUÊS
+0x0000c8d8 = RUSSO
+0x0000cccb = SUECO
+0x0000ceff = TENTAR DE NOVO
+0x0000e3a2 = ESPANHOL
+0x0000e867 = INGLÊS
+0x0000e86f = INGLÊS
+0x0000f617 = FRANCÊS
+0x0000fb96 = Espaço livre insuficiente no memory card (8MB)(para†PlayStation®2) no slot de MEMORY CARD 1.  Insira um memory card (8MB)(para†PlayStation®2) com pelo menos 95KB livres, ou libere espaço usando o navegador interno do console.
+
+# Outra cópia desta bíblia (2 chave(s) com outro texto nela):
+[package\9eed48ad.p3d]
+0x0000b2ae = Não há memory card (8MB)(para PlayStation®2) inserido no slot de MEMORY CARD 1.  Crash of the Titans usa salvamento automático.  Inserir um memory card (8MB)(para PlayStation®2) depois deste ponto pode fazer com que dados sejam sobrescritos.
+0x0000fb96 = Espaço livre insuficiente no memory card (8MB)(para PlayStation®2) no slot de MEMORY CARD 1.  Insira um memory card (8MB)(para PlayStation®2) com pelo menos 95KB livres, ou libere espaço usando o navegador interno do console.

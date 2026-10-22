@@ -1,0 +1,31 @@
+# Pacote de idioma do CrashRecomp: português do Brasil (README, "Tradução PT-BR").
+# O jogo roda em inglês por baixo (vozes originais em inglês, english.rcf) e o runtime troca os
+# textos em inglês destes pacotes do default.rcf pelos de texts\<bíblia>.txt quando o jogo abre o
+# arquivo. Escolha em SETTINGS > IDIOMA ou com game.language = "pt-br" no userdata\settings.toml.
+
+id = "pt-br"
+name = "PORTUGUÊS (BR)"          # na tela SETTINGS (fontes do jogo: o Ê é composto como abaixo)
+base = "english"                 # vozes e textos sem tradução
+help = ["Textos em português do Brasil.", "As vozes continuam em inglês."]   # ajuda do item IDIOMA
+archive = "default"
+# Letras que as fontes do jogo não têm: ã Ã Ê Ô existem só como espaço vazio e õ Õ nem existem.
+# O runtime compõe cada uma de letras que a fonte tem: "nova = base + acento - base do acento"
+# (o til do ñ menos o n, o circunflexo do Â menos o A) e põe numa página nova da fonte.
+# Numa fonte que já tem 32 páginas (o máximo do jogo; Titans_Large) a letra nova ocupa a célula da
+# letra depois do "@", que nenhum texto em inglês ou português usa.
+glyphs = ["ã = a + ñ - n @ å", "õ = o + ñ - n @ ò", "Ã = A + Ñ - N @ Å", "Õ = O + Ñ - N @ Ò", "Ê = E + Â - A @ È", "Ô = O + Â - A @ Ö"]
+# Os pacotes com as bíblias de texto em inglês (python tools\texts.py lang-init/lang-check).
+packages = [
+    "package/1725c617.p3d",
+    "package/79290aaa.p3d",
+    "package/7a8185b0.p3d",
+    "package/7efdcd91.p3d",
+    "package/97597d1b.p3d",
+    "package/9eed48ad.p3d",
+    "package/aabeaa37.p3d",
+    "package/ad83ca09.p3d",
+    "package/b4c85fe7.p3d",
+    "package/b9c6f232.p3d",
+    "package/c1e387c7.p3d",
+    "package/cdd70a8c.p3d",
+]

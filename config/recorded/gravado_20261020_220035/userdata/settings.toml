@@ -1,0 +1,32 @@
+# CrashRecomp: configuracoes do runtime (tela SETTINGS no menu principal).
+# Editavel a mao com o jogo fechado; valores invalidos voltam ao padrao.
+
+[audio]
+master = 100     # 0-100, vale na hora
+music = 100      # 0-100, musica (vale ao reiniciar o jogo)
+effects = 100    # 0-100, efeitos e ambiente (ao reiniciar)
+voice = 100      # 0-100, dialogos (ao reiniciar)
+
+[video]
+window = "windowed"   # windowed | borderless | fullscreen
+vsync = false
+fps_limit = 30   # 30 (original) | 60 | 120 | 0 = sem limite
+resolution = "1280x720"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160 (ao reiniciar)
+overlay = "off"   # off | fps | frametime | full (F1 alterna)
+antialiasing = "off"   # off | fxaa | smaa (pos-processamento da imagem final)
+
+[graphics]
+upscaler = "off"   # off | dlss (DLSS/DLAA, so NVIDIA RTX) | fsr (FSR 3.1, qualquer GPU) (ao reiniciar)
+upscaler_quality = "native"   # native (DLAA / FSR Native AA) | quality | balanced | performance | ultra_performance (ao reiniciar)
+sharpness = 0   # 0-100, nitidez do FSR (RCAS); o DLSS 4 nao tem
+motion_blur = 100   # 0-100 %, 0 = sem motion blur
+depth_of_field = 100   # 0-100 %, 0 = sem profundidade de campo
+anisotropic_filtering = 16   # 1 (desligado) | 2 | 4 | 8 | 16
+shadow_softness = 100   # 0-200 %, raio do filtro das sombras (sombras por stencil: nao ha resolucao de sombra)
+
+[game]
+language = "english"   # english | french | german | spanish | italian | dutch | pt-br (ao reiniciar; os da pasta languages\ usam as vozes do idioma base)
+mojo_colors = "ps2"   # ps2 (mojo grande azul bem claro, extra grande roxo lilas) | xbox360 (todos azuis, como no original) (ao reiniciar)
+subtitles = false   # legendas nas cenas e falas (tools\subtitles.py; README "Legendas")
+subtitle_size = 100   # 50-200 %, tamanho da letra das legendas
+subtitle_background = 50   # 0-100 %, opacidade da caixa atras das legendas (0 = so contorno)

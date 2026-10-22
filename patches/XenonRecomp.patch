@@ -1,0 +1,207 @@
+diff --git a/XenonAnalyse/function.cpp b/XenonAnalyse/function.cpp
+index 34add40..c21a60f 100644
+--- a/XenonAnalyse/function.cpp
++++ b/XenonAnalyse/function.cpp
+@@ -186,7 +186,9 @@ Function Function::Analyze(const void* code, size_t size, size_t base)
+                     {
+                         // right block's just going to return
+                         const size_t lBase = (addr - base) + 4;
+-                        size_t lBlock = fn.SearchBlock(lBase);
++                        // SearchBlock takes an absolute address; passing the relative lBase never matched,
++                        // so every revisit pushed a duplicate block and the analysis never terminated.
++                        size_t lBlock = fn.SearchBlock(base + lBase);
+                         if (lBlock == -1)
+                         {
+                             blocks.emplace_back(lBase, 0);
+diff --git a/XenonRecomp/main.cpp b/XenonRecomp/main.cpp
+index 12c6d8c..e8d2506 100644
+--- a/XenonRecomp/main.cpp
++++ b/XenonRecomp/main.cpp
+@@ -25,7 +25,9 @@ int main(int argc, char* argv[])
+         if (!recompiler.LoadConfig(path))
+             return -1;
+ 
++        fprintf(stderr, "[phase] config loaded, analysing\n");
+         recompiler.Analyse();
++        fprintf(stderr, "[phase] analysed %zu functions, recompiling\n", recompiler.functions.size());
+ 
+         auto entry = recompiler.image.symbols.find(recompiler.image.entry_point);
+         if (entry != recompiler.image.symbols.end())
+diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
+index fa91527..7e921f5 100644
+--- a/XenonRecomp/recompiler.cpp
++++ b/XenonRecomp/recompiler.cpp
+@@ -202,6 +202,7 @@ void Recompiler::Analyse()
+         size_t base = section.base;
+         uint8_t* data = section.data;
+         uint8_t* dataEnd = section.data + section.size;
++        fprintf(stderr, "[analyse] section %s 0x%zX size 0x%X: bl scan\n", section.name.c_str(), section.base, section.size);
+ 
+         while (data < dataEnd)
+         {
+@@ -221,9 +222,11 @@ void Recompiler::Analyse()
+         }
+ 
+         data = section.data;
++        fprintf(stderr, "[analyse] section %s: linear scan\n", section.name.c_str());
+ 
+         while (data < dataEnd)
+         {
++            if (((base - section.base) & 0xFFFF) == 0) fprintf(stderr, "[analyse]   at 0x%zX\n", base);
+             auto invalidInstr = config.invalidInstructions.find(ByteSwap(*(uint32_t*)data));
+             if (invalidInstr != config.invalidInstructions.end())
+             {
+@@ -242,7 +245,18 @@ void Recompiler::Analyse()
+             }
+             else
+             {
+-                auto& fn = functions.emplace_back(Function::Analyze(data, dataEnd - data, base));
++                fprintf(stderr, "[analyse] Analyze 0x%zX\n", base);
++                auto fn = Function::Analyze(data, dataEnd - data, base);
++                if (fn.size == 0)
++                {
++                    // A zero-sized result would never advance base and loop forever; skip the word instead.
++                    fmt::println("WARNING: zero-sized function at 0x{:X} (word 0x{:08X}), skipping 4 bytes", base, ByteSwap(*(uint32_t*)data));
++                    base += 4;
++                    data += 4;
++                    continue;
++                }
++
++                functions.emplace_back(fn);
+                 image.symbols.emplace(fmt::format("sub_{:X}", fn.base), fn.base, fn.size, Symbol_Function);
+ 
+                 base += fn.size;
+@@ -609,7 +623,9 @@ bool Recompiler::Recompile(
+     case PPC_INST_BCTR:
+         if (switchTable != config.switchTables.end())
+         {
+-            println("\tswitch ({}.u64) {{", r(switchTable->second.r));
++            // The guest bounds-checks and scales the index with 32-bit ops (cmplwi/rlwinm), so the upper
++            // half of the register may be garbage (e.g. -1 + 1 = 0x1_00000000); switch on the low word only.
++            println("\tswitch ({}.u32) {{", r(switchTable->second.r));
+ 
+             for (size_t i = 0; i < switchTable->second.labels.size(); i++)
+             {
+@@ -800,6 +816,7 @@ bool Recompiler::Recompile(
+         // no op
+         break;
+ 
++    case PPC_INST_DCBST:
+     case PPC_INST_DCBF:
+         // no op
+         break;
+@@ -890,6 +907,7 @@ bool Recompiler::Recompile(
+         println("\t{}.f64 = double({}.s64);", f(insn.operands[0]), f(insn.operands[1]));
+         break;
+ 
++    case PPC_INST_FCMPO:
+     case PPC_INST_FCMPU:
+         printSetFlushMode(false);
+         println("\t{}.compare({}.f64, {}.f64);", cr(insn.operands[0]), f(insn.operands[1]), f(insn.operands[2]));
+@@ -980,6 +998,21 @@ bool Recompiler::Recompile(
+         println("\t{}.f64 = double(float(-({}.f64 * {}.f64 - {}.f64)));", f(insn.operands[0]), f(insn.operands[1]), f(insn.operands[2]), f(insn.operands[3]));
+         break;
+ 
++    case PPC_INST_FRSQRTE:
++        printSetFlushMode(false);
++        println("\t{}.f64 = 1.0 / sqrt({}.f64);", f(insn.operands[0]), f(insn.operands[1]));
++        break;
++
++    case PPC_INST_MULHDU:
++        println("\t{}.u64 = uint64_t((unsigned __int128)({}.u64) * {}.u64 >> 64);", r(insn.operands[0]), r(insn.operands[1]), r(insn.operands[2]));
++        if (strchr(insn.opcode->name, '.'))
++            println("\t{}.compare<int64_t>({}.s64, 0, {});", cr(0), r(insn.operands[0]), xer());
++        break;
++
++    case PPC_INST_MCRF:
++        println("\t{} = {};", cr(insn.operands[0]), cr(insn.operands[1]));
++        break;
++
+     case PPC_INST_FRES:
+         printSetFlushMode(false);
+         println("\t{}.f64 = float(1.0 / {}.f64);", f(insn.operands[0]), f(insn.operands[1]));
+@@ -1137,6 +1170,8 @@ bool Recompiler::Recompile(
+     case PPC_INST_LVEWX128:
+     case PPC_INST_LVX:
+     case PPC_INST_LVX128:
++    case PPC_INST_LVXL:
++    case PPC_INST_LVXL128:
+         // NOTE: for endian swapping, we reverse the whole vector instead of individual elements.
+         // this is accounted for in every instruction (eg. dp3 sums yzw instead of xyz)
+         print("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_shuffle_epi8(simde_mm_load_si128((simde__m128i*)(base + ((", v(insn.operands[0]));
+@@ -1147,6 +1182,8 @@ bool Recompiler::Recompile(
+ 
+     case PPC_INST_LVLX:
+     case PPC_INST_LVLX128:
++    case PPC_INST_LVLXL:
++    case PPC_INST_LVLXL128:
+         print("\t{}.u32 = ", temp());
+         if (insn.operands[1] != 0)
+             print("{}.u32 + ", r(insn.operands[1]));
+@@ -1156,6 +1193,8 @@ bool Recompiler::Recompile(
+ 
+     case PPC_INST_LVRX:
+     case PPC_INST_LVRX128:
++    case PPC_INST_LVRXL:
++    case PPC_INST_LVRXL128:
+         print("\t{}.u32 = ", temp());
+         if (insn.operands[1] != 0)
+             print("{}.u32 + ", r(insn.operands[1]));
+@@ -1609,6 +1648,8 @@ bool Recompiler::Recompile(
+ 
+     case PPC_INST_STVLX:
+     case PPC_INST_STVLX128:
++    case PPC_INST_STVLXL:
++    case PPC_INST_STVLXL128:
+         // TODO: vectorize
+         // NOTE: accounting for the full vector reversal here
+         print("\t{} = ", ea());
+@@ -1622,6 +1663,8 @@ bool Recompiler::Recompile(
+ 
+     case PPC_INST_STVRX:
+     case PPC_INST_STVRX128:
++    case PPC_INST_STVRXL:
++    case PPC_INST_STVRXL128:
+         // TODO: vectorize
+         // NOTE: accounting for the full vector reversal here
+         print("\t{} = ", ea());
+@@ -1635,6 +1678,8 @@ bool Recompiler::Recompile(
+ 
+     case PPC_INST_STVX:
+     case PPC_INST_STVX128:
++    case PPC_INST_STVXL:
++    case PPC_INST_STVXL128:
+         print("\tsimde_mm_store_si128((simde__m128i*)(base + ((");
+         if (insn.operands[1] != 0)
+             print("{}.u32 + ", r(insn.operands[1]));
+@@ -1769,6 +1814,7 @@ bool Recompiler::Recompile(
+         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
+         break;
+ 
++    case PPC_INST_VANDC:
+     case PPC_INST_VANDC128:
+         println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
+         break;
+diff --git a/XenonUtils/xex.cpp b/XenonUtils/xex.cpp
+index 4e79042..d74aaf7 100644
+--- a/XenonUtils/xex.cpp
++++ b/XenonUtils/xex.cpp
+@@ -2,6 +2,7 @@
+ #include "image.h"
+ #include <cassert>
+ #include <cstring>
++#include <algorithm>
+ #include <vector>
+ #include <unordered_map>
+ #include <aes.hpp>
+@@ -180,7 +181,9 @@ Image Xex2LoadImage(const uint8_t* data, size_t dataSize)
+                 imageSize += blocks[i].dataSize + blocks[i].zeroSize;
+             }
+ 
+-            result = std::make_unique<uint8_t[]>(imageSize);
++            // The block sum can be smaller than security->imageSize, which becomes image.size below;
++            // allocate the larger of the two (zero-filled) so reads of the full image stay in bounds.
++            result = std::make_unique<uint8_t[]>(std::max<size_t>(imageSize, security->imageSize));
+             auto* destData = result.get();
+ 
+             for (size_t i = 0; i < numBlocks; i++)

@@ -1,0 +1,111 @@
+# XenonRecomp config for Crash of the Titans (Xbox 360, title ID 565507E4, Crash007f.exe)
+# Paths are relative to this file.
+
+[main]
+file_path = "../private/default.xex"
+out_directory_path = "../generated/ppc"
+switch_table_file_path = "Crash_switch_tables.toml"
+
+# Optimizations (2026-10-22, runtime/NOTES.md "Desempenho"): registers as C++ locals instead of
+# PPCContext fields, so the compiler keeps them in host registers. The runtime reads LR only in
+# logs, CTR only in the unmapped-indirect-call report. non_argument_as_local breaks the SEH
+# __finally funclets, which get the parent's frame in r12 (sub_82268B14: addi r31,r12,-320).
+skip_lr = true
+skip_msr = true
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_argument_as_local = false
+non_volatile_as_local = false
+
+# Register save/restore helpers (unique byte-pattern matches in .text).
+restgprlr_14_address = 0x823CEC30
+savegprlr_14_address = 0x823CEBE0
+restfpr_14_address = 0x823CFF1C
+savefpr_14_address = 0x823CFED0
+# No __savevmx_*/__restvmx_* helpers exist in this binary (no pattern matches), so they are omitted.
+
+# longjmp restores f14-f31/r13-r31/LR/CR/r1 from the jmp_buf in r3 and calls RtlUnwind when
+# jmp_buf+0x138 is set; setjmp (leaf, no .pdata entry) writes the same layout and returns 0.
+longjmp_address = 0x823D2EA0
+setjmp_address = 0x823D2FC0
+
+functions = [
+    # Leaf functions without .pdata (red-zone locals below r1) in gaps between .pdata entries:
+    # some found by hand (0x8237F8F8..0x82380738), the rest generated from jump tables the linear
+    # scan cut short, then split at entries referenced by data function-pointer tables or by
+    # addresses built in code (lis/addi). Check with tools/find_swallowed.py after any change here.
+    { address = 0x8237F8F8, size = 0xA24 },
+    { address = 0x82380320, size = 0x6C },
+    { address = 0x82380390, size = 0x3A4 },
+    { address = 0x82380738, size = 0x24 },
+    { address = 0x820B0E20, size = 0x88 },
+    { address = 0x820E5470, size = 0x17C },
+    { address = 0x820EF3B8, size = 0x58 },
+    { address = 0x8210A338, size = 0xC },
+    { address = 0x8210A348, size = 0xA0 },
+    { address = 0x8210CA30, size = 0x5C },
+    { address = 0x8210EAE0, size = 0x24 },
+    { address = 0x8210EB08, size = 0x90 },
+    { address = 0x8210EB98, size = 0x8 },
+    { address = 0x8212C828, size = 0xB8 },
+    { address = 0x82134760, size = 0x18 },
+    { address = 0x82134778, size = 0x94 },
+    { address = 0x82135048, size = 0xD8 },
+    { address = 0x821481B0, size = 0xF4 },
+    { address = 0x82149160, size = 0xE8 },
+    { address = 0x82149248, size = 0x8 },
+    { address = 0x82166618, size = 0x16C },
+    { address = 0x821C9A80, size = 0x68 },
+    { address = 0x82213020, size = 0x1B8 },
+    { address = 0x822131D8, size = 0x168 },
+    { address = 0x82214080, size = 0x1B4 },
+    { address = 0x822148F0, size = 0x114 },
+    { address = 0x82215548, size = 0x1E8 },
+    { address = 0x82215788, size = 0x178 },
+    { address = 0x8221D138, size = 0x1A0 },
+    { address = 0x8226B3E8, size = 0xEC },
+    { address = 0x82288180, size = 0xA8 },
+    { address = 0x822897E0, size = 0x168 },
+    { address = 0x82289948, size = 0x30 },
+    { address = 0x82289978, size = 0x40 },
+    { address = 0x822899B8, size = 0x30 },
+    { address = 0x8228CB80, size = 0xE4 },
+    { address = 0x822955D8, size = 0x134 },
+    { address = 0x82296A90, size = 0xF8 },
+    { address = 0x82299D30, size = 0x7C },
+    { address = 0x8229CB50, size = 0x84 },
+    { address = 0x822A0098, size = 0x154 },
+    { address = 0x822A5A48, size = 0x468 },
+    { address = 0x822A6010, size = 0xA4 },
+    { address = 0x822D46F8, size = 0x16C },
+    { address = 0x822D4928, size = 0x25C },
+    { address = 0x822D4B88, size = 0x19C },
+    { address = 0x822D4D28, size = 0x28 },
+    { address = 0x822D4D50, size = 0xC },
+    { address = 0x822D6CE8, size = 0x6C },
+    { address = 0x823034D8, size = 0x15C },
+    { address = 0x82316E50, size = 0x8 },
+    { address = 0x82316E58, size = 0x170 },
+    { address = 0x8231F668, size = 0x8C },
+    { address = 0x8231F6F8, size = 0x16C },
+    { address = 0x82340D70, size = 0x60 },
+    { address = 0x82340DD0, size = 0x6C },
+    { address = 0x82340E40, size = 0x20 },
+    { address = 0x823449F8, size = 0x68 },
+    { address = 0x82344A60, size = 0xC8 },
+    { address = 0x8235F700, size = 0x70 },
+    { address = 0x823672A0, size = 0x4E4 },
+    { address = 0x82369088, size = 0xFF4 },
+    { address = 0x8236C4C8, size = 0x960 },
+    { address = 0x8238F9E0, size = 0x144 },
+    { address = 0x82391988, size = 0x5C },
+    { address = 0x82398888, size = 0x84 },
+    { address = 0x82398910, size = 0x80 },
+    { address = 0x823B7060, size = 0xA8 },
+]
+
+invalid_instructions = [
+    { data = 0x00000000, size = 4 }, # Padding
+]

@@ -1,0 +1,772 @@
+# Controle de execução e testes do CrashRecomp.
+# Lido por tools/run_game.py:
+#
+#   python tools\run_game.py jogar          (compila e abre o jogo com os seus saves, dist\userdata)
+#   python tools\run_game.py boot           (roda um perfil e confere o resultado)
+#   python tools\run_game.py boot --dist    (o mesmo com dist\CrashRecomp.exe, como o jogador abre)
+#   python tools\run_game.py --all          (roda todos os perfis com test = true; demora)
+#   python tools\run_game.py --list         (lista os perfis)
+#   python tools\run_game.py boot --set timeout=60 --set audio=true
+#
+# Caminhos relativos são relativos à pasta do projeto (CrashRecomp).
+# Todo teste roda numa cópia de tests/userdata_base (saves e settings.toml fixos); só o perfil
+# jogar usa a sua userdata de verdade (dist/userdata).
+#
+# Perfis gravados jogando (F5 em qualquer execução, ou o perfil gravar) ficam em
+# config/recorded/<nome>.toml, um por arquivo, e aparecem aqui como os outros (--list).
+#
+# Os testes não dependem mais do relógio para passar pelas intros e menus: boot = "..." entra direto
+# na fase ou no save pelo código do jogo, e os botões ficam ancorados em eventos (["@gameplay_ready"]).
+
+[paths]
+exe = "build/CrashRecomp.exe"             # o exe compilado (--dist usa dist/CrashRecomp.exe)
+game = ""                                 # sua cópia do jogo (somente leitura); vazio = config/local.toml ou o [paths] game de dist/userdata/settings.toml (tools/buildenv.py)
+mods = "dist/mods"                        # os mods do jogo (a mesma pasta que o dist\CrashRecomp.exe usa)
+userdata = "dist/userdata"                # seus saves e opções de verdade: só o perfil jogar (userdata_mode = "shared") usa
+test_userdata = "tests/userdata_base"     # base fixa dos testes (saves + settings.toml); cada execução usa uma cópia dela
+test_shadercache = "tests/shadercache"    # cache de shaders dos testes (os shaders novos de cada execução entram aqui)
+languages = "languages"                   # pacotes de idioma (fonte; o make_dist copia para dist\languages)
+data = "private"                          # dados opcionais tirados do seu jogo: subtitles\, symbols\, remaster_full\
+dist = "dist"                           # a pasta para jogar (tools/make_dist.py)
+runs = "build/runs"                       # cada execução ganha uma pasta aqui (log, capturas, áudio, resultado)
+
+[build]
+# Compila antes de rodar (só o que mudou). Desligue com --no-build.
+auto = true
+# O Visual Studio (vcvars64.bat) vem do vswhere e o clang-cl/CMake/Ninja do PATH e das pastas de
+# instalação comuns; para outra instalação, [build] vcvars / path_prepend em config/local.toml.
+build_dir = "build"
+target = "CrashRecomp"
+
+# Valores usados por todos os perfis; cada perfil pode sobrescrever qualquer um.
+[defaults]
+timeout = 0            # segundos até o watchdog encerrar o jogo (0 = sem limite)
+audio = true           # false = não abre dispositivo de áudio (CRASH_NOAUDIO)
+render = true          # false = sem janela/renderização (CRASH_NO_RENDER)
+symbols = true         # nomes de funções (RTTI) nas mensagens de crash
+# "copy" (o padrão): a pasta da execução recebe uma cópia de tests/userdata_base (saves e
+# settings.toml) e do cache de shaders dos testes; o teste pode sobrescrever slots e opções sem
+# mexer na base nem nos seus saves. "shared": a sua userdata de verdade (só o perfil jogar).
+userdata_mode = "copy"
+screenshots = []       # números de quadro (VdSwap) em que salvar uma captura
+audio_dump = false     # grava a mixagem em audio.wav na pasta da execução
+audio_dump_seconds = 60
+log_imports = []       # imports a logar em toda chamada (CRASH_LOG_IMPORTS)
+log_all_io = false
+d3d12_debug = false
+# Botões do controle 0: [segundos desde a primeira leitura do controle, "BOTÃO"] (relógio de parede).
+# Botões: A B X Y START BACK UP DOWN LEFT RIGHT LB RB L3 R3 (cada um fica apertado por 200 ms;
+# [segundos, "BOTÃO", segundos_apertado] segura por mais tempo, ex.: [80, "RIGHT", 1.5]).
+# Analógicos: LS_UP etc. (até o fim) ou [s, "LS"/"RS", x, y, (segundos)] e [s, "LT"/"RT", v, (segundos)].
+# [s, "SHOT"] = captura. Âncoras: depois de ["@evento"] (ou ["@evento#n"], a n-ésima vez) os tempos
+# contam a partir daquele evento do jogo, e uma entrada espera o evento acontecer: ["@main_menu"],
+# [2, "DOWN"] aperta DOWN 2 s depois de o menu aparecer. Eventos: title, main_menu, save_slots,
+# load_complete, hub, level_start, level_ready, cinematic, gameplay_ready, pause, game_over,
+# boot_done, boot_failed (README, "Boot direto e eventos"). ["@start"] volta ao relógio do input.
+input = []
+# Boot direto pelo próprio código do jogo (CRASH_BOOT): "menu" (pula as intros), "level:L1_E3" (a
+# fase, sem save), "load:1" (LOAD GAME no slot 1 + CONTINUE STORY), "load:1:hub" (para no menu do
+# episódio), "load:1:L1_E3" (a fase escolhida no menu do episódio, com o progresso do save).
+# skip_intros = true: só pula os vídeos de logo e a tela de título (CRASH_SKIP_INTROS).
+# expect.events = ["gameplay_ready", "main_menu#2"]: eventos que precisam acontecer; com boot, o
+# evento boot_failed sempre falha o teste.
+# replay = [...]: entradas no relógio do jogo, com SYNC nos carregamentos (é o que o F5 grava;
+# veja config/recorded e o README, "Gravando um perfil jogando").
+# userdata_from = "pasta": com userdata_mode = "copy", copia content\ e settings.toml dela em vez da base.
+env = {}               # variáveis extras, ex.: { CRASH_GPU_TRACE = "1" }
+# Overlay de desempenho: true = completo (quadro, relógio do input, FPS, frame time, resolução,
+# perfil e último botão), false = o modo do settings.toml, ou "off" | "fps" | "frametime" | "full".
+# F1 troca o modo, F2 marca o quadro (marks.txt), F12 tira um print.
+overlay = true
+screenshot_overlay = false   # true = o overlay também sai nas capturas
+record_input = false   # true = começa a gravar (como o F5) já no boot; o perfil vai para config/recorded
+perf_from_frame = 0    # estatísticas de frame time (resumo/result.json/expect) a partir deste quadro
+# Checagens de desempenho opcionais em expect: min_fps, max_frame_ms_p99, max_hitches (> 50 ms).
+
+[profiles.jogar]
+description = "Abre o jogo para jogar, sem limite de tempo e com os seus saves"
+test = false
+userdata_mode = "shared"   # o único perfil que usa a sua userdata de verdade
+expect = { exit = ["ok"] }
+
+[profiles.gravar]
+description = "Joga numa cópia dos saves gravando o controle desde o boot (F5 ou fechar a janela salva o perfil em config/recorded)"
+test = false
+userdata_mode = "copy"
+record_input = true
+expect = { exit = ["ok"] }
+
+[profiles.boot]
+description = "Boot até o loop de quadros: logos, áudio XMA, sem crash"
+test = true
+timeout = 20
+audio = false
+userdata_mode = "copy"
+screenshots = [300, 540]
+expect = { exit = ["timeout"], min_frames = 480, log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.menu]
+description = "Pula as intros (skip_intros: sem vídeos de logo e sem tela de título) e chega ao menu principal com música"
+test = true
+timeout = 25
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+audio_dump = true
+audio_dump_seconds = 25
+input = [["@main_menu"], [2, "SHOT"], [10, "SHOT"]]
+expect = { exit = ["timeout"], events = ["main_menu"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.menu_loaded]
+description = "LOAD GAME no primeiro slot até o menu do episódio (boot load:1:hub, pelas saídas do próprio frontend)"
+test = true
+timeout = 30
+audio = false
+userdata_mode = "copy"
+boot = "load:1:hub"
+input = [["@hub"], [3, "SHOT"]]
+expect = { exit = ["timeout"], events = ["main_menu", "hub", "boot_done"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.load_pelos_menus]
+description = "Ponta a ponta pela interface: LOAD GAME só com botões (DOWN, A, slot 1, CONTINUE, Y) até a fase, cada botão ancorado na tela em que cai"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+# Cada ["@evento"] faz os tempos seguintes contarem a partir daquele evento (README, "Boot direto e
+# eventos"): o menu, a tela de saves, "load complete", o menu do episódio e a fase.
+input = [
+    ["@main_menu"], [2, "DOWN"], [3, "A"],
+    ["@save_slots"], [1, "SHOT"], [1.5, "A"],
+    ["@load_complete"], [1, "A"],
+    ["@hub"], [1.5, "SHOT"], [2, "Y"],
+    ["@gameplay_ready"], [1, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "save_slots", "load_complete", "hub", "level_start", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.primeira_fase]
+description = "Ponta a ponta pela interface: NEW GAME (nome, NORMAL, slot 1 sobrescrito) pelo piloto automático de menus, cena de abertura e a vila"
+test = true
+timeout = 150
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+# CRASH_MENU_AUTOPILOT=newgame aperta o botão de cada tela assim que ela aparece (A em NEW GAME,
+# nome "A", Y, NORMAL, slot 1, DOWN + A para sobrescrever, CONTINUE): os botões passam pelo caminho
+# do controle de verdade, sem horário fixo. A cena de abertura não pula (~100 s).
+env = { CRASH_MENU_AUTOPILOT = "newgame" }
+input = [["@cinematic"], [5, "SHOT"], ["@gameplay_ready"], [1, "SHOT"], [2, "LS", 0, 1, 2], [4.5, "SHOT"]]
+expect = { exit = ["timeout"], events = ["main_menu", "level_start", "cinematic", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['menu autopilot: last step pressed', 'level_start .*: L1_E1'] }
+
+[profiles.primeiro_slot_load]
+description = "LOAD GAME no primeiro slot e CONTINUE STORY até a fase (episódio 2) pelo boot load:1"
+test = true
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "load:1"
+input = [["@gameplay_ready"], [1, "SHOT"]]
+expect = { exit = ["timeout"], events = ["hub", "level_start", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['level_start .*: L1_E2'] }
+
+[profiles.fase_direta]
+description = "Boot direto numa fase sem save (level:L1_E3, a fase com cena de abertura): o caminho SkipToLevel dos desenvolvedores; anda depois da cena e pausa"
+test = true
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E3"
+input = [["@cinematic"], [2, "SHOT"], ["@gameplay_ready"], [0.5, "SHOT"], [1, "LS", 0, 1, 2.5], [4, "SHOT"], [6, "START"], [7.5, "SHOT"], [9, "START"]]
+expect = { exit = ["timeout"], events = ["level_start", "level_ready", "cinematic", "gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SkipToLevel, StartLevel 2 L1_E3'] }
+
+[profiles.vila_sem_cena]
+description = "Boot direto no L1_E1 sem save pulando a cena de abertura (skip_cinematics): a vila jogável, anda e pausa"
+test = true
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+input = [["@cinematic_skipped"], [0.5, "SHOT"], ["@gameplay_ready"], [0.5, "SHOT"], [1, "LS", 0, 1, 2.5], [4, "SHOT"], [6, "START"], [7.5, "SHOT"], [9, "START"]]
+expect = { exit = ["timeout"], events = ["level_start", "level_ready", "cinematic", "cinematic_skipped", "cinematic_done", "gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SkipToLevel, StartLevel 0 L1_E1'] }
+
+[profiles.iluminacao]
+description = "Iluminação (remaster, gpu/lighting.*): boot direto na vila L1_E1 sem a cena, capturas paradas e andando nas mesmas posições a cada execução; compare com --set 'env={ CRASH_SETTINGS = \"lighting.ssao=high;lighting.gi=true;lighting.contact_shadows=true;lighting.soft_shadows=true\" }' (+ CRASH_LIGHTING_SHOW = \"split\" | \"ao\" | \"gi\" | \"shadow\")"
+test = false
+timeout = 48
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+input = [["@gameplay_ready"], [5, "SHOT"], [5.5, "LS", 0, 1, 2], [6.5, "SHOT"], [8.5, "SHOT"], [9, "LS", 1, 0, 1.5], [11, "SHOT"], [11.5, "RS", 1, 0, 0.8], [13, "SHOT"], [13.5, "LS", 0, 1, 3], [15, "SHOT"], [17.5, "SHOT"], [18, "LS", -1, 0.3, 2.5], [21, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.iluminacao_tela]
+description = "SETTINGS > DEFINITIVE EDITION > ILUMINAÇÃO (REMASTER): liga SSAO ALTA, luz indireta 110%, sombras de contato e suaves pelo controle, salva, faz LOAD GAME, continua a história (Y no HUB) e confere a iluminação na fase"
+test = true
+timeout = 70
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+skip_cinematics = true
+# Do menu principal: DOWN x3, A = SETTINGS (aba JOGO); LB = DEFINITIVE EDITION (a última aba);
+# DOWN x2 = OCLUSÃO DE AMBIENTE (o título do subgrupo é pulado); RIGHT x2 = ALTA; DOWN, RIGHT = luz
+# indireta; DOWN, RIGHT = intensidade 110%; DOWN, RIGHT = sombras de contato; DOWN, RIGHT = suaves;
+# B salva e volta (nada pede reinício); DOWN, A = LOAD GAME.
+input = [
+    ["@main_menu"],
+    [2, "DOWN"], [3, "DOWN"], [4, "DOWN"], [5, "A"],
+    [6.5, "LB"], [7.2, "DOWN"], [7.6, "DOWN"], [8, "RIGHT"], [8.4, "RIGHT"],
+    [8.8, "DOWN"], [9.2, "RIGHT"], [9.6, "DOWN"], [10, "RIGHT"], [10.4, "DOWN"], [10.8, "RIGHT"], [11.2, "DOWN"], [11.6, "RIGHT"],
+    [12.5, "SHOT"], [13, "B"],
+    [15, "SHOT"], [16, "DOWN"], [17, "A"],
+    ["@save_slots"], [1.5, "A"],
+    ["@load_complete"], [1, "A"],
+    ["@hub"], [2, "SHOT"], [3, "Y"],
+    ["@gameplay_ready"], [3, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "save_slots", "hub", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[settings\] tab -> definitive', 'lighting\.ssao -> HIGH', 'lighting\.gi -> ON', 'lighting\.gi_intensity -> 110%', 'lighting\.contact_shadows -> ON', 'lighting\.soft_shadows -> ON', '\[settings\] saved', '\[lighting\] targets'] }
+
+[profiles.configuracoes]
+description = "SETTINGS (antigo CALIBRATION) no menu: muda volume e anti-aliasing, passa por todas as abas (LB/RB), fecha e faz LOAD GAME"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+# Tempos a partir do menu principal (@main_menu). DOWN x3, A = SETTINGS (abre a tela na aba JOGO);
+# abas: JOGO, ÁUDIO, VÍDEO, GRÁFICOS, CONTROLES, DEFINITIVE EDITION.
+# RB = ÁUDIO; LEFT x2 = volume geral 90%; RB = VÍDEO; DOWN x4 = ANTI-ALIASING; A = FXAA;
+# RB x3 = GRÁFICOS, CONTROLES, DEFINITIVE EDITION; RB x2 = de volta a JOGO e ÁUDIO;
+# B = salva e volta ao menu; DOWN, A = LOAD GAME; A no slot 1 e A em "load complete" (cada um na sua tela).
+# Capturas: tela aberta (JOGO), ÁUDIO com 90% (e as legendas), VÍDEO depois do FXAA, GRÁFICOS,
+# CONTROLES, DEFINITIVE EDITION, ÁUDIO de novo, menu depois de fechar e o menu do episódio.
+# Em PT-BR: --set 'env={CRASH_SETTINGS="game.language=pt-br"}'
+input = [
+    ["@main_menu"],
+    [2, "DOWN"], [3, "DOWN"], [4, "DOWN"], [5, "A"],
+    [6.5, "SHOT"], [7, "RB"], [7.5, "LEFT"], [8, "LEFT"],
+    [8.7, "SHOT"], [9, "RB"], [9.5, "DOWN"], [9.8, "DOWN"], [10.1, "DOWN"], [10.4, "DOWN"], [11.1, "A"],
+    [12.1, "SHOT"], [13, "RB"], [14.3, "SHOT"], [15, "RB"], [16.3, "SHOT"], [17, "RB"], [18.3, "SHOT"], [19, "RB"], [20, "RB"],
+    [21.1, "SHOT"], [22, "B"],
+    [23, "SHOT"], [24, "DOWN"], [25, "A"],
+    ["@save_slots"], [1.5, "A"],
+    ["@load_complete"], [1, "A"],
+    ["@hub"], [2, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "save_slots", "hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[settings\] screen opened', 'audio\.master -> 90%', 'video\.antialiasing -> FXAA', '\[settings\] tab -> controls', '\[settings\] tab -> definitive', '\[settings\] saved', 'XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.configuracoes_reinicio]
+description = "SETTINGS: troca o idioma para PT-BR, sai, aceita o reinício (A); o runner reabre o jogo, que pula as intros sozinho, e faz LOAD GAME"
+test = true
+timeout = 30
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+# A partir do menu: DOWN x3, A = SETTINGS (abre na aba JOGO); LEFT = idioma PORTUGUÊS (BR) (o
+# último da lista); B = sai -> "Reiniciar agora?"; A = reinicia (código 4). Capturas: aba JOGO com
+# PT-BR escolhido e a pergunta de reinício.
+input = [
+    ["@main_menu"], [2, "DOWN"], [3, "DOWN"], [4, "DOWN"], [5, "A"],
+    [9, "LEFT"], [10, "SHOT"], [10.5, "B"], [12, "SHOT"], [13, "A"],
+]
+# Depois do reinício (relógio novo): o jogo reaberto pula as intros sozinho (--restarted); DOWN, A =
+# LOAD GAME; A no slot 1 e em "load complete". Capturas: menu em PT-BR e o menu do episódio.
+restart_input = [
+    ["@main_menu"], [2, "SHOT"], [2.5, "DOWN"], [3.5, "A"],
+    ["@save_slots"], [1.5, "A"],
+    ["@load_complete"], [1, "A"],
+    ["@hub"], [2, "SHOT"],
+]
+restart_timeout = 30
+expect = { exit = ["timeout"], restarts = 1, events = ["main_menu#2", "hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['game\.language -> PORTUGU', 'restart needed for', 'restart accepted', 'exiting with code 4', 'restarted from the settings screen', 'language pt-br', 'boot: skipping the intros to the main menu \(restarted', 'XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.configuracoes_resolucao]
+description = "SETTINGS: resolução 1920x1080 e DLSS Qualidade aplicados ao fechar a tela, sem reiniciar; depois LOAD GAME até a fase"
+test = true
+timeout = 55
+audio = false
+userdata_mode = "copy"
+screenshot_overlay = true
+skip_intros = true
+# A partir do menu: DOWN x3, A = SETTINGS (abre na aba JOGO); RB x2 = VÍDEO; DOWN = RESOLUÇÃO;
+# RIGHT x2 = 1920x1080; RB = GRÁFICOS; RIGHT = DLSS (a primeira vez a tela trava ~1,2 s sondando o
+# DLSS: folga de 2 s); DOWN, RIGHT = modo QUALIDADE; B = fecha (sem pergunta: nada precisa
+# reiniciar) e o renderer recria os alvos; DOWN, A = LOAD GAME; slot 1, CONTINUE e Y nas telas deles.
+# Capturas (com o overlay completo: a linha RENDER mostra a resolução e o DLSS): aba GRÁFICOS,
+# menu depois de fechar, fase.
+input = [
+    ["@main_menu"], [2, "DOWN"], [3, "DOWN"], [4, "DOWN"], [5, "A"],
+    [7, "RB"], [7.6, "RB"], [8.2, "DOWN"], [8.8, "RIGHT"], [9.4, "RIGHT"],
+    [10.2, "RB"], [10.8, "RIGHT"], [13.1, "DOWN"], [13.8, "RIGHT"],
+    [14.5, "SHOT"], [15, "B"], [17, "SHOT"], [17.5, "DOWN"], [18.5, "A"],
+    ["@save_slots"], [1.5, "A"],
+    ["@load_complete"], [1, "A"],
+    ["@hub"], [2, "Y"],
+    ["@gameplay_ready"], [3, "SHOT"],
+]
+expect = { exit = ["timeout"], restarts = 0, events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]', 'restart needed'], log_contains = ['video\.resolution -> 1920x1080', 'graphics\.upscaler -> DLSS', 'renderer options changed', 'reconfigured: internal resolution 1920x1080 \(1\.50x\), DLSS', 'DLSS feature created', 'XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.sair_do_jogo]
+description = "SAIR DO JOGO (EXIT GAME, 5º item do menu principal): fecha o jogo com código 0"
+test = true
+timeout = 25
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+audio_dump = true
+audio_dump_seconds = 25
+# A partir do menu: DOWN x4 (1 s entre elas: mais rápido o menu conta toques a mais) = EXIT GAME
+# (captura com o item selecionado); Y não faz nada (antes chamava o seletor de armazenamento); A = fecha o jogo.
+input = [["@main_menu"], [1.5, "SHOT"], [2, "DOWN"], [3, "DOWN"], [4, "DOWN"], [5, "DOWN"], [6.5, "Y"], [8, "SHOT"], [8.5, "A"]]
+expect = { exit = ["ok"], log_absent = ['\[fatal\]', '\[crash\]', 'XamShowDeviceSelectorUI'], log_contains = ['EXIT GAME added to the main menu', 'Y \(storage device\) ignored \(exit 94\)', 'EXIT GAME chosen on the main menu \(exit 86\)', '\[quit\] EXIT GAME chosen', '\[quit\] exiting with code 0'] }
+
+[profiles.configuracoes_jogo]
+description = "Menu principal: SETTINGS > JOGO, COOPERATIVO = CAVALINHO e INVERTER EIXO ligado antes de entrar; LOAD GAME até a fase (o save traz os valores dele e o runtime volta a aplicar os da tela)"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+# A partir do menu: DOWN x3, A = SETTINGS (abre na aba JOGO); DOWN = COOPERATIVO, RIGHT = CAVALINHO;
+# DOWN, RIGHT = INVERTER EIXO ligado; B = fecha; DOWN, A = LOAD GAME; slot 1, CONTINUE e Y nas
+# telas deles. Capturas: aba JOGO no menu principal, fase.
+input = [
+    ["@main_menu"], [2, "DOWN"], [3, "DOWN"], [4, "DOWN"], [5, "A"],
+    [9, "DOWN"], [11, "RIGHT"], [12, "DOWN"], [13, "RIGHT"],
+    [14, "SHOT"], [15, "B"], [17.5, "DOWN"], [18.5, "A"],
+    ["@save_slots"], [1.5, "A"],
+    ["@load_complete"], [1, "A"],
+    ["@hub"], [2, "Y"],
+    ["@gameplay_ready"], [3, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['game\.coop_mode -> PIGGYBACK', 'game option: co-op mode piggyback \(was 1\)', 'game option: invert axis on', 'XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.configuracoes_pausa]
+description = "No jogo: pausa > OPÇÕES abre a tela (a original fica escondida); MÚSICA ao vivo, COOPERATIVO / INVERTER EIXO / SALVAMENTO AUTOMÁTICO na aba JOGO, resolução 1600x900 ao fechar; B volta à pausa, que reabre a tela; START volta a jogar"
+test = true
+timeout = 65
+audio = false
+userdata_mode = "copy"
+screenshot_overlay = true
+audio_dump = true
+audio_dump_seconds = 65
+boot = "load:1"
+# Boot no slot 1 até a fase; a partir de @gameplay_ready: START = pausa; DOWN, A = OPÇÕES (abre a
+# tela, aba JOGO); DOWN = COOPERATIVO, RIGHT = CAVALINHO; DOWN, RIGHT = INVERTER EIXO ligado; DOWN,
+# RIGHT = SALVAMENTO AUTOMÁTICO desligado; RB = ÁUDIO; DOWN, LEFT segurado = MÚSICA 70%;
+# RB = VÍDEO; DOWN, RIGHT = RESOLUÇÃO 1600x900; B = fecha (a pausa vira a "sem salvar", com
+# SAIR DA FASE); DOWN, A = OPÇÕES de novo (abre a tela); B; START = volta a jogar.
+# Capturas: tela aberta pela pausa (JOGO), JOGO com as três opções mudadas, ÁUDIO com a música,
+# VÍDEO, pausa "sem salvar" depois de fechar, a tela reaberta por ela, fase em 1600x900.
+input = [
+    ["@gameplay_ready"],
+    [4, "START"], [6, "DOWN"], [7, "A"],
+    [9, "SHOT"], [10, "DOWN"], [11, "RIGHT"], [12, "DOWN"], [13, "RIGHT"], [14, "DOWN"], [15, "RIGHT"],
+    [16.5, "SHOT"], [17, "RB"], [18, "DOWN"], [19, "LEFT", 1.0],
+    [21.3, "SHOT"], [22, "RB"], [23, "DOWN"], [24, "RIGHT"],
+    [26, "SHOT"], [27, "B"], [29, "SHOT"], [30, "DOWN"], [31, "A"], [33, "SHOT"], [34, "B"], [37, "START"], [40, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['in-game options screen is frontend node 1154', 'pause menu OPTIONS selected', 'screen opened \(pause menu', 'audio\.music -> 70%', 'game option: co-op mode piggyback', 'game option: invert axis on', 'game option: autosave off', 'video\.resolution -> 1600x900', 'reconfigured: internal resolution 1600x900', 'XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.teclado]
+description = "Só teclado e mouse: LOAD GAME pelos menus (setas, Enter, Tab) e na fase anda (WASD), pula, ataca (mouse), giro (R), girar + ataque (Q + mouse), ação (E), bloqueio (Shift) e pausa (Esc)"
+test = true
+timeout = 65
+audio = false
+userdata_mode = "copy"
+screenshot_overlay = true
+skip_intros = true
+# As teclas passam pelo mesmo caminho do teclado de verdade (input::pc, as ligações de [controls]).
+# Menu: seta para baixo, Enter = LOAD GAME; Enter no slot 1 e em "load complete"; Tab (Y) = inicia.
+# Na fase: W andando, Alt+W andando devagar, Espaço pula, mouse 1/2 ataques, R = ataque giratório,
+# Q + mouse 1 repetido = girar o analógico + ataque leve (Old Skool), E ação, Shift bloqueio, Esc
+# pausa e Esc volta.
+input = [
+    ["@main_menu"], [2.5, "KEY_DOWN"], [3.5, "KEY_ENTER"], [4.5, "SHOT"],
+    ["@save_slots"], [1.5, "KEY_ENTER"],
+    ["@load_complete"], [1, "KEY_ENTER"],
+    ["@hub"], [1.5, "SHOT"], [2, "KEY_TAB"],
+    ["@gameplay_ready"],
+    [4, "KEY_W", 2.5], [5.5, "SHOT"], [7, "KEY_LALT", 2.0], [7, "KEY_W", 2.0], [8.5, "SHOT"], [10, "KEY_SPACE"], [11, "KEY_MOUSE1"], [11.2, "SHOT"], [12, "KEY_MOUSE2"],
+    [14, "KEY_R", 2.5], [15.5, "SHOT"],
+    [18, "KEY_Q", 2.5], [18.4, "KEY_MOUSE1", 0.1], [18.8, "KEY_MOUSE1", 0.1], [19.2, "KEY_MOUSE1", 0.1], [19.5, "SHOT"], [19.6, "KEY_MOUSE1", 0.1],
+    [22, "KEY_E"], [23, "KEY_LSHIFT", 1.5], [23.5, "KEY_A", 0.5], [24, "SHOT"],
+    [26, "KEY_D", 1.5], [26, "KEY_RIGHT", 1.5], [27.5, "SHOT"],
+    [30, "KEY_ESC"], [32, "SHOT"], [34, "KEY_ESC"], [40, "SHOT"],
+]
+env = { CRASH_FRONTEND_TRACE = "1" }
+expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['keyboard: walking \(left stick at 40%\)', 'keyboard: rotating the left stick \(spin attack\)', 'game: left stick rotation detected', 'XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.camera_livre]
+description = "Câmera livre (experimental): boot no slot 1 (episódio 2) com camera.free_camera ligada; gira com o analógico direito, anda (relativo à câmera), pula, R3 recentra, olha para cima e para trás"
+test = true
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "load:1"
+# A partir de @gameplay_ready: RS para a esquerda 1,5 s, anda 4 s com um pulo e RS para a direita
+# no meio, R3 (recentra atrás do Crash, que fica de costas para uma parede invisível: a câmera para
+# a 1,4 dele), anda para a esquerda, olha para cima, anda e pula, anda para trás (em direção à câmera).
+input = [
+    ["@gameplay_ready"],
+    [2, "RS", -1.0, 0.0, 1.5], [2, "SHOT"], [4, "LS", 0.0, 1.0, 4], [4.5, "SHOT"], [5, "A"], [5.4, "RS", 0.6, 0.0, 1.2], [7, "SHOT"], [9, "R3"], [9, "SHOT"],
+    [10.2, "SHOT"], [11.5, "SHOT"], [12, "LS", -1.0, 0.0, 2], [14, "SHOT"], [14.5, "RS", 0.0, 0.7, 1], [16, "LS", 0.0, 1.0, 4], [16.5, "A"], [17, "SHOT"],
+    [20, "SHOT"], [21, "LS", 0.0, -1.0, 3], [23, "SHOT"],
+]
+env = { CRASH_SETTINGS = "camera.free_camera=true", CRASH_CAMERA_PROBE = "1" }
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['free camera: active', 'free camera: recenter behind the player'] }
+
+[profiles.camera_livre_abertura]
+description = "Câmera livre: NEW GAME (sobrescreve o slot 1 da cópia, piloto automático) com camera.free_camera ligada; a cena de abertura fica com a câmera do jogo e a câmera livre assume na vila (gira, anda, R3)"
+test = false
+timeout = 165
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+input = [
+    ["@cinematic"], [10, "SHOT"], [40, "SHOT"], [65, "SHOT"],
+    ["@gameplay_ready"], [0.5, "SHOT"], [1, "RS", 1.0, 0.0, 1.5], [3, "SHOT"], [6, "LS", 0.0, 1.0, 3], [8, "SHOT"],
+    [11, "RS", -0.8, 0.3, 1.5], [13, "SHOT"], [16, "LS", 0.0, 1.0, 3], [18, "SHOT"], [21, "R3"], [23, "SHOT"],
+]
+env = { CRASH_MENU_AUTOPILOT = "newgame", CRASH_SETTINGS = "camera.free_camera=true", CRASH_CAMERA_PROBE = "1" }
+expect = { exit = ["timeout"], events = ["cinematic", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['free camera: game camera \(cinematic\)', 'free camera: active'] }
+
+[profiles.icones]
+description = "Ícones dos botões conforme o último dispositivo: teclado, PlayStation e Xbox (DEVICE_*), no menu principal, nos saves, no episódio e na pausa"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+# DEVICE_PLAYSTATION / DEVICE_XBOX / DEVICE_KEYBOARD fazem de conta que aquele aparelho foi o último
+# usado; as teclas KEY_* contam como teclado. Caminho: LOAD GAME, slot 1, CONTINUE, Y inicia.
+# Capturas: menu (teclado, PlayStation, Xbox), saves (PlayStation, teclado), episódio (teclado,
+# PlayStation), pausa (teclado, PlayStation).
+input = [
+    ["@main_menu"], [1.5, "DEVICE_KEYBOARD"], [2, "SHOT"], [2.2, "DEVICE_PLAYSTATION"], [2.5, "SHOT"], [2.7, "DEVICE_XBOX"], [2.9, "SHOT"],
+    [3.2, "KEY_DOWN"], [4.2, "KEY_ENTER"],
+    ["@save_slots"], [1, "DEVICE_PLAYSTATION"], [1.5, "SHOT"], [2, "DEVICE_KEYBOARD"], [2.5, "SHOT"], [3, "KEY_ENTER"],
+    ["@load_complete"], [1, "KEY_ENTER"],
+    ["@hub"], [1.5, "SHOT"], [1.7, "DEVICE_PLAYSTATION"], [2.1, "SHOT"], [2.5, "Y"],
+    ["@gameplay_ready"], [3, "KEY_ESC"], [4.5, "SHOT"], [5.5, "DEVICE_PLAYSTATION"], [6.5, "SHOT"], [8, "KEY_ESC"],
+]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['button icon 00B1', 'last device used: playstation', 'last device used: keyboard'] }
+
+[profiles.controles_tela]
+description = "Aba CONTROLES da tela SETTINGS só pelo teclado: troca PULAR para K (captura de tecla), fecha, faz LOAD GAME e pula com K na fase"
+test = true
+timeout = 55
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+# Menu: seta para baixo x3 + Enter = SETTINGS; E x4 = aba CONTROLES (RB); seta para baixo x11 =
+# PULAR; Enter = escolher a tecla; K = a nova tecla; Esc fecha (salva). Depois LOAD GAME como em
+# teclado e, na fase, K pula (o salto aparece na última captura).
+input = [
+    ["@main_menu"], [2.5, "KEY_DOWN"], [3.1, "KEY_DOWN"], [3.7, "KEY_DOWN"], [4.5, "KEY_ENTER"],
+    [6.5, "KEY_E"], [6.9, "KEY_E"], [7.3, "KEY_E"], [7.7, "KEY_E"], [8.8, "SHOT"],
+    [9.1, "KEY_DOWN"], [9.4, "KEY_DOWN"], [9.7, "KEY_DOWN"], [10, "KEY_DOWN"], [10.3, "KEY_DOWN"], [10.6, "KEY_DOWN"],
+    [10.9, "KEY_DOWN"], [11.2, "KEY_DOWN"], [11.5, "KEY_DOWN"], [11.8, "KEY_DOWN"], [12.1, "KEY_DOWN"],
+    [13, "KEY_ENTER"], [13.7, "SHOT"], [14.5, "KEY_K"], [15.5, "SHOT"], [16.5, "KEY_ESC"], [17.5, "SHOT"],
+    [19.5, "KEY_DOWN"], [20.5, "KEY_ENTER"],
+    ["@save_slots"], [1.5, "KEY_ENTER"],
+    ["@load_complete"], [1, "KEY_ENTER"],
+    ["@hub"], [2, "KEY_TAB"],
+    ["@gameplay_ready"], [3, "KEY_K"], [3.6, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['tab -> controls', 'jump -> K / SPACE', '\[settings\] saved', 'XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.mouse_menus]
+description = "Menus pelo mouse como num jogo de PC: passar em SETTINGS vindo de NEW GAME seleciona direto (uma troca só), roda, teclado e D-pad continuam, clique abre SETTINGS; lá: clique nas abas, passar nas linhas, clique e arrasto nas estrelas, clique na linha e nas setas, roda, RB, VOLTAR; depois LOAD GAME, save e CONTINUE pelo clique, menu do episódio; na fase, pausa, passar em OPTIONS e clique em RESUME GAME"
+test = true
+timeout = 90
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MOUSE_TRACE = "1" }
+# MOUSE / CLICK / RCLICK: o cursor em (x, y) da imagem 1280x720 do jogo, com um clique; LDOWN / LUP
+# apertam / soltam o botão esquerdo ali (arrastar); WHEEL n = n dentes da roda (+ = para cima).
+# Menu principal (centro dos itens, x 640): NEW GAME 235, LOAD GAME 303, CREDITS 371, SETTINGS 451,
+# EXIT GAME 520; saves em y 330, x 220 / 434 / 644...; pausa: RESUME 271, OPTIONS 337.
+# SETTINGS (720p): abas em y 97 (JOGO 180, ÁUDIO 296, VÍDEO 417, GRÁFICOS 565, CONTROLES 745), RB em
+# 1210,92; ÁUDIO: linhas em y 156/200/244/288 (volumes), 376 legendas; estrelas de x 680 a 948 (a 5ª
+# em 799); a seta esquerda dos valores em x 655; (B) VOLTAR em 300,642.
+input = [
+    ["@main_menu"], [1.5, "SHOT"], [2, "MOUSE", 640, 236], [2.5, "MOUSE", 640, 451], [3.5, "SHOT"],
+    [4, "WHEEL", -1], [5, "WHEEL", 1], [6, "KEY_UP"], [7, "DOWN"], [8.5, "SHOT"], [9, "CLICK", 640, 451],
+    [11, "SHOT"], [11.5, "CLICK", 296, 97], [12.5, "MOUSE", 500, 244], [13, "CLICK", 799, 244],
+    [14, "LDOWN", 692, 288], [14.3, "MOUSE", 760, 288], [14.6, "MOUSE", 880, 288], [14.9, "LUP", 880, 288], [15.5, "SHOT"],
+    [16, "MOUSE", 520, 376], [16.5, "CLICK", 700, 376], [17, "WHEEL", -1], [17.8, "SHOT"],
+    [18.5, "CLICK", 1210, 92], [19.5, "MOUSE", 520, 288], [20, "CLICK", 655, 288], [20.8, "SHOT"],
+    [21.5, "CLICK", 745, 97], [22.5, "MOUSE", 500, 200], [23, "WHEEL", -9], [24, "SHOT"], [24.5, "CLICK", 300, 642],
+    ["@main_menu#2"], [1.5, "SHOT"], [2.5, "MOUSE", 640, 303], [3.5, "SHOT"], [4, "CLICK", 640, 303],
+    ["@save_slots"], [0.8, "SHOT"], [1, "MOUSE", 434, 330], [2, "SHOT"], [2.5, "CLICK", 220, 330],
+    ["@load_complete"], [0.5, "SHOT"], [1, "CLICK", 640, 653],
+    ["@hub"], [1, "SHOT"], [2, "Y"],
+    ["@gameplay_ready"], [3, "KEY_ESC"], [5, "MOUSE", 640, 337], [6, "SHOT"], [7, "CLICK", 643, 271], [9, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu#2", "save_slots", "hub", "gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['hover menu 0x[0-9A-F]+ item 3 -> selected \(was 0\)', 'selection 0 -> 3', 'wheel -1 on menu 0x[0-9A-F]+: item 3 -> 4', 'click menu 0x[0-9A-F]+ item 3 -> accept', '\[settings\] screen opened', 'tab -> audio \(mouse\)', 'audio\.effects -> 50% \(mouse\)', 'audio\.voice -> [0-9]+% \(mouse\)', 'game\.subtitles -> ', 'tab -> video', 'video\.fps_limit -> ', 'tab -> controls \(mouse\)', '\[settings\] screen closed', 'click menu 0x[0-9A-F]+ item 1 -> accept', 'XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.desempenho]
+description = "Benchmark de CPU/GPU: LOAD GAME no primeiro slot (episódio 2) e ~48 s andando, girando a câmera e atacando na fase (replay no relógio do jogo; tools/perf/bench.py)"
+test = false
+timeout = 220
+audio = false
+userdata_mode = "copy"
+# Começo do gravado_20261020_221744 (intros, LOAD GAME, slot 1, CONTINUE, Y), os primeiros 11 s
+# de caminhada dele e depois um trecho fixo de câmera, ataques e caminhada até t = 100 s.
+replay = [
+    [10.90, "SYNC", "0x4C800#1"],
+    [15.27, "START", 0.40], [16.93, "START", 0.23], [17.90, "START"], [18.87, "START"],
+    [19.63, "SYNC", "0x10042000#1"],
+    [19.97, "START"], [20.97, "START"], [21.97, "START"], [22.97, "START"], [24.97, "DOWN"],
+    [25.97, "A"], [32.47, "A"], [36.47, "A"], [38.47, "Y", 0.23],
+    [46.73, "SYNC", "0x12E0E800#1"],
+    [49.90, "A", 0.13],
+    [52.00, "SHOT"],
+    [52.37, "LS", 0.00, 0.33], [52.43, "LS", 0.00, 1.00], [53.03, "LS", -0.06, 1.00], [53.17, "LS", -0.11, 1.00],
+    [53.73, "LS", 0.00, 1.00], [53.87, "LS", 0.22, 1.00], [54.27, "LS", 0.16, 1.00], [56.70, "LS", 0.21, 1.00],
+    [56.90, "LS", 0.35, 1.00], [57.60, "LS", 0.25, 1.00], [57.83, "LS", 0.13, 1.00], [58.07, "LS", 0.00, 1.00],
+    [58.43, "LS", -0.25, 1.00], [58.73, "LS", -0.18, 1.00], [60.47, "LS", -0.10, 1.00], [60.70, "LS", 0.00, 1.00],
+    [62.00, "LS", 0.17, 1.00], [62.27, "LS", 0.33, 1.00], [63.03, "LS", 0.21, 1.00], [63.13, "LS", 0.15, 0.45],
+    [63.27, "LS", 0.00, 0.00],
+    [64.00, "RS", 0.70, 0.00], [68.00, "RS", 0.00, 0.00],
+    [68.00, "LS", 0.00, 1.00], [71.00, "X"], [72.00, "X"], [73.00, "A"], [74.00, "LS", -0.50, 1.00],
+    [77.00, "SHOT"],
+    [78.00, "LS", 0.00, -1.00], [80.00, "Y"], [82.00, "RS", -0.70, 0.00], [84.00, "LS", 0.50, 1.00],
+    [86.00, "RS", 0.00, 0.00], [88.00, "X"], [89.00, "LS", 0.00, 1.00], [91.00, "A"], [93.00, "LS", -1.00, 0.00],
+    [95.00, "RS", 0.50, 0.00], [97.00, "LS", 0.00, 1.00], [99.00, "RS", 0.00, 0.00],
+    [100.00, "LS", 0.00, 0.00],
+    [100.50, "SHOT"],
+    [101.50, "END"],
+]
+expect = { exit = ["ok"], log_absent = ['\[fatal\]', '\[crash\]', 'replay sync .* timed out'], log_contains = ['\[input\] replay finished'] }
+
+[profiles.desempenho_vila]
+description = "Benchmark (a cena mais pesada): NEW GAME pelo piloto automático de menus, cena de abertura (30 fps) e a vila: ~3 s parado e ~30 s andando, girando a câmera e atacando, com o limite de FPS do bench.py. tools/perf/bench.py + walk_window.py"
+test = false
+timeout = 230
+audio = false
+userdata_mode = "copy"
+# CRASH_MENU_AUTOPILOT=newgame passa pelos logos, título, NEW GAME, nome, NORMAL, slot 1 e CONTINUE
+# assim que cada tela aparece (settings/menu_autopilot.cpp). A cena de abertura lê o controle uma vez
+# por quadro e não pula, então roda a 30 fps; o replay espera (WAIT, até 60 s cada) o nó 756 (começo
+# do carregamento, onde o 638 pisca antes) e depois o 638 do Frontend.bfig, a jogabilidade
+# (CRASH_FRONTEND_TRACE loga os nós), e o bench.py troca o limite de FPS em t = 110,5 (CRASH_FPS_LIMIT_AT). A caminhada é a
+# gravada em 2026-10-21 (build/desempenho/gravacao) com os botões do primeira_fase.
+env = { CRASH_MENU_AUTOPILOT = "newgame", CRASH_FRONTEND_TRACE = "1" }
+replay = [
+    [30.00, "WAIT", "frontend node 756 (input"],
+    [110.00, "WAIT", "frontend node 638 (input"],
+    [111.00, "SHOT"], [119.37, "LS", 0.00, 1.00], [123.27, "LS", 0.00, 0.00], [123.27, "RS", 0.70, 0.00],
+    [125.00, "SHOT"], [126.27, "LS", -0.60, 0.80], [126.27, "RS", 0.00, 0.00], [130.27, "LS", 0.00, 0.00],
+    [130.27, "X"], [131.27, "X"], [132.27, "LS", 0.00, -1.00], [136.20, "LS", 0.00, 0.00],
+    [136.20, "A"], [137.20, "RS", -0.70, 0.00], [140.20, "LS", 0.70, 0.70], [140.20, "RS", 0.00, 0.00],
+    [144.00, "SHOT"], [145.00, "END"],
+]
+expect = { exit = ["ok"], log_absent = ['\[fatal\]', '\[crash\]', 'replay sync .* timed out', 'replay wait .* timed out'], log_contains = ['\[input\] replay finished', 'menu autopilot: last step pressed'] }
+
+[profiles.desempenho_vila_direto]
+description = "Benchmark rápido (a cena mais pesada): boot direto no L1_E1 pulando a cena de abertura e 22 s parado na vila logo que o jogador ganha o controle; tools/perf/bench.py --profile desempenho_vila_direto mede de gameplay_ready + 1 s a + 21 s"
+test = false
+timeout = 50
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+input = [["@gameplay_ready"], [1, "SHOT"], [21, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+# ---- Tela do nome com teclado e apagar saves (settings/save_screens.cpp; README "Nome e saves no PC") ----
+# Teclado da tela do nome (1280x720 da imagem do jogo): teclas de 50x46 a cada 56 x 52, primeira linha
+# em y 296; centros: 1-0 em x 388 + 56 i (y 319), Q-P em x 388 + 56 i (y 371), A-L em x 416 + 56 i
+# (y 423), Z-M em x 472 + 56 i (y 475); APAGAR (510, 527) e PRONTO (770, 527).
+# Em PT-BR: --set 'env={ CRASH_SETTINGS = "game.language=pt-br" }'.
+
+[profiles.nome_teclado_controle]
+description = "NEW GAME: nome AQ1Z digitado no teclado da tela com o controle (D-pad, A, X apaga, Y pronto), NORMAL e sobrescreve o slot 3; confere o nome no save"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+input = [
+    ["@main_menu"], [1.5, "A"],
+    ["@name_entry"], [1, "SHOT"], [1.5, "A"], [2, "UP"], [2.5, "A"], [3, "UP"], [3.5, "A"], [4, "RIGHT"], [4.5, "A"],
+    [5, "SHOT"], [5.5, "X"], [6, "DOWN"], [6.3, "DOWN"], [6.6, "DOWN"], [7, "A"], [7.5, "SHOT"], [8, "Y"], [10, "A"],
+    ["@save_slots"], [1, "RIGHT"], [2, "RIGHT"], [3, "A"], [4.5, "DOWN"], [5.5, "A"], [8, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["name_entry", "save_slots"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[saves\] name: DONE -> "AQ1Z"', 'XamContentCreateEx.*GameSlot 3.*Name: AQ1Z'] }
+
+[profiles.nome_teclado_fisico]
+description = "NEW GAME: nome CRASH digitado no teclado físico (letras, uma a mais com o nome cheio, Backspace, Enter = pronto) e o resto pelo teclado (Enter, setas); sobrescreve o slot 4"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+input = [
+    ["@main_menu"], [1.5, "KEY_ENTER"],
+    ["@name_entry"], [1, "KEY_C"], [1.4, "KEY_R"], [1.8, "KEY_A"], [2.2, "KEY_S"], [2.6, "KEY_H"], [3.0, "KEY_X"], [3.5, "SHOT"],
+    [4, "KEY_BACKSPACE"], [4.5, "KEY_H"], [5, "SHOT"], [5.5, "KEY_ENTER"], [7.5, "KEY_ENTER"],
+    ["@save_slots"], [1, "KEY_RIGHT"], [2, "KEY_RIGHT"], [3, "KEY_RIGHT"], [4, "KEY_ENTER"], [5.5, "KEY_DOWN"], [6.5, "KEY_ENTER"], [9, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["name_entry", "save_slots"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['name is full', '\[saves\] name: DONE -> "CRASH"', 'XamContentCreateEx.*GameSlot 4.*Name: CRASH'] }
+
+[profiles.nome_teclado_mouse]
+description = "NEW GAME: nome MOUSE clicando nas teclas (passar o mouse destaca a tecla), APAGAR e PRONTO clicados; sobrescreve o slot 5"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+input = [
+    ["@main_menu"], [1.5, "A"],
+    ["@name_entry"], [1, "CLICK", 808, 475], [1.5, "CLICK", 836, 371], [2, "CLICK", 724, 371], [2.5, "CLICK", 472, 423],
+    [3, "CLICK", 500, 371], [3.5, "CLICK", 510, 527], [4, "MOUSE", 500, 371], [4.5, "SHOT"], [5, "CLICK", 500, 371],
+    [5.5, "MOUSE", 770, 527], [6, "SHOT"], [6.5, "CLICK", 770, 527], [8.5, "A"],
+    ["@save_slots"], [1, "RIGHT"], [2, "RIGHT"], [3, "RIGHT"], [4, "RIGHT"], [5, "A"], [6.5, "DOWN"], [7.5, "A"], [10, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["name_entry", "save_slots"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[saves\] name: erase -> "MOUS"', '\[saves\] name: DONE -> "MOUSE"', 'XamContentCreateEx.*GameSlot 5.*Name: MOUSE'] }
+
+[profiles.apagar_save]
+description = "LOAD GAME: X no slot 2 abre a pergunta; B cancela, NÃO cancela (o slot fica); X, SIM apaga: a lista é lida de novo com o slot 2 vazio e os outros no lugar; LOAD do slot 1 continua funcionando"
+test = true
+timeout = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+input = [
+    ["@main_menu"], [1, "DOWN"], [2, "A"],
+    ["@save_slots"], [1.5, "RIGHT"], [2.5, "SHOT"], [3, "X"], [4, "SHOT"], [4.5, "B"], [5.5, "SHOT"],
+    [6.5, "X"], [7.5, "A"], [8.5, "SHOT"],
+    [9.5, "X"], [10.5, "DOWN"], [11.5, "SHOT"], [12, "A"],
+    ["@save_slots#2"], [1.5, "SHOT"], [2.5, "LEFT"], [3.5, "A"],
+    ["@load_complete"], [1, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["save_deleted", "save_slots#2", "load_complete"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['delete slot 2: cancelled \(B\)', 'delete slot 2: cancelled \(NO\)', 'XenonSaveDrive::vf19\(.*GameSlot 2"\) -> deleted', 'selection back on slot 2', 'XamContentCreateEnumerator.* 4 package'] }
+
+[profiles.apagar_save_mouse]
+description = "LOAD GAME pelo mouse e teclado: Delete no slot 3 e clique direito cancela; clique em X APAGAR no slot 4 e clique em SIM apaga"
+test = true
+timeout = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+input = [
+    ["@main_menu"], [1, "DOWN"], [2, "A"],
+    ["@save_slots"], [1, "MOUSE", 643, 290], [2, "KEY_DELETE"], [3, "SHOT"], [3.5, "RCLICK", 643, 290], [4.5, "SHOT"],
+    [5.5, "MOUSE", 800, 290], [6.5, "MOUSE", 640, 643], [7, "SHOT"], [7.5, "CLICK", 640, 643], [8.5, "MOUSE", 640, 410], [9, "SHOT"], [9.5, "CLICK", 640, 410],
+    ["@save_slots#2"], [1.5, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["save_deleted", "save_slots#2"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['delete slot 3: cancelled \(B\)', 'GameSlot 4"\) -> deleted', 'selection back on slot 4'] }
+
+# ---- Recursos DEV (runtime/dev, docs/dev_features.md): um perfil por recurso, provas em build\dev ----
+
+[profiles.dev_api]
+description = "DEV: roda tools/dev_lua/dump_globals.lua dentro do Lua do jogo e lista no log as globais, classes C++ e enums ([lua] API ...)"
+test = true
+timeout = 25
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_lua_file = "tools/dev_lua/dump_globals.lua"
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]', 'lua error'], log_contains = ['\[lua\] API Managers.StatsManager object', '\[lua\] API done: \d+ entries'] }
+
+[profiles.dev_invencivel]
+description = "DEV: dev_invincible; o Lua causa 1000 de dano no Crash (TakeDamage) e ele continua vivo"
+test = true
+timeout = 25
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_at = "gameplay_ready+1"
+dev_lua = 'dev.damage(1000) devprint("vivo depois de 1000 de dano: " .. tostring(not dev.is_dead()))'
+input = [["@gameplay_ready"], [0.5, "SHOT"], [3, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]', 'lua error'], log_contains = ['invincible: blocked 1000.00 damage', 'vivo depois de 1000 de dano: true'] }
+
+[profiles.dev_mojo]
+description = "DEV: dev_mojo = 500; o contador de mojo do HUD mostra 500"
+test = true
+timeout = 25
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_mojo = 500
+input = [["@gameplay_ready"], [0.3, "SHOT"], [2, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]', 'lua error'], log_contains = ['\[lua\] dev.mojo 500'] }
+
+[profiles.dev_teleporte]
+description = "DEV: dev_teleport leva o Crash da entrada da vila para perto da casa da Coco (posição lida de volta com dev.pos)"
+test = true
+timeout = 25
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_lua_at = "gameplay_ready+1"
+dev_teleport = [-43.0, 1.5, 55.0]
+input = [["@gameplay_ready"], [0.5, "SHOT"], [3, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]', 'lua error'], log_contains = ['\[lua\] dev.pos -43 1.5 55'] }
+
+[profiles.dev_sombra]
+description = "DEV: dev_shadow liga o cheat Shadow Crash do jogo (SettingsDatabase m_CheatShadowCrash)"
+test = true
+timeout = 25
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_shadow = true
+input = [["@gameplay_ready"], [1, "LS", 0, 1, 1.5], [3, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]', 'lua error'], log_contains = ['dev.setting m_CheatShadowCrash = true'] }
+
+[profiles.dev_cheat_cabecao]
+description = "DEV: o código de cheat original do X360 (pausa, segura RT, X X Y A) liga o Big Head Crash, sem nada do runtime"
+test = true
+timeout = 25
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+input = [["@gameplay_ready"], [0.5, "SHOT"], [1, "START"], [2.5, "RT", 1, 3], [3, "X", 0.15], [3.5, "X", 0.15], [4, "Y", 0.15], [4.5, "A", 0.15], [6, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.dev_desbloquear]
+description = "DEV: desbloqueia a skin não usada Crash_Hulk (22) e depois tudo o que o jogo desbloqueia (dev.unlock_all: 20 skins, fases, golpes...); a lista de skins do jogo tem 20 posições"
+test = true
+timeout = 25
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_lua = 'dev.unlock_all({ESkin_Crash_Hulk})'
+input = [["@gameplay_ready"], [2, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]', 'lua error'], log_contains = ['dev.unlock_all queued', '\[dev\] unlock skin 22 -> unlocked: 21 22', '\[dev\] unlock skin 23 -> unlocked: 21 22 10 5 3 15 11 24 2 13 0 4 12 17 16 8 7 6 14 23$'] }
+
+[profiles.dev_soundtest]
+description = "DEV: a fase escondida SoundTest (índice 20 da lista do jogo) pelo boot direto; precisa do mod de teste com os 2 scripts que faltam no disco"
+test = false
+timeout = 30
+audio = false
+userdata_mode = "copy"
+boot = "level:SoundTest"
+mods_dir = "private/assets/test_mods/dev"
+input = [["@level_ready"], [1, "SHOT"], ["@gameplay_ready"], [2, "SHOT"]]
+expect = { exit = ["timeout"], events = ["level_start", "level_ready", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['StartLevel 20 SOUNDTEST'] }
+
+[profiles.dev_luadec]
+description = "DEV: confere o tools/luadec.py: o compilador do próprio jogo compila (loadstring, sem rodar) a saída do decompilador gerada por 'luadec.py check' e loga ok/erro de cada script; 'luadec.py check --log' resume"
+test = false
+timeout = 60
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_lua_file = "private/luadec/check.lua"
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]', 'LUADEC \d+ error'], log_contains = ['LUADEC done'] }
