@@ -12,6 +12,7 @@
 #include "../fs/rcf_overlay.h"
 #include "../gpu/window.h"
 #include "../kernel/input.h"
+#include "../kernel/pad_slots.h"
 #include "../kernel/pc_input.h"
 #include "../subtitles/subtitles.h"
 
@@ -107,6 +108,7 @@ namespace settings::menu
             FreeCamera, CameraSensitivity, CameraInvertY, CameraDistance,
             LightSsao, LightGi, LightGiIntensity, LightContactShadows, LightSoftShadows,
             Prompts, MouseCamera, MouseSensitivity, MouseInvertY, WalkSpeed, MouseMenus,
+            Player1, Player2,
             DevConsole,
             HeaderSubtitles, HeaderCamera, HeaderLighting, HeaderDev,  // sub-group headings inside a tab (not selectable)
             Bind0,  // + settings::Action: the key bindings (controls.h), one row per action
@@ -130,8 +132,8 @@ namespace settings::menu
 
         std::vector<Item> ControlItems()
         {
-            std::vector<Item> items = { Item::Prompts, Item::MouseCamera, Item::MouseSensitivity, Item::MouseInvertY, Item::WalkSpeed,
-                                        Item::MouseMenus };
+            std::vector<Item> items = { Item::Player1, Item::Player2, Item::Prompts, Item::MouseCamera, Item::MouseSensitivity,
+                                        Item::MouseInvertY, Item::WalkSpeed, Item::MouseMenus };
             for (int i = 0; i < int(ACTION_COUNT); i++)
                 items.push_back(Item(int(Item::Bind0) + i));
             return items;
@@ -300,6 +302,8 @@ namespace settings::menu
             case Item::LightContactShadows: return "lighting.contact_shadows";
             case Item::LightSoftShadows: return "lighting.soft_shadows";
             case Item::Prompts: return "controls.prompts";
+            case Item::Player1: return "controls.player1";
+            case Item::Player2: return "controls.player2";
             case Item::MouseCamera: return "controls.mouse_camera";
             case Item::MouseSensitivity: return "controls.mouse_sensitivity";
             case Item::MouseInvertY: return "controls.invert_y";
@@ -355,6 +359,8 @@ namespace settings::menu
             case Item::LightContactShadows: return T({ "CONTACT SHADOWS", "SOMBRAS DE CONTATO" });
             case Item::LightSoftShadows: return T({ "SOFT SHADOWS", "SOMBRAS SUAVES" });
             case Item::Prompts: return T({ "BUTTON ICONS", "ÍCONES DOS BOTÕES" });
+            case Item::Player1: return T({ "PLAYER 1", "JOGADOR 1" });
+            case Item::Player2: return T({ "PLAYER 2", "JOGADOR 2" });
             case Item::MouseCamera: return T({ "MOUSE CAMERA", "CÂMERA PELO MOUSE" });
             case Item::MouseSensitivity: return T({ "MOUSE SENSITIVITY", "SENSIBILIDADE DO MOUSE" });
             case Item::MouseInvertY: return T({ "INVERT MOUSE Y", "INVERTER Y DO MOUSE" });
@@ -558,6 +564,12 @@ namespace settings::menu
             case Item::LightSoftShadows:
                 return { T({ "The game's shadows with a wider, smoother filter.", "As sombras do jogo com um filtro mais largo e suave." }),
                          T({ "SHADOW SOFTNESS (GRAPHICS) still sets the radius.", "A SUAVIDADE DAS SOMBRAS (GRÁFICOS) ajusta o raio." }) };
+            case Item::Player1:
+                return { T({ "Controller of player 1 (with the keyboard and mouse).", "Controle do jogador 1 (junto com teclado e mouse)." }),
+                         T({ "AUTO: the one that pressed START on the title screen.", "AUTO: o que apertou START na tela título." }) };
+            case Item::Player2:
+                return { T({ "Controller of player 2: B joins the game, Y leaves", "Controle do jogador 2: B entra no jogo, Y desce" }),
+                         T({ "the backpack. A single controller is always player 1.", "da mochila. Com um controle só, ele é o jogador 1." }) };
             case Item::Prompts:
                 return { T({ "Icons in menus and hints: the last device used,", "Ícones nos menus e dicas: o último aparelho usado," }),
                          T({ "or always Xbox / PlayStation / keyboard.", "ou sempre Xbox / PlayStation / teclado." }) };
@@ -634,6 +646,28 @@ namespace settings::menu
             default:
                 return g_values.upscaler == Upscaler::Fsr ? T({ "NATIVE (AA)", "NATIVO (AA)" }) : T({ "NATIVE (DLAA)", "NATIVO (DLAA)" });
             }
+        }
+
+        // [controls] player1 / player2: "AUTO", or the controller's name ("CONTROLE 2", "DUALSENSE (USB)",
+        // "+ JOGADOR 2" when it is on the other player now, "(DESCONECTADO)" when it is not connected).
+        std::string PlayerDeviceText(const std::string& key)
+        {
+            if (key == "auto")
+                return T({ "AUTO", "AUTO" });
+            for (const input::slots::Device& device : input::slots::Devices())
+            {
+                if (device.key != key)
+                    continue;
+                std::string name = device.name;
+                if (key.compare(0, 4, "xbox") == 0 && name.compare(0, 9, "Controle ") == 0)
+                    name = T({ "CONTROLLER ", "CONTROLE " }) + name.substr(9);
+                for (char& c : name)
+                    c = char(toupper(uint8_t(c)));
+                return name;
+            }
+            std::string name = key.compare(0, 4, "xbox") == 0 ? std::string(T({ "CONTROLLER ", "CONTROLE " })) + key.substr(4)
+                                                              : "PLAYSTATION " + key.substr(11);
+            return name + T({ " (NOT CONNECTED)", " (DESCONECTADO)" });
         }
 
         std::string Value(Item item)
@@ -716,6 +750,8 @@ namespace settings::menu
                 case PromptStyle::Keyboard: return T({ "KEYBOARD", "TECLADO" });
                 default: return T({ "AUTOMATIC", "AUTOMÁTICO" });
                 }
+            case Item::Player1:
+            case Item::Player2: return PlayerDeviceText(g_values.controls.players[item == Item::Player2]);
             case Item::MouseCamera: return OnOff(g_values.controls.mouseCamera);
             case Item::MouseInvertY: return OnOff(g_values.controls.invertY);
             case Item::MouseMenus: return OnOff(g_values.controls.mouseMenus);
@@ -1228,6 +1264,20 @@ namespace settings::menu
                 case Item::Prompts:
                     g_values.controls.prompts = Cycle(g_values.controls.prompts, 4, direction);
                     break;
+                case Item::Player1:
+                case Item::Player2:
+                {
+                    // AUTO, then the controllers connected now (and the saved one, if it is not).
+                    std::string& chosen = g_values.controls.players[item == Item::Player2];
+                    std::vector<std::string> keys = { "auto" };
+                    for (const input::slots::Device& device : input::slots::Devices())
+                        keys.push_back(device.key);
+                    if (std::find(keys.begin(), keys.end(), chosen) == keys.end())
+                        keys.push_back(chosen);
+                    size_t index = size_t(std::find(keys.begin(), keys.end(), chosen) - keys.begin());
+                    chosen = keys[(index + keys.size() + direction) % keys.size()];
+                    break;
+                }
                 case Item::MouseCamera:
                     g_values.controls.mouseCamera = !g_values.controls.mouseCamera;
                     break;

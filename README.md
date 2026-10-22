@@ -20,7 +20,8 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 - **DLSS / DLAA** (NVIDIA RTX) and **FSR 3.1** (any GPU) upscaling, FXAA / SMAA, anisotropic filtering,
   adjustable motion blur, depth of field and shadow softness.
 - **PC controls**: keyboard and mouse with rebindable keys, mouse camera, mouse in every menu, Xbox and
-  **PlayStation (DualSense)** controllers, button icons that follow the last device used.
+  **PlayStation (DualSense)** controllers, button icons that follow the last device used, and **local
+  co-op** with two controllers (choose who is player 1 and player 2 in SETTINGS > CONTROLS).
 - **Native settings screen** in the game's own style (GAME, AUDIO, VIDEO, GRAPHICS, CONTROLS and
   DEFINITIVE EDITION tabs), plus a **launcher** with the same options before playing.
 - **Brazilian Portuguese translation** of every text, and **subtitles** for all dialogue and cutscenes
@@ -173,7 +174,8 @@ de PC.
 - **DLSS / DLAA** (NVIDIA RTX) e **FSR 3.1** (qualquer placa), FXAA / SMAA, filtro anisotrópico, motion
   blur, profundidade de campo e suavidade das sombras ajustáveis.
 - **Controles de PC**: teclado e mouse com teclas configuráveis, câmera pelo mouse, mouse em todos os
-  menus, controles Xbox e **PlayStation (DualSense)**, ícones dos botões que seguem o último dispositivo.
+  menus, controles Xbox e **PlayStation (DualSense)**, ícones dos botões que seguem o último dispositivo e
+  **co-op local** com dois controles (escolha quem é o jogador 1 e o 2 em SETTINGS > CONTROLES).
 - **Tela de configurações nativa** no estilo do jogo (abas JOGO, ÁUDIO, VÍDEO, GRÁFICOS, CONTROLES e
   DEFINITIVE EDITION) e um **launcher** com as mesmas opções antes de jogar.
 - **Tradução completa para português do Brasil** e **legendas** em todas as falas e cenas (transcrição
@@ -254,6 +256,11 @@ cheia, F8 liga/desliga o remaster da iluminação e, com **DEFINITIVE EDITION > 
 As opções padrão são a experiência original (1280x720, 30 fps, sem upscaler, extras desligados). Ligue o
 que quiser em **SETTINGS** (menu principal ou pausa > OPÇÕES) ou no launcher. Para o HD AI Remaster,
 instale-o e ligue **DEFINITIVE EDITION > HD AI REMASTER**. Para jogar em português, IDIOMA = PORTUGUÊS (BR).
+
+**Dois jogadores**: ligue dois controles (Xbox ou DualSense, em qualquer combinação). Na fase, aperte **B**
+no segundo controle quando aparecer JOIN GAME: o jogador 2 entra na mochila do Crash, e **Y** o faz descer.
+O teclado e o mouse ficam sempre com o jogador 1; com um controle só, ele é o jogador 1. Para trocar quem é
+quem, use **SETTINGS > CONTROLES > JOGADOR 1 / JOGADOR 2**.
 
 ## Mods e exportação dos assets do jogo
 

@@ -178,6 +178,11 @@ def input_script(presses):
         if not (isinstance(entry, list) and len(entry) >= 2):
             raise SystemExit(f"entrada inválida em input: {entry!r} {usage}")
         seconds, button = entry[0], str(entry[1]).upper()
+        # P2_ / P3_ / P4_ + a button, stick or trigger: a virtual second (third, fourth) controller
+        # (local co-op), e.g. [1, "P2_START"], [2, "P2_LS", 1, 0, 1.5].
+        player = ""
+        if re.fullmatch(r"P[2-4]_.+", button) and button[3:] in BUTTONS | STICKS | TRIGGERS:
+            player, button = button[:3], button[3:]
         values = 2 if button in STICKS or button in MOUSE else 1 if button in TRIGGERS or button in WHEEL else 0
         # KEY_<name>: a keyboard key or mouse button (settings/controls.h names: KEY_W, KEY_SPACE,
         # KEY_MOUSE1...), through the [controls] bindings like the real keyboard.
@@ -188,7 +193,7 @@ def input_script(presses):
                              f"(válidos: {' '.join(sorted(BUTTONS | STICKS | TRIGGERS))} e KEY_<tecla>)")
         if len(entry) not in (2 + values, 3 + values):
             raise SystemExit(f"entrada inválida em input: {entry!r} {usage}")
-        name = button
+        name = player + button
         if values:
             name += "=" + "/".join(f"{float(v):g}" for v in entry[2:2 + values])
         ms = round(float(seconds) * 1000)

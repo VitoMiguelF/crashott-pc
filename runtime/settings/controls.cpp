@@ -239,6 +239,12 @@ namespace settings
             valid = ParseInt(lower, controls.walkSpeed, 10, 90);
         else if (key == "mouse_menus")
             valid = ParseBool(lower, controls.mouseMenus);
+        else if (key == "player1" || key == "player2")
+        {
+            valid = ValidPlayerDevice(lower);
+            if (valid)
+                controls.players[key == "player2"] = lower;
+        }
         else if (key == "prompts")
         {
             valid = false;
@@ -254,6 +260,18 @@ namespace settings
         else
             return false;
         return true;
+    }
+
+    bool ValidPlayerDevice(const std::string& key)
+    {
+        if (key == "auto")
+            return true;
+        for (std::string prefix : { "xbox", "playstation" })
+        {
+            if (key.size() == prefix.size() + 1 && key.compare(0, prefix.size(), prefix) == 0 && key.back() >= '1' && key.back() <= '4')
+                return true;
+        }
+        return false;
     }
 
     std::string SerializeControls(const Controls& c)
@@ -279,7 +297,9 @@ namespace settings
             << "invert_y = " << (c.invertY ? "true" : "false") << "   # inverte o eixo vertical da camera (mouse e teclas)\n"
             << "walk_speed = " << c.walkSpeed << "   # 10-90 %, analogico enquanto 'walk' esta apertado (andar em vez de correr)\n"
             << "mouse_menus = " << (c.mouseMenus ? "true" : "false") << "   # menus do jogo pelo mouse (passar por cima seleciona, clique confirma, botao direito volta)\n"
-            << "prompts = \"" << PromptStyleName(c.prompts) << "\"   # icones dos botoes: auto (o ultimo usado) | xbox | playstation | keyboard\n";
+            << "prompts = \"" << PromptStyleName(c.prompts) << "\"   # icones dos botoes: auto (o ultimo usado) | xbox | playstation | keyboard\n"
+            << "player1 = \"" << c.players[0] << "\"   # co-op local, controle do jogador 1: auto | xbox1..xbox4 (XInput) | playstation1..playstation4\n"
+            << "player2 = \"" << c.players[1] << "\"   # controle do jogador 2 (com um controle so, ele e o jogador 1, junto com o teclado)\n";
         return out.str();
     }
 }

@@ -53,6 +53,7 @@ namespace input::hid
         struct Pad
         {
             std::wstring path;
+            uint32_t id = 0;  // Pads(): never reused, so a pad that leaves and comes back is a new one
             HANDLE handle = INVALID_HANDLE_VALUE;
             Kind kind = Kind::DualSense;
             bool bluetooth = false;
@@ -74,6 +75,7 @@ namespace input::hid
         std::atomic<bool> g_started{ false };
         HANDLE g_rescanEvent = nullptr;
         std::atomic<ULONGLONG> g_lastActive{ 0 };
+        std::atomic<uint32_t> g_nextId{ 1 };
 
         SHORT StickAxis(uint8_t value, bool flip)
         {
@@ -336,6 +338,7 @@ namespace input::hid
             }
             auto pad = std::make_shared<Pad>();
             pad->path = path;
+            pad->id = g_nextId++;
             pad->handle = handle;
             pad->kind = model->kind;
             pad->inputLength = caps.InputReportByteLength;
@@ -405,15 +408,12 @@ namespace input::hid
             SetupDiDestroyDeviceInfoList(devices);
         }
 
-        std::shared_ptr<Pad> PadOf(uint32_t user)
+        std::shared_ptr<Pad> PadById(uint32_t id)
         {
             std::lock_guard lock(g_padsMutex);
-            uint32_t index = 0;
             for (const auto& pad : g_pads)
             {
-                if (!pad->alive)
-                    continue;
-                if (index++ == user)
+                if (pad->alive && pad->id == id)
                     return pad;
             }
             return nullptr;
@@ -443,31 +443,32 @@ namespace input::hid
             SetEvent(g_rescanEvent);
     }
 
-    bool Read(uint32_t user, bool, XINPUT_GAMEPAD& pad)
+    std::vector<PadInfo> Pads()
     {
         Start();
-        std::shared_ptr<Pad> ps = PadOf(user);
+        std::lock_guard lock(g_padsMutex);
+        std::vector<PadInfo> pads;
+        for (const auto& pad : g_pads)
+        {
+            if (pad->alive)
+                pads.push_back({ pad->id, pad->name });
+        }
+        return pads;
+    }
+
+    bool ReadPad(uint32_t id, XINPUT_GAMEPAD& pad)
+    {
+        std::shared_ptr<Pad> ps = PadById(id);
         if (!ps)
             return false;
-        XINPUT_GAMEPAD state;
-        {
-            std::lock_guard lock(ps->mutex);
-            state = ps->state;
-        }
-        pad.wButtons |= state.wButtons;
-        pad.bLeftTrigger = std::max(pad.bLeftTrigger, state.bLeftTrigger);
-        pad.bRightTrigger = std::max(pad.bRightTrigger, state.bRightTrigger);
-        // Sticks as pairs, so a centred XInput pad does not cut a PlayStation stick's diagonal.
-        if (std::hypot(state.sThumbLX, state.sThumbLY) > std::hypot(pad.sThumbLX, pad.sThumbLY))
-            pad.sThumbLX = state.sThumbLX, pad.sThumbLY = state.sThumbLY;
-        if (std::hypot(state.sThumbRX, state.sThumbRY) > std::hypot(pad.sThumbRX, pad.sThumbRY))
-            pad.sThumbRX = state.sThumbRX, pad.sThumbRY = state.sThumbRY;
+        std::lock_guard lock(ps->mutex);
+        pad = ps->state;
         return true;
     }
 
-    void SetVibration(uint32_t user, uint16_t left, uint16_t right)
+    void SetPadVibration(uint32_t id, uint16_t left, uint16_t right)
     {
-        std::shared_ptr<Pad> ps = PadOf(user);
+        std::shared_ptr<Pad> ps = PadById(id);
         if (ps && ps->outputLength)
             ps->motors = uint32_t(left) << 16 | right;
     }
@@ -552,21 +553,24 @@ namespace input::hid
             for (const auto& pad : g_pads)
                 printf("  %s (relatorio de entrada %u bytes, saida %u)\n", pad->name.c_str(), pad->inputLength, pad->outputLength);
         }
-        XINPUT_GAMEPAD last[4] = {};
+        std::vector<std::pair<uint32_t, XINPUT_GAMEPAD>> last;
         ULONGLONG end = GetTickCount64() + ULONGLONG(seconds) * 1000;
         while (GetTickCount64() < end)
         {
-            for (uint32_t user = 0; user < 4; user++)
+            for (const PadInfo& info : Pads())
             {
                 XINPUT_GAMEPAD pad{};
-                if (!Read(user, false, pad))
+                if (!ReadPad(info.id, pad))
                     continue;
                 // Cross held: both motors at half (rumble check).
-                SetVibration(user, (pad.wButtons & XINPUT_GAMEPAD_A) ? 0x8000 : 0, (pad.wButtons & XINPUT_GAMEPAD_A) ? 0x8000 : 0);
-                if (!Active(pad, last[user]))
+                SetPadVibration(info.id, (pad.wButtons & XINPUT_GAMEPAD_A) ? 0x8000 : 0, (pad.wButtons & XINPUT_GAMEPAD_A) ? 0x8000 : 0);
+                auto it = std::find_if(last.begin(), last.end(), [&](const auto& entry) { return entry.first == info.id; });
+                if (it == last.end())
+                    it = last.insert(last.end(), { info.id, XINPUT_GAMEPAD{} });
+                if (!Active(pad, it->second))
                     continue;
-                last[user] = pad;
-                printf("[%u] botoes %04X  LS %6d %6d  RS %6d %6d  L2 %3u R2 %3u\n", user, pad.wButtons, pad.sThumbLX, pad.sThumbLY, pad.sThumbRX,
+                it->second = pad;
+                printf("[%u] botoes %04X  LS %6d %6d  RS %6d %6d  L2 %3u R2 %3u\n", info.id, pad.wButtons, pad.sThumbLX, pad.sThumbLY, pad.sThumbRX,
                        pad.sThumbRY, pad.bLeftTrigger, pad.bRightTrigger);
                 fflush(stdout);
             }

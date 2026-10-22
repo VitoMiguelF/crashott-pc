@@ -15,6 +15,7 @@
 //   --settings-preview <folder>  draws the settings screen to PNG files and exits (settings_menu.h)
 //   --hid-selftest  checks the PlayStation pad report parsing (kernel/hid_pads.h) and exits
 //   --hid-monitor [seconds]  lists the PlayStation pads and prints their input (kernel/hid_pads.h)
+//   --pads-selftest  checks which player each controller gets (local co-op, kernel/pad_slots.h) and exits
 //   --prompt-preview <folder>  draws the button icons (Xbox / PlayStation / keyboard) to PNG files and
 //               exits (settings/prompt_icons.h)
 //   --restarted <pid>  given by a restart from the settings screen (settings.h, Restart): waits for
@@ -32,6 +33,7 @@
 #include "kernel/memory.h"
 #include "kernel/xex_loader.h"
 #include "kernel/hid_pads.h"
+#include "kernel/pad_slots.h"
 #include "kernel/pc_input.h"
 #include "paths.h"
 #include "settings/direct_boot.h"
@@ -121,6 +123,8 @@ int main(int argc, char** argv)
     {
         if (strcmp(argv[i], "--hid-selftest") == 0)
             return input::hid::SelfTest();
+        if (strcmp(argv[i], "--pads-selftest") == 0)
+            return input::slots::SelfTest();
         if (strcmp(argv[i], "--hid-monitor") == 0)
             return input::hid::Monitor(i + 1 < argc ? atoi(argv[i + 1]) : 20);
     }

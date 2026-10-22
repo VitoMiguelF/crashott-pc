@@ -12,6 +12,8 @@
 //   light_attack = "MOUSE1, J"
 //   mouse_sensitivity = 100     # %, mouse -> camera
 //   prompts = "auto"            # auto | xbox | playstation | keyboard (button icons)
+//   player1 = "auto"            # local co-op: the controller of each player (kernel/pad_slots.h):
+//   player2 = "auto"            # auto | xbox1..xbox4 (XInput) | playstation1..playstation4
 //
 // The game's own controls (scripts\mixins\inputmap_methods.lua, Crash.bfig/Crashlua.blua; see
 // runtime/NOTES.md "Controles de PC"): A jump, X light attack, Y heavy attack, B action/jack/
@@ -61,6 +63,9 @@ namespace settings
         int walkSpeed = 40;          // % of the left stick while Walk is held
         PromptStyle prompts = PromptStyle::Auto;
         bool mouseMenus = true;      // the frontend menus follow the mouse
+        // Local co-op: the controller of player 1 / player 2 (PlayerDeviceKey; "auto" = connection
+        // order, and START on the title screen picks player 1). A single pad is always player 1.
+        std::array<std::string, 2> players{ "auto", "auto" };
 
         Controls();  // the defaults
         bool operator==(const Controls&) const = default;
@@ -71,6 +76,8 @@ namespace settings
     std::string KeyName(uint16_t key);                      // "W", "SPACE", "MOUSE1"; "" for 0
     bool ParseKey(const std::string& name, uint16_t& key);  // case-insensitive
     const char* PromptStyleName(PromptStyle style);         // "auto", "xbox", "playstation", "keyboard"
+    // [controls] player1 / player2 values: "auto", "xbox1".."xbox4", "playstation1".."playstation4".
+    bool ValidPlayerDevice(const std::string& key);
 
     // A [controls] line: false when `key` is not a controls setting; `valid` false for a bad value.
     bool ApplyControl(Controls& controls, const std::string& key, const std::string& value, bool& valid);

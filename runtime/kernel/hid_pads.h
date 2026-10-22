@@ -7,12 +7,15 @@
 // virtual Xbox pad: then both are read and merged, and the icons stay PlayStation).
 //
 // A thread scans for pads every 2 s and when Windows says a device arrived (hot-plug), and reads
-// each open pad on its own thread. The n-th PlayStation pad found is merged into XInput user n.
+// each open pad on its own thread. Which game controller (player) each pad drives is decided in
+// pad_slots.h.
 
 #include <windows.h>
 #include <xinput.h>
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace input::hid
 {
@@ -20,12 +23,19 @@ namespace input::hid
     void Start();
     // A device arrived or left (WM_DEVICECHANGE): rescan now.
     void Rescan();
-    // Merges the PlayStation pad of `user` into `pad` (buttons OR'd, the stick or trigger pushed
-    // further wins). False when no PlayStation pad is on that user.
-    bool Read(uint32_t user, bool xinputConnected, XINPUT_GAMEPAD& pad);
-    // Rumble for the PlayStation pad of `user` (XamInputSetState's motors, 0..65535). Only used
-    // when no XInput pad is on that user (DS4Windows/DSX forward the virtual pad's rumble).
-    void SetVibration(uint32_t user, uint16_t left, uint16_t right);
+    // The PlayStation pads connected now, in connection order: an id each (never reused, so one
+    // that is unplugged and plugged again is a new pad) and its name ("DualSense (USB)").
+    struct PadInfo
+    {
+        uint32_t id;
+        std::string name;
+    };
+    std::vector<PadInfo> Pads();
+    // The current state of pad `id`; false when it is gone.
+    bool ReadPad(uint32_t id, XINPUT_GAMEPAD& pad);
+    // Rumble for pad `id` (XamInputSetState's motors, 0..65535). Not used for a pad that
+    // DS4Windows/DSX also present as a virtual Xbox pad (they forward that pad's rumble).
+    void SetPadVibration(uint32_t id, uint16_t left, uint16_t right);
     // A PlayStation pad had input in the last second.
     bool RecentlyActive();
     // A PlayStation pad is present but another program holds it (DSX, DS4Windows, HidHide) and

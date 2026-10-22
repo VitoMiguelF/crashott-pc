@@ -1,11 +1,12 @@
-// Controller input (xam XamInput*) through XInput and the PlayStation pads read over HID
-// (hid_pads.h), plus the keyboard and the mouse for controller 0 (pc_input.h: the [controls]
-// bindings in gameplay, fixed keys in menus; F1/F2/F5/F12 belong to the overlay, gpu/window.cpp).
+// Controller input (xam XamInput*): the physical pads on each game controller (pad_slots.h: XInput
+// and the PlayStation pads read over HID, local co-op), plus the keyboard and the mouse on player 1's
+// controller (pc_input.h: the [controls] bindings in gameplay, fixed keys in menus; F1/F2/F5/F12
+// belong to the overlay, gpu/window.cpp).
 // XINPUT_STATE / XINPUT_CAPABILITIES have the same layout on the console (big-endian in guest memory).
 
 #include "kernel.h"
 #include "input.h"
-#include "hid_pads.h"
+#include "pad_slots.h"
 #include "pc_input.h"
 #include "input_record.h"
 #include "../audio/game_volumes.h"
@@ -32,33 +33,6 @@
 namespace
 {
     constexpr uint32_t ERROR_DEVICE_NOT_CONNECTED_ = 0x48F;
-
-    using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
-    using XInputSetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_VIBRATION*);
-
-    struct XInputApi
-    {
-        XInputGetStateFn getState{};
-        XInputSetStateFn setState{};
-
-        XInputApi()
-        {
-            HMODULE module = LoadLibraryW(L"xinput1_4.dll");
-            if (!module)
-                module = LoadLibraryW(L"xinput9_1_0.dll");
-            if (module)
-            {
-                getState = reinterpret_cast<XInputGetStateFn>(GetProcAddress(module, "XInputGetState"));
-                setState = reinterpret_cast<XInputSetStateFn>(GetProcAddress(module, "XInputSetState"));
-            }
-        }
-    };
-
-    XInputApi& Api()
-    {
-        static XInputApi api;
-        return api;
-    }
 
     // Button names used by CRASH_INPUT_SCRIPT and by the recording (run.toml `input`).
     constexpr std::pair<const char*, WORD> BUTTON_NAMES[] = {
@@ -95,8 +69,10 @@ namespace
     // trigger at any position: LS=0.5/-1 (x/y, -1..1), RS=x/y, LT=0.7, RT=1 (0..1), e.g.
     // 146000:LS=0.3/1:3000. A time can be relative to a test event (settings/direct_boot.h):
     // gameplay_ready+2500:A (ms after the first gameplay_ready), level_ready#2+0:SHOT (the second
-    // one); an entry waits for its event. SHOT saves a screenshot. The replay on the game clock
-    // (CRASH_REPLAY) is in input_record.cpp.
+    // one); an entry waits for its event. SHOT saves a screenshot. A P2_ / P3_ / P4_ prefix on a
+    // button, stick or trigger presses it on a virtual controller 1 / 2 / 3 instead, connected from
+    // boot (local co-op tests without a second pad): gameplay_ready+1000:P2_START, P2_LS=1/0. The
+    // replay on the game clock (CRASH_REPLAY) is in input_record.cpp.
     struct ScriptedPress
     {
         boot::Anchored at;
@@ -111,6 +87,7 @@ namespace
         bool done = false;    // MOUSE / CLICK / SHOT entries act once
         char analog = 0;      // 'L'/'R' stick, 'l'/'r' trigger
         float x = 0.0f, y = 0.0f;
+        uint32_t user = 0;    // P2_ etc.: the virtual controller it presses
     };
 
     SHORT StickValue(float value)
@@ -132,6 +109,14 @@ namespace
             const char* name = at + 1;
             size_t length = strcspn(name, ",:");
             const char* next = name + length;
+            uint32_t user = 0;
+            if (length > 3 && toupper(uint8_t(name[0])) == 'P' && name[1] >= '2' && name[1] <= '4' && name[2] == '_')
+            {
+                user = uint32_t(name[1] - '1');
+                name += 3;
+                length -= 3;
+            }
+            size_t first = presses.size();
             ULONGLONG hold = DEFAULT_HOLD_MS;
             if (*next == ':')
             {
@@ -208,6 +193,8 @@ namespace
                     presses.push_back(press);
                 }
             }
+            for (size_t i = first; i < presses.size(); i++)
+                presses[i].user = user;
             script = *next ? next + 1 : next;
         }
         return presses;
@@ -238,8 +225,8 @@ namespace
         std::vector<uint16_t> keys;
         for (const ScriptedPress& press : Script())
         {
-            if (press.at.event.empty() ? now < ULONGLONG(press.at.offsetMs) : boot::Resolve(press.at) < 0)
-                continue;  // not yet (the cheap test first: most entries are ahead)
+            if (press.user || (press.at.event.empty() ? now < ULONGLONG(press.at.offsetMs) : boot::Resolve(press.at) < 0))
+                continue;  // another controller's, or not yet (the cheap test first: most entries are ahead)
             if (press.key && Held(press, now))
             {
                 keys.push_back(press.key);
@@ -265,11 +252,23 @@ namespace
         return keys;
     }
 
-    void ScriptedState(XINPUT_STATE& state, ULONGLONG now)
+    // Whether CRASH_INPUT_SCRIPT has entries for controller `user` (> 0): a virtual pad there.
+    bool ScriptedPad(uint32_t user)
+    {
+        static const uint32_t users = [] {
+            uint32_t mask = 0;
+            for (const ScriptedPress& press : Script())
+                mask |= 1u << press.user;
+            return mask;
+        }();
+        return user && (users >> user & 1);
+    }
+
+    void ScriptedState(XINPUT_STATE& state, ULONGLONG now, uint32_t user = 0)
     {
         for (const ScriptedPress& press : Script())
         {
-            if (press.at.event.empty() ? now < ULONGLONG(press.at.offsetMs) : boot::Resolve(press.at) < 0)
+            if (press.user != user || (press.at.event.empty() ? now < ULONGLONG(press.at.offsetMs) : boot::Resolve(press.at) < 0))
                 continue;
             if (Held(press, now))
             {
@@ -317,44 +316,28 @@ namespace
         }
     }
 
-    // An XInput pad that moved past the dead zones makes "xbox" the last device used (pc_input.h).
-    void NoteXInputActivity(uint32_t user, const XINPUT_GAMEPAD& pad)
-    {
-        static XINPUT_GAMEPAD s_last[4];
-        auto moved = [](SHORT a, SHORT b) { return std::abs(int(a) - int(b)) > 8000 && (std::abs(int(a)) > 12000 || std::abs(int(b)) > 12000); };
-        XINPUT_GAMEPAD& last = s_last[user & 3];
-        bool active = pad.wButtons != last.wButtons || std::abs(int(pad.bLeftTrigger) - int(last.bLeftTrigger)) > 60 ||
-                      std::abs(int(pad.bRightTrigger) - int(last.bRightTrigger)) > 60 || moved(pad.sThumbLX, last.sThumbLX) ||
-                      moved(pad.sThumbLY, last.sThumbLY) || moved(pad.sThumbRX, last.sThumbRX) || moved(pad.sThumbRY, last.sThumbRY);
-        if (active)
-        {
-            last = pad;
-            // A DualSense read directly and also seen through DS4Windows/DSX's virtual pad, or one
-            // those programs hide (HidHide): still a DualSense.
-            if (input::hid::HiddenPads())
-                input::pc::NoteDevice(input::pc::Device::PlayStation);
-            else if (!input::hid::RecentlyActive())
-                input::pc::NoteDevice(input::pc::Device::Xbox);
-        }
-    }
-
     // Fills `state` for `user`; false if nothing is connected there. `poll`: XamInputGetState, the
     // game's read once per tick (the replay advances and the recording samples only then).
     bool ReadController(uint32_t user, XINPUT_STATE& state, bool poll = false)
     {
         state = {};
-        bool connected = false;
-        if (Api().getState && Api().getState(user, &state) == ERROR_SUCCESS)
+        bool connected = input::slots::Read(user, state.Gamepad);
+        uint32_t playerOne = input::slots::PlayerOneUser();
+        if (user != playerOne)
         {
-            connected = true;
-            NoteXInputActivity(user, state.Gamepad);
+            // A virtual pad from CRASH_INPUT_SCRIPT (P2_ entries) on top.
+            if (ScriptedPad(user))
+            {
+                ScriptedState(state, ClockNow(), user);
+                connected = true;
+            }
+            // The settings screen and the console hide every controller from the game, not only player 1's.
+            if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput())
+                state.Gamepad = {};
         }
-        // PlayStation pads (HID) after the XInput ones: pad N lands on the first free user.
-        if (input::hid::Read(user, connected, state.Gamepad))
-            connected = true;
-        if (user == 0)
+        if (user == playerOne)
         {
-            // Controller 0 always exists (the keyboard stands in for it).
+            // Player 1's controller always exists (the keyboard stands in for it).
             ULONGLONG now = ClockNow();
             input::pc::Apply(state, poll, ScriptedKeys(now));
             static WORD s_lastPlayer, s_lastScript;
@@ -385,15 +368,16 @@ namespace
             if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput())
                 state.Gamepad = {};
             state.Gamepad.wButtons |= settings::menu::GameButtons();  // B when it closes
-            static DWORD packet;
-            static XINPUT_GAMEPAD lastPad;
-            if (memcmp(&state.Gamepad, &lastPad, sizeof(lastPad)) != 0)
-            {
-                packet++;
-                lastPad = state.Gamepad;
-            }
-            state.dwPacketNumber += packet;
         }
+        // The packet number changes with the state, per controller.
+        static DWORD s_packet[4];
+        static XINPUT_GAMEPAD s_lastPad[4];
+        if (memcmp(&state.Gamepad, &s_lastPad[user], sizeof(XINPUT_GAMEPAD)) != 0)
+        {
+            s_packet[user]++;
+            s_lastPad[user] = state.Gamepad;
+        }
+        state.dwPacketNumber = s_packet[user];
         return connected;
     }
 }
@@ -431,9 +415,7 @@ namespace input
     uint16_t MenuButtons()
     {
         XINPUT_STATE state{};
-        if (Api().getState && Api().getState(0, &state) != ERROR_SUCCESS)
-            state = {};
-        input::hid::Read(0, false, state.Gamepad);
+        input::slots::Read(input::slots::PlayerOneUser(), state.Gamepad);
         state.Gamepad.wButtons |= input::pc::MenuKeys(ScriptedKeys(ClockNow()));
         ScriptedState(state, ClockNow());
         input::record::Apply(state);
@@ -523,10 +505,7 @@ PPC_FUNC(__imp__XamInputSetState)
     }
     if (vibrationPtr)
     {
-        XINPUT_VIBRATION vibration{ PPC_LOAD_U16(vibrationPtr), PPC_LOAD_U16(vibrationPtr + 2) };
-        // An XInput pad takes it; otherwise the PlayStation pad on that user (hid_pads.h).
-        if (!Api().setState || Api().setState(user, &vibration) != ERROR_SUCCESS)
-            input::hid::SetVibration(user, vibration.wLeftMotorSpeed, vibration.wRightMotorSpeed);
+        input::slots::SetVibration(user, PPC_LOAD_U16(vibrationPtr), PPC_LOAD_U16(vibrationPtr + 2));
     }
     ctx.r3.u64 = 0;
 }

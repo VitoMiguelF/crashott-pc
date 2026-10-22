@@ -190,6 +190,45 @@ skip_cinematics = true
 input = [["@cinematic_skipped"], [0.5, "SHOT"], ["@gameplay_ready"], [0.5, "SHOT"], [1, "LS", 0, 1, 2.5], [4, "SHOT"], [6, "START"], [7.5, "SHOT"], [9, "START"]]
 expect = { exit = ["timeout"], events = ["level_start", "level_ready", "cinematic", "cinematic_skipped", "cinematic_done", "gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SkipToLevel, StartLevel 0 L1_E1'] }
 
+[profiles.coop_p2]
+description = "Co-op local: boot direto na vila L1_E1 sem a cena; um segundo controle virtual (entradas P2_ do script) entra com B (JOIN GAME) montado no jogador 1, desce com Y, anda e pula como jogador 2 e pausa com START (P2 PAUSED)"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+# P2 entra com B; Y só solta da mochila uns segundos depois de entrar (aos 2,5 s ainda não), por isso
+# vai três vezes.
+input = [["@gameplay_ready"], [1, "SHOT"], [3, "P2_B"], [5, "SHOT"], [8, "P2_Y"], [9, "P2_Y"], [10, "P2_Y"], [11, "P2_LS", 1, 0, 1.5], [12.8, "SHOT"],
+         [13.2, "P2_A"], [13.5, "SHOT"], [14.5, "P2_LS", -1, 0, 1.5], [16.5, "SHOT"], [17.5, "P2_START"], [18.5, "SHOT"], [19.5, "P2_START"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['o jogo pegou o controle 0 como jogador 1'] }
+
+[profiles.coop_jogadores]
+description = "Co-op local com dois controles de verdade conectados (não roda sem eles): SETTINGS > CONTROLES, JOGADOR 1 = o segundo controle e JOGADOR 2 = o primeiro pelas setas; o log mostra a troca dos jogadores"
+test = false
+timeout = 30
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+input = [
+    ["@main_menu"], [2.5, "KEY_DOWN"], [3.1, "KEY_DOWN"], [3.7, "KEY_DOWN"], [4.5, "KEY_ENTER"],
+    [6.5, "KEY_E"], [6.9, "KEY_E"], [7.3, "KEY_E"], [7.7, "KEY_E"], [8.5, "SHOT"],
+    [9, "KEY_RIGHT"], [9.5, "KEY_RIGHT"], [10.2, "SHOT"], [10.6, "KEY_DOWN"], [11, "KEY_RIGHT"], [11.7, "SHOT"], [12.5, "KEY_ESC"],
+]
+expect = { exit = ["timeout"], events = ["main_menu"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['tab -> controls', 'jogadores: P1 = .* 1 .*controle 0 do jogo.*P2 = ', 'jogadores: P1 = .* 2 .*controle 0 do jogo', '\[settings\] saved'] }
+
+[profiles.coop_manual]
+description = "Co-op com controles de verdade, jogado por uma pessoa: boot direto na vila L1_E1 sem a cena, 90 s, uma captura a cada 6 s; no segundo controle, B entra (JOIN GAME), Y desce da mochila; o log mostra os jogadores e os botões dos outros controles"
+test = false
+timeout = 90
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+input = [["@gameplay_ready"], [3, "SHOT"], [9, "SHOT"], [15, "SHOT"], [21, "SHOT"], [27, "SHOT"], [33, "SHOT"], [39, "SHOT"], [45, "SHOT"], [51, "SHOT"], [57, "SHOT"], [63, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
 [profiles.iluminacao]
 description = "Iluminação (remaster, gpu/lighting.*): boot direto na vila L1_E1 sem a cena, capturas paradas e andando nas mesmas posições a cada execução; compare com --set 'env={ CRASH_SETTINGS = \"lighting.ssao=high;lighting.gi=true;lighting.contact_shadows=true;lighting.soft_shadows=true\" }' (+ CRASH_LIGHTING_SHOW = \"split\" | \"ao\" | \"gi\" | \"shadow\")"
 test = false
@@ -515,7 +554,7 @@ timeout = 55
 audio = false
 userdata_mode = "copy"
 skip_intros = true
-# Menu: seta para baixo x3 + Enter = SETTINGS; E x4 = aba CONTROLES (RB); seta para baixo x11 =
+# Menu: seta para baixo x3 + Enter = SETTINGS; E x4 = aba CONTROLES (RB); seta para baixo x13 =
 # PULAR; Enter = escolher a tecla; K = a nova tecla; Esc fecha (salva). Depois LOAD GAME como em
 # teclado e, na fase, K pula (o salto aparece na última captura).
 input = [
@@ -523,7 +562,7 @@ input = [
     [6.5, "KEY_E"], [6.9, "KEY_E"], [7.3, "KEY_E"], [7.7, "KEY_E"], [8.8, "SHOT"],
     [9.1, "KEY_DOWN"], [9.4, "KEY_DOWN"], [9.7, "KEY_DOWN"], [10, "KEY_DOWN"], [10.3, "KEY_DOWN"], [10.6, "KEY_DOWN"],
     [10.9, "KEY_DOWN"], [11.2, "KEY_DOWN"], [11.5, "KEY_DOWN"], [11.8, "KEY_DOWN"], [12.1, "KEY_DOWN"],
-    [13, "KEY_ENTER"], [13.7, "SHOT"], [14.5, "KEY_K"], [15.5, "SHOT"], [16.5, "KEY_ESC"], [17.5, "SHOT"],
+    [12.4, "KEY_DOWN"], [12.7, "KEY_DOWN"], [13.2, "KEY_ENTER"], [13.9, "SHOT"], [14.5, "KEY_K"], [15.5, "SHOT"], [16.5, "KEY_ESC"], [17.5, "SHOT"],
     [19.5, "KEY_DOWN"], [20.5, "KEY_ENTER"],
     ["@save_slots"], [1.5, "KEY_ENTER"],
     ["@load_complete"], [1, "KEY_ENTER"],

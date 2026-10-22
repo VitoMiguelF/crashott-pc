@@ -99,7 +99,7 @@ namespace
         Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, HdTextures,
         Language, CoopMode, InvertAxis, Autosave,
         MojoColors, HdRemaster, FreeCamera, CameraSensitivity, CameraInvertY, CameraDistance, DevConsole,
-        Prompts, MouseCamera, MouseSensitivity, MouseInvertY, WalkSpeed, MouseMenus,
+        Prompts, MouseCamera, MouseSensitivity, MouseInvertY, WalkSpeed, MouseMenus, Player1, Player2,
         GameFolder, ModsFolder, SavesFolder, ExtraData,
         HeaderSubtitles, HeaderCamera, HeaderKeys, HeaderDev,
         Bind0,
@@ -123,8 +123,8 @@ namespace
 
     std::vector<Tab> MakeTabs()
     {
-        std::vector<Item> controls = { Item::Prompts, Item::MouseCamera, Item::MouseSensitivity, Item::MouseInvertY, Item::WalkSpeed,
-                                       Item::MouseMenus, Item::HeaderKeys };
+        std::vector<Item> controls = { Item::Player1, Item::Player2, Item::Prompts, Item::MouseCamera, Item::MouseSensitivity,
+                                       Item::MouseInvertY, Item::WalkSpeed, Item::MouseMenus, Item::HeaderKeys };
         for (int i = 0; i < int(settings::ACTION_COUNT); i++)
             controls.push_back(Item(int(Item::Bind0) + i));
         return {
@@ -262,6 +262,8 @@ namespace
         case Item::CameraInvertY: return T({ "INVERT CAMERA Y", "INVERTER EIXO Y" });
         case Item::CameraDistance: return T({ "CAMERA DISTANCE", "DISTÂNCIA DA CÂMERA" });
         case Item::Prompts: return T({ "BUTTON ICONS", "ÍCONES DOS BOTÕES" });
+        case Item::Player1: return T({ "PLAYER 1", "JOGADOR 1" });
+        case Item::Player2: return T({ "PLAYER 2", "JOGADOR 2" });
         case Item::MouseCamera: return T({ "MOUSE CAMERA", "CÂMERA PELO MOUSE" });
         case Item::MouseSensitivity: return T({ "MOUSE SENSITIVITY", "SENSIBILIDADE DO MOUSE" });
         case Item::MouseInvertY: return T({ "INVERT MOUSE Y", "INVERTER Y DO MOUSE" });
@@ -395,6 +397,17 @@ namespace
             case settings::PromptStyle::Keyboard: return T({ "KEYBOARD", "TECLADO" });
             default: return T({ "AUTOMATIC", "AUTOMÁTICO" });
             }
+        case Item::Player1:
+        case Item::Player2:
+        {
+            // The launcher doesn't read the pads: the controller by its number (the game's
+            // settings screen shows the connected ones by name).
+            const std::string& key = g_values.controls.players[item == Item::Player2];
+            if (key == "auto")
+                return "AUTO";
+            return key.compare(0, 4, "xbox") == 0 ? std::string(T({ "CONTROLLER ", "CONTROLE " })) + key.substr(4) + " (XINPUT)"
+                                                  : "PLAYSTATION " + key.substr(11);
+        }
         case Item::MouseCamera: return OnOff(g_values.controls.mouseCamera);
         case Item::MouseInvertY: return OnOff(g_values.controls.invertY);
         case Item::MouseMenus: return OnOff(g_values.controls.mouseMenus);
@@ -505,6 +518,12 @@ namespace
         case Item::Prompts:
             return { T({ "Icons in menus and hints: the last device used,", "Ícones nos menus e dicas: o último aparelho usado," }),
                      T({ "or always Xbox / PlayStation / keyboard.", "ou sempre Xbox / PlayStation / teclado." }) };
+        case Item::Player1:
+            return { T({ "Controller of player 1 (with the keyboard and mouse).", "Controle do jogador 1 (junto com teclado e mouse)." }),
+                     T({ "AUTO: the one that pressed START on the title screen.", "AUTO: o que apertou START na tela título." }) };
+        case Item::Player2:
+            return { T({ "Controller of player 2: B joins the game, Y leaves", "Controle do jogador 2: B entra no jogo, Y desce" }),
+                     T({ "the backpack. A single controller is always player 1.", "da mochila. Com um controle só, ele é o jogador 1." }) };
         case Item::MouseCamera: return { T({ "The mouse turns the camera in gameplay", "O mouse gira a câmera na gameplay" }), T({ "(the cursor is hidden and kept in the window).", "(o cursor fica escondido e preso na janela)." }) };
         case Item::MouseSensitivity: return { T({ "Mouse movement -> camera speed.", "Movimento do mouse -> velocidade da câmera." }), T({ "100% = default.", "100% = padrão." }) };
         case Item::MouseInvertY: return { T({ "Mouse / camera keys: up looks down.", "Mouse / teclas da câmera: para cima olha para baixo." }), "" };
@@ -640,6 +659,18 @@ namespace
         case Item::CameraInvertY: g_values.cameraInvertY = !g_values.cameraInvertY; break;
         case Item::DevConsole: g_values.devConsole = !g_values.devConsole; break;
         case Item::Prompts: g_values.controls.prompts = Cycle(g_values.controls.prompts, 4, direction); break;
+        case Item::Player1:
+        case Item::Player2:
+        {
+            static const char* const KEYS[] = { "auto", "xbox1", "xbox2", "xbox3", "xbox4", "playstation1", "playstation2", "playstation3", "playstation4" };
+            constexpr int COUNT = int(std::size(KEYS));
+            std::string& key = g_values.controls.players[item == Item::Player2];
+            int index = 0;
+            while (index < COUNT && key != KEYS[index])
+                index++;
+            key = KEYS[((index % COUNT) + COUNT + direction) % COUNT];
+            break;
+        }
         case Item::MouseCamera: g_values.controls.mouseCamera = !g_values.controls.mouseCamera; break;
         case Item::MouseInvertY: g_values.controls.invertY = !g_values.controls.invertY; break;
         case Item::MouseMenus: g_values.controls.mouseMenus = !g_values.controls.mouseMenus; break;
