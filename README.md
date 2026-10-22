@@ -57,6 +57,9 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
     **Desktop development with C++**;
   - [LLVM](https://github.com/llvm/llvm-project/releases) (`clang-cl`), [CMake](https://cmake.org),
     [Ninja](https://ninja-build.org), [Git](https://git-scm.com), [Python 3.11+](https://www.python.org).
+- Only for the asset export (**ASSETS FOR MODDING**): the Python packages in
+  [tools/requirements.txt](tools/requirements.txt) (numpy, Pillow). The installer installs them with
+  pip into the same Python it runs with; by hand: `python -m pip install -r tools\requirements.txt`.
 - About 3 GB of free space (plus 4.5 GB for the HD AI Remaster, 4 GB for the asset export).
 
 FFmpeg (LGPL), NVIDIA DLSS and AMD FSR are downloaded by the installer from their official sources and
@@ -64,7 +67,7 @@ checked by SHA-256 (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 ## Install
 
-1. Download **`CrashRecomp-v1.01.zip`** (the latest) from the [releases](https://github.com/VitoMiguelF/crashott-pc/releases)
+1. Download **`CrashRecomp-v1.02.zip`** (the latest) from the [releases](https://github.com/VitoMiguelF/crashott-pc/releases)
    and unzip it (or `git clone` this repository).
 2. Run **`CrashSetup.exe`**. Choose your game folder, check the prerequisites, pick the options
    (subtitles, HD AI Remaster, asset export for modding, copying the game into the folder) and click
@@ -77,10 +80,25 @@ checked by SHA-256 (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
    ```bat
    python tools\setup.py --game D:\Games\Crash --subtitles
    python tools\setup.py --game D:\Games\Crash --remaster --extract-assets --copy-game
+   python tools\setup.py --game D:\Games\Crash --assets-only   :: retry only the asset export
    ```
 
-   Release zips placed next to `CrashSetup.exe` are used instead of downloading them again.
+   Release zips placed next to `CrashSetup.exe` are used instead of downloading them again. If only
+   the asset export fails, the game is installed anyway: **TRY AGAIN** reruns just that step.
 3. Play with **`dist\CrashLauncher.exe`** (options, then PLAY) or `dist\CrashRecomp.exe`.
+
+### Known issues
+
+- **v1.01: ASSETS FOR MODDING fails with `ModuleNotFoundError: No module named 'numpy'`.** The v1.01
+  installer doesn't install the Python packages the asset export needs (fixed in v1.02). The game
+  itself is installed fine. Install them and run the installer again (finished steps are skipped):
+
+  ```bat
+  python -m pip install numpy pillow
+  ```
+
+  Use the same Python the installer uses: if `python` isn't found or is a different one, try
+  `py -3 -m pip install numpy pillow`.
 
 ## Playing
 
@@ -103,6 +121,7 @@ The game's assets are **not** distributed, but you can export them from your own
 **ASSETS FOR MODDING**, or):
 
 ```bat
+python -m pip install -r tools\requirements.txt   :: once: numpy and Pillow
 python tools\assets.py all          :: everything to private\assets (about 8 minutes, 4 GB)
 python tools\textures.py export     :: or step by step: textures -> PNG
 python tools\models.py export       :: models, skeletons, animations -> glTF (.glb)
@@ -183,6 +202,9 @@ de PC.
 - Para compilar (o instalador oferece instalar o que faltar pelo `winget`): Visual Studio 2022+ ou as
   Build Tools com **Desenvolvimento para desktop com C++**, LLVM (`clang-cl`), CMake, Ninja, Git e
   Python 3.11+.
+- Só para exportar os assets (**ASSETS PARA MODDING**): os pacotes Python de
+  [tools/requirements.txt](tools/requirements.txt) (numpy, Pillow). O instalador os instala pelo pip
+  no mesmo Python que ele usa; à mão: `python -m pip install -r tools\requirements.txt`.
 - Cerca de 3 GB livres (mais 4,5 GB para o HD AI Remaster e 4 GB para exportar os assets).
 
 FFmpeg (LGPL), NVIDIA DLSS e AMD FSR são baixados pelo instalador das fontes oficiais e conferidos pelo
@@ -190,7 +212,7 @@ SHA-256 (veja [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 ## Instalação
 
-1. Baixe **`CrashRecomp-v1.01.zip`** (a mais recente) nas [releases](https://github.com/VitoMiguelF/crashott-pc/releases) e
+1. Baixe **`CrashRecomp-v1.02.zip`** (a mais recente) nas [releases](https://github.com/VitoMiguelF/crashott-pc/releases) e
    descompacte (ou faça `git clone` deste repositório).
 2. Abra o **`CrashSetup.exe`**. Escolha a pasta do jogo, confira os pré-requisitos, escolha as opções
    (legendas, HD AI Remaster, assets para modding, copiar o jogo para a pasta) e clique em **INSTALAR**.
@@ -201,10 +223,25 @@ SHA-256 (veja [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
    ```bat
    python tools\setup.py --game D:\Jogos\Crash --subtitles
    python tools\setup.py --game D:\Jogos\Crash --remaster --extract-assets --copy-game
+   python tools\setup.py --game D:\Jogos\Crash --assets-only   :: tenta de novo só a exportação de assets
    ```
 
-   Zips da release colocados ao lado do `CrashSetup.exe` são usados em vez de baixar de novo.
+   Zips da release colocados ao lado do `CrashSetup.exe` são usados em vez de baixar de novo. Se só a
+   exportação de assets falhar, o jogo fica instalado mesmo assim: **TENTAR DE NOVO** refaz só essa etapa.
 3. Jogue pelo **`dist\CrashLauncher.exe`** (opções e depois JOGAR) ou pelo `dist\CrashRecomp.exe`.
+
+### Problemas conhecidos
+
+- **v1.01: ASSETS PARA MODDING falha com `ModuleNotFoundError: No module named 'numpy'`.** O instalador
+  da v1.01 não instala os pacotes Python que a exportação de assets usa (corrigido na v1.02). O jogo em
+  si é instalado normalmente. Instale-os e rode o instalador de novo (as etapas prontas são puladas):
+
+  ```bat
+  python -m pip install numpy pillow
+  ```
+
+  Use o mesmo Python do instalador: se `python` não for encontrado ou for outro, tente
+  `py -3 -m pip install numpy pillow`.
 
 ## Jogando
 
@@ -227,6 +264,7 @@ Os assets do jogo **não** são distribuídos, mas você pode exportá-los da su
 MODDING** do instalador, ou):
 
 ```bat
+python -m pip install -r tools\requirements.txt   :: uma vez: numpy e Pillow
 python tools\assets.py all          :: tudo para private\assets (cerca de 8 minutos, 4 GB)
 python tools\textures.py export     :: ou por etapa: texturas -> PNG
 python tools\models.py export       :: modelos, esqueletos, animações -> glTF (.glb)

@@ -6,7 +6,7 @@ Recompilação estática de **Crash of the Titans** (Xbox 360, title ID `565507E
 
 Nenhum arquivo do jogo é distribuído: tudo é gerado a partir da sua própria cópia.
 
-**Estado (v1.01, 2026-10-22)**: o jogo roda da abertura até fases de vários episódios (boot direto testado em L1_E1, L3_E2 e L5_E3, também com o HD AI Remaster), com áudio, legendas, tradução PT-BR, controles de PC (teclado, mouse, DualSense), tela de configurações nativa (abas JOGO, ÁUDIO, VÍDEO, GRÁFICOS, CONTROLES e DEFINITIVE EDITION), DLSS/FSR, título "Definitive Edition", cores do mojo do PS2, HD AI Remaster, câmera livre experimental, cenas e vídeos que dá para pular (v1.01) e o console de desenvolvedor opcional com troca de skin (v1.01). Para jogar, use a pasta `dist\` (veja "Jogando").
+**Estado (v1.02, 2026-10-22)**: o jogo roda da abertura até fases de vários episódios (boot direto testado em L1_E1, L3_E2 e L5_E3, também com o HD AI Remaster), com áudio, legendas, tradução PT-BR, controles de PC (teclado, mouse, DualSense), tela de configurações nativa (abas JOGO, ÁUDIO, VÍDEO, GRÁFICOS, CONTROLES e DEFINITIVE EDITION), DLSS/FSR, título "Definitive Edition", cores do mojo do PS2, HD AI Remaster, câmera livre experimental, cenas e vídeos que dá para pular (v1.01) e o console de desenvolvedor opcional com troca de skin (v1.01); o instalador instala sozinho os pacotes Python da exportação de assets (v1.02). Para jogar, use a pasta `dist\` (veja "Jogando").
 
 ## Estrutura
 
@@ -99,13 +99,13 @@ dist\
 - **Linha de comando** (opcional): `--game`, `--mods`, `--userdata`, `--languages`, `--data <pasta>`, `--xex <default.xex>` e `--image <image.bin>` (usa uma imagem pronta em vez de descriptografar). O log começa com as linhas `[paths]`, que dizem de onde veio cada pasta.
 - **Exe do build**: `build\CrashRecomp.exe` aberto à mão (sem `languages\` ao lado e dentro do projeto) usa `languages\` e `private\` do projeto e `mods\`/`userdata\` de `dist\`, ou seja, os mesmos saves do jogador. Os testes passam todas as pastas pela linha de comando.
 
-### O que vai para o GitHub (v1.0, v1.01)
+### O que vai para o GitHub (v1.0, v1.01, v1.02)
 
 | No git (público) | Assets da release (opcionais, separados do código) | Nunca publicado |
 |---|---|---|
 | o código (`runtime/`, `launcher/`, `tools/`), `config/`, `patches/XenonRecomp.patch`, `languages/pt-br` (só a tradução por hash, sem textos do jogo), `tests/userdata_base` (saves de teste), `docs/` (sem `capturas/`) e as licenças | o zip do código + `CrashSetup.exe`, as legendas (transcrição em inglês + PT-BR) e o HD AI Remaster em partes (`tools/make_release.py`) | o jogo e tudo extraído dele: `private\`, `generated\ppc\`, `dist\` (o `CrashRecomp.exe` tem o código do jogo recompilado), `docs\capturas\`, `tests\shadercache\`, os assets exportados |
 
-A v1.01 publica só o zip do código + `CrashSetup.exe` (`python tools\make_release.py v1.01 --only source`): as legendas e o HD AI Remaster não mudaram, continuam como assets da v1.0, e o `tools/setup.py` os baixa de lá (`RELEASE_TAG`, que só muda quando esses assets forem refeitos).
+A v1.01 e a v1.02 publicam só o zip do código + `CrashSetup.exe` (`python tools\make_release.py v1.02 --only source`): as legendas e o HD AI Remaster não mudaram, continuam como assets da v1.0, e o `tools/setup.py` os baixa de lá (`RELEASE_TAG`, que só muda quando esses assets forem refeitos).
 
 O `.gitignore` cobre tudo isso e ainda recusa `*.xex`, `*.rcf`, `*.bik`, `*.rsd`, `*.p3d`, `image.bin` e qualquer pasta `game/`, para um dump nunca entrar por acidente.
 
@@ -935,7 +935,12 @@ Tudo o que os `.rcf` do jogo têm pode ser extraído para formatos abertos: sons
 
 A exportação é **um arquivo por conteúdo**. O jogo repete muita coisa: o mesmo Crash está copiado em centenas de pacotes de cena, as fases repetem texturas, e há gritos iguais nos seis idiomas. Cada imagem, malha ou som diferente sai uma vez só, numa pasta pela categoria (personagem, fase, objeto...). Um índice lista onde cada arquivo é usado. Ao montar o mod, a edição vai para **todos** os pacotes que usam aquele conteúdo.
 
+As ferramentas de textura e modelo usam numpy e Pillow (`tools/requirements.txt`). O instalador os instala pelo pip no mesmo Python que roda o `setup.py` (no começo, quando ASSETS PARA MODDING está ligado, e de novo antes dessa etapa); se o pip falhar (sem internet, Python sem pip), só a etapa 9 falha, com o comando para rodar à mão, e o jogo fica instalado. `python tools\setup.py --game <pasta> --assets-only` (ou TENTAR DE NOVO no `CrashSetup.exe`) refaz só essa etapa.
+
 ```bat
+:: Uma vez: os pacotes Python (numpy, Pillow)
+python -m pip install -r tools\requirements.txt
+
 :: Tudo de uma vez (extração incremental). ~8 min na primeira vez.
 python tools\assets.py all
 

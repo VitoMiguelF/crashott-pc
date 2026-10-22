@@ -1886,3 +1886,10 @@ Pedido: mandar comandos com o jogo aberto (unlock all, mojo, trocar de skin...).
 
 - O que entrou: pular cenas e vídeos de abertura segurando B/Esc, com aviso no canto (commit 54a73bd, seção "Pular as cenas") e o console de desenvolvedor com troca de skin e a Crash_Hulk (67767a1, seção "Console de desenvolvedor e troca de skin").
 - A release publica só `CrashRecomp-v1.01.zip` (código + `CrashSetup.exe`) e o seu `SHA256SUMS.txt` (`tools/make_release.py v1.01 --only source`). As legendas e o HD AI Remaster são os mesmos da v1.0 e continuam lá: o `tools/setup.py` baixa os dados da release em `RELEASE_TAG` (`v1.0`), que só muda quando esses assets forem refeitos.
+
+## v1.02 (2026-10-22): o instalador instala os pacotes Python da exportação de assets
+
+- Problema relatado na v1.01: ASSETS PARA MODDING falhava com `ModuleNotFoundError: No module named 'numpy'` (textures.py/models.py importam numpy e Pillow, e o instalador nunca os conferia nem instalava). O resto da instalação passava.
+- `tools/requirements.txt` (numpy>=1.23, Pillow>=9.1). O `setup.py` lista os pacotes na checagem (`@@pypkg`, nunca bloqueia), instala com `"<o mesmo python>" -m pip install -r tools/requirements.txt` no começo (com `--extract-assets`; tenta `ensurepip` se faltar o pip) e de novo antes da etapa 9. Uma falha só derruba a etapa 9, com o comando para rodar à mão (`@@hint`); o jogo fica pronto (`@@game-ready`). `--assets-only` refaz só a exportação; `--check-packages` só confere os pacotes.
+- `CrashSetup.exe`: os pacotes que faltam aparecem em PRÉ-REQUISITOS (clicar instala pelo pip num console); se só os assets falharem, o título vira O JOGO ESTÁ PRONTO, aparecem JOGAR e o comando do pip, e TENTAR DE NOVO roda só `--assets-only`. Usa o Python de um venv ativado (`VIRTUAL_ENV`).
+- Testado num clone limpo com um venv sem numpy/Pillow (detalhes no commit). A release publica só `CrashRecomp-v1.02.zip` + `SHA256SUMS.txt`; dados continuam na v1.0.
