@@ -8,7 +8,7 @@
 //                ring as a storage buffer, vertex data)
 //         set 2: s0-s31 -> bindings 0-31 (samplers, cached sets)
 //   Pass  set 0: b0 -> binding 0, t0-t7 -> bindings 1-8 (or the structured buffer at t0), s0-s1 ->
-//                bindings 9-10 (immutable samplers); all push descriptors
+//                bindings 9-10 (immutable samplers); a regular set per pass
 //
 // D3D conventions kept: the backend flips the viewport (negative height) so clip space and
 // SV_Position match Direct3D; -fvk-use-dx-position-w gives SV_Position.w as Direct3D does and

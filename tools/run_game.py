@@ -362,8 +362,10 @@ def environment(settings, run_dir, profile=None):
     # The runtime treats these as on whenever they are set, whatever the value.
     if not settings.get("render", True):
         env["CRASH_NO_RENDER"] = "1"
-    if settings.get("d3d12_debug"):
-        env["CRASH_D3D12_DEBUG"] = "1"
+    if settings.get("d3d12_debug") or settings.get("gpu_debug"):
+        env["CRASH_GPU_DEBUG"] = "1"  # D3D12 debug layer / Vulkan validation layers
+    if settings.get("renderer"):
+        env["CRASH_RENDERER"] = str(settings["renderer"])  # d3d12 | vulkan (gpu/renderer.h)
     if settings.get("log_all_io"):
         env["CRASH_LOG_ALL_IO"] = "1"
     if not settings.get("symbols", True):

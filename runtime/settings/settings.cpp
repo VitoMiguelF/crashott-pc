@@ -680,7 +680,7 @@ namespace settings
     bool NeedsRestart(const Values& v)
     {
         const Values& boot = g_startup;
-        return v.language != boot.language || v.ps2MojoColors != boot.ps2MojoColors ||
+        return v.language != boot.language || v.ps2MojoColors != boot.ps2MojoColors || v.renderer != boot.renderer ||
                (v.hdRemaster != boot.hdRemaster && HdRemasterAvailable());
     }
 

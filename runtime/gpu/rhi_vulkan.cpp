@@ -12,6 +12,9 @@
 //   upload ring (b0-b3) + the ring as a storage buffer (vertex data), set 2 = sampler sets cached by
 //   their 32 descriptions (rhi_vulkan_shaders.cpp maps the HLSL registers). Viewport, scissor, blend constants and stencil reference are
 //   dynamic; the rest is in pipelines cached by DrawPipelineKey (and a VkPipelineCache on disk).
+// - Passes: one regular descriptor set per pass from the command buffer's pool. With push descriptors
+//   (and their immutable samplers) NVIDIA's driver sampled zeros from image views created after the
+//   first frames: the menus' second front buffer presented black every other frame.
 // - The viewport is flipped (negative height) so Direct3D's clip space and window coordinates hold;
 //   front faces stay clockwise as in the D3D12 backend.
 // - D24S8 depth when the GPU supports it (NVIDIA), D32S8 otherwise (AMD, RADV); the 24-bit depth
@@ -45,6 +48,7 @@ namespace gpu::rhi
         constexpr uint32_t SAMPLER_SETS = 4096;
         constexpr VkDeviceSize BLOCK_SIZE = 64ull << 20;
         constexpr uint32_t ACQUIRE_SEMAPHORES = 4;
+        constexpr uint32_t PASS_SETS = 4096;  // descriptor sets of the passes per command buffer
 
         const char* ResultName(VkResult result)
         {
@@ -81,6 +85,11 @@ namespace gpu::rhi
         uint32_t g_trace = [] {
             const char* text = getenv("CRASH_VULKAN_TRACE");
             return text ? uint32_t(strtoul(text, nullptr, 10)) : 0u;
+        }();
+        // CRASH_VULKAN_TRACE_PASSES=<submission>: the passes of 3 submissions from that one.
+        uint64_t g_tracePassesFrom = [] {
+            const char* text = getenv("CRASH_VULKAN_TRACE_PASSES");
+            return text ? uint64_t(strtoull(text, nullptr, 10)) : 0ull;
         }();
 #define VK_TRACE(...)                        do                                       {                                            if (g_trace)                             {                                            g_trace--;                               Log("[vulkan] " __VA_ARGS__);         }                                    } while (0)
 
@@ -232,6 +241,7 @@ namespace gpu::rhi
             VkPipelineLayout layout = VK_NULL_HANDLE;
             uint32_t textureCount = 0, constantBytes = 0, targetCount = 0;
             bool bufferInput = false;
+            std::string name;
         };
 
         class VulkanDevice final : public Device
@@ -249,7 +259,9 @@ namespace gpu::rhi
             Texture* CreateTexture(const TextureDesc& desc) override;
             void DestroyTexture(Texture* texture) override;
             Texture* NullTexture() override { return m_nullTexture; }
-            Buffer* CreateBuffer(uint64_t size) override;
+            Buffer* CreateBuffer(uint64_t size) override { return CreateBuffer(size, false); }
+            // `readback`: memory the CPU reads (host cached when the GPU has some).
+            Buffer* CreateBuffer(uint64_t size, bool readback);
             void DestroyBuffer(Buffer* buffer) override;
 
             void CopyUploadToTexture(Texture* texture, uint32_t level, uint64_t offset, uint32_t rowPitch) override;
@@ -357,6 +369,7 @@ namespace gpu::rhi
             {
                 VkCommandPool pool = VK_NULL_HANDLE;
                 VkCommandBuffer buffer = VK_NULL_HANDLE;
+                VkDescriptorPool descriptors = VK_NULL_HANDLE;  // the passes' sets, reset with the pool
                 uint64_t value = 0;
             };
             std::deque<Context> m_pendingContexts;
@@ -976,6 +989,7 @@ namespace gpu::rhi
                 m_context = m_freeContexts.back();
                 m_freeContexts.pop_back();
                 vkResetCommandPool(m_device, m_context.pool, 0);
+                vkResetDescriptorPool(m_device, m_context.descriptors, 0);
             }
             else
             {
@@ -989,6 +1003,13 @@ namespace gpu::rhi
                 allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
                 allocate.commandBufferCount = 1;
                 vkAllocateCommandBuffers(m_device, &allocate, &m_context.buffer);
+                VkDescriptorPoolSize sizes[4] = { { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, PASS_SETS }, { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, PASS_SETS * 8 },
+                                                  { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, PASS_SETS }, { VK_DESCRIPTOR_TYPE_SAMPLER, PASS_SETS * 2 } };
+                VkDescriptorPoolCreateInfo descriptorPool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+                descriptorPool.maxSets = PASS_SETS;
+                descriptorPool.poolSizeCount = 4;
+                descriptorPool.pPoolSizes = sizes;
+                Check(vkCreateDescriptorPool(m_device, &descriptorPool, nullptr, &m_context.descriptors), "vkCreateDescriptorPool (passes)");
             }
             m_cmd = m_context.buffer;
             VkCommandBufferBeginInfo begin{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
@@ -1142,7 +1163,7 @@ namespace gpu::rhi
                 return false;
             allocation.type = uint32_t(type);
             allocation.size = requirements.size;
-            static const bool dedicatedOnly = getenv("CRASH_VULKAN_DEDICATED") != nullptr;  // debug: one allocation per image
+            static const bool dedicatedOnly = getenv("CRASH_VULKAN_DEDICATED") != nullptr;  // debug: an allocation per resource
             if (requirements.size <= BLOCK_SIZE / 4 && !dedicatedOnly)
             {
                 for (size_t b = 0; b <= m_blocks.size(); b++)
@@ -1315,7 +1336,7 @@ namespace gpu::rhi
             m_garbage.push_back(std::move(garbage));
         }
 
-        Buffer* VulkanDevice::CreateBuffer(uint64_t size)
+        Buffer* VulkanDevice::CreateBuffer(uint64_t size, bool readback)
         {
             auto buffer = std::make_unique<VulkanBuffer>();
             VkBufferCreateInfo create{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
@@ -1325,7 +1346,12 @@ namespace gpu::rhi
                 return nullptr;
             VkMemoryRequirements requirements;
             vkGetBufferMemoryRequirements(m_device, buffer->buffer, &requirements);
-            int32_t type = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            int32_t type = -1;
+            if (readback)
+                type = FindMemoryType(requirements.memoryTypeBits,
+                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+            if (type < 0)
+                type = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             VkMemoryAllocateInfo allocate{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
             allocate.allocationSize = requirements.size;
             allocate.memoryTypeIndex = uint32_t(type);
@@ -1378,6 +1404,16 @@ namespace gpu::rhi
                 // Same state: only a write in another pass needs ordering (write after write).
                 if (!after.writes || texture->lastPass == m_passId)
                     return;
+            }
+            // The barriers of one vkCmdPipelineBarrier2 aren't ordered among themselves: a second
+            // transition of the same image goes in the next batch.
+            for (const VkImageMemoryBarrier2& queued : m_barriers)
+            {
+                if (queued.image == texture->image)
+                {
+                    FlushBarriers();
+                    break;
+                }
             }
             AccessInfo before = AccessOf(texture->access, texture->depth);
             VkImageMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
@@ -1538,6 +1574,9 @@ namespace gpu::rhi
         void VulkanDevice::CopyTexture(Texture* destination, Texture* source, const Rect* region)
         {
             VK_TRACE("copy %s -> %s", source->desc.name, destination->desc.name);
+            if (g_tracePassesFrom && m_stats.submits >= g_tracePassesFrom && m_stats.submits < g_tracePassesFrom + 3)
+                Log("[vulkan] submit %llu: copy %s %p -> %s %p%s", (unsigned long long)m_stats.submits, source->desc.name, (void*)source,
+                    destination->desc.name, (void*)destination, region ? " (region)" : "");
             auto* to = static_cast<VulkanTexture*>(destination);
             auto* from = static_cast<VulkanTexture*>(source);
             m_passId++;
@@ -1571,6 +1610,8 @@ namespace gpu::rhi
         void VulkanDevice::ClearColor(Texture* texture, const float color[4], const Rect* rect)
         {
             VK_TRACE("clear color %s", texture->desc.name);
+            if (g_tracePassesFrom && m_stats.submits >= g_tracePassesFrom && m_stats.submits < g_tracePassesFrom + 3)
+                Log("[vulkan] submit %llu: clear %s %p", (unsigned long long)m_stats.submits, texture->desc.name, (void*)texture);
             auto* vulkanTexture = static_cast<VulkanTexture*>(texture);
             // Inside the current rendering instance when it draws into the texture; else one of its own.
             uint32_t attachment = UINT32_MAX;
@@ -1905,8 +1946,9 @@ float4 main(uint id : SV_VertexID) : SV_Position
             pipeline->constantBytes = desc.constantBytes;
             pipeline->bufferInput = desc.bufferInput;
             pipeline->targetCount = desc.targetCount;
+            pipeline->name = desc.name;
 
-            // Push descriptors: b0 (binding 0), t0-t7 (1-8) or the structured buffer (1), immutable s0-s1 (9-10).
+            // b0 (binding 0), t0-t7 (1-8) or the structured buffer (1), immutable s0-s1 (9-10).
             std::vector<VkDescriptorSetLayoutBinding> bindings;
             VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
             bindings.push_back({ 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, stages, nullptr });
@@ -1922,7 +1964,6 @@ float4 main(uint id : SV_VertexID) : SV_Position
                 bindings.push_back({ 9 + i, VK_DESCRIPTOR_TYPE_SAMPLER, 1, stages, &samplers[i] });
             }
             VkDescriptorSetLayoutCreateInfo layout{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-            layout.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
             layout.bindingCount = uint32_t(bindings.size());
             layout.pBindings = bindings.data();
             if (!Check(vkCreateDescriptorSetLayout(m_device, &layout, nullptr, &pipeline->setLayout), "vkCreateDescriptorSetLayout"))
@@ -2147,12 +2188,21 @@ float4 main(uint id : SV_VertexID) : SV_Position
 
         void VulkanDevice::DrawPass(const PassDraw& pass)
         {
-            VK_TRACE("pass %u textures -> %s", pass.textureCount, pass.targets[0] ? pass.targets[0]->desc.name : "?");
+            VK_TRACE("pass %s: %u textures (%s) -> %s", static_cast<VulkanPipeline*>(pass.pipeline)->name.c_str(), pass.textureCount,
+                     pass.textureCount && pass.textures[0].texture ? pass.textures[0].texture->desc.name : "-", pass.targets[0] ? pass.targets[0]->desc.name : "?");
+            if (g_tracePassesFrom && m_stats.submits >= g_tracePassesFrom && m_stats.submits < g_tracePassesFrom + 3)
+                Log("[vulkan] submit %llu: pass %s: %u textures (%s %p) -> %s %p", (unsigned long long)m_stats.submits,
+                    static_cast<VulkanPipeline*>(pass.pipeline)->name.c_str(), pass.textureCount,
+                    pass.textureCount && pass.textures[0].texture ? pass.textures[0].texture->desc.name : "-",
+                    pass.textureCount ? (void*)pass.textures[0].texture : nullptr, pass.targets[0] ? pass.targets[0]->desc.name : "?", (void*)pass.targets[0]);
             auto* pipeline = static_cast<VulkanPipeline*>(pass.pipeline);
             VulkanTexture* textures[8];
             for (uint32_t i = 0; i < pipeline->textureCount; i++)
             {
                 textures[i] = i < pass.textureCount && pass.textures[i].texture ? static_cast<VulkanTexture*>(pass.textures[i].texture) : m_nullTexture;
+                if (g_tracePassesFrom && m_stats.submits >= g_tracePassesFrom && m_stats.submits < g_tracePassesFrom + 3)
+                    Log("[vulkan]   texture %p access %d image %p view %p barriers %zu", (void*)textures[i], int(textures[i]->access),
+                        (void*)textures[i]->image, (void*)textures[i]->views[0], m_barriers.size());
                 Transition(textures[i], Access::ShaderRead);
             }
             VulkanTexture* targets[4];
@@ -2201,8 +2251,25 @@ float4 main(uint id : SV_VertexID) : SV_Position
                     writes[writeCount++].pImageInfo = &images[i];
                 }
             }
+            // A set of this command buffer's pool (a new command buffer when it is full).
+            VkDescriptorSetAllocateInfo allocate{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+            allocate.descriptorPool = m_context.descriptors;
+            allocate.descriptorSetCount = 1;
+            allocate.pSetLayouts = &pipeline->setLayout;
+            VkDescriptorSet set = VK_NULL_HANDLE;
+            if (vkAllocateDescriptorSets(m_device, &allocate, &set) != VK_SUCCESS)
+            {
+                SubmitInternal(false);
+                BeginRendering(targets, pass.targetCount, nullptr);
+                allocate.descriptorPool = m_context.descriptors;
+                if (!Check(vkAllocateDescriptorSets(m_device, &allocate, &set), "vkAllocateDescriptorSets (pass)"))
+                    return;
+            }
+            for (uint32_t i = 0; i < writeCount; i++)
+                writes[i].dstSet = set;
+            vkUpdateDescriptorSets(m_device, writeCount, writes, 0, nullptr);
             vkCmdBindPipeline(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
-            vkCmdPushDescriptorSetKHR(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout, 0, writeCount, writes);
+            vkCmdBindDescriptorSets(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout, 0, 1, &set, 0, nullptr);
             // The draw bindings are disturbed (another layout): the next draw binds everything again.
             m_drawState = {};
             SetViewportScissor(pass.viewport, pass.scissor);
@@ -2335,7 +2402,7 @@ float4 main(uint id : SV_VertexID) : SV_Position
             auto* source = static_cast<VulkanTexture*>(texture);
             width = texture->desc.width;
             height = texture->desc.height;
-            Buffer* buffer = CreateBuffer(uint64_t(width) * height * 4);
+            Buffer* buffer = CreateBuffer(uint64_t(width) * height * 4, true);
             if (!buffer)
                 return false;
             Access before = source->access;
@@ -2347,6 +2414,20 @@ float4 main(uint id : SV_VertexID) : SV_Position
             region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
             region.imageExtent = { width, height, 1 };
             vkCmdCopyImageToBuffer(m_cmd, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, static_cast<VulkanBuffer*>(buffer)->buffer, 1, &region);
+            // The copy's writes made visible to the host: without it the read could see the buffer's
+            // memory before the GPU's caches were written back (screenshots came out black at times).
+            VkBufferMemoryBarrier2 hostRead{ VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2 };
+            hostRead.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+            hostRead.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            hostRead.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+            hostRead.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+            hostRead.srcQueueFamilyIndex = hostRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            hostRead.buffer = static_cast<VulkanBuffer*>(buffer)->buffer;
+            hostRead.size = VK_WHOLE_SIZE;
+            VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            dependency.bufferMemoryBarrierCount = 1;
+            dependency.pBufferMemoryBarriers = &hostRead;
+            vkCmdPipelineBarrier2(m_cmd, &dependency);
             if (before != Access::Undefined)
                 Transition(source, before);
             WaitIdle();

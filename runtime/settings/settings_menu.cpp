@@ -101,7 +101,7 @@ namespace settings::menu
         enum class Item
         {
             Master, Music, Effects, Voice,
-            Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay,
+            Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay, Renderer,
             Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, ShadowResolution, HdRemaster,
             Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Storage,
             Subtitles, SubtitleSize, SubtitleBackground,
@@ -165,7 +165,7 @@ namespace settings::menu
             { "audio", { "AUDIO", "ÁUDIO" },
               { Item::Master, Item::Music, Item::Effects, Item::Voice, Item::HeaderSubtitles, Item::Subtitles, Item::SubtitleSize,
                 Item::SubtitleBackground } },
-            { "video", { "VIDEO", "VÍDEO" }, { Item::Window, Item::Resolution, Item::FpsLimit, Item::VSync, Item::AntiAliasing, Item::Overlay } },
+            { "video", { "VIDEO", "VÍDEO" }, { Item::Window, Item::Resolution, Item::FpsLimit, Item::VSync, Item::AntiAliasing, Item::Overlay, Item::Renderer } },
             { "graphics", { "GRAPHICS", "GRÁFICOS" },
               { Item::Upscaler, Item::UpscalerQuality, Item::Sharpness, Item::MotionBlur, Item::DepthOfField, Item::Anisotropy,
                 Item::ShadowSoftness, Item::ShadowResolution } },
@@ -272,6 +272,7 @@ namespace settings::menu
             case Item::VSync: return "video.vsync";
             case Item::AntiAliasing: return "video.antialiasing";
             case Item::Overlay: return "video.overlay";
+            case Item::Renderer: return "video.renderer";
             case Item::Upscaler: return "graphics.upscaler";
             case Item::UpscalerQuality: return "graphics.upscaler_quality";
             case Item::Sharpness: return "graphics.sharpness";
@@ -330,6 +331,7 @@ namespace settings::menu
             case Item::VSync: return "V-SYNC";
             case Item::AntiAliasing: return "ANTI-ALIASING";
             case Item::Overlay: return "OVERLAY (F1)";
+            case Item::Renderer: return T({ "RENDERER", "RENDERIZADOR" });
             case Item::Upscaler: return "DLSS / FSR";
             case Item::UpscalerQuality: return T({ "UPSCALER MODE", "MODO DO UPSCALER" });
             case Item::Sharpness: return T({ "SHARPNESS (FSR)", "NITIDEZ (FSR)" });
@@ -383,7 +385,7 @@ namespace settings::menu
         {
             switch (item)
             {
-            case Item::Language: case Item::MojoColors: case Item::HdRemaster:
+            case Item::Language: case Item::MojoColors: case Item::HdRemaster: case Item::Renderer:
                 return true;
             default:
                 return false;
@@ -466,6 +468,9 @@ namespace settings::menu
             case Item::Overlay:
                 return { T({ "Performance overlay: FPS, frame time and graph.", "Overlay de desempenho: FPS, frame time e gráfico." }),
                          T({ "F1 switches it at any time.", "O F1 alterna a qualquer momento." }) };
+            case Item::Renderer:
+                return { T({ "Graphics API: Direct3D 12, or Vulkan (new; Linux/Steam Deck).", "API gráfica: Direct3D 12, ou Vulkan (novo; Linux/Steam Deck)." }),
+                         restart };
             case Item::Upscaler:
                 return { T({ "Temporal AA + upscaling of the 3D scene, no", "AA temporal + upscaling da cena 3D, sem" }),
                          T({ "frame generation. DLSS: NVIDIA RTX only.", "frame generation. DLSS: só NVIDIA RTX." }) };
@@ -696,6 +701,7 @@ namespace settings::menu
                 default: return T({ "WINDOWED", "JANELA" });
                 }
             case Item::VSync: return OnOff(g_values.vsync);
+            case Item::Renderer: return g_values.renderer == Renderer::Vulkan ? "VULKAN" : "DIRECT3D 12";
             case Item::AntiAliasing:
                 switch (g_values.antiAliasing)
                 {
@@ -776,6 +782,7 @@ namespace settings::menu
             add(g_values.language != boot.language, Item::Language);
             add(g_values.ps2MojoColors != boot.ps2MojoColors, Item::MojoColors);
             add(g_values.hdRemaster != boot.hdRemaster, Item::HdRemaster);
+            add(g_values.renderer != boot.renderer, Item::Renderer);
             return list;
         }
 
@@ -1195,6 +1202,9 @@ namespace settings::menu
                     break;
                 case Item::Overlay:
                     g_values.overlay = Cycle(g_values.overlay, 4, direction);
+                    break;
+                case Item::Renderer:
+                    g_values.renderer = Cycle(g_values.renderer, 2, direction);
                     break;
                 case Item::Upscaler:
                     g_values.upscaler = Cycle(g_values.upscaler, 3, direction);

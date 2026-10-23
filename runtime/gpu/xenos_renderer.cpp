@@ -334,9 +334,12 @@ namespace gpu::renderer
         uint64_t g_traceFrom = 0;
         uint64_t g_traceSwap = UINT64_MAX; // CRASH_GPU_TRACE_SWAP=N: every draw and resolve of the frame presented by swap N
 
+        // CRASH_GPU_TRACE_SWAPS=N: that many frames from CRASH_GPU_TRACE_SWAP (default 1).
+        const uint64_t g_traceSwapCount = getenv("CRASH_GPU_TRACE_SWAPS") ? strtoull(getenv("CRASH_GPU_TRACE_SWAPS"), nullptr, 10) : 1;
+
         bool TracingSwap()
         {
-            return g_stats.swaps + 1 == g_traceSwap;
+            return g_stats.swaps + 1 >= g_traceSwap && g_stats.swaps + 1 < g_traceSwap + g_traceSwapCount;
         }
 
         void Skip(SkipReason reason)
@@ -2158,7 +2161,9 @@ float4 main(float4 position : SV_Position) : SV_Target
             float scale = source->scale;
 
             static uint32_t loggedResolves;
-            bool logThis = loggedResolves < 40 || TracingSwap();
+            // CRASH_GPU_TRACE_RESOLVE=<physical address, hex>: every resolve into that address.
+            static const uint32_t s_traceResolve = getenv("CRASH_GPU_TRACE_RESOLVE") ? uint32_t(strtoul(getenv("CRASH_GPU_TRACE_RESOLVE"), nullptr, 16)) : 0;
+            bool logThis = loggedResolves < 40 || TracingSwap() || (s_traceResolve && (Reg(xenos::REG_RB_COPY_DEST_BASE) & 0x1FFFFFFF) == s_traceResolve);
 
             // Copy.
             uint32_t destBase = Reg(xenos::REG_RB_COPY_DEST_BASE) & 0x1FFFFFFF;
@@ -2235,6 +2240,8 @@ float4 main(float4 position : SV_Position) : SV_Target
 
                 ResolveSurface* surface = &EnsureSurface(*destination, scale);
                 destination->current = SurfaceIndex(scale);
+                if (logThis && TracingSwap())
+                    Log("[gpu]   -> texture %p (surface %u), source texture %p", (void*)surface->texture, SurfaceIndex(scale), (void*)source->texture);
                 NoteSceneResolve(*destination, *source, isDepth, sourceSelect);
                 rhi::Rect hostRect{ std::max(0, ScaledFloor(float(x0 + dx), scale)), std::max(0, ScaledFloor(float(y0 + dy), scale)),
                                     std::min(int32_t(surface->hostWidth), ScaledCeil(float(x1 + dx), scale)),
@@ -2262,6 +2269,29 @@ float4 main(float4 position : SV_Position) : SV_Target
                     if (visible)
                         g_rhi->DrawPass(pass);
                     target->lastWriteFrame = g_frame;
+                }
+
+                // CRASH_GPU_DUMP_RESOLVE=<physical address, hex>: in the traced frames (CRASH_GPU_TRACE_SWAP),
+                // the destination after each resolve into that address, and its source, as PNGs.
+                static const uint32_t s_dumpResolve = getenv("CRASH_GPU_DUMP_RESOLVE") ? uint32_t(strtoul(getenv("CRASH_GPU_DUMP_RESOLVE"), nullptr, 16)) : 0;
+                if (s_dumpResolve && destBase == s_dumpResolve && TracingSwap() && !isDepth)
+                {
+                    static uint32_t dumped;
+                    for (int which = 0; which < 2; which++)
+                    {
+                        std::vector<uint8_t> pixels;
+                        uint32_t width, height;
+                        rhi::Texture* texture = which ? source->texture : surface->texture;
+                        if (texture->desc.format != DXGI_FORMAT_R8G8B8A8_UNORM || !g_rhi->ReadBack(texture, pixels, width, height))
+                            continue;
+                        for (size_t i = 3; i < pixels.size(); i += 4)
+                            pixels[i] = 255;
+                        char name[96];
+                        snprintf(name, sizeof(name), "resolve_%08X_swap%llu_%u_%s.png", destBase, (unsigned long long)g_stats.swaps + 1, dumped,
+                                 which ? "source" : "destination");
+                        WritePng(g_screenshotDir / name, pixels.data(), width, height, width * 4);
+                    }
+                    dumped++;
                 }
 
                 if (isDepth && target->format == DXGI_FORMAT_R32_FLOAT)
@@ -3697,6 +3727,27 @@ float4 main(float4 position : SV_Position) : SV_Target
             flags |= 2;
         }
         memcpy(&constants[4], &flags, 4);
+        if (TracingSwap())
+            Log("[gpu] present: front buffer 0x%08X %ux%u, source %s (%ux%u, surface %ux%u scale %.2f), flags %u, swizzle 0x%03X, uv scale %g %g, image %g,%g %gx%g, aa %d",
+                frontBuffer, width, height, source ? "found" : "none", source ? source->width : 0, source ? source->height : 0,
+                sourceSurface ? sourceSurface->hostWidth : 0, sourceSurface ? sourceSurface->hostHeight : 0, sourceSurface ? sourceSurface->scale : 0.0f,
+                flags, swizzle, constants[0], constants[1], imageX, imageY, imageWidth, imageHeight, int(antiAliasing));
+        if (TracingSwap() && sourceSurface)
+        {
+            Log("[gpu] present texture %p (current %u)", (void*)sourceSurface->texture, source->current);
+            // CRASH_GPU_DUMP_PRESENT=1: the texture each traced present samples, as a PNG.
+            static const bool dumpPresent = getenv("CRASH_GPU_DUMP_PRESENT") != nullptr;
+            std::vector<uint8_t> pixels;
+            uint32_t dumpWidth, dumpHeight;
+            if (dumpPresent && g_rhi->ReadBack(sourceSurface->texture, pixels, dumpWidth, dumpHeight))
+            {
+                for (size_t i = 3; i < pixels.size(); i += 4)
+                    pixels[i] = 255;
+                char name[64];
+                snprintf(name, sizeof(name), "present_source_%05llu.png", (unsigned long long)g_stats.swaps);
+                WritePng(g_screenshotDir / name, pixels.data(), dumpWidth, dumpHeight, dumpWidth * 4);
+            }
+        }
         present.viewport = { imageX, imageY, imageWidth, imageHeight };
         present.scissor = { int32_t(imageX), int32_t(imageY), int32_t(imageX + imageWidth), int32_t(imageY + imageHeight) };
         float presentConstants[8];
@@ -3738,6 +3789,19 @@ float4 main(float4 position : SV_Position) : SV_Target
             g_rhi->ClearColor(backBuffer, black, nullptr);
         }
         g_rhi->DrawPass(present);
+        if (TracingSwap() && getenv("CRASH_GPU_DUMP_PRESENT"))
+        {
+            std::vector<uint8_t> pixels;
+            uint32_t dumpWidth, dumpHeight;
+            if (g_rhi->ReadBack(backBuffer, pixels, dumpWidth, dumpHeight))
+            {
+                for (size_t i = 3; i < pixels.size(); i += 4)
+                    pixels[i] = 255;
+                char name[64];
+                snprintf(name, sizeof(name), "present_after_%05llu.png", (unsigned long long)g_stats.swaps);
+                WritePng(g_screenshotDir / name, pixels.data(), dumpWidth, dumpHeight, dumpWidth * 4);
+            }
+        }
 
         // Drawn over the image at the window's resolution, through the overlay's bitmaps.
         overlay::BeginPresent(backBuffer);
