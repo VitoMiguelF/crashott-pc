@@ -81,8 +81,6 @@ target_compile_options(XexImage PRIVATE -w)
 # (runtime/paths.h). The image is decrypted from <game>\default.xex at startup.
 file(GLOB_RECURSE CRASH_RUNTIME_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/runtime/*.cpp)
 list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "/runtime/xex_image/")
-# The Direct3D 12 backend left the build on 2026-10-23 (Vulkan only).
-list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "/runtime/gpu/rhi_d3d12\\.cpp$")
 add_executable(CrashRecomp ${CRASH_RUNTIME_SOURCES})
 target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
     hid setupapi windowscodecs)

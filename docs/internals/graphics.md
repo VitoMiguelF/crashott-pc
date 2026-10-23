@@ -36,7 +36,7 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   Formats are DXGI enums (only `<dxgiformat.h>`), mapped by the backend.
 - The only backend is `rhi_vulkan.cpp` (Vulkan 1.3: dynamic rendering, synchronization2, a timeline
   semaphore per submission; DXC -> SPIR-V, `<hash>.spv`, `userdata\shadercache\vulkan_pipelines.bin`).
-  Direct3D 12 (`rhi_d3d12.cpp`, FXC) was dropped on 2026-10-23 after reaching parity; `rhi.h` keeps the
+  Direct3D 12 (`rhi_d3d12.cpp`, FXC; in git history) was removed on 2026-10-23 after reaching parity; `rhi.h` keeps the
   shape so a native Linux WSI or Metal only needs a new Device. Without a Vulkan 1.3 device or a
   `dxcompiler.dll` that emits SPIR-V, `renderer::Init` logs why, shows a message box and exits.
 - Vulkan facts: viewport flipped (negative height), front faces stay clockwise; draws bind textures as push
