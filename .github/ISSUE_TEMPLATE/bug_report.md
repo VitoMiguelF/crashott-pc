@@ -8,7 +8,7 @@ assignees: ''
 
 <!-- EN: fill what you can. PT-BR: preencha o que puder. Never attach game files / Nunca anexe arquivos do jogo. -->
 
-**Version / Versão:** <!-- release tag (v1.02) or commit -->
+**Version / Versão:** <!-- release tag (v1.03) or commit -->
 **Windows, CPU, GPU:**
 **Controller(s) / Controle(s):** <!-- keyboard+mouse, Xbox, DualSense USB/BT, DSX/DS4Windows... -->
 
