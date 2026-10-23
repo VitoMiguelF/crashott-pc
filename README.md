@@ -49,7 +49,9 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 
 ## Requirements
 
-- Windows 10/11 x64, a DirectX 12 GPU.
+- Windows 10/11 x64, a DirectX 12 GPU. An experimental Vulkan 1.3 renderer (aimed at Linux/Steam Deck
+  through Proton) can be chosen in SETTINGS > VIDEO > RENDERER; it needs `dxcompiler.dll` with SPIR-V
+  next to the exe and falls back to Direct3D 12 without it.
 - Your Crash of the Titans (Xbox 360) game files: the folder with `default.xex`, `default.rcf`,
   `english.rcf`, `sound1.rcf`, `sound2.rcf` and `shaders\` (extracted from your disc). Only the known
   retail `default.xex` is supported (the installer checks its SHA-256).
@@ -199,7 +201,9 @@ de PC.
 
 ## Requisitos
 
-- Windows 10/11 x64 e uma placa de vídeo com DirectX 12.
+- Windows 10/11 x64 e uma placa de vídeo com DirectX 12. Um renderizador Vulkan 1.3 experimental (para
+  Linux/Steam Deck pelo Proton) pode ser escolhido em SETTINGS > VÍDEO > RENDERIZADOR; ele precisa do
+  `dxcompiler.dll` com SPIR-V ao lado do exe e volta para o Direct3D 12 sem ele.
 - Os arquivos do seu Crash of the Titans (Xbox 360): a pasta com `default.xex`, `default.rcf`,
   `english.rcf`, `sound1.rcf`, `sound2.rcf` e `shaders\` (extraída do seu disco). Só o `default.xex`
   conhecido da versão comercial é suportado (o instalador confere o SHA-256).

@@ -20,4 +20,7 @@ namespace gpu::rhi::vulkan
     // False (logged, the HLSL written to shaderdump\) if it doesn't compile.
     bool CompileSpirv(Stage stage, const std::string& hlsl, const char* name, Layout layout, const std::filesystem::path& cache,
                       std::vector<uint32_t>& spirv, uint64_t* compiles = nullptr, uint64_t* failures = nullptr);
+
+    // dxcompiler.dll loads and generates SPIR-V (the Windows SDK's copy has no SPIR-V backend).
+    bool CompilerAvailable();
 }

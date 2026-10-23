@@ -159,6 +159,28 @@ namespace gpu::rhi::vulkan
         result->Release();
         return true;
     }
+
+    bool CompilerAvailable()
+    {
+        if (!LoadCompiler())
+            return false;
+        static const char HLSL[] = "float4 main() : SV_Target { return 0; }";
+        std::vector<std::wstring> args = Arguments(Stage::Pixel, Layout::Pass);
+        std::vector<const wchar_t*> argPointers;
+        for (const std::wstring& arg : args)
+            argPointers.push_back(arg.c_str());
+        DxcBuffer source{ HLSL, sizeof(HLSL) - 1, DXC_CP_UTF8 };
+        IDxcResult* result = nullptr;
+        HRESULT status = g_compiler->Compile(&source, argPointers.data(), uint32_t(argPointers.size()), nullptr, __uuidof(IDxcResult),
+                                             reinterpret_cast<void**>(&result));
+        if (SUCCEEDED(status) && result)
+            result->GetStatus(&status);
+        if (result)
+            result->Release();
+        if (FAILED(status))
+            Log("[vulkan] dxcompiler.dll does not generate SPIR-V (the Windows SDK's copy? the Vulkan SDK's or a DirectXShaderCompiler release's is needed)");
+        return SUCCEEDED(status);
+    }
 }
 
 namespace gpu::rhi

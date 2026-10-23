@@ -893,6 +893,8 @@ namespace gpu::rhi
         {
             m_hwnd = HWND(info.window);
             m_shaderCache = info.shaderCache;
+            if (!vulkan::CompilerAvailable())
+                return false;
             if (!LoadLoader())
             {
                 Log("[vulkan] vulkan-1.dll not found (no Vulkan driver installed)");

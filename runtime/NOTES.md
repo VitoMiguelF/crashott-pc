@@ -70,7 +70,7 @@ O alvo `CrashRecomp` usa as mesmas flags do `CrashPPC` (`/arch:AVX -fno-strict-a
 | `gpu/gpu.*` | GPU, primeira etapa: janela de registradores (`0x7FC80000`, primeira página com trap de escrita), thread de interrupções (vblank a 60 Hz + `PM4_INTERRUPT`) e contadores |
 | `gpu/command_processor.cpp` | Thread host que percorre o PM4 do ring buffer e dos indirect buffers, aplica escritas de registrador, faz as escritas em memória/esperas/interrupções e grava o read pointer de volta. Shaders, draws e swaps vão para o renderer (passo 10) |
 | `gpu/video_imports.cpp` | `Vd*` e `XGetVideoMode`: modo fixo 1280x720 60 Hz widescreen, ring buffer/write-back/callback de interrupção para a GPU, `VdSwap` |
-| `gpu/shader_translator.*`, `gpu/d3d12_renderer.cpp`, `gpu/texture_decode.*`, `gpu/window.*`, `gpu/xenos.h` | Renderização Direct3D 12 (passo 10) |
+| `gpu/shader_translator.*`, `gpu/xenos_renderer.cpp` (antes `d3d12_renderer.cpp`), `gpu/rhi*.{h,cpp}`, `gpu/texture_decode.*`, `gpu/window.*`, `gpu/xenos.h` | Renderização (passo 10): Direct3D 12 e Vulkan (seção "Vulkan") |
 | `gpu/overlay.*`, `gpu/overlay_font.h`, `kernel/input.h` | Overlay de desempenho (quadro, relógio do input, FPS, frame time), marcas F2, `frametimes.csv` e gravação de botões (passo 18) |
 | `settings/*` | Tela de configurações (SETTINGS no menu principal), `userdata\settings.toml`, patches embutidos do menu/textos/mixers e o gancho Lua que abre a tela (passo 19); `restart.cpp`: o reinício pela tela e o pulo das intros ("Aplicar as opções sem fechar o jogo") |
 | `camera/free_camera.*` | Câmera livre em terceira pessoa (experimental, `[camera] free_camera`): órbita sobre a câmera de render do jogo, colisão, recentrar ("Câmera livre em terceira pessoa") |
@@ -458,7 +458,7 @@ Objetivo: desenhar numa janela o que o jogo manda para a GPU. Código em `runtim
 |---|---|
 | `gpu/xenos.h` | Índices de registradores, enums (formatos de RT/textura/vértice, blend, primitivas), fetch constants de textura/vértice e o endereçamento tiled 2D (`Tiled2D`), seguindo o `register_table.inc`/`registers.h`/`xenos.h`/`texture_address.h` do Xenia (BSD) |
 | `gpu/shader_translator.*` | Microcode Xenos → HLSL. Fluxo de controle (exec/cond exec por bool ou predicado, loops, call/return, jump), as 30 ops vetoriais e 51 escalares (com as regras do D3D9: `0 * x = 0` em mul/mad/dp), exports (posição, 16 interpoladores, oC0–3, oDepth, máscaras de constante 0/1), `vfetch` (todos os formatos de vértice, mini fetch, exp_adjust) e `tfetch` 1D/2D (getWeights, offsets, coordenadas não normalizadas). Shaders sem loop/jump viram código linear; os demais, um laço com `switch` sobre o contador de programa |
-| `gpu/d3d12_renderer.cpp` | Dispositivo, swap chain, anel de upload (256 MB) e de descritores com reaproveitamento por fence, cache de PSOs, render targets, resolves, texturas, samplers, draws e apresentação |
+| `gpu/d3d12_renderer.cpp` (hoje `xenos_renderer.cpp` + `rhi_d3d12.cpp`, ver "Vulkan") | Dispositivo, swap chain, anel de upload (256 MB) e de descritores com reaproveitamento por fence, cache de PSOs, render targets, resolves, texturas, samplers, draws e apresentação |
 | `gpu/texture_decode.*` | Textura guest → dados host: formatos, untiling 2D, swap de endian, nível base no mip tail empacotado, conversões em CPU (565/1555/4444/CTX1/DXT3A/profundidade) |
 | `gpu/window.*` | Janela Win32 numa thread própria (fechar encerra o processo, F12 tira screenshot) |
 | `gpu/png_writer.*` | PNG sem compressão para os screenshots |
@@ -1903,3 +1903,54 @@ Pedido: mandar comandos com o jogo aberto (unlock all, mojo, trocar de skin...).
 - `tools/requirements.txt` (numpy>=1.23, Pillow>=9.1). O `setup.py` lista os pacotes na checagem (`@@pypkg`, nunca bloqueia), instala com `"<o mesmo python>" -m pip install -r tools/requirements.txt` no começo (com `--extract-assets`; tenta `ensurepip` se faltar o pip) e de novo antes da etapa 9. Uma falha só derruba a etapa 9, com o comando para rodar à mão (`@@hint`); o jogo fica pronto (`@@game-ready`). `--assets-only` refaz só a exportação; `--check-packages` só confere os pacotes.
 - `CrashSetup.exe`: os pacotes que faltam aparecem em PRÉ-REQUISITOS (clicar instala pelo pip num console); se só os assets falharem, o título vira O JOGO ESTÁ PRONTO, aparecem JOGAR e o comando do pip, e TENTAR DE NOVO roda só `--assets-only`. Usa o Python de um venv ativado (`VIRTUAL_ENV`).
 - Testado num clone limpo com um venv sem numpy/Pillow (detalhes no commit). A release publica só `CrashRecomp-v1.02.zip` + `SHA256SUMS.txt`; dados continuam na v1.0.
+
+## Vulkan (2026-10-23, branch `vulkan`): segundo backend gráfico, rumo a Linux/Steam Deck (`gpu/rhi*.{h,cpp}`, `gpu/xenos_renderer.cpp`, `gpu/vulkan_loader.*`, `settings/*`, `tools/perf/compare_backends.py`)
+
+Pedido: trocar o D3D12 por Vulkan para ter mais compatibilidade com Linux (Proton, principalmente Steam Deck) e Windows; o D3D12 continua selecionável durante a transição. Mac fica de fora.
+
+**Arquitetura.** O antigo `d3d12_renderer.cpp` virou `xenos_renderer.cpp` (PM4, EDRAM, resolves, tile stash, decodificação e cache de texturas, passes temporais, apresentação), que fala só com `rhi::Device` (`gpu/rhi.h`). Dois modelos de binding: *draws* (shaders do Xenos: b0-b3, t0-t31, s0-s31, anel de upload em t0 space1) e *passes* (b0, t0-t7 ou structured buffer, samplers fixos s0/s1). Backends: `rhi_d3d12.cpp` (o código de antes, mesmas imagens que a main) e `rhi_vulkan.cpp` (Vulkan 1.3: dynamic rendering, synchronization2, timeline semaphore por submissão; shaders HLSL -> SPIR-V pelo DXC, `dxcompiler.dll` carregado em tempo de execução; `vulkan-1.dll` também, então o exe abre sem driver Vulkan). Overlay, SMAA, iluminação, upscaler e as telas (legendas, settings, saves, console) usam só o RHI.
+
+**Escolha.** `--renderer d3d12|vulkan` > `CRASH_RENDERER` > `video.renderer` (`settings.toml`; tela SETTINGS > VÍDEO > RENDERIZADOR, ao reiniciar). Padrão ainda `d3d12`. O Vulkan cai para o D3D12 se não houver GPU/driver com Vulkan 1.3 + push descriptors, ou se o `dxcompiler.dll` não gerar SPIR-V (o do Windows SDK não gera; precisa o do Vulkan SDK ou de uma release do DirectXShaderCompiler). `run_game.py`: `--set renderer=vulkan`, `--set gpu_debug=true` (validation + sync validation).
+
+**Paridade (RTX 5080, Windows; `python tools\perf\compare_backends.py <perfil>`, capturas em `build\vulkan\`):**
+
+| Área | Vulkan | Como foi conferido |
+|---|---|---|
+| Boot, intros Bink, menus, frontend | igual | `menu`, `boot` |
+| Tela SETTINGS (todas as abas), fonte do jogo, ícones paletizados, FXAA, hub | igual | `configuracoes` |
+| L1_E1: cores, sombras de stencil, aliasing de EDRAM, resolves, tiling, MSAA, profundidade | igual | `vila_sem_cena` |
+| Motion blur, DOF, suavidade de sombra, anisotrópico 16x, mipmaps | igual | `vila_sem_cena` |
+| SMAA, resolução interna 1.5x | igual | `vila_sem_cena` + `CRASH_SETTINGS` |
+| Iluminação (SSAO/GI/contato/sombras suaves) | igual | `iluminacao_tela` |
+| Overlay F1, legendas, cursor | igual (overlay e telas conferidos; legendas e cursor pelo mesmo caminho de passes) | `configuracoes` |
+| Caminho D32S8 + `VK_EXT_depth_bias_control` (o do RADV/Deck) | igual | `vila_sem_cena` + `CRASH_VULKAN_D32=1` |
+| V-Sync, limite 30/60/120 | ok (FIFO / immediate ou mailbox) | `vila_sem_cena` + `CRASH_SETTINGS` |
+| Tela cheia | sem modo exclusivo: tela cheia = janela sem bordas | idem |
+| Desempenho 1080p sem limite | 170 fps vs 169 (D3D12), CP 3,2 vs 3,1 ms/quadro | `bench.py --profile desempenho_vila_direto` |
+| Validation layers | limpo (só o aviso de PS que escreve SV_Target0 sem attachment) | `vila_sem_cena` + `gpu_debug` |
+| DLSS | **falta**: o `nvsdk_ngx_s.lib` já tem `NVSDK_NGX_VULKAN_*`, faltam `nvsdk_ngx_vk.h` e `nvsdk_ngx_helpers_vk.h` | upscaler diz "indisponível" no Vulkan |
+| FSR 3.1 | **falta**: o FidelityFX SDK v2 só tem DLLs DX12; precisa `amd_fidelityfx_vk.dll` (SDK 1.1.x) | idem |
+| Pacotes HD de texturas | mesmo caminho de upload (não conferido com um pacote) | — |
+
+**Armadilhas encontradas.**
+- Render targets e depth empacotados no alinhamento de 1 KB do driver dentro da mesma página de 64 KB se corrompiam na NVIDIA (a vila mostrava padrões de depth): attachments ganham alinhamento de 64 KB.
+- Push descriptors com samplers imutáveis amostravam zero de image views criadas depois dos primeiros quadros: o segundo front buffer dos menus (0x0A6F0000) aparecia preto a cada dois quadros. O resolve e a apresentação estavam certos (cópia de leitura com conteúdo), `WaitIdle` antes de cada passe não mudava nada, uma view nova por uso deixava todos os quadros pretos. Os passes agora usam um descriptor set normal por passe (pool por command buffer); os draws continuam com push descriptors (set 0, sem samplers imutáveis).
+- As validation layers do SDK 1.4.363 travam em `vkCmdPushDescriptorSetKHR` quando o set de push não é o set 0 (as texturas dos draws estão no set 0 por isso).
+- SPIR-V do DXC usa `OpDemoteToHelperInvocation` para `discard`: `shaderDemoteToHelperInvocation` é obrigatório.
+- Leitura de stencil: SPIR-V lê `.x` de uma view de stencil, DXBC/DXIL `.y` (`XE_STENCIL` no HLSL).
+- Primeira vez numa resolução nova: o DXC compila os shaders escalados (~80 ms cada, travada de ~2 s na vila a 1080p); depois vêm do cache `userdata\shadercache\*.spv`.
+
+**Plano de teste no Steam Deck (Proton, RADV, 1280x800):**
+1. Copiar a `dist` com `dxcompiler.dll` (do Vulkan SDK) ao lado do exe; adicionar o exe como jogo não-Steam, Proton Experimental.
+2. `settings.toml`: `renderer = "vulkan"`, `resolution = "1280x720"`, `fps_limit = 30`; janela sem bordas (16:10 fica com faixas pretas em cima e embaixo, o jogo é 16:9).
+3. Conferir no log: `[vulkan] AMD Custom GPU 0405 (RADV VANGOGH) ... depth D32S8 (no sampled D24S8) ... depth bias control`. Sem `depth bias control` (Mesa < 23.3), o bias das sombras fica em unidades de D32: anotar.
+4. Menu, SETTINGS, NEW GAME, vila (sombras de stencil, motion blur), uma fase com tiling (ice band) e a iluminação ligada; F1 para o FPS. Comparar com `renderer = "d3d12"` (vkd3d-proton).
+5. Rodar com `CRASH_GPU_DEBUG=1` (precisa das validation layers instaladas no prefixo) e guardar `userdata\log.txt`.
+6. Medir 720p/800p a 30 e 60 fps com o overlay; o gargalo esperado é a CPU do command processor (4 núcleos Zen 2).
+
+**Próximos passos.**
+1. DLSS no Vulkan (NGX Vulkan; extensões de instância/dispositivo pedidas por `NVSDK_NGX_VULKAN_RequiredExtensions` antes de criar o device) e FSR 3.1 Vulkan; ambos dependem de baixar os arquivos (headers NGX VK / `amd_fidelityfx_vk.dll`).
+2. Instalador/release: levar `dxcompiler.dll` com SPIR-V (release oficial do DirectXShaderCompiler, licença NCSA) no `setup.py`/`make_release` (sessão do instalador).
+3. Menos instâncias de rendering e barreiras por quadro (~300 e ~650 na vila): agrupar barreiras e manter a instância aberta entre draws com os mesmos alvos.
+4. Tornar o Vulkan o padrão depois de testar no Deck e numa GPU AMD/Intel no Windows.
+5. Build nativa para Linux (tarefa separada): SDL3 para janela/entrada/áudio, threads/memória/fibers POSIX (hoje `kernel/` usa Win32: `VirtualAlloc` com endereços fixos, fibers, eventos), `VK_KHR_wayland/xlib_surface` (headers já vendorizados), caminhos e `LoadLibrary` -> `dlopen` (`libvulkan.so.1`, `libdxcompiler.so`), ffmpeg do sistema.
