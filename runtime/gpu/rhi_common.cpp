@@ -10,22 +10,6 @@
 
 namespace gpu::rhi
 {
-    const char* BackendName(Backend backend)
-    {
-        return backend == Backend::Vulkan ? "Vulkan" : "Direct3D 12";
-    }
-
-    bool TestCompileD3D12(Stage stage, const std::string& hlsl, const char* name, const std::filesystem::path& shaderCache);
-    bool TestCompileVulkan(Stage stage, const std::string& hlsl, const char* name, Layout layout, const std::filesystem::path& shaderCache);
-
-    bool TestCompile(Backend backend, Stage stage, const std::string& hlsl, const char* name, Layout layout,
-                     const std::filesystem::path& shaderCache)
-    {
-        if (backend == Backend::Vulkan)
-            return TestCompileVulkan(stage, hlsl, name, layout, shaderCache);
-        return TestCompileD3D12(stage, hlsl, name, shaderCache);
-    }
-
     void FormatBlock(DXGI_FORMAT format, uint32_t& blockWidth, uint32_t& blockHeight, uint32_t& bytesPerBlock)
     {
         blockWidth = blockHeight = 1;

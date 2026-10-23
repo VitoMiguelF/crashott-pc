@@ -5,7 +5,7 @@
 // (sub_8226C958 / sub_8226D968). Crash passes zeros in D3DRING_BUFFER_PARAMETERS
 // (D3DPRESENT_PARAMETERS + 72), so it gets D3D's defaults: 2 MB in 32 segments of 64 KB. On the
 // console the GPU front end eats that faster than the CPU fills it; here the command processor is a
-// host thread translating every draw to D3D12, slower than the game's own submission, so 2 MB
+// host thread translating every draw to Vulkan, slower than the game's own submission, so 2 MB
 // (less than one frame of the village: ~1,600 draws with their constants) kept the game thread
 // waiting on it while rendering and left the command processor idle while the game updated the
 // next frame. A larger ring lets the game run up to ~a frame ahead, overlapping its update with the

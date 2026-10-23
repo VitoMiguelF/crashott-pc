@@ -53,8 +53,6 @@ namespace settings
 {
     enum class WindowMode : uint8_t { Windowed, Borderless, Fullscreen };
     enum class AntiAliasing : uint8_t { Off, Fxaa, Smaa };
-    // Graphics API of the renderer (gpu/rhi.h), on the next launch.
-    enum class Renderer : uint8_t { D3D12, Vulkan };
     // Temporal upscaling / anti-aliasing of the 3D scene (gpu/upscaler.h). With an upscaler on,
     // video.resolution is the output of the upscaler (the HUD and the post-processing are drawn
     // at it) and the 3D scene is drawn at that resolution times the quality's scale.
@@ -111,7 +109,6 @@ namespace settings
         int renderHeight = 720;  // internal resolution (Resolutions())
         OverlayMode overlay = OverlayMode::Off;
         AntiAliasing antiAliasing = AntiAliasing::Off;
-        Renderer renderer = Renderer::D3D12;
         Upscaler upscaler = Upscaler::Off;
         UpscalerQuality upscalerQuality = UpscalerQuality::Native;
         int sharpness = 0;          // %: FSR's RCAS sharpening (DLSS 4 has none)
@@ -225,7 +222,6 @@ namespace settings
 
     const char* WindowModeName(WindowMode mode);
     const char* AntiAliasingName(AntiAliasing mode);
-    const char* RendererName(Renderer renderer);
     const char* UpscalerName(Upscaler upscaler);                  // "off", "dlss", "fsr"
     const char* UpscalerQualityName(UpscalerQuality quality);     // "native", "quality", ...
     // Scene resolution / output resolution of an upscaler quality (1, 0.667, 0.588, 0.5, 0.333).

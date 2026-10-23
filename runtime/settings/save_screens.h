@@ -17,7 +17,7 @@
 //   kernel/xam_content_imports.cpp) and the game reads the slots again (its "access the save
 //   folder" screens), back on the same slot. Deleted saves cannot be recovered.
 //
-// Drawn by the presenter over the game (gpu/d3d12_renderer.cpp), like the settings screen.
+// Drawn by the presenter over the game (gpu/xenos_renderer.cpp), like the settings screen.
 
 #include <windows.h>
 #include <xinput.h>

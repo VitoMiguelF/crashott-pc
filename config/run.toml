@@ -53,9 +53,7 @@ audio_dump = false     # grava a mixagem em audio.wav na pasta da execução
 audio_dump_seconds = 60
 log_imports = []       # imports a logar em toda chamada (CRASH_LOG_IMPORTS)
 log_all_io = false
-d3d12_debug = false
-gpu_debug = false      # camadas de depuração da API gráfica: debug layer do D3D12 / validation layers do Vulkan (CRASH_GPU_DEBUG)
-renderer = ""          # "" = video.renderer do settings.toml da execução | "d3d12" | "vulkan" (CRASH_RENDERER); ex.: --set renderer=vulkan
+gpu_debug = false      # validation layers do Vulkan + validação de sincronização (CRASH_GPU_DEBUG; precisa do Vulkan SDK)
 # Botões do controle 0: [segundos desde a primeira leitura do controle, "BOTÃO"] (relógio de parede).
 # Botões: A B X Y START BACK UP DOWN LEFT RIGHT LB RB L3 R3 (cada um fica apertado por 200 ms;
 # [segundos, "BOTÃO", segundos_apertado] segura por mais tempo, ex.: [80, "RIGHT", 1.5]).

@@ -249,7 +249,6 @@ namespace gpu::rhi
         public:
             bool Init(const DeviceInfo& info);
 
-            Backend Kind() const override { return Backend::Vulkan; }
             const std::string& AdapterName() const override { return m_adapterName; }
 
             void Submit() override { SubmitInternal(false); }

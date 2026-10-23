@@ -1,7 +1,7 @@
 #pragma once
 
 // Draws the current subtitle (subtitles.h) over the game image; called by the presenter
-// (gpu/d3d12_renderer.cpp, Swap) after the game image and before the settings screen, the
+// (gpu/xenos_renderer.cpp, Swap) after the game image and before the settings screen, the
 // screenshots and the performance overlay, so screenshots include it.
 
 #include <windows.h>

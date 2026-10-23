@@ -535,17 +535,12 @@ namespace gpu::upscaler
     void Init(rhi::Device* device, settings::Upscaler wanted, const std::wstring& dataDir)
     {
         g_rhi = device;
-        if (device->Kind() == rhi::Backend::Vulkan)
-        {
-            rhi::NativeHandles native = device->Native();
-            g_instance = static_cast<VkInstance>(native.instance);
-            g_physical = static_cast<VkPhysicalDevice>(native.physicalDevice);
-            g_device = static_cast<VkDevice>(native.device);
-            g_getInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(native.getInstanceProcAddr);
-            g_getDeviceProcAddr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(native.getDeviceProcAddr);
-        }
-        else if (wanted != settings::Upscaler::Off)
-            Log("[gpu] upscalers: Vulkan renderer only");
+        rhi::NativeHandles native = device->Native();
+        g_instance = static_cast<VkInstance>(native.instance);
+        g_physical = static_cast<VkPhysicalDevice>(native.physicalDevice);
+        g_device = static_cast<VkDevice>(native.device);
+        g_getInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(native.getInstanceProcAddr);
+        g_getDeviceProcAddr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(native.getDeviceProcAddr);
         g_dataDir = dataDir;
         Select(wanted);
     }

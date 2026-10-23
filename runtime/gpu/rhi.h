@@ -1,12 +1,13 @@
 #pragma once
 
 // Rendering hardware interface: what the Xenos renderer (xenos_renderer.cpp) and its passes (smaa,
-// lighting, overlay) need from a graphics API. Two backends implement it: rhi_d3d12.cpp (Direct3D 12)
-// and rhi_vulkan.cpp (Vulkan 1.3); settings video.renderer / --renderer picks one at startup.
+// lighting, overlay) need from a graphics API, implemented by rhi_vulkan.cpp (Vulkan 1.3). It kept
+// the shape it had when Direct3D 12 was a second backend (until 2026-10-23), so another API (Metal,
+// a native Linux build's WSI) only needs a new Device.
 //
 // The model is the renderer's own, kept small on purpose:
 // - One command stream on one queue, recorded and submitted by the backend (Submit on demand,
-//   Present at the end of a frame). Resource states (D3D12 states, Vulkan layouts and access) are
+//   Present at the end of a frame). Resource states (Vulkan layouts and access) are
 //   tracked per texture and the barriers recorded on use: callers never write barriers.
 // - An upload ring (host-visible, ~256 MB): vertex data, indices, constants and texture uploads are
 //   written there by the CPU and referenced by byte offset. Space is reclaimed by fence.
@@ -17,8 +18,8 @@
 //   structured buffer at t0) and up to 2 static samplers (s0, s1): resolves, present, FXAA, SMAA,
 //   motion vectors, the lighting remaster, the overlay.
 // - Formats are DXGI_FORMAT values (only the enum, from <dxgiformat.h>); the Vulkan backend maps them.
-// - Shaders are HLSL: FXC (SM 5.1, DXBC) for D3D12, DXC (SPIR-V) for Vulkan, both cached on disk
-//   by a hash of the source (userdata\shadercache\*.dxbc / *.spv).
+// - Shaders are HLSL compiled to SPIR-V by DXC, cached on disk by a hash of the source
+//   (userdata\shadercache\*.spv).
 //
 // Everything runs on the command processor thread (renderer.h), except Create (Init).
 
@@ -33,13 +34,6 @@
 
 namespace gpu::rhi
 {
-    enum class Backend : uint8_t
-    {
-        D3D12,
-        Vulkan,
-    };
-    const char* BackendName(Backend backend);
-
     struct Rect
     {
         int32_t left = 0, top = 0, right = 0, bottom = 0;
@@ -87,7 +81,7 @@ namespace gpu::rhi
     {
         Default,
         Depth,    // depth of a depth/stencil texture, as a float in .r
-        Stencil,  // stencil of a depth/stencil texture, as an uint: in .y on D3D12, .x on Vulkan (HLSL: XE_STENCIL)
+        Stencil,  // stencil of a depth/stencil texture, as an uint in .x (HLSL: XE_STENCIL)
     };
 
     struct TextureView
@@ -105,7 +99,7 @@ namespace gpu::rhi
         uint64_t size = 0;
     };
 
-    // Layout of one texture level in upload memory (D3D12's copyable footprint rules: rows of
+    // Layout of one texture level in upload memory (D3D12-style copyable footprint rules: rows of
     // blocks, the row pitch aligned to 256 bytes, the level to UPLOAD_PLACEMENT_ALIGNMENT).
     constexpr uint64_t UPLOAD_PLACEMENT_ALIGNMENT = 512;
     struct Footprint
@@ -243,9 +237,9 @@ namespace gpu::rhi
     enum class NativeState : uint8_t { ShaderRead, UnorderedAccess, CopySource, CopyDest, RenderTarget };
     struct NativeHandles
     {
-        void* device = nullptr;       // ID3D12Device* / VkDevice
-        void* queue = nullptr;        // ID3D12CommandQueue* / VkQueue
-        void* commandList = nullptr;  // ID3D12GraphicsCommandList* / VkCommandBuffer (the one being recorded)
+        void* device = nullptr;       // VkDevice
+        void* queue = nullptr;        // VkQueue
+        void* commandList = nullptr;  // VkCommandBuffer (the one being recorded)
         void* physicalDevice = nullptr;  // VkPhysicalDevice
         void* instance = nullptr;        // VkInstance
         void* getInstanceProcAddr = nullptr;  // PFN_vkGetInstanceProcAddr
@@ -265,7 +259,7 @@ namespace gpu::rhi
         void* window = nullptr;  // HWND
         uint32_t width = 1280, height = 720;
         std::filesystem::path shaderCache;  // userdata\shadercache (empty: no disk cache)
-        bool debug = false;                 // D3D12 debug layer / Vulkan validation layers
+        bool debug = false;                 // Vulkan validation layers (+ synchronization validation)
         // Vulkan extensions a vendor SDK asks for (DLSS's NGX), enabled when the driver has them.
         std::vector<std::string> instanceExtensions, deviceExtensions;
     };
@@ -274,7 +268,6 @@ namespace gpu::rhi
     {
     public:
         virtual ~Device() = default;
-        virtual Backend Kind() const = 0;
         virtual const std::string& AdapterName() const = 0;
 
         // Submission.
@@ -318,8 +311,7 @@ namespace gpu::rhi
         virtual bool Resize(uint32_t width, uint32_t height) = 0;
         virtual Texture* BeginPresent() = 0;
         virtual void Present(bool vsync) = 0;
-        // video.window = fullscreen (D3D12: exclusive fullscreen while focused; Vulkan: the
-        // borderless window is the fullscreen).
+        // video.window = fullscreen (the borderless window is the fullscreen: no exclusive mode).
         virtual void UpdateFullscreen(bool wanted, bool focused) = 0;
         virtual void LeaveFullscreen() = 0;
         // Reads `texture` (RGBA8 or BGRA8) back as RGBA8 rows; waits for the GPU.
@@ -332,7 +324,7 @@ namespace gpu::rhi
         virtual bool ReadTimestamps(uint32_t first, uint32_t count, uint64_t* ticks) = 0;
         virtual double TimestampFrequency() const = 0;
 
-        // Native access (upscalers): handles, a texture's resource (ID3D12Resource* / VkImage) and
+        // Native access (upscalers): handles, a texture's resource (VkImage) and
         // view (VkImageView), its transition to `state`, and InvalidateState after recording
         // native work (the backend sets its descriptor heaps, pipelines and targets again).
         virtual NativeHandles Native() = 0;
@@ -346,12 +338,10 @@ namespace gpu::rhi
     };
 
     // Creates the device and the swap chain on `info.window`; null (and logged) if unavailable.
-    Device* CreateD3D12(const DeviceInfo& info);
     Device* CreateVulkan(const DeviceInfo& info);
 
-    // Compiles without a device (--test-shaders): true if `hlsl` compiles for `backend`.
-    bool TestCompile(Backend backend, Stage stage, const std::string& hlsl, const char* name, Layout layout,
-                     const std::filesystem::path& shaderCache);
+    // Compiles without a device (--test-shaders): true if `hlsl` compiles to SPIR-V.
+    bool TestCompile(Stage stage, const std::string& hlsl, const char* name, Layout layout, const std::filesystem::path& shaderCache);
 
     // Shared by the backends (rhi_common.cpp).
     uint64_t HashBytes(const void* data, size_t size, uint64_t seed = 0);

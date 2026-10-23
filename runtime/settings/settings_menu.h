@@ -1,7 +1,7 @@
 #pragma once
 
 // The settings screen: opened from the main menu's SETTINGS item (the patched CALIBRATION entry,
-// frontend_hooks.cpp), drawn by the presenter over the game (gpu/d3d12_renderer.cpp) and driven by
+// frontend_hooks.cpp), drawn by the presenter over the game (gpu/xenos_renderer.cpp) and driven by
 // controller 0 / the keyboard. While it is open the game reads a neutral controller, and after it
 // closes it keeps reading one until every button is released. Changes apply as they are made,
 // except the internal resolution and the upscaler, which the renderer applies when the screen

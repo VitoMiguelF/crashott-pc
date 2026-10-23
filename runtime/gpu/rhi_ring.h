@@ -1,8 +1,8 @@
 #pragma once
 
-// Ring allocator with fence-based reclamation (rhi.h backends: the upload ring, D3D12's
-// shader-visible descriptors). Offsets are handed out in order; OnSubmit marks the head with the
-// fence (D3D12) or timeline value (Vulkan) of a submission, Retire frees up to the completed one.
+// Ring allocator with fence-based reclamation (the Vulkan backend's upload ring). Offsets are
+// handed out in order; OnSubmit marks the head with the timeline value of a submission, Retire
+// frees up to the completed one.
 
 #include <cstdint>
 #include <deque>

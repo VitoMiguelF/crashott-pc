@@ -27,35 +27,39 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   stash copies (`TileStashBeforeResolve`; `CRASH_GPU_NO_TILE_STASH=1` disables).
 - The orange translucent shapes in the top corners are the P1/P2 HUD, not artifacts.
 
-## Graphics APIs: `rhi.h`, Direct3D 12 and Vulkan
+## Vulkan renderer (`rhi.h`, `rhi_vulkan.cpp`)
 
 - `xenos_renderer.cpp` is API-agnostic: PM4 state, EDRAM render targets, resolves, tile stash, texture
   decode and cache, temporal passes and present. It talks to an `rhi::Device` (`rhi.h`) with two binding
   models: **draws** (Xenos shaders: b0-b3, t0-t31, s0-s31, the upload ring at t0 space1) and **passes**
   (fullscreen helpers: b0, t0-t7 or a structured buffer, static samplers s0 point / s1 linear).
-  Formats are DXGI enums in both backends.
-- Backends: `rhi_d3d12.cpp` (root signatures, descriptor rings, FXC, `<hash>.<target>.dxbc`) and
-  `rhi_vulkan.cpp` (Vulkan 1.3: dynamic rendering, synchronization2, a timeline semaphore per submission;
-  DXC -> SPIR-V, `<hash>.spv`, `userdata\vulkan_pipelines.bin`). Choice: `--renderer d3d12|vulkan` >
-  `CRASH_RENDERER` > `video.renderer` (settings screen, VIDEO > RENDERER, on restart). Vulkan falls back
-  to Direct3D 12 when there is no usable GPU/driver or no `dxcompiler.dll` with SPIR-V.
+  Formats are DXGI enums (only `<dxgiformat.h>`), mapped by the backend.
+- The only backend is `rhi_vulkan.cpp` (Vulkan 1.3: dynamic rendering, synchronization2, a timeline
+  semaphore per submission; DXC -> SPIR-V, `<hash>.spv`, `userdata\shadercache\vulkan_pipelines.bin`).
+  Direct3D 12 (`rhi_d3d12.cpp`, FXC) was dropped on 2026-10-23 after reaching parity; `rhi.h` keeps the
+  shape so a native Linux WSI or Metal only needs a new Device. Without a Vulkan 1.3 device or a
+  `dxcompiler.dll` that emits SPIR-V, `renderer::Init` logs why, shows a message box and exits.
 - Vulkan facts: viewport flipped (negative height), front faces stay clockwise; draws bind textures as push
   descriptors (set 0), b0-b3 as dynamic UBOs in the ring + the ring as a storage buffer (set 1), sampler
   sets cached by description (set 2); passes use a regular set per pass from the command buffer's pool.
   D24S8 when sampleable (NVIDIA), else D32S8 + `VK_EXT_depth_bias_control` (AMD/RADV, Steam Deck;
-  `CRASH_VULKAN_D32=1` forces it). `XE_STENCIL` reads `.x` of a stencil view on SPIR-V, `.y` on DXIL/DXBC.
+  `CRASH_VULKAN_D32=1` forces it). `XE_STENCIL` reads `.x` of a stencil view.
 - Pitfalls found: render targets/depth packed at the driver's 1 KB alignment in shared 64 KB pages
   corrupted each other on NVIDIA (attachments get 64 KB alignment); push descriptors with immutable
   samplers sampled zeros from image views created after the first frames (the menus' second front buffer
   presented black every other frame), hence regular sets for passes; the SDK 1.4.363 validation layer
-  crashes in `vkCmdPushDescriptorSetKHR` when the push set is not set 0.
-- Debug: `CRASH_GPU_DEBUG=1` (D3D12 debug layer / Vulkan validation + sync validation),
+  crashes in `vkCmdPushDescriptorSetKHR` when the push set is not set 0; llvm-mingw needs the DXC
+  interface GUIDs declared (`__CRT_UUID_DECL`).
+- Upscalers (`upscaler.cpp`) run on the renderer's device: DLSS through NGX's Vulkan API (same static
+  `nvsdk_ngx_s.lib`), FSR 3.1.4 through `amd_fidelityfx_vk.dll` (FidelityFX SDK 1.1.4; SDK 2.x is DX12
+  only). The device enables the extensions they ask for (`rhi::DeviceInfo`): NGX's list, and the ones
+  the FidelityFX DLL looks up by extension name (`vkGetBufferMemoryRequirements2KHR`,
+  `vkSetDebugUtilsObjectNameEXT`: a null call otherwise).
+- Debug: `CRASH_GPU_DEBUG=1` (validation + sync validation; `run_game.py --set gpu_debug=true`),
   `CRASH_VULKAN_DEVICE=<name part>`, `CRASH_VULKAN_TRACE=N`, `CRASH_VULKAN_TRACE_PASSES=<submit>`,
   `CRASH_VULKAN_DEDICATED=1`, `CRASH_GPU_TRACE_SWAPS=N`, `CRASH_GPU_TRACE_RESOLVE=<hex>`,
-  `CRASH_GPU_DUMP_RESOLVE=<hex>`, `CRASH_GPU_DUMP_PRESENT=1`. Compare both APIs:
-  `python tools\perf\compare_backends.py <profile>` (runs in `build\vulkan\<api>\`, side-by-side PNG).
-- DLSS (NGX) is D3D12-only for now: on Vulkan the upscaler reports unavailable. Status, parity table and
-  the native-Linux plan: `runtime/NOTES.md`, "Vulkan".
+  `CRASH_GPU_DUMP_RESOLVE=<hex>`, `CRASH_GPU_DUMP_PRESENT=1`. Status, parity table and the native-Linux
+  plan: `runtime/NOTES.md`, "Vulkan".
 
 ## PC graphics options (`[graphics]`, `gpu/graphics_options.cpp`)
 
@@ -85,7 +89,7 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   texture (texture_dump + `hd_textures.py match`).
 - Palettized textures (k_8 + 256x1 palette at sampler s8, e.g. button icons) are invisible to the RGBA dump;
   their key is the hash of the R8 indices.
-- Pitfall: reading back from the D3D12 upload heap (write-combined) cost 1.3 s per level load; decode the base
+- Pitfall: reading back from the upload heap (write-combined) cost 1.3 s per level load; decode the base
   level to host memory first.
 
 ## Lighting remaster (`gpu/lighting.*`)

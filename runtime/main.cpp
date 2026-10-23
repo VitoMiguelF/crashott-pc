@@ -130,11 +130,6 @@ int main(int argc, char** argv)
     }
     for (int i = 1; i + 1 < argc; i++)
     {
-        if (strcmp(argv[i], "--renderer") == 0)  // d3d12 | vulkan (gpu/renderer.h)
-            gpu::renderer::SetBackend(argv[i + 1]);
-    }
-    for (int i = 1; i + 1 < argc; i++)
-    {
         if (strcmp(argv[i], "--test-shaders") == 0)
             return gpu::renderer::TestShaders(argv[i + 1]) ? 2 : 0;
         if (strcmp(argv[i], "--settings-preview") == 0)

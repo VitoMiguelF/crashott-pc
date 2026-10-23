@@ -13,7 +13,7 @@ second `PPC_FUNC` for the same address will not link. Extend the existing one.
 | File | Topic |
 |---|---|
 | [recompiler-and-runtime.md](recompiler-and-runtime.md) | XenonRecomp config and local patches, the kernel/XAM imports, fibers, GPU/audio basics, symbols |
-| [graphics.md](graphics.md) | D3D12 renderer facts, PC graphics options (DLSS/FSR/SMAA), tiling/resolves, HD texture packs, lighting remaster, window |
+| [graphics.md](graphics.md) | Vulkan renderer (rhi.h) facts, PC graphics options (DLSS/FSR/SMAA), tiling/resolves, HD texture packs, lighting remaster, window |
 | [frontend-and-boot.md](frontend-and-boot.md) | The native frontend tree, direct boot (`--boot`), test events, skipping cutscenes, name entry and save deletion |
 | [input-and-coop.md](input-and-coop.md) | Keyboard/mouse/DualSense, button icons, mouse in menus, local co-op player slots |
 | [free-camera.md](free-camera.md) | The experimental third-person free camera, camera/collision managers |

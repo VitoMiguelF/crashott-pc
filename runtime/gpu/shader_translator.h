@@ -6,7 +6,7 @@
 // host order by the caller). Instruction formats and ALU/fetch semantics follow Xenia's ucode.h
 // and shader_interpreter.cc (BSD license); the HLSL generation is our own.
 //
-// Generated shaders share one interface with the D3D12 renderer (see d3d12_renderer.cpp):
+// Generated shaders share one interface with the renderer (see xenos_renderer.cpp):
 //   b0          system constants (viewport transform, flags, alpha test, bool/loop constants,
 //               vertex buffer bases, texture swizzles)
 //   b1 / b2     float constants of the vertex / pixel shader (256 float4 each)

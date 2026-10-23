@@ -1920,15 +1920,17 @@ Pedido da comunidade depois da v1.02: o instalador exigia Visual Studio Build To
 - **Teste limpo**: zip extraído em `Downloads\CrashRecomp-v1.03-test` e `CrashSetup.exe --autostart --option assets` aberto com `PATH` só com as pastas do Windows e um perfil de usuário novo e vazio (`USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP`); sem Windows Sandbox nesta máquina (e sem admin). Pré-requisitos ok sem Git, XenonRecomp do zip, jogo pronto em ~1,5 min (recompilação + build), legendas baixadas da v1.0; a exportação de assets (o `crash_assettool` compilado pelo llvm-mingw, numpy e Pillow do Python embutido) terminou em ~9 min com vídeos, sons, 1 553 texturas e 790 `.glb`. O `dist\CrashRecomp.exe` dessa instalação entrou na vila (`vila_sem_cena`) com DLSS e com FSR. Espaço: ~1,4 GB sem os assets (toolchain 0,5, build 0,37, dist 0,19, SDKs 0,18, XenonRecomp 0,08, código gerado 0,06).
 - Detalhes: os arquivos baixados pelo `toolchain.py` são conferidos contra SHA-256 anotados no dia (as releases do GitHub não publicam checksums desses arquivos). O `rtti_scan.py` continua precisando do `undname.exe` do Visual Studio ou de um `llvm-undname` (o llvm-mingw não traz).
 
-## Vulkan (2026-10-23, branch `vulkan`): segundo backend gráfico, rumo a Linux/Steam Deck (`gpu/rhi*.{h,cpp}`, `gpu/xenos_renderer.cpp`, `gpu/vulkan_loader.*`, `settings/*`, `tools/perf/compare_backends.py`)
+## Vulkan (2026-10-23): o único renderizador, rumo a Linux/Steam Deck (`gpu/rhi*.{h,cpp}`, `gpu/xenos_renderer.cpp`, `gpu/vulkan_loader.*`, `gpu/upscaler.*`, `tools/setup.py`)
 
-Pedido: trocar o D3D12 por Vulkan para ter mais compatibilidade com Linux (Proton, principalmente Steam Deck) e Windows; o D3D12 continua selecionável durante a transição. Mac fica de fora.
+Pedido: trocar o D3D12 por Vulkan para ter mais compatibilidade com Linux (Proton, principalmente Steam Deck) e Windows. Mac fica de fora. Primeiro os dois conviveram (`video.renderer`, `--renderer`); com a paridade, inclusive DLSS e FSR, o usuário pediu "não vamos mais trabalhar na D3D12" e o backend Direct3D 12 saiu do build no mesmo dia.
 
-**Arquitetura.** O antigo `d3d12_renderer.cpp` virou `xenos_renderer.cpp` (PM4, EDRAM, resolves, tile stash, decodificação e cache de texturas, passes temporais, apresentação), que fala só com `rhi::Device` (`gpu/rhi.h`). Dois modelos de binding: *draws* (shaders do Xenos: b0-b3, t0-t31, s0-s31, anel de upload em t0 space1) e *passes* (b0, t0-t7 ou structured buffer, samplers fixos s0/s1). Backends: `rhi_d3d12.cpp` (o código de antes, mesmas imagens que a main) e `rhi_vulkan.cpp` (Vulkan 1.3: dynamic rendering, synchronization2, timeline semaphore por submissão; shaders HLSL -> SPIR-V pelo DXC, `dxcompiler.dll` carregado em tempo de execução; `vulkan-1.dll` também, então o exe abre sem driver Vulkan). Overlay, SMAA, iluminação, upscaler e as telas (legendas, settings, saves, console) usam só o RHI.
+**Arquitetura.** O antigo `d3d12_renderer.cpp` virou `xenos_renderer.cpp` (PM4, EDRAM, resolves, tile stash, decodificação e cache de texturas, passes temporais, apresentação), que fala só com `rhi::Device` (`gpu/rhi.h`). Dois modelos de binding: *draws* (shaders do Xenos: b0-b3, t0-t31, s0-s31, anel de upload em t0 space1) e *passes* (b0, t0-t7 ou structured buffer, samplers fixos s0/s1). O backend é `rhi_vulkan.cpp` (Vulkan 1.3: dynamic rendering, synchronization2, timeline semaphore por submissão; shaders HLSL -> SPIR-V pelo DXC, `dxcompiler.dll` carregado em tempo de execução; `vulkan-1.dll` também). Overlay, SMAA, iluminação, upscalers e as telas (legendas, settings, saves, console) usam só o RHI. O `rhi.h` manteve a forma de quando havia dois backends: uma build nativa (WSI do Linux) ou Metal só precisam de outro `Device`.
 
-**Escolha.** `--renderer d3d12|vulkan` > `CRASH_RENDERER` > `video.renderer` (`settings.toml`; tela SETTINGS > VÍDEO > RENDERIZADOR, ao reiniciar). Padrão ainda `d3d12`. O Vulkan cai para o D3D12 se não houver GPU/driver com Vulkan 1.3 + push descriptors, ou se o `dxcompiler.dll` não gerar SPIR-V (o do Windows SDK não gera; precisa o do Vulkan SDK ou de uma release do DirectXShaderCompiler). `run_game.py`: `--set renderer=vulkan`, `--set gpu_debug=true` (validation + sync validation).
+**Sem Vulkan.** Sem GPU/driver com Vulkan 1.3 + push descriptors, ou sem um `dxcompiler.dll` que gere SPIR-V (o do Windows SDK não gera), o log diz o motivo, uma caixa de mensagem avisa o jogador e o jogo fecha. O instalador baixa o `dxcompiler.dll` assinado da release oficial do DirectXShaderCompiler (v1.9.2609); numa máquina de desenvolvimento serve o do Vulkan SDK (o CMake copia de `thirdparty/dxc/bin` ou de `%VULKAN_SDK%\Bin`). `video.renderer` de um `settings.toml` antigo é ignorado. `run_game.py --set gpu_debug=true` liga validation + sync validation.
 
-**Paridade (RTX 5080, Windows; `python tools\perf\compare_backends.py <perfil>`, capturas em `build\vulkan\`):**
+**Upscalers.** DLSS pela API Vulkan do NGX (o mesmo `nvsdk_ngx_s.lib` 310.9.16 já tinha `NVSDK_NGX_VULKAN_*`; faltavam `nvsdk_ngx_vk.h`, `nvsdk_ngx_defs_vk.h` e `nvsdk_ngx_helpers_vk.h`). FSR 3.1 pela `amd_fidelityfx_vk.dll` assinada do FidelityFX SDK 1.1.4 (o SDK 2.x só tem DLLs DX12), com o FSR 3.1.4 (no D3D12 era o 3.1.5). O device liga as extensões que eles pedem (`rhi::DeviceInfo`): a lista do NGX e as que a DLL da AMD procura pelo nome da extensão (`vkGetBufferMemoryRequirements2KHR`, `vkSetDebugUtilsObjectNameEXT`...: sem a extensão, o `vkGetDeviceProcAddr` devolve nulo e o primeiro dispatch do FSR chamava o endereço 0). Liga também, quando existem, os recursos dos compute shaders deles (fp16/int8/int16, armazenamento de 8/16 bits, controle de tamanho de subgrupo, storage images sem formato, buffer device address). Recursos descritos à mão para o FSR: o `ffxApiGetImageResourceDescriptionVK` trata imagens de formato mutável como sRGB.
+
+**Paridade com o D3D12 (RTX 5080, Windows, comparada antes de remover o D3D12; capturas em `build\vulkan\` do worktree):**
 
 | Área | Vulkan | Como foi conferido |
 |---|---|---|
@@ -1942,10 +1944,10 @@ Pedido: trocar o D3D12 por Vulkan para ter mais compatibilidade com Linux (Proto
 | Caminho D32S8 + `VK_EXT_depth_bias_control` (o do RADV/Deck) | igual | `vila_sem_cena` + `CRASH_VULKAN_D32=1` |
 | V-Sync, limite 30/60/120 | ok (FIFO / immediate ou mailbox) | `vila_sem_cena` + `CRASH_SETTINGS` |
 | Tela cheia | sem modo exclusivo: tela cheia = janela sem bordas | idem |
+| DLSS 310.9.16 (quality, 1080p) | igual | `vila_sem_cena` + `graphics.upscaler=dlss` |
+| FSR 3.1 (quality, 1080p) | igual (3.1.4 vs 3.1.5); o primeiro dispatch leva ~0,9 s (pipelines) | `vila_sem_cena` + `graphics.upscaler=fsr` |
 | Desempenho 1080p sem limite | 170 fps vs 169 (D3D12), CP 3,2 vs 3,1 ms/quadro | `bench.py --profile desempenho_vila_direto` |
 | Validation layers | limpo (só o aviso de PS que escreve SV_Target0 sem attachment) | `vila_sem_cena` + `gpu_debug` |
-| DLSS | **falta**: o `nvsdk_ngx_s.lib` já tem `NVSDK_NGX_VULKAN_*`, faltam `nvsdk_ngx_vk.h` e `nvsdk_ngx_helpers_vk.h` | upscaler diz "indisponível" no Vulkan |
-| FSR 3.1 | **falta**: o FidelityFX SDK v2 só tem DLLs DX12; precisa `amd_fidelityfx_vk.dll` (SDK 1.1.x) | idem |
 | Pacotes HD de texturas | mesmo caminho de upload (não conferido com um pacote) | — |
 
 **Armadilhas encontradas.**
@@ -1953,20 +1955,19 @@ Pedido: trocar o D3D12 por Vulkan para ter mais compatibilidade com Linux (Proto
 - Push descriptors com samplers imutáveis amostravam zero de image views criadas depois dos primeiros quadros: o segundo front buffer dos menus (0x0A6F0000) aparecia preto a cada dois quadros. O resolve e a apresentação estavam certos (cópia de leitura com conteúdo), `WaitIdle` antes de cada passe não mudava nada, uma view nova por uso deixava todos os quadros pretos. Os passes agora usam um descriptor set normal por passe (pool por command buffer); os draws continuam com push descriptors (set 0, sem samplers imutáveis).
 - As validation layers do SDK 1.4.363 travam em `vkCmdPushDescriptorSetKHR` quando o set de push não é o set 0 (as texturas dos draws estão no set 0 por isso).
 - SPIR-V do DXC usa `OpDemoteToHelperInvocation` para `discard`: `shaderDemoteToHelperInvocation` é obrigatório.
-- Leitura de stencil: SPIR-V lê `.x` de uma view de stencil, DXBC/DXIL `.y` (`XE_STENCIL` no HLSL).
+- Leitura de stencil: SPIR-V lê `.x` de uma view de stencil (`XE_STENCIL` no HLSL; o DXBC do D3D12 lia `.y`).
+- No llvm-mingw, o `__uuidof` das interfaces do DXC precisa dos GUIDs declarados (`__CRT_UUID_DECL`): o `dxcapi.h` só tem `__declspec(uuid)`, que só os compiladores de ABI MSVC leem.
 - Primeira vez numa resolução nova: o DXC compila os shaders escalados (~80 ms cada, travada de ~2 s na vila a 1080p); depois vêm do cache `userdata\shadercache\*.spv`.
 
 **Plano de teste no Steam Deck (Proton, RADV, 1280x800):**
-1. Copiar a `dist` com `dxcompiler.dll` (do Vulkan SDK) ao lado do exe; adicionar o exe como jogo não-Steam, Proton Experimental.
-2. `settings.toml`: `renderer = "vulkan"`, `resolution = "1280x720"`, `fps_limit = 30`; janela sem bordas (16:10 fica com faixas pretas em cima e embaixo, o jogo é 16:9).
-3. Conferir no log: `[vulkan] AMD Custom GPU 0405 (RADV VANGOGH) ... depth D32S8 (no sampled D24S8) ... depth bias control`. Sem `depth bias control` (Mesa < 23.3), o bias das sombras fica em unidades de D32: anotar.
-4. Menu, SETTINGS, NEW GAME, vila (sombras de stencil, motion blur), uma fase com tiling (ice band) e a iluminação ligada; F1 para o FPS. Comparar com `renderer = "d3d12"` (vkd3d-proton).
-5. Rodar com `CRASH_GPU_DEBUG=1` (precisa das validation layers instaladas no prefixo) e guardar `userdata\log.txt`.
+1. Copiar a `dist` (com o `dxcompiler.dll`) para o Deck; adicionar o `CrashRecomp.exe` como jogo não-Steam, Proton Experimental.
+2. `settings.toml`: `resolution = "1280x720"`, `fps_limit = 30`; janela sem bordas (16:10 fica com faixas pretas em cima e embaixo, o jogo é 16:9).
+3. Rodar com `PROTON_LOG=1` (a saída do jogo vai para o `steam-*.log`) e conferir: `[vulkan] AMD Custom GPU 0405 (RADV VANGOGH) ... depth D32S8 (no sampled D24S8) ... depth bias control`. Sem `depth bias control` (Mesa < 23.3), o bias das sombras fica em unidades de D32: anotar.
+4. Menu, SETTINGS, NEW GAME, vila (sombras de stencil, motion blur), uma fase com tiling (ice band), a iluminação ligada e o FSR; F1 para o FPS.
+5. `CRASH_GPU_DEBUG=1` (precisa das validation layers no prefixo) num segundo teste.
 6. Medir 720p/800p a 30 e 60 fps com o overlay; o gargalo esperado é a CPU do command processor (4 núcleos Zen 2).
 
 **Próximos passos.**
-1. DLSS no Vulkan (NGX Vulkan; extensões de instância/dispositivo pedidas por `NVSDK_NGX_VULKAN_RequiredExtensions` antes de criar o device) e FSR 3.1 Vulkan; ambos dependem de baixar os arquivos (headers NGX VK / `amd_fidelityfx_vk.dll`).
-2. Instalador/release: levar `dxcompiler.dll` com SPIR-V (release oficial do DirectXShaderCompiler, licença NCSA) no `setup.py`/`make_release` (sessão do instalador).
-3. Menos instâncias de rendering e barreiras por quadro (~300 e ~650 na vila): agrupar barreiras e manter a instância aberta entre draws com os mesmos alvos.
-4. Tornar o Vulkan o padrão depois de testar no Deck e numa GPU AMD/Intel no Windows.
-5. Build nativa para Linux (tarefa separada): SDL3 para janela/entrada/áudio, threads/memória/fibers POSIX (hoje `kernel/` usa Win32: `VirtualAlloc` com endereços fixos, fibers, eventos), `VK_KHR_wayland/xlib_surface` (headers já vendorizados), caminhos e `LoadLibrary` -> `dlopen` (`libvulkan.so.1`, `libdxcompiler.so`), ffmpeg do sistema.
+1. Testar no Steam Deck e numa GPU AMD/Intel no Windows (o caminho D32S8 só foi forçado na NVIDIA).
+2. Menos instâncias de rendering e barreiras por quadro (~300 e ~650 na vila): agrupar barreiras e manter a instância aberta entre draws com os mesmos alvos.
+3. Build nativa para Linux (tarefa separada): SDL3 para janela/entrada/áudio, threads/memória/fibers POSIX (hoje `kernel/` usa Win32: `VirtualAlloc` com endereços fixos, fibers, eventos), `VK_KHR_wayland/xlib_surface` (headers já vendorizados), caminhos e `LoadLibrary` -> `dlopen` (`libvulkan.so.1`, `libdxcompiler.so`), ffmpeg do sistema. O DLSS do Linux precisa do `libnvsdk_ngx.a` do SDK; o FSR VK só tem DLL de Windows.

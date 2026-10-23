@@ -351,7 +351,6 @@ namespace gpu::renderer
         // Device: the graphics API backend (rhi.h) and the window.
         std::atomic<bool> g_active;
         rhi::Device* g_rhi = nullptr;
-        rhi::Backend g_backend = rhi::Backend::D3D12;
         bool g_debugLayer = false;
         HWND g_hwnd;
         uint32_t g_backBufferWidth = WINDOW_WIDTH, g_backBufferHeight = WINDOW_HEIGHT;
@@ -401,22 +400,6 @@ namespace gpu::renderer
         std::vector<boot::Anchored> g_screenshotAnchors;  // CRASH_SCREENSHOT_TIMES entries after a test event
         std::filesystem::path g_screenshotDir;
         bool g_swapRedBlue = false;
-
-        // The backend: --renderer / CRASH_RENDERER, else video.renderer.
-        std::string g_backendOverride;
-
-        rhi::Backend ChosenBackend()
-        {
-            std::string name = g_backendOverride;
-            if (name.empty())
-            {
-                if (const char* env = getenv("CRASH_RENDERER"))
-                    name = env;
-            }
-            if (name.empty())
-                return settings::Get().renderer == settings::Renderer::Vulkan ? rhi::Backend::Vulkan : rhi::Backend::D3D12;
-            return name == "vulkan" || name == "vk" ? rhi::Backend::Vulkan : rhi::Backend::D3D12;
-        }
 
         void WaitIdle()
         {
@@ -504,7 +487,7 @@ namespace gpu::renderer
                 else
                 {
                     // --test-shaders: compiled only.
-                    entry->failed = !rhi::TestCompile(g_backend, stage, entry->info.hlsl, name, rhi::Layout::Draw, g_shaderCacheDir);
+                    entry->failed = !rhi::TestCompile(stage, entry->info.hlsl, name, rhi::Layout::Draw, g_shaderCacheDir);
                 }
             }
             return entry->failed ? nullptr : entry;
@@ -3231,9 +3214,8 @@ float4 main(float4 position : SV_Position) : SV_Target
             return true;
         }
 
-        // video.window = fullscreen: what the backend makes of it (D3D12: exclusive fullscreen while
-        // the window has the focus; DXGI drops it on Alt+Tab, the borderless window stays, and it is
-        // retried).
+        // video.window = fullscreen: what the backend makes of it (Vulkan: the borderless window is
+        // the fullscreen, nothing exclusive).
         void UpdateFullscreen()
         {
             static bool s_maybeFullscreen;
@@ -3427,8 +3409,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         if (g_renderScale != 1.0f)
             Log("[gpu] internal resolution %s (%.2fx the game's 1280x720)", settings::ResolutionOf(settings::AtStartup().renderHeight).name, g_renderScale);
 
-        g_backend = ChosenBackend();
-        g_debugLayer = getenv("CRASH_D3D12_DEBUG") != nullptr || getenv("CRASH_GPU_DEBUG") != nullptr;
+        g_debugLayer = getenv("CRASH_GPU_DEBUG") != nullptr;
         g_shaderCacheDir = vfs::UserDataDir() / "shadercache";
         std::error_code error;
         std::filesystem::create_directories(g_shaderCacheDir, error);
@@ -3449,17 +3430,17 @@ float4 main(float4 position : SV_Position) : SV_Target
         info.shaderCache = g_shaderCacheDir;
         info.debug = g_debugLayer;
         upscaler::VulkanExtensions(info.instanceExtensions, info.deviceExtensions);
-        g_rhi = g_backend == rhi::Backend::Vulkan ? rhi::CreateVulkan(info) : rhi::CreateD3D12(info);
-        if (!g_rhi && g_backend == rhi::Backend::Vulkan)
-        {
-            Log("[gpu] Vulkan unavailable: falling back to Direct3D 12");
-            g_backend = rhi::Backend::D3D12;
-            g_rhi = rhi::CreateD3D12(info);
-        }
+        g_rhi = rhi::CreateVulkan(info);
         if (!g_rhi)
         {
-            Log("[gpu] no %s device: rendering disabled", rhi::BackendName(g_backend));
-            return false;
+            // The log says which part failed (driver, GPU features, dxcompiler.dll).
+            Log("[gpu] no Vulkan device: the game cannot be shown");
+            MessageBoxW(g_hwnd,
+                        L"O jogo precisa de uma placa de vídeo com Vulkan 1.3 (driver atualizado) e do dxcompiler.dll ao lado do "
+                        L"CrashRecomp.exe.\n\n"
+                        L"The game needs a Vulkan 1.3 GPU (an up-to-date driver) and dxcompiler.dll next to CrashRecomp.exe.",
+                        L"Crash of the Titans (CrashRecomp)", MB_OK | MB_ICONERROR);
+            ExitProcess(3);
         }
         g_rhi->BackBufferSize(g_backBufferWidth, g_backBufferHeight);
 
@@ -3503,8 +3484,8 @@ float4 main(float4 position : SV_Position) : SV_Target
         if (const char* swap = getenv("CRASH_GPU_TRACE_SWAP"))
             g_traceSwap = strtoull(swap, nullptr, 10);
 
-        Log("[gpu] %s renderer on %s%s; shader cache %s", rhi::BackendName(g_backend), g_rhi->AdapterName().c_str(),
-            g_debugLayer ? (g_backend == rhi::Backend::Vulkan ? " (validation layers)" : " (debug layer)") : "", g_shaderCacheDir.string().c_str());
+        Log("[gpu] Vulkan renderer on %s%s; shader cache %s", g_rhi->AdapterName().c_str(), g_debugLayer ? " (validation layers)" : "",
+            g_shaderCacheDir.string().c_str());
         DEVMODEA displayMode{};
         displayMode.dmSize = sizeof(displayMode);
         if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &displayMode))
@@ -3521,9 +3502,7 @@ float4 main(float4 position : SV_Position) : SV_Target
 
     int TestShaders(const std::filesystem::path& folder)
     {
-        // Compiled for the chosen backend (--renderer): FXC (D3D12) or DXC to SPIR-V (Vulkan).
-        g_backend = ChosenBackend();
-        Log("[test] shaders for %s", rhi::BackendName(g_backend));
+        // HLSL -> SPIR-V with DXC, as the Vulkan renderer compiles them.
         g_shaderCacheDir = vfs::UserDataDir() / "shadercache";
         std::error_code error;
         std::filesystem::create_directories(g_shaderCacheDir, error);
@@ -3929,16 +3908,6 @@ float4 main(float4 position : SV_Position) : SV_Target
             Log("[gpu] exit: GPU idle, windowed, upscalers released");
             settings::FinishQuit();
         }
-    }
-
-    void SetBackend(const char* name)
-    {
-        g_backendOverride = name ? name : "";
-    }
-
-    const char* BackendName()
-    {
-        return g_rhi ? rhi::BackendName(g_backend) : "none";
     }
 
     void RequestReconfigure()

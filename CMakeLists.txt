@@ -81,8 +81,10 @@ target_compile_options(XexImage PRIVATE -w)
 # (runtime/paths.h). The image is decrypted from <game>\default.xex at startup.
 file(GLOB_RECURSE CRASH_RUNTIME_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/runtime/*.cpp)
 list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "/runtime/xex_image/")
+# The Direct3D 12 backend left the build on 2026-10-23 (Vulkan only).
+list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "/runtime/gpu/rhi_d3d12\\.cpp$")
 add_executable(CrashRecomp ${CRASH_RUNTIME_SOURCES})
-target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage d3d12 dxgi ${CRASH_XAUDIO2_LIB} winmm version ole32
+target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
     hid setupapi windowscodecs)
 target_compile_options(CrashRecomp PRIVATE ${CRASH_COMPILE_OPTIONS})
 # Symbol map (build\CrashRecomp.map) and line tables in a PDB (build\CrashRecomp.pdb): name the
@@ -143,7 +145,7 @@ else()
     message(STATUS "thirdparty/fsr not found: FSR disabled")
 endif()
 
-# Vulkan renderer (runtime/gpu/rhi_vulkan.cpp, video.renderer = vulkan): the Khronos headers
+# Vulkan renderer (runtime/gpu/rhi_vulkan.cpp, the only one): the Khronos headers
 # (thirdparty/vulkan, in git) with vulkan-1.dll loaded at run time (no import library), and DXC to
 # compile HLSL to SPIR-V (thirdparty/dxc: dxcapi.h in git; dxcompiler.dll with SPIR-V support,
 # loaded at run time and copied next to CrashRecomp.exe from thirdparty/dxc/bin or the Vulkan SDK).

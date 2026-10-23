@@ -29,14 +29,10 @@ namespace gpu
 
     namespace renderer
     {
-        // The graphics API, before Init / TestShaders: "d3d12" or "vulkan" (--renderer). Without it
-        // CRASH_RENDERER, else the settings' video.renderer.
-        void SetBackend(const char* name);
-        // Creates the window and the device (Vulkan falls back to D3D12 if it can't start). Returns
-        // false (and logs why) if rendering is unavailable; the emulation then runs without output.
+        // Creates the window and the Vulkan device. Without one (no Vulkan 1.3 driver, no
+        // dxcompiler.dll with SPIR-V) it logs why, tells the player in a message box and exits.
         bool Init();
         bool IsActive();
-        const char* BackendName();  // "Direct3D 12", "Vulkan" or "none"
 
         // Translates and compiles every shader container (*.out) in `folder` (the game's shaders\
         // folder): a check of the microcode translator without running the game. Returns the

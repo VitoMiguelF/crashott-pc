@@ -5,7 +5,7 @@ Full write-up: `runtime/NOTES.md` "Desempenho de CPU" (two rounds); GUIA "Desemp
 ## Where the time goes
 
 - Round 1 finding: CPU bound on the **GPU command-processor thread** (PM4 -> D3D12 translation in
-  `runtime/gpu`), not the game thread. The game spins in D3D's fence wait (sub_8226C958 / spin sub_8226D968).
+  `runtime/gpu`; Vulkan since 2026-10-23, same cost), not the game thread. The game spins in D3D's fence wait (sub_8226C958 / spin sub_8226D968).
   DLSS or a lower resolution changes nothing (GPU wait ~0).
 - After round 2 the **game thread** is the bottleneck (vertex transform sub_82353478 ~18%, D3D spin ~20%) and
   the CP thread is mostly idle.

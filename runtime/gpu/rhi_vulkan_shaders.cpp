@@ -194,7 +194,7 @@ namespace gpu::rhi::vulkan
 
 namespace gpu::rhi
 {
-    bool TestCompileVulkan(Stage stage, const std::string& hlsl, const char* name, Layout layout, const std::filesystem::path& shaderCache)
+    bool TestCompile(Stage stage, const std::string& hlsl, const char* name, Layout layout, const std::filesystem::path& shaderCache)
     {
         std::vector<uint32_t> spirv;
         return vulkan::CompileSpirv(stage, hlsl, name, layout, shaderCache, spirv);

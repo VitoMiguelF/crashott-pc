@@ -677,7 +677,7 @@ Testes: `pular_cena` (Xbox, inglês, L1_E1: aviso, aviso apagado, B segurado, vi
 
 ## Desempenho
 
-O jogo é limitado pela **CPU**, não pela placa de vídeo: uma thread do runtime (o *command processor*, que traduz os comandos de GPU do Xbox 360 para Direct3D 12) é o gargalo, e a thread do jogo espera por ela. Por isso **o DLSS/FSR e a resolução quase não mudam o FPS**: eles aliviam a GPU, que já está ociosa (espera de ~0 ms por quadro em todas as medições). Use o DLSS/FSR pela qualidade de imagem (DLAA, anti-aliasing temporal), não para ganhar FPS.
+O jogo é limitado pela **CPU**, não pela placa de vídeo: uma thread do runtime (o *command processor*, que traduz os comandos de GPU do Xbox 360 para Vulkan) é o gargalo, e a thread do jogo espera por ela. Por isso **o DLSS/FSR e a resolução quase não mudam o FPS**: eles aliviam a GPU, que já está ociosa (espera de ~0 ms por quadro em todas as medições). Use o DLSS/FSR pela qualidade de imagem (DLAA, anti-aliasing temporal), não para ganhar FPS.
 
 Medido num Ryzen 7 5700X + RTX 5080, na vila da primeira fase (a cena mais pesada), 1080p. Primeira rodada (2026-10-21, andando pela vila):
 
@@ -710,7 +710,7 @@ python tools\perf\bench.py meu_teste_60 --fps 60
 python tools\perf\bench.py meu_perfil --sample 1000                 :: + amostrador de CPU (build\perf\sampler.exe)
 python tools\perf\walk_window.py meu_teste meu_teste_dlss            :: FPS dos primeiros 20 s jogáveis
 python tools\perf\profile.py build\desempenho\meu_perfil.samples.txt --log <pasta da execução>\run.log
-python tools\perf\system_callers.py build\desempenho\meu_perfil.samples.txt --lines   :: tempo em DLLs do sistema (D3D12, driver, esperas) por linha do código
+python tools\perf\system_callers.py build\desempenho\meu_perfil.samples.txt --lines   :: tempo em DLLs do sistema (Vulkan, driver, esperas) por linha do código
 python tools\perf\hot_lines.py build\desempenho\meu_perfil.samples.txt GetTextureSrv ExecuteBuffer   :: tempo por linha dentro de funções do runtime
 ```
 

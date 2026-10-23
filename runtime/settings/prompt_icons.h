@@ -6,7 +6,7 @@
 // touchpad) or for the keyboard keys and mouse buttons bound to that button. The replacements are
 // drawn here (shapes + the game's own Titans font for the labels; nothing taken from other games).
 //
-// The renderer (gpu/d3d12_renderer.cpp) recognises the game's icon textures by their HD texture
+// The renderer (gpu/xenos_renderer.cpp) recognises the game's icon textures by their HD texture
 // key (gpu/hd_textures.h), so the menus, the HUD prompts and the tutorial texts all change; the
 // settings screen draws its icons through menu_art::DrawIcon, which asks here too.
 

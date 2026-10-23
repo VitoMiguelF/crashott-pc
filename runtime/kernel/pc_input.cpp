@@ -472,7 +472,7 @@ namespace input::pc
 
     bool CursorOnImage(float& x, float& y)
     {
-        // The game's image is 16:9, fitted into the window and centred (gpu/d3d12_renderer.cpp,
+        // The game's image is 16:9, fitted into the window and centred (gpu/xenos_renderer.cpp,
         // present: the front buffer's aspect), with black bars around it.
         int cx = g_cursorX, cy = g_cursorY, w = g_clientW, h = g_clientH;
         if (cx < 0 || w <= 0 || h <= 0)
