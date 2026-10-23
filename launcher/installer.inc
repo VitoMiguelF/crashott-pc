@@ -2,10 +2,14 @@
 // CRASH_INSTALLER is defined (CMake target CrashSetup), so it has the launcher's look: the game's
 // cloth, logo, Titans fonts, message frame and stars, read from the chosen dump's default.rcf.
 //
-// It is a front end for tools\setup.py (next to the exe, in the release bundle or a clone):
+// It is a front end for tools\setup.py (next to the exe, in the release bundle or a clone), run with
+// the release's own Python (toolchain\python\python.exe):
 //   - choose the game folder (then it starts again with --game to load the art);
-//   - check the prerequisites (setup.py --check) and install the missing ones with winget, and the
-//     Python packages of tools\requirements.txt (only the asset export needs them) with pip;
+//   - check the prerequisites (setup.py --check). The release zip carries the whole build toolchain
+//     (toolchain\: llvm-mingw clang, CMake, Ninja, Python with numpy and Pillow), so normally there
+//     is nothing to install. BUILD TOOLS = VISUAL STUDIO (advanced) builds with an installed Visual
+//     Studio + LLVM clang-cl instead (setup.py --toolchain msvc), and installs the missing ones
+//     with winget; a clone without toolchain\ gets it with tools\toolchain.py fetch;
 //   - options: subtitles, HD AI Remaster, asset export for modding, copy the dump into dist\game;
 //   - run setup.py, showing its steps ("@@step"), progress ("@@progress", "@@download") and log;
 //   - at the end, open dist\CrashLauncher.exe. When only the asset export failed, the game is
@@ -31,7 +35,7 @@ struct Prereq
     bool ok = false;
 };
 
-// winget packages for each prerequisite setup.py checks (its names).
+// winget packages for each prerequisite setup.py checks with --toolchain msvc (its names).
 struct WingetPackage
 {
     const char* prereq;
@@ -52,7 +56,9 @@ enum class Phase { Setup, Running, Done, Failed };
 struct Installer
 {
     Phase phase = Phase::Setup;
-    std::wstring python;  // command prefix: "py -3" or a python.exe path
+    std::wstring python;  // command prefix: toolchain\python\python.exe, else "py -3" or a python.exe path
+    std::string toolchain = "bundled";  // setup.py --toolchain: "bundled" (toolchain\) or "msvc"
+    bool toolchainChosen = false;       // the user changed BUILD TOOLS (else setup.py's "@@toolchain" sets it)
     bool checking = false, checked = false;
     std::vector<Prereq> prereqs;
     std::vector<Prereq> packages;  // tools\requirements.txt ("@@pypkg"): never block the install
@@ -79,6 +85,8 @@ struct Installer
 Installer g_inst;
 
 fs::path SetupScript() { return paths::ExeDir() / "tools" / "setup.py"; }
+fs::path BundledPython() { return paths::ExeDir() / "toolchain" / "python" / "python.exe"; }
+bool UsesBundledToolchain() { return g_inst.toolchain != "msvc"; }
 fs::path Requirements() { return paths::ExeDir() / "tools" / "requirements.txt"; }
 
 std::wstring Widen(const std::string& text)
@@ -88,6 +96,8 @@ std::wstring Widen(const std::string& text)
     MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), out.data(), n);
     return out;
 }
+
+std::wstring ToolchainArg() { return g_inst.toolchainChosen ? L" --toolchain " + Widen(g_inst.toolchain) : L""; }
 
 // PATH as Windows has it now (machine + user), so tools installed while the installer is open are
 // found without restarting it.
@@ -127,11 +137,13 @@ int RunHidden(std::wstring command, DWORD timeoutMs = 60000)
     return int(code);
 }
 
-// Python 3.11+ (setup.py needs tomllib): an activated virtual environment (CrashSetup started from
-// its prompt), else the py launcher, else python.exe on PATH (not the Microsoft Store alias, which
-// only opens the Store).
+// Python 3.11+ (setup.py needs tomllib): the release's own (toolchain\python), else an activated
+// virtual environment (CrashSetup started from its prompt), else the py launcher, else python.exe on
+// PATH (not the Microsoft Store alias, which only opens the Store).
 std::wstring FindPython()
 {
+    if (Exists(BundledPython()))
+        return L"\"" + BundledPython().wstring() + L"\"";
     const wchar_t* test = L" -c \"import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)\"";
     wchar_t found[MAX_PATH];
     if (GetEnvironmentVariableW(L"VIRTUAL_ENV", found, MAX_PATH))
@@ -199,6 +211,11 @@ void HandleLine(const std::string& line)
         p.path = bar == std::string::npos ? "" : line.substr(bar + 3);
         (package ? g_inst.packages : g_inst.prereqs).push_back(p);
     }
+    else if (line.rfind("@@toolchain ", 0) == 0)
+    {
+        if (!g_inst.toolchainChosen)
+            g_inst.toolchain = line.substr(12);
+    }
     else if (line.rfind("@@error ", 0) == 0)
         g_inst.error = line.substr(8);
     else if (line.rfind("@@hint ", 0) == 0)
@@ -210,7 +227,7 @@ void HandleLine(const std::string& line)
 }
 
 // Starts `python tools\setup.py <args>` with its output read on a thread. A job object holds it and
-// everything it starts (cmake, ninja, clang-cl...) so CANCEL stops them all.
+// everything it starts (cmake, ninja, clang...) so CANCEL stops them all.
 bool StartSetup(const std::wstring& args, bool check)
 {
     if (g_inst.reader.joinable())
@@ -313,7 +330,7 @@ void CheckPrerequisites()
         g_inst.checked = true;
         return;
     }
-    g_inst.checking = StartSetup(L"--check", true);
+    g_inst.checking = StartSetup(L"--check" + ToolchainArg(), true);
 }
 
 int MissingCount()
@@ -337,8 +354,9 @@ std::string MissingPackages()
 // pip with the same Python setup.py runs with.
 std::wstring PipCommand() { return g_inst.python + L" -m pip install -r \"" + Requirements().wstring() + L"\""; }
 
-// Opens a console that installs the missing prerequisites with winget and the missing Python
-// packages with pip (the user sees and answers the prompts); CHECK AGAIN afterwards.
+// Opens a console that gets what is missing (the user sees and answers the prompts); CHECK AGAIN
+// afterwards. The bundled toolchain: tools\toolchain.py fetch (only a clone lacks it). Visual
+// Studio: winget. Python packages (only another Python than the bundled one lacks them): pip.
 void InstallMissing()
 {
     std::wstring commands;
@@ -346,6 +364,13 @@ void InstallMissing()
     {
         if (p.ok)
             continue;
+        if (p.name.rfind("Toolchain", 0) == 0)
+        {
+            if (!g_inst.python.empty() && commands.find(L"toolchain.py") == std::wstring::npos)
+                commands += (commands.empty() ? L"" : L" & ") + g_inst.python + L" \"" +
+                            (paths::ExeDir() / "tools" / "toolchain.py").wstring() + L"\" fetch";
+            continue;
+        }
         for (const WingetPackage& w : WINGET)
             if (p.name.find(w.prereq) != std::string::npos)
                 commands += (commands.empty() ? L"" : L" & ") + std::wstring(w.command);
@@ -379,6 +404,7 @@ void StartInstall(bool assetsOnly = false)
         if (g_inst.extractAssets) args += L" --extract-assets";
         if (g_inst.copyGame) args += L" --copy-game";
         args += L" --assets-dir \"" + paths::ExeDir().wstring() + L"\"";
+        args += ToolchainArg();
         g_inst.gameReady = false;
     }
     if (StartSetup(args, false))
@@ -434,7 +460,7 @@ struct InstallRow
     int id = 0;
 };
 
-enum RowId { RowGame = 1, RowGameStatus, RowPrereqs, RowSubtitles, RowRemaster, RowAssets, RowCopy };
+enum RowId { RowGame = 1, RowGameStatus, RowPrereqs, RowSubtitles, RowRemaster, RowAssets, RowCopy, RowToolchain };
 
 std::vector<InstallRow> InstallRows()
 {
@@ -462,22 +488,32 @@ std::vector<InstallRow> InstallRows()
         if (g_inst.checking || !g_inst.checked)
             prereq = T({ "CHECKING...", "VERIFICANDO..." });
         else if (!missing)
-            prereq = T({ "ALL READY", "TUDO PRONTO" });
+            prereq = UsesBundledToolchain() ? T({ "INCLUDED", "INCLUÍDOS" }) : T({ "ALL READY", "TUDO PRONTO" });
         else
             prereq = std::string(T({ "MISSING ", "FALTAM " })) + std::to_string(missing) + T({ " (INSTALL)", " (INSTALAR)" });
         for (const Prereq& p : g_inst.prereqs)
             (p.ok ? help1 : help0) += (p.ok ? (help1.empty() ? "" : ", ") : (help0.empty() ? "" : ", ")) + p.name;
     }
+    bool bundled = UsesBundledToolchain(), allIncluded = bundled && help0.empty() && packages.empty();
     if (!help0.empty())
-        help0 = std::string(T({ "Missing: ", "Faltam: " })) + help0 + T({ ". Click to install with winget, then click again to check.",
-                                                                          ". Clique para instalar pelo winget e depois de novo para conferir." });
+        help0 = std::string(T({ "Missing: ", "Faltam: " })) + help0 +
+                (bundled ? T({ ". The release zip has them; click to download them (tools\\toolchain.py).",
+                               ". O zip da release os traz; clique para baixá-los (tools\\toolchain.py)." })
+                         : T({ ". Click to install with winget, then click again to check.",
+                               ". Clique para instalar pelo winget e depois de novo para conferir." }));
     else if (!packages.empty())
         help0 = std::string(T({ "Python packages for ASSETS FOR MODDING: ", "Pacotes Python para ASSETS PARA MODDING: " })) + packages +
                 T({ " (pip installs them then; click to install now).", " (o pip instala na hora; clique para instalar agora)." });
+    else if (bundled)
+        help0 = T({ "Compiler (clang), CMake, Ninja and Python come in the toolchain folder.",
+                    "Compilador (clang), CMake, Ninja e Python vêm na pasta toolchain." });
     else
-        help0 = T({ "Visual Studio Build Tools (C++), LLVM clang-cl, CMake, Ninja, Git and Python.",
-                    "Visual Studio Build Tools (C++), LLVM clang-cl, CMake, Ninja, Git e Python." });
-    help1 = help1.empty() ? std::string() : std::string("OK: ") + help1;
+        help0 = T({ "Visual Studio Build Tools (C++), LLVM clang-cl, CMake and Ninja.",
+                    "Visual Studio Build Tools (C++), LLVM clang-cl, CMake e Ninja." });
+    if (allIncluded)
+        help1 = T({ "Nothing is installed on this PC.", "Nada é instalado neste PC." });
+    else
+        help1 = help1.empty() ? std::string() : std::string("OK: ") + help1;
     rows.push_back({ { "PREREQUISITES", "PRÉ-REQUISITOS" }, prereq, { help0, help1 }, false, true, true, RowPrereqs });
     rows.push_back({ { "OPTIONS", "OPÇÕES" }, "", {}, true });
     rows.push_back({ { "SUBTITLES", "LEGENDAS" }, OnOff(g_inst.subtitles),
@@ -490,13 +526,19 @@ std::vector<InstallRow> InstallRows()
                      false, true, false, RowRemaster });
     rows.push_back({ { "ASSETS FOR MODDING", "ASSETS PARA MODDING" }, OnOff(g_inst.extractAssets),
                      { T({ "Exports the game's sounds, videos, textures and 3D models to open formats", "Exporta sons, vídeos, texturas e modelos 3D do jogo para formatos abertos" }),
-                       T({ "in private\\assets (about 8 minutes, 4 GB; installs numpy and Pillow with pip). Only for mods.",
-                           "em private\\assets (cerca de 8 minutos, 4 GB; instala numpy e Pillow pelo pip). Só para mods." }) },
+                       T({ "in private\\assets (about 9 minutes, 18 GB). Only for mods.",
+                           "em private\\assets (cerca de 9 minutos, 18 GB). Só para mods." }) },
                      false, true, false, RowAssets });
     rows.push_back({ { "COPY THE GAME INTO THE FOLDER", "COPIAR O JOGO PARA A PASTA" }, OnOff(g_inst.copyGame),
                      { T({ "On: the dump is copied to dist\\game (3 GB). Off: the game keeps", "Ligado: o jogo é copiado para dist\\game (3 GB). Desligado: o jogo usa" }),
                        T({ "using it where it is.", "a pasta onde ele está." }) },
                      false, true, false, RowCopy });
+    rows.push_back({ { "BUILD TOOLS", "FERRAMENTAS" }, UsesBundledToolchain() ? T({ "INCLUDED", "INCLUÍDAS" }) : std::string("VISUAL STUDIO"),
+                     { T({ "Advanced. INCLUDED: the toolchain folder of the zip, nothing to install. VISUAL STUDIO:",
+                           "Avançado. INCLUÍDAS: a pasta toolchain do zip, nada a instalar. VISUAL STUDIO:" }),
+                       T({ "an installed Visual Studio Build Tools + LLVM clang-cl (winget installs them).",
+                           "Visual Studio Build Tools + LLVM clang-cl instalados (o winget os instala)." }) },
+                     false, true, false, RowToolchain });
     return rows;
 }
 
@@ -517,6 +559,14 @@ void ActivateRow(int id, int direction)
     case RowRemaster: g_inst.remaster = !g_inst.remaster; break;
     case RowAssets: g_inst.extractAssets = !g_inst.extractAssets; break;
     case RowCopy: g_inst.copyGame = !g_inst.copyGame; break;
+    case RowToolchain:
+        if (!g_inst.checking)
+        {
+            g_inst.toolchain = UsesBundledToolchain() ? "msvc" : "bundled";
+            g_inst.toolchainChosen = true;
+            CheckPrerequisites();
+        }
+        break;
     }
     (void)direction;
 }

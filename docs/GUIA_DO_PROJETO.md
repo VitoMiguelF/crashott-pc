@@ -22,13 +22,14 @@ Nenhum arquivo do jogo é distribuído: tudo é gerado a partir da sua própria 
 | `docs/capturas/` | Capturas que comprovam cada recurso (citadas neste README e no `runtime/NOTES.md`), reduzidas para JPEG |
 | `private/` | Só seu, fora do git: `default.xex` (copiado do jogo pelo setup) e `image.bin` (ferramentas), `symbols\`, `subtitles\` e `remaster_full\` (instalados dos assets da release), `assets\` (exportados para modding) |
 | `thirdparty/` | FFmpeg (LGPL), DLSS (NVIDIA), FidelityFX FSR 3.1 (AMD): o setup baixa das fontes oficiais e confere o SHA-256; SMAA e Dear ImGui (MIT) estão no git; licenças em cada pasta |
-| `tools/XenonRecomp/` | XenonRecomp no commit fixado, clonado pelo `tools\setup.py`, com `patches/XenonRecomp.patch` (veja abaixo) |
+| `tools/XenonRecomp/` | XenonRecomp no commit fixado com `patches/XenonRecomp.patch` (veja abaixo): o zip da release já traz o código (sem `.git`, com `.crashrecomp_source`); num clone do repositório, o `tools\setup.py` o clona |
+| `toolchain/` | O toolchain portátil (fora do git): llvm-mingw (clang + lld + headers/libs do mingw-w64), CMake, Ninja e o Python embutido com numpy e Pillow. Vem no zip da release; num clone, `python tools\toolchain.py fetch` |
 | `tools/xexdump/` | Extrai a imagem descriptografada (`image.bin`) e a tabela de símbolos do XEX, para as ferramentas |
 | `tools/run_game.py` | Compila, roda o jogo com um perfil de `config/run.toml` e confere o resultado (veja "Rodando e testando") |
 | `tools/frontend_tree.py`, `tools/convert_recording.py` | A árvore do frontend com os números do jogo, e o conversor de gravações F5 antigas para o boot direto (veja "Boot direto e eventos") |
 | `tools/make_dist.py` | Monta/atualiza a pasta `dist\` a partir do build |
 | `launcher/installer.inc` | O instalador gráfico (`CrashSetup.exe`): a cara do launcher na frente do `tools\setup.py` |
-| `tools/setup.py`, `tools/buildenv.py`, `tools/make_release.py` | O instalador (do dump ao `dist\`), a detecção do Visual Studio/LLVM/CMake/Ninja e os zips da release |
+| `tools/setup.py`, `tools/buildenv.py`, `tools/toolchain.py`, `tools/make_release.py` | O instalador (do dump ao `dist\`), a escolha do toolchain (o de `toolchain\` ou Visual Studio + clang-cl), o download fixado do toolchain portátil e os zips da release |
 | `tools/perf/` | Benchmark e perfil de CPU: `bench.py`, `walk_window.py`, `report.py`, o amostrador `sampler.cpp` e `profile.py` (veja "Desempenho") |
 | `tools/find_swallowed.py`, `tools/rtti_scan.py` e afins | Funções "engolidas" pelo config e nomes de classes/métodos pelo RTTI (veja "Lendo o código do jogo") |
 | `tools/rcf.py`, `texts.py`, `assets.py`, `audio.py`, `textures.py`, `models.py`, `p3d.py`, `hd_textures.py`, `subtitles.py`, `assettool/` | Extraem os `.rcf`, textos, sons, vídeos, texturas e modelos para formatos abertos e geram mods (veja "Extraindo e modificando assets") |
@@ -36,14 +37,19 @@ Nenhum arquivo do jogo é distribuído: tudo é gerado a partir da sua própria 
 
 ## Requisitos
 
-Visual Studio 2022 ou mais novo, ou as Build Tools, com "Desenvolvimento para desktop com C++" (MSVC + Windows SDK), LLVM (`clang-cl`), CMake, Ninja, Git e Python 3.11+. As ferramentas acham o Visual Studio pelo `vswhere` e o resto pelo `PATH` e pelas pastas de instalação comuns (`tools/buildenv.py`); outra instalação vai em `config/local.toml` (fora do git).
+Nada para instalar. O zip da release traz a pasta `toolchain\` com tudo o que compila o jogo: **llvm-mingw** (clang 23, lld, libc++ e os headers/bibliotecas de importação do mingw-w64 com a UCRT; só o alvo x86-64), **CMake**, **Ninja** e o **Python embutido** oficial com numpy e Pillow (`tools/toolchain.py` fixa as versões pelo SHA-256). Num clone do repositório, baixe a mesma pasta uma vez com `python tools\toolchain.py fetch` (precisa de um Python 3.11+ qualquer e do Git, que clona o XenonRecomp).
 
-O jeito simples é o instalador: `CrashSetup.exe` ou `python tools\setup.py --game <pasta do jogo>` faz todos os passos abaixo (veja o [README](../README.md)).
+As ferramentas (`tools/buildenv.py`) põem as pastas de `toolchain\` na frente do `PATH` em toda compilação. Para compilar como antes, com o **Visual Studio 2022+ / Build Tools** ("Desenvolvimento para desktop com C++") + **LLVM `clang-cl`**, ponha `[build] toolchain = "msvc"` em `config/local.toml` (fora do git), use `CRASH_TOOLCHAIN=msvc`, `setup.py --toolchain msvc` ou FERRAMENTAS = VISUAL STUDIO no instalador; nesse modo o Visual Studio vem do `vswhere` e o resto do `PATH` e das pastas de instalação comuns. Cada pasta de build lembra o toolchain que a configurou (`.crashrecomp_toolchain`) e é reconfigurada sozinha quando ele muda.
+
+O jeito simples é o instalador: `CrashSetup.exe` ou `toolchain\python\python.exe tools\setup.py --game <pasta do jogo>` faz todos os passos abaixo (veja o [README](../README.md)).
 
 ## Passo a passo (à mão; o `tools\setup.py` faz o mesmo)
 
 ```bat
-:: 0. XenonRecomp no commit fixado + as correções locais, e as bibliotecas de terceiros
+:: (com o toolchain portátil no PATH)
+set PATH=%CD%\toolchain\llvm-mingw\bin;%CD%\toolchain\cmake\bin;%CD%\toolchain\ninja;%CD%\toolchain\python;%PATH%
+
+:: 0. XenonRecomp no commit fixado + as correções locais (o zip da release já traz isso), e as bibliotecas de terceiros
 git clone https://github.com/hedge-dev/XenonRecomp tools\XenonRecomp
 git -C tools\XenonRecomp checkout ddd128bcca99fe8bfbb99bea583c972351fa6ace
 git -C tools\XenonRecomp submodule update --init --recursive
@@ -51,7 +57,7 @@ git -C tools\XenonRecomp apply --ignore-whitespace ..\..\patches\XenonRecomp.pat
 :: (FFmpeg, DLSS e FSR: thirdparty\*\README.md; o setup.py baixa e confere)
 
 :: 1. Compilar as ferramentas
-cmake -S tools\XenonRecomp -B tools\XenonRecomp\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+cmake -S tools\XenonRecomp -B tools\XenonRecomp\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "-DCMAKE_CXX_FLAGS=-include cstdlib" -DCMAKE_EXE_LINKER_FLAGS=-static
 cmake --build tools\XenonRecomp\build --target XenonAnalyse XenonRecomp
 
 :: 2. Detectar jump tables
@@ -61,12 +67,14 @@ tools\XenonRecomp\build\XenonAnalyse\XenonAnalyse.exe private\default.xex config
 tools\XenonRecomp\build\XenonRecomp\XenonRecomp.exe config\Crash.toml tools\XenonRecomp\XenonUtils\ppc_context.h
 
 :: 4. Compilar o código gerado (biblioteca CrashPPC), o runtime (build\CrashRecomp.exe) e o launcher (build\CrashLauncher.exe)
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang-cl
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build
 
 :: 5. Montar a pasta para jogar (dist\), dizendo onde está o seu jogo
 python tools\make_dist.py --game D:\Jogos\Crash
 ```
+
+Com o Visual Studio, os mesmos passos rodam num prompt `vcvars64` com `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` (sem as duas flags extras do XenonRecomp). O `-include cstdlib` só existe porque o `fmt` do XenonRecomp usa `malloc` sem incluir `<cstdlib>`, o que a libc++ não perdoa; o XenonRecomp compilado pelos dois toolchains gera exatamente o mesmo `generated\ppc`.
 
 Antes do passo 2, copie o `default.xex` do seu jogo para `private\` (o XenonRecomp e as ferramentas leem de lá). `private\image.bin` (a imagem descriptografada, para `find_swallowed.py` e `rtti_scan.py`) sai de `tools\xexdump\build\xexdump.exe private\default.xex private\image.bin private\symbols.txt`. O jogo em si não usa nenhum dos dois: o `CrashRecomp.exe` descriptografa o `default.xex` da pasta do jogo ao abrir (`runtime/xex_image/`, com o código do XenonUtils).
 
@@ -107,6 +115,8 @@ dist\
 
 A v1.01 e a v1.02 publicam só o zip do código + `CrashSetup.exe` (`python tools\make_release.py v1.02 --only source`): as legendas e o HD AI Remaster não mudaram, continuam como assets da v1.0, e o `tools/setup.py` os baixa de lá (`RELEASE_TAG`, que só muda quando esses assets forem refeitos).
 
+A partir da v1.03 o zip do código também leva `toolchain\` (llvm-mingw, CMake, Ninja e o Python embutido com numpy e Pillow, ~480 MB descompactados; `python tools\toolchain.py fetch` antes do `make_release.py`) e o código do XenonRecomp já corrigido (`tools\XenonRecomp\`, sem `.git`, com o carimbo `.crashrecomp_source`): o jogador não instala nada nem precisa do Git. O zip fica com ~150 MB. São ferramentas de terceiros redistribuíveis (licenças no `THIRD_PARTY_NOTICES.md`), nenhuma coisa do jogo.
+
 O `.gitignore` cobre tudo isso e ainda recusa `*.xex`, `*.rcf`, `*.bik`, `*.rsd`, `*.p3d`, `image.bin` e qualquer pasta `game/`, para um dump nunca entrar por acidente.
 
 ### Launcher
@@ -128,7 +138,7 @@ O `.gitignore` cobre tudo isso e ainda recusa `*.xex`, `*.rcf`, `*.bik`, `*.rsd`
 
 ## Rodando e testando (`config/run.toml`)
 
-Tudo o que controla a execução fica em `config/run.toml`: caminhos (exe, pasta do jogo, mods, userdata), compilação automática e **perfis**. Cada perfil define tempo limite, áudio, renderização, botões apertados automaticamente, capturas de tela, gravação de áudio, logs extras e o que conferir no fim. O script `tools/run_game.py` lê esse arquivo, compila o que mudou, roda o jogo e diz se o teste passou. Não precisa de prompt `vcvars64`, porque o script chama sozinho.
+Tudo o que controla a execução fica em `config/run.toml`: caminhos (exe, pasta do jogo, mods, userdata), compilação automática e **perfis**. Cada perfil define tempo limite, áudio, renderização, botões apertados automaticamente, capturas de tela, gravação de áudio, logs extras e o que conferir no fim. O script `tools/run_game.py` lê esse arquivo, compila o que mudou (com o toolchain de `tools/buildenv.py`), roda o jogo e diz se o teste passou. Não precisa preparar nenhum prompt.
 
 ```bat
 python tools\run_game.py --list                 :: lista os perfis
@@ -993,7 +1003,7 @@ Os pacotes `.p3d` com nome de hash ganham o nome original pelo `hashdictionary.t
 
 **Como os formatos foram lidos** (detalhes no cabeçalho de cada ferramenta):
 
-- **Som** (`.rsd`, "RSD6XMA "): cabeçalho de 0x800 bytes (canais, taxa, caminho original), formato XMA2 (streams, duração, blocos de 64 KB, tabela de busca) e pacotes XMA2. Arquivos 5.1 são 3 streams estéreo intercalados pelo campo *skip* dos pacotes. A decodificação é a mesma do runtime (`runtime/audio/xma.cpp`: quadro a quadro pelo WMA Pro do FFmpeg), feita por `tools/assettool`. Ele é escrito em C++, compila sozinho na primeira vez com o toolchain de `run.toml` e usa as DLLs de `thirdparty\ffmpeg`. Dois sons são o mesmo quando os dados XMA são iguais byte a byte; comparar o áudio decodificado dá o mesmo resultado (41 550 nos dois casos).
+- **Som** (`.rsd`, "RSD6XMA "): cabeçalho de 0x800 bytes (canais, taxa, caminho original), formato XMA2 (streams, duração, blocos de 64 KB, tabela de busca) e pacotes XMA2. Arquivos 5.1 são 3 streams estéreo intercalados pelo campo *skip* dos pacotes. A decodificação é a mesma do runtime (`runtime/audio/xma.cpp`: quadro a quadro pelo WMA Pro do FFmpeg), feita por `tools/assettool`. Ele é escrito em C++, compila sozinho na primeira vez com o toolchain do `tools/buildenv.py` e usa as DLLs de `thirdparty\ffmpeg`. Dois sons são o mesmo quando os dados XMA são iguais byte a byte; comparar o áudio decodificado dá o mesmo resultado (41 550 nos dois casos).
 - **Vídeo** (`.bik`, Bink 1): o FFmpeg incluído tem os decodificadores Bink, mas não o libavformat, então o `assettool` lê o contêiner Bink e grava o MP4 com um muxer próprio (H.264 via libopenh264, AAC).
 - **Texturas**: no 360 as imagens dos `.p3d` **não** estão no formato da GPU (sem tiling Xenos). O chunk de imagem (0x19001) guarda um PNG comum (quase todas), um DDS (DXT1/3/5) ou um TGA com paleta, um por nível de mip, e o jogo converte ao carregar. As texturas de 256 cores são desenhadas com a **paleta do chunk 0x19006/0x19007 de mesmo nome**, não com a paleta do próprio arquivo. Outras paletas pintam os mesmos índices de outro jeito: `Crash_Player2.bmp` é o Crash do jogador 2 em `crash_normal.bmp`, os `*_jacked.bmp` são os monstros montados, e `x.tga.1..3` são paletas animadas.
 - **Modelos**: Pure3D clássico em little-endian. Malha 0x10000 / skin 0x10001 → grupos 0x10020 com posições, normais, UVs, cores, índices (só listas de triângulos), matrix list, pesos e palette. Esqueleto 0x23000 (joints com pai e pose local 4x4). Shader 0x11000 → textura. Animações 0x121000 com canais `TRAN` (float3, ou 1/2 eixos + constantes) e `ROT` (quaternion comprimido: 3 × int16, w implícito). O Pure3D é mão esquerda; no glTF o z é invertido e cada triângulo sai com os vértices na ordem inversa (no jogo a frente é a face horária, como dizem as normais; o glTF usa a anti-horária). O `build` não lê os índices do .glb. `python tools\models.py preview x.glb` faz um render rápido (PNG) sem precisar do Blender.

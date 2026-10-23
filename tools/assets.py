@@ -61,9 +61,7 @@ def build_assettool(force=False):
     script.write_text("\r\n".join([
         "@echo off",
         *buildenv.cmd_prelude(),
-        f'if not exist "{out / "build.ninja"}" cmake -S "{src}" -B "{out}" -G Ninja '
-        f'-DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang-cl || exit /b 1',
-        f'cmake --build "{out}"', ""]), encoding="ascii")
+        *buildenv.build_lines(src, out), ""]), encoding="ascii")
     result = subprocess.run(["cmd", "/d", "/c", str(script)], capture_output=True, text=True, errors="replace")
     if result.returncode != 0:
         print(result.stdout[-4000:], result.stderr[-2000:])

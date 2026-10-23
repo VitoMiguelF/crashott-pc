@@ -3,6 +3,26 @@
 Full write-ups: `runtime/NOTES.md` steps 1-17, GUIA "Funções engolidas", "Lendo o código do jogo",
 "Correções locais no XenonRecomp".
 
+## Toolchain (`toolchain\`, `tools/toolchain.py`, `tools/buildenv.py`)
+
+- Default: the portable **llvm-mingw** (clang + lld + mingw-w64, UCRT, x86-64) + CMake + Ninja + the
+  embeddable Python with numpy/Pillow, all in `toolchain\` (release zip; a clone runs
+  `python tools/toolchain.py fetch`). `[build] toolchain = "msvc"` / `CRASH_TOOLCHAIN=msvc` = VS + clang-cl.
+  A build folder remembers its toolchain (`.crashrecomp_toolchain`) and is reconfigured on a switch.
+- mingw specifics in `CMakeLists.txt`: `-mavx`, `-O2` (= clang-cl `/O2`), `-static` (no libc++/libunwind/
+  winpthreads DLLs), `_WIN32_WINNT=0x0A00` (mingw-w64 defaults to older APIs: `SetProcessInformation`,
+  `GetDpiForSystem`...), `xaudio2_9`, `-gcodeview -Wl,--pdb=` + `-Wl,--Xlink=/map:` (the MSVC-style map
+  `tools/perf` parses; names are Itanium-mangled, `profile.py` demangles both).
+- **DLSS**: NVIDIA's static `nvsdk_ngx_s.lib` (MSVC, /MT) links unchanged under lld in mingw mode with
+  `/nodefaultlib:LIBCMT,OLDNAMES,libcpmt` and `runtime/gpu/ngx_msvc_compat.cpp`, which supplies the 12
+  missing MSVC symbols (`_Init_thread_*`, `__security_cookie`, `__GSHandlerCheck[_EH]`, `_fltused`,
+  MSVC-mangled `operator new/delete`, `std::_Xbad_alloc/_Xlength_error`). `__CxxFrameHandler3` and
+  `_CxxThrowException` come from ucrtbase (`api-ms-win-crt-private`). No Streamline needed.
+- XenonRecomp under llvm-mingw needs `-include cstdlib` (its `fmt` uses `malloc` without the header) and
+  emits a byte-identical `generated/ppc`. FSR (DLLs loaded at run time) and FFmpeg (DLLs) needed nothing.
+- Measured 2026-10-23 (5700X): clean build 46 s (mingw) vs 50 s (clang-cl); `desempenho_vila_direto`
+  ~190-200 fps vs ~177-180 fps.
+
 ## XenonRecomp config (`config/Crash.toml`)
 
 - Entry `_xstart` 0x82264F40. Helpers: savegprlr_14 0x823CEBE0, restgprlr_14 0x823CEC30, savefpr_14 0x823CFED0,
@@ -21,7 +41,8 @@ Full write-ups: `runtime/NOTES.md` steps 1-17, GUIA "Funções engolidas", "Lend
 
 ## Local XenonRecomp patches (`patches/XenonRecomp.patch`)
 
-Reapply if XenonRecomp is re-cloned (`tools/setup.py` does it):
+Reapply if XenonRecomp is re-cloned (`tools/setup.py` does it; the release zip carries the source with
+the patch already applied, stamped in `tools/XenonRecomp/.crashrecomp_source`):
 - xex.cpp: basic-compression buffer sized max(blocks, imageSize) (was out of bounds).
 - XenonAnalyse/function.cpp: conditional bclr/bcctr searched `SearchBlock(relative)` instead of
   `SearchBlock(base+rel)` -> infinite loop + memory growth (the hang at 0x8237FF6C).

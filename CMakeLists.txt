@@ -6,7 +6,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "The recompiled code relies on Clang extensions; configure with clang-cl.")
+    message(FATAL_ERROR "The recompiled code relies on Clang extensions; configure with clang (llvm-mingw) or clang-cl.")
+endif()
+
+# Two toolchains build the same code (tools/buildenv.py picks one):
+# - llvm-mingw (the default; toolchain\llvm-mingw in the release zip, nothing to install): clang with
+#   the mingw-w64 headers and import libraries and the UCRT. Everything links statically (libc++,
+#   libunwind, winpthreads), so the exe needs no DLL of the toolchain.
+# - clang-cl with Visual Studio / the Windows SDK (MSVC ABI; [build] toolchain = "msvc" in
+#   config/local.toml).
+if (MINGW)
+    set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")   # what clang-cl's /O2 means
+    set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
+    add_link_options(-static)
+    add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)  # mingw-w64 defaults to older Windows APIs
+    set(CRASH_ARCH_FLAGS -mavx)
+    set(CRASH_XAUDIO2_LIB xaudio2_9)
+else()
+    set(CRASH_ARCH_FLAGS /arch:AVX)
+    set(CRASH_XAUDIO2_LIB xaudio2)
 endif()
 
 set(XENON_RECOMP_DIR ${CMAKE_SOURCE_DIR}/tools/XenonRecomp)
@@ -25,7 +43,7 @@ target_include_directories(CrashPPC PUBLIC
     ${CRASH_PPC_DIR}
     ${XENON_RECOMP_DIR}/thirdparty/simde)
 set(CRASH_COMPILE_OPTIONS
-    /arch:AVX
+    ${CRASH_ARCH_FLAGS}
     -fno-strict-aliasing
     -Wno-unused-label
     -Wno-unused-variable
@@ -64,13 +82,21 @@ target_compile_options(XexImage PRIVATE -w)
 file(GLOB_RECURSE CRASH_RUNTIME_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/runtime/*.cpp)
 list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "/runtime/xex_image/")
 add_executable(CrashRecomp ${CRASH_RUNTIME_SOURCES})
-target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage d3d12 dxgi xaudio2 winmm version ole32)
+target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage d3d12 dxgi ${CRASH_XAUDIO2_LIB} winmm version ole32
+    hid setupapi windowscodecs)
 target_compile_options(CrashRecomp PRIVATE ${CRASH_COMPILE_OPTIONS})
 # Symbol map (build\CrashRecomp.map) and line tables in a PDB (build\CrashRecomp.pdb): name the
 # sampled addresses of tools/perf/profile.py down to the source line (-gline-tables-only doesn't
 # change the generated code; the recompiled CrashPPC library has none).
 target_compile_options(CrashRecomp PRIVATE -gline-tables-only)
-target_link_options(CrashRecomp PRIVATE /MAP /DEBUG /OPT:REF /OPT:ICF)  # /DEBUG alone turns REF/ICF off
+if (MINGW)
+    # CodeView line tables + a PDB like clang-cl's, and lld-link's MSVC-style map (/map, not --Map).
+    target_compile_options(CrashRecomp PRIVATE -gcodeview)
+    target_link_options(CrashRecomp PRIVATE -Wl,--pdb= -Wl,--Xlink=/map:$<TARGET_FILE_DIR:CrashRecomp>/CrashRecomp.map
+        -Wl,--gc-sections -Wl,--icf=all)
+else()
+    target_link_options(CrashRecomp PRIVATE /MAP /DEBUG /OPT:REF /OPT:ICF)  # /DEBUG alone turns REF/ICF off
+endif()
 target_compile_definitions(CrashRecomp PRIVATE
     NOMINMAX
     WIN32_LEAN_AND_MEAN)
@@ -98,6 +124,10 @@ if (EXISTS ${CRASH_DLSS_DIR}/include/nvsdk_ngx.h AND EXISTS ${CRASH_DLSS_DIR}/li
     target_include_directories(CrashRecomp PRIVATE ${CRASH_DLSS_DIR}/include)
     target_link_libraries(CrashRecomp PRIVATE ${CRASH_DLSS_DIR}/lib/nvsdk_ngx_s.lib)
     target_compile_definitions(CrashRecomp PRIVATE CRASH_HAVE_DLSS=1)
+    if (MINGW)
+        target_link_options(CrashRecomp PRIVATE -Wl,--Xlink=/nodefaultlib:LIBCMT -Wl,--Xlink=/nodefaultlib:OLDNAMES
+            -Wl,--Xlink=/nodefaultlib:libcpmt)
+    endif()
     add_custom_command(TARGET CrashRecomp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_DLSS_DIR}/bin/nvngx_dlss.dll $<TARGET_FILE_DIR:CrashRecomp>)
 else()

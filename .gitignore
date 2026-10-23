@@ -32,6 +32,10 @@
 # XenonRecomp: cloned at a pinned commit by tools/setup.py, plus patches/XenonRecomp.patch
 /tools/XenonRecomp/
 
+# The portable build toolchain (llvm-mingw, CMake, Ninja, Python): in the release zip, or
+# `python tools/toolchain.py fetch` (pinned archives, checked by SHA-256)
+/toolchain/
+
 # Third-party binaries and SDK files: downloaded by tools/setup.py (see each README.md)
 /thirdparty/ffmpeg/bin/
 /thirdparty/ffmpeg/include/

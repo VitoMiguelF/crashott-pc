@@ -7,13 +7,15 @@
 You need your own legally obtained copy of Crash of the Titans for Xbox 360 (`default.xex`, `default.rcf`,
 ...). Nothing from the game is in this repository, and nothing from it may ever be added.
 
-1. Install Visual Studio 2022+ with "Desktop development with C++", LLVM (`clang-cl`), CMake, Ninja, Git and
-   Python 3.11+.
-2. Clone your fork (or the repo, if you are a collaborator) and run the installer:
+1. You need Git and any Python 3.11+ only to get started; the compilers come in a portable folder.
+2. Clone your fork (or the repo, if you are a collaborator), fetch the portable toolchain once (llvm-mingw,
+   CMake, Ninja and an embeddable Python with numpy and Pillow, pinned by SHA-256, into `toolchain\`;
+   ~300 MB of downloads) and run the installer with its Python:
    ```bat
    git clone https://github.com/VitoMiguelF/crashott-pc CrashRecomp
    cd CrashRecomp
-   python tools\setup.py --game <your game folder>
+   python tools\toolchain.py fetch
+   toolchain\python\python.exe tools\setup.py --game <your game folder>
    ```
    It clones XenonRecomp at the pinned commit and applies `patches/XenonRecomp.patch`, downloads FFmpeg /
    DLSS / FSR from their official sources (checked by SHA-256), copies `default.xex` into `private\`,
@@ -22,8 +24,10 @@ You need your own legally obtained copy of Crash of the Titans for Xbox 360 (`de
    ```bat
    git config core.hooksPath .githooks
    ```
-4. Machine-specific paths (another Visual Studio, LLVM, your game folder) go in `config/local.toml`
-   (gitignored); see `tools/buildenv.py`.
+4. Machine-specific settings (your game folder, or `[build] toolchain = "msvc"` to build with Visual Studio
+   2022+ and LLVM `clang-cl` instead of `toolchain\`) go in `config/local.toml` (gitignored); see
+   `tools/buildenv.py`. Changes must build with the bundled toolchain (llvm-mingw); keep MSVC-only
+   constructs (`__try` / `__except`, MSVC-only headers or libraries) out of the code.
 
 Read `docs/GUIA_DO_PROJETO.md` (the full guide) and `docs/internals/` (English cheat sheets) before changing
 an area.
@@ -91,13 +95,15 @@ Never attach game files or save files containing game data you don't own.
 Você precisa da sua própria cópia de Crash of the Titans para Xbox 360 (`default.xex`, `default.rcf`, ...).
 Nada do jogo está neste repositório, e nada dele pode ser adicionado.
 
-1. Instale o Visual Studio 2022+ com "Desenvolvimento para desktop com C++", LLVM (`clang-cl`), CMake, Ninja,
-   Git e Python 3.11+.
-2. Clone o seu fork (ou o repositório, se você for colaborador) e rode o instalador:
+1. Para começar você só precisa do Git e de um Python 3.11+ qualquer; os compiladores vêm numa pasta portátil.
+2. Clone o seu fork (ou o repositório, se você for colaborador), baixe uma vez o toolchain portátil (llvm-mingw,
+   CMake, Ninja e um Python embutido com numpy e Pillow, fixados por SHA-256, em `toolchain\`; ~300 MB) e rode
+   o instalador com o Python dele:
    ```bat
    git clone https://github.com/VitoMiguelF/crashott-pc CrashRecomp
    cd CrashRecomp
-   python tools\setup.py --game <pasta do seu jogo>
+   python tools\toolchain.py fetch
+   toolchain\python\python.exe tools\setup.py --game <pasta do seu jogo>
    ```
    Ele clona o XenonRecomp no commit fixado e aplica `patches/XenonRecomp.patch`, baixa FFmpeg / DLSS / FSR das
    fontes oficiais (conferidos por SHA-256), copia o `default.xex` para `private\`, recompila o código do jogo
@@ -106,8 +112,10 @@ Nada do jogo está neste repositório, e nada dele pode ser adicionado.
    ```bat
    git config core.hooksPath .githooks
    ```
-4. Caminhos da sua máquina (outro Visual Studio, LLVM, a pasta do jogo) vão em `config/local.toml` (fora do
-   git); veja `tools/buildenv.py`.
+4. O que é da sua máquina (a pasta do jogo, ou `[build] toolchain = "msvc"` para compilar com o Visual Studio
+   2022+ e o `clang-cl` do LLVM em vez de `toolchain\`) vai em `config/local.toml` (fora do git); veja
+   `tools/buildenv.py`. O código precisa compilar com o toolchain embutido (llvm-mingw): nada de construções só
+   do MSVC (`__try` / `__except`, headers ou bibliotecas que só o Visual Studio tem).
 
 Leia o `docs/GUIA_DO_PROJETO.md` (o guia completo) e `docs/internals/` (resumos em inglês) antes de mexer
 numa parte.

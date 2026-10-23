@@ -7,7 +7,8 @@
 //
 //   sampler.exe <pid> <seconds> <interval_us> <out.txt> [max_frames]
 //
-// Build (vcvars64 + LLVM on PATH): clang-cl /O2 /EHsc /std:c++20 tools\perf\sampler.cpp /Fe:build\perf\sampler.exe /Fo:build\perf\ /link winmm.lib
+// Build with the bundled toolchain: toolchain\llvm-mingw\bin\clang++ -O2 -std=c++20 -static tools\perf\sampler.cpp -o build\perf\sampler.exe -ldbghelp -lpsapi -lwinmm
+// (or with vcvars64 + LLVM on PATH: clang-cl /O2 /EHsc /std:c++20 tools\perf\sampler.cpp /Fe:build\perf\sampler.exe /Fo:build\perf\ /link winmm.lib)
 #include <windows.h>
 #include <dbghelp.h>
 #include <psapi.h>

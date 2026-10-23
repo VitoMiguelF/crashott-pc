@@ -33,8 +33,8 @@ runs = "build/runs"                       # cada execução ganha uma pasta aqui
 [build]
 # Compila antes de rodar (só o que mudou). Desligue com --no-build.
 auto = true
-# O Visual Studio (vcvars64.bat) vem do vswhere e o clang-cl/CMake/Ninja do PATH e das pastas de
-# instalação comuns; para outra instalação, [build] vcvars / path_prepend em config/local.toml.
+# O toolchain vem do tools/buildenv.py: o portátil de toolchain\ (llvm-mingw, CMake, Ninja), ou com
+# [build] toolchain = "msvc" em config/local.toml o Visual Studio (vswhere) + clang-cl.
 build_dir = "build"
 target = "CrashRecomp"
 
