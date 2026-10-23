@@ -526,8 +526,8 @@ std::vector<InstallRow> InstallRows()
                      false, true, false, RowRemaster });
     rows.push_back({ { "ASSETS FOR MODDING", "ASSETS PARA MODDING" }, OnOff(g_inst.extractAssets),
                      { T({ "Exports the game's sounds, videos, textures and 3D models to open formats", "Exporta sons, vídeos, texturas e modelos 3D do jogo para formatos abertos" }),
-                       T({ "in private\\assets (about 8 minutes, 4 GB). Only for mods.",
-                           "em private\\assets (cerca de 8 minutos, 4 GB). Só para mods." }) },
+                       T({ "in private\\assets (about 9 minutes, 18 GB). Only for mods.",
+                           "em private\\assets (cerca de 9 minutos, 18 GB). Só para mods." }) },
                      false, true, false, RowAssets });
     rows.push_back({ { "COPY THE GAME INTO THE FOLDER", "COPIAR O JOGO PARA A PASTA" }, OnOff(g_inst.copyGame),
                      { T({ "On: the dump is copied to dist\\game (3 GB). Off: the game keeps", "Ligado: o jogo é copiado para dist\\game (3 GB). Desligado: o jogo usa" }),

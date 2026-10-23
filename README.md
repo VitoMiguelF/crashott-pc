@@ -54,7 +54,7 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
   `english.rcf`, `sound1.rcf`, `sound2.rcf` and `shaders\` (extracted from your disc). Only the known
   retail `default.xex` is supported (the installer checks its SHA-256).
 - About 1.5 GB of free space (plus 3 GB to copy the game into the folder, 4.5 GB for the HD AI Remaster,
-  4 GB for the asset export).
+  18 GB for the asset export, mostly WAV sounds).
 
 **Nothing else to install.** Since v1.03 the release zip carries its own build tools in `toolchain\`
 ([llvm-mingw](https://github.com/mstorsjo/llvm-mingw) clang, [CMake](https://cmake.org),
@@ -125,7 +125,7 @@ The game's assets are **not** distributed, but you can export them from your own
 
 ```bat
 set PY=toolchain\python\python.exe
-%PY% tools\assets.py all          :: everything to private\assets (about 8 minutes, 4 GB)
+%PY% tools\assets.py all          :: everything to private\assets (about 9 minutes, 18 GB)
 %PY% tools\textures.py export     :: or step by step: textures -> PNG
 %PY% tools\models.py export       :: models, skeletons, animations -> glTF (.glb)
 %PY% tools\audio.py export        :: sounds and voices -> WAV
@@ -209,7 +209,7 @@ de PC.
 - Os arquivos do seu Crash of the Titans (Xbox 360): a pasta com `default.xex`, `default.rcf`,
   `english.rcf`, `sound1.rcf`, `sound2.rcf` e `shaders\` (extraída do seu disco). Só o `default.xex`
   conhecido da versão comercial é suportado (o instalador confere o SHA-256).
-- Cerca de 1,5 GB livres (mais 3 GB para copiar o jogo para a pasta, 4,5 GB para o HD AI Remaster e 4 GB
+- Cerca de 1,5 GB livres (mais 3 GB para copiar o jogo para a pasta, 4,5 GB para o HD AI Remaster e 18 GB
   para exportar os assets).
 
 **Nada mais para instalar.** Desde a v1.03 o zip da release traz as próprias ferramentas de compilação em
@@ -283,7 +283,7 @@ MODDING** do instalador, ou com o Python que vem junto, que já tem numpy e Pill
 
 ```bat
 set PY=toolchain\python\python.exe
-%PY% tools\assets.py all          :: tudo para private\assets (cerca de 8 minutos, 4 GB)
+%PY% tools\assets.py all          :: tudo para private\assets (cerca de 9 minutos, 18 GB)
 %PY% tools\textures.py export     :: ou por etapa: texturas -> PNG
 %PY% tools\models.py export       :: modelos, esqueletos, animações -> glTF (.glb)
 %PY% tools\audio.py export        :: sons e vozes -> WAV
