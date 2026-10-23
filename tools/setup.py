@@ -6,12 +6,21 @@
     python tools/setup.py --game D:\\Games\\Crash --extract-assets # + export the game's assets for modding
     python tools/setup.py --game D:\\Games\\Crash --assets-only    # only the asset export (retry it)
     python tools/setup.py --check                                 # only check the prerequisites
+    python tools/setup.py --game ... --toolchain msvc             # build with Visual Studio + clang-cl
+
+Run it with the Python of the release (toolchain\\python\\python.exe, what CrashSetup.exe uses) or any
+Python 3.11+.
 
 Steps (each one is skipped when its result is already up to date, so running it again is cheap):
- 1. prerequisites: Visual Studio 2022+ / Build Tools (C++), LLVM clang-cl, CMake, Ninja, Git;
+ 1. prerequisites: the portable toolchain in toolchain\\ (llvm-mingw clang, CMake, Ninja and Python
+    with numpy and Pillow; tools/toolchain.py), which the release zip carries: nothing to install.
+    With --toolchain msvc (advanced): Visual Studio 2022+ / Build Tools (C++), LLVM clang-cl, CMake,
+    Ninja;
  2. the dump: default.xex must be the known version (SHA-256 below); default.rcf, english.rcf,
     sound1.rcf, sound2.rcf and shaders\\ must be there. It is never written to;
- 3. XenonRecomp: cloned at a pinned commit into tools\\XenonRecomp, + patches\\XenonRecomp.patch;
+ 3. XenonRecomp: its source at a pinned commit + patches\\XenonRecomp.patch in tools\\XenonRecomp. The
+    release zip has it (tools\\XenonRecomp\\.crashrecomp_source names the commit and the patch); a git
+    clone of this repository clones it with git;
  4. third-party SDK files (FFmpeg LGPL, NVIDIA DLSS, AMD FSR), from their official sources, checked
     by SHA-256 (thirdparty\\*\\README.md);
  5. XenonRecomp turns default.xex into C++ (generated\\ppc, ~60 MB, never shared);
@@ -22,9 +31,9 @@ Steps (each one is skipped when its result is already up to date, so running it 
     the dump into dist\\game with --copy-game);
  9. optional: tools\\assets.py all exports the game's sounds, videos, textures and models to
     private\\assets for modding (README, "Extracting and modifying assets"). It needs the Python
-    packages of tools\\requirements.txt (numpy, Pillow): setup installs them into this same Python
-    with pip, and a failure there only fails this step (the game is installed anyway). Retry it
-    alone with --assets-only.
+    packages of tools\\requirements.txt (numpy, Pillow): the bundled Python has them; another Python
+    gets them with pip, and a failure there only fails this step (the game is installed anyway).
+    Retry it alone with --assets-only.
 
 Machine-readable progress for the graphical installer (installer/): lines starting with "@@".
 """
@@ -51,6 +60,8 @@ XENON = ROOT / "tools" / "XenonRecomp"
 XENON_URL = "https://github.com/hedge-dev/XenonRecomp.git"
 XENON_COMMIT = "ddd128bcca99fe8bfbb99bea583c972351fa6ace"
 XENON_PATCH = ROOT / "patches" / "XenonRecomp.patch"
+# Written by tools/make_release.py into the bundled XenonRecomp source: "<commit> <sha256 of the patch>".
+XENON_SOURCE_STAMP = XENON / ".crashrecomp_source"
 REQUIREMENTS = ROOT / "tools" / "requirements.txt"
 
 # Crash of the Titans (Xbox 360, NTSC/PAL disc release, title 565507E4): the only default.xex the
@@ -150,7 +161,7 @@ _ENV = None
 
 
 def build_env():
-    """The environment of vcvars64.bat + the tool folders (computed once)."""
+    """The build environment: the toolchain's folders first on PATH (+ vcvars64.bat for msvc), computed once."""
     global _ENV
     if _ENV is None:
         lines = buildenv.cmd_prelude() + ["set"]
@@ -159,7 +170,8 @@ def build_env():
         script.write_text("@echo off\r\n" + "\r\n".join(lines) + "\r\n", encoding="ascii")
         out = subprocess.run(["cmd", "/d", "/c", str(script)], capture_output=True, text=True, errors="replace")
         if out.returncode != 0:
-            fail("vcvars64.bat falhou: confira a instalação do Visual Studio (C++)")
+            fail("vcvars64.bat falhou: confira a instalação do Visual Studio (C++)" if buildenv.toolchain_kind() == "msvc"
+                 else "não consegui preparar o ambiente de compilação: " + (out.stdout + out.stderr).strip()[-300:])
         _ENV = dict(line.split("=", 1) for line in out.stdout.splitlines() if "=" in line and not line.startswith("="))
     return _ENV
 
@@ -195,15 +207,31 @@ def download(url, dest, expected=None, label=None):
 
 # --- steps ------------------------------------------------------------------------------------
 
+def xenon_source_bundled():
+    """The release's XenonRecomp source (no .git): the pinned commit with the current patch applied."""
+    if (XENON / ".git").exists() or not XENON_SOURCE_STAMP.is_file():
+        return False
+    return XENON_SOURCE_STAMP.read_text(encoding="ascii").split() == [XENON_COMMIT, sha256(XENON_PATCH)]
+
+
 def check_prerequisites():
     """Returns {name: path or None}; the setup needs all of them."""
-    found = {
-        "Visual Studio (C++)": buildenv.vcvars(),
-        "clang-cl (LLVM)": buildenv.which("clang-cl"),
-        "CMake": buildenv.which("cmake"),
-        "Ninja": buildenv.which("ninja"),
-        "Git": buildenv.which("git"),
-    }
+    if buildenv.toolchain_kind() == "bundled":
+        tc = buildenv.portable
+        gaps = tc.missing()
+        parts = {"Toolchain: llvm-mingw (clang)": ("llvm-mingw", tc.TOOLCHAIN / "llvm-mingw" / "bin" / "clang++.exe"),
+                 "Toolchain: CMake": ("cmake", tc.TOOLCHAIN / "cmake" / "bin" / "cmake.exe"),
+                 "Toolchain: Ninja": ("ninja", tc.TOOLCHAIN / "ninja" / "ninja.exe")}
+        found = {name: None if part in gaps else path for name, (part, path) in parts.items()}
+    else:
+        found = {
+            "Visual Studio (C++)": buildenv.vcvars(),
+            "clang-cl (LLVM)": buildenv.which("clang-cl"),
+            "CMake": buildenv.which("cmake"),
+            "Ninja": buildenv.which("ninja"),
+        }
+    if not xenon_source_bundled():
+        found["Git"] = buildenv.which("git")  # only a clone of the repository needs it, for XenonRecomp
     for name, path in found.items():
         say(f"@@prereq {'ok' if path else 'missing'} {name} | {path or ''}")
     if sys.version_info < (3, 11):
@@ -328,7 +356,13 @@ def check_game(game, allow_other_xex=False):
 
 
 def setup_xenonrecomp():
+    if xenon_source_bundled():
+        say("XenonRecomp ok (código do zip: " + XENON_COMMIT[:10] + " + patches/XenonRecomp.patch)")
+        return
     git = buildenv.which("git")
+    if git is None:
+        fail(f"{XENON} não tem o código do XenonRecomp e o Git não foi encontrado: use o zip da release "
+             "ou instale o Git")
     if not (XENON / ".git").exists():
         if XENON.exists():
             fail(f"{XENON} existe mas não é um clone do XenonRecomp: apague a pasta e rode de novo")
@@ -385,9 +419,12 @@ def recompile():
         return
     env = build_env()
     build = XENON / "build"
-    if not (build / "build.ninja").is_file():
-        run_all(["cmake", "-S", XENON, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-                 "-DCMAKE_C_COMPILER=clang-cl", "-DCMAKE_CXX_COMPILER=clang-cl"], env=env)
+    # llvm-mingw: XenonRecomp's fmt uses malloc without <cstdlib> under libc++; -static: no toolchain DLLs.
+    extra = ["-DCMAKE_CXX_FLAGS=-include cstdlib", "-DCMAKE_EXE_LINKER_FLAGS=-static"] \
+        if buildenv.toolchain_kind() == "bundled" else []
+    configure = buildenv.configure_build(XENON, build, extra)
+    if configure:
+        run_all(configure, env=env)
     run_all(["cmake", "--build", build, "--target", "XenonRecomp"], env=env)
     if GENERATED.exists():
         shutil.rmtree(GENERATED)
@@ -403,9 +440,9 @@ def recompile():
 def compile_project(jobs=None):
     env = build_env()
     build = ROOT / "build"
-    if not (build / "build.ninja").is_file():
-        run_all(["cmake", "-S", ROOT, "-B", build, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-                 "-DCMAKE_C_COMPILER=clang-cl", "-DCMAKE_CXX_COMPILER=clang-cl"], env=env)
+    configure = buildenv.configure_build(ROOT, build)
+    if configure:
+        run_all(configure, env=env)
     args = ["cmake", "--build", build] + (["--parallel", str(jobs)] if jobs else [])
     for line in run(args, env=env):
         # Ninja: "[123/456] Building CXX ..."
@@ -505,17 +542,27 @@ def main():
     p.add_argument("--allow-other-xex", action="store_true", help="continua com um default.xex desconhecido (não suportado)")
     p.add_argument("--assets-only", action="store_true", help="só a exportação de assets (tentar de novo depois de uma falha nela)")
     p.add_argument("--check", action="store_true", help="só confere os pré-requisitos")
+    p.add_argument("--toolchain", choices=buildenv.TOOLCHAINS,
+                   help="bundled = a pasta toolchain\\ (padrão); msvc = Visual Studio + clang-cl instalados "
+                        "(avançado; fica salvo em config/local.toml)")
     p.add_argument("--check-packages", action="store_true", help="só confere os pacotes Python (tools/requirements.txt)")
     args = p.parse_args()
     if args.check_packages:
         return 1 if check_python_packages() else 0
     args.extract_assets |= args.assets_only
+    if args.toolchain:
+        buildenv.write_local(toolchain=args.toolchain)
+        os.environ.pop("CRASH_TOOLCHAIN", None)
+    say(f"@@toolchain {buildenv.toolchain_kind()}")
 
     step(0)
     found = check_prerequisites()
     missing_packages = check_python_packages()
     missing = [name for name, path in found.items() if not path]
     if missing:
+        if any(m.startswith("Toolchain") for m in missing):
+            fail("falta a pasta toolchain\\ completa (" + ", ".join(missing) + "): ela vem no zip da release; "
+                 "num clone do repositório, rode: python tools\\toolchain.py fetch")
         fail("falta instalar: " + ", ".join(missing) + " (README, \"Requisitos\")")
     if args.check:
         say("@@done")

@@ -18,6 +18,29 @@ the same files next to their licenses (`dist\licencas\` in the play folder).
 | [SMAA](https://github.com/iryoku/smaa) | SMAA anti-aliasing | MIT (`thirdparty/smaa/LICENSE.txt`) | commit `71c806a838bdd7d517df19192a20f0c61b3ca29d` (in git) |
 | [Dear ImGui](https://github.com/ocornut/imgui) 1.91.8 | The launcher and the installer | MIT (`thirdparty/imgui/LICENSE.txt`) | tag `v1.91.8` (in git) |
 
+## The build toolchain (`toolchain\` in the release zip)
+
+The release zip carries the tools that build the game on the player's PC, unmodified except for
+files removed to save space (other CPU targets, debuggers, manuals). They are not part of the game:
+the installer runs them. Each folder keeps its own license files, listed here.
+`tools/toolchain.py` downloads the same pinned archives (checked by SHA-256) for a git clone.
+
+| Component | Used for | License | Source / license files |
+|---|---|---|---|
+| [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) 20261006 (UCRT, x86-64): Clang/LLVM 23, LLD, libc++, libunwind, compiler-rt builtins | Compiling and linking everything (`clang`, `clang++`, `ld.lld`) | Apache 2.0 with LLVM Exceptions | `toolchain\llvm-mingw\LICENSE.TXT` |
+| [mingw-w64](https://www.mingw-w64.org) headers, CRT, import libraries and winpthreads (part of llvm-mingw) | Windows headers and import libraries, the C runtime startup code | ZPL 2.1 / public domain (headers, CRT), MIT-style (winpthreads) | `toolchain\llvm-mingw\x86_64-w64-mingw32\share\mingw32\COPYING*` |
+| [CMake](https://cmake.org) 4.4.4 (`cmake.exe` + its modules) | Configuring the builds | BSD 3-Clause; its bundled libraries (curl, libarchive, zlib, zstd, liblzma, libuv, nghttp2, rhash, cppdap) under their own licenses | `toolchain\cmake\doc\cmake\` |
+| [Ninja](https://ninja-build.org) 1.13.2 | Running the builds | Apache 2.0 | `toolchain\ninja\COPYING.txt` |
+| [Python](https://www.python.org) 3.13.17 (official embeddable package, amd64) | Running `tools\setup.py` and the asset tools | PSF License (and its bundled OpenSSL, libffi, SQLite, zlib...) | `toolchain\python\LICENSE.txt` |
+| [NumPy](https://numpy.org) 2.5.4 (wheel, with its bundled OpenBLAS / gfortran runtime) | The asset export (textures, models) | BSD 3-Clause; bundled libraries under their own licenses | `toolchain\python\Lib\site-packages\numpy-2.5.4.dist-info\licenses\` |
+| [Pillow](https://python-pillow.org) 13.0.0 (wheel) | The asset export (PNG textures) | MIT-CMU (HPND); bundled libraries (libjpeg-turbo, libpng, zlib, FreeType...) under their own licenses | `toolchain\python\Lib\site-packages\pillow-13.0.0.dist-info\licenses\` |
+
+Programs built with this toolchain (`CrashRecomp.exe`, `CrashLauncher.exe`, `CrashSetup.exe`) link
+libc++ and libunwind (LLVM Exceptions: no notice needed in binaries) and the mingw-w64 runtime
+statically; the mingw-w64 / winpthreads notices above cover the prebuilt `CrashSetup.exe`.
+`CrashRecomp.exe` links NVIDIA's `nvsdk_ngx_s.lib` (below) unchanged; `runtime/gpu/ngx_msvc_compat.cpp`
+(our code) provides the few Visual C++ runtime functions that library expects.
+
 Optional tools used only by the asset exporter (`tools/assettool`, built on your machine): FFmpeg
 (above) and, for Bink videos to MP4, Cisco's OpenH264 when present in the FFmpeg build.
 

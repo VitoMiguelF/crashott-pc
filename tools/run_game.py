@@ -277,10 +277,9 @@ def parse_events(text):
 def build(config, run_dir):
     b = config.get("build", {})
     script = run_dir / "build.cmd"
-    script.write_text(
-        "@echo off\r\n" + "".join(line + "\r\n" for line in buildenv.cmd_prelude()) +
-        f'cmake --build "{resolve(b.get("build_dir", "build"))}" --target {b.get("target", "CrashRecomp")}\r\n',
-        encoding="ascii")
+    lines = ["@echo off", *buildenv.cmd_prelude(),
+             *buildenv.build_lines(ROOT, resolve(b.get("build_dir", "build")), b.get("target", "CrashRecomp"))]
+    script.write_text("".join(line + "\r\n" for line in lines), encoding="ascii")
     log_path = run_dir / "build.log"
     with open(log_path, "w", encoding="utf-8", errors="replace") as log:
         result = subprocess.run(["cmd", "/d", "/c", str(script)], stdout=log, stderr=subprocess.STDOUT, cwd=ROOT)

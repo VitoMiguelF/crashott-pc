@@ -3,8 +3,11 @@
     python tools/make_release.py v1.0
 
 - CrashRecomp-<tag>.zip: the source at HEAD (git archive) + CrashSetup.exe (the installer, our code
-  only) at the top. No game file, no recompiled code: the installer builds everything from the
-  user's dump.
+  only) at the top, + everything the installer needs to build, so a player installs nothing:
+  toolchain\\ (llvm-mingw, CMake, Ninja, the embeddable Python with numpy and Pillow; fetch it with
+  `python tools/toolchain.py fetch`) and tools\\XenonRecomp\\ (its source at setup.py's pinned commit
+  with patches/XenonRecomp.patch applied, without .git: no Git needed). No game file, no recompiled
+  code: the installer builds everything from the user's dump.
 - CrashRecomp-<tag>-legendas.zip: the subtitles (English transcript of the game's voices and the
   Brazilian Portuguese translation), paths relative to the project (tools/setup.py --subtitles).
 - CrashRecomp-<tag>-HD-AI-Remaster.partN.zip: the HD AI Remaster mod (hd_textures + rcf), split in
@@ -17,6 +20,9 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import toolchain  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PART_LIMIT = 1900 * 1024 * 1024  # bytes of input per remaster part (GitHub: 2 GiB per asset)
@@ -49,6 +55,23 @@ def sha256(path):
     return h.hexdigest()
 
 
+def xenon_source(prefix):
+    """[(file, name in the zip)] of tools/XenonRecomp: the files git tracks there and in its submodules,
+    as they are in the working tree (the pinned commit + patches/XenonRecomp.patch, checked)."""
+    xenon = ROOT / "tools" / "XenonRecomp"
+    sys.path.insert(0, str(ROOT / "tools"))
+    import setup  # XENON_COMMIT, XENON_PATCH
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=xenon, capture_output=True, text=True).stdout.strip()
+    if head != setup.XENON_COMMIT:
+        raise SystemExit(f"tools/XenonRecomp está em {head[:10]}, não em {setup.XENON_COMMIT[:10]}: rode tools/setup.py")
+    if subprocess.run(["git", "apply", "--reverse", "--check", "--ignore-whitespace", str(setup.XENON_PATCH)],
+                      cwd=xenon, capture_output=True).returncode != 0:
+        raise SystemExit("tools/XenonRecomp não tem exatamente o patches/XenonRecomp.patch aplicado")
+    names = subprocess.run(["git", "ls-files", "--recurse-submodules", "-z"], cwd=xenon, capture_output=True,
+                           text=True, check=True).stdout.split("\0")
+    return [(xenon / n, f"{prefix}/tools/XenonRecomp/{n}") for n in names if n and (xenon / n).is_file()]
+
+
 def zip_files(target, files, arcname, compress=zipfile.ZIP_DEFLATED, extra=None):
     with zipfile.ZipFile(target, "w", compress, compresslevel=6) as z:
         for f in files:
@@ -77,8 +100,22 @@ def main():
         setup = ROOT / "build" / "CrashSetup.exe"
         if not setup.is_file():
             raise SystemExit("build\\CrashSetup.exe não existe: cmake --build build --target CrashSetup")
-        with zipfile.ZipFile(source, "a", zipfile.ZIP_DEFLATED) as z:
+        if toolchain.missing():
+            raise SystemExit("toolchain\\ incompleta: python tools\\toolchain.py fetch")
+        xenon = xenon_source(prefix)
+        with zipfile.ZipFile(source, "a", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
             z.write(setup, f"{prefix}/CrashSetup.exe")
+            # The stamp setup.py checks: the commit and the SHA-256 of the patch exactly as this zip has it.
+            patch = z.read(f"{prefix}/patches/XenonRecomp.patch")
+            for f, name in xenon:
+                z.write(f, name)
+            commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT / "tools" / "XenonRecomp",
+                                    capture_output=True, text=True).stdout.strip()
+            z.writestr(f"{prefix}/tools/XenonRecomp/.crashrecomp_source",
+                       f"{commit} {hashlib.sha256(patch).hexdigest()}\n")
+            for f in sorted(toolchain.TOOLCHAIN.rglob("*")):
+                if f.is_file() and "_unpack" not in f.parts:
+                    z.write(f, f"{prefix}/toolchain/{f.relative_to(toolchain.TOOLCHAIN).as_posix()}")
         print(f"{source.name}: {source.stat().st_size / 1048576:.1f} MB", flush=True)
 
     if "subtitles" in only:

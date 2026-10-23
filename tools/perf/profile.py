@@ -31,9 +31,28 @@ THREAD_ROOTS = [
 ]
 
 
+def demangle_itanium(name):
+    """The qualified name of an Itanium-mangled symbol (llvm-mingw builds), without the parameters:
+    _Z12sub_82353478R10PPCContextPh -> sub_82353478, _ZN3gpu6Upload4FlushEv -> gpu::Upload::Flush."""
+    body, nested = name[2:], name.startswith("_ZN")
+    if nested:
+        body = body[1:].lstrip("rVK")
+    parts = []
+    while body[:1].isdigit():
+        digits = len(body) - len(body.lstrip("0123456789"))
+        length = int(body[:digits])
+        parts.append(body[digits:digits + length])
+        body = body[digits + length:]
+        if not nested:
+            break
+    return "::".join(parts) if parts else name
+
+
 def demangle(name):
     if name.startswith("__imp__sub_"):
         return name[len("__imp__"):]
+    if name.startswith("_Z"):
+        return demangle_itanium(name)
     if not name.startswith("?"):
         return name
     body = name[1:]
