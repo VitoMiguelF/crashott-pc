@@ -53,35 +53,37 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 - Your Crash of the Titans (Xbox 360) game files: the folder with `default.xex`, `default.rcf`,
   `english.rcf`, `sound1.rcf`, `sound2.rcf` and `shaders\` (extracted from your disc). Only the known
   retail `default.xex` is supported (the installer checks its SHA-256).
-- To build (the installer offers to install the missing ones with `winget`):
-  - [Visual Studio 2022+ or the Build Tools](https://visualstudio.microsoft.com/downloads/) with
-    **Desktop development with C++**;
-  - [LLVM](https://github.com/llvm/llvm-project/releases) (`clang-cl`), [CMake](https://cmake.org),
-    [Ninja](https://ninja-build.org), [Git](https://git-scm.com), [Python 3.11+](https://www.python.org).
-- Only for the asset export (**ASSETS FOR MODDING**): the Python packages in
-  [tools/requirements.txt](tools/requirements.txt) (numpy, Pillow). The installer installs them with
-  pip into the same Python it runs with; by hand: `python -m pip install -r tools\requirements.txt`.
-- About 3 GB of free space (plus 4.5 GB for the HD AI Remaster, 4 GB for the asset export).
+- About 1.5 GB of free space (plus 3 GB to copy the game into the folder, 4.5 GB for the HD AI Remaster,
+  4 GB for the asset export).
 
-FFmpeg (LGPL), NVIDIA DLSS and AMD FSR are downloaded by the installer from their official sources and
-checked by SHA-256 (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+**Nothing else to install.** Since v1.03 the release zip carries its own build tools in `toolchain\`
+([llvm-mingw](https://github.com/mstorsjo/llvm-mingw) clang, [CMake](https://cmake.org),
+[Ninja](https://ninja-build.org) and the official embeddable [Python](https://www.python.org) with numpy and
+Pillow): no Visual Studio, LLVM, Python or Git, and nothing is installed on the system. The installer
+only downloads FFmpeg (LGPL), NVIDIA DLSS and AMD FSR from their official sources, checked by SHA-256
+(see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), and the optional extras you choose.
+
+Advanced: to build with an installed Visual Studio 2022+ / Build Tools and LLVM `clang-cl` instead, set
+**BUILD TOOLS = VISUAL STUDIO** in the installer (or `--toolchain msvc`); it offers to install the missing
+ones with `winget`.
 
 ## Install
 
-1. Download **`CrashRecomp-v1.02.zip`** (the latest) from the [releases](https://github.com/VitoMiguelF/crashott-pc/releases)
-   and unzip it (or `git clone` this repository).
-2. Run **`CrashSetup.exe`**. Choose your game folder, check the prerequisites, pick the options
-   (subtitles, HD AI Remaster, asset export for modding, copying the game into the folder) and click
-   **INSTALL**. It recompiles the game code and builds everything (5 to 20 minutes).
+1. Download **`CrashRecomp-v1.03.zip`** (the latest, ~150 MB) from the [releases](https://github.com/VitoMiguelF/crashott-pc/releases)
+   and unzip it. (A `git clone` of this repository has no `toolchain\`: see [CONTRIBUTING.md](CONTRIBUTING.md).)
+2. Run **`CrashSetup.exe`**. Choose your game folder, pick the options (subtitles, HD AI Remaster, asset
+   export for modding, copying the game into the folder) and click **INSTALL**. It recompiles the game
+   code and builds everything with the tools in `toolchain\` (about 2 minutes on an 8-core PC, longer on
+   slower ones).
 
    ![Installer](docs/screenshots/installer.jpg)
 
-   Without the GUI, the same in a terminal:
+   Without the GUI, the same in a terminal, with the bundled Python:
 
    ```bat
-   python tools\setup.py --game D:\Games\Crash --subtitles
-   python tools\setup.py --game D:\Games\Crash --remaster --extract-assets --copy-game
-   python tools\setup.py --game D:\Games\Crash --assets-only   :: retry only the asset export
+   toolchain\python\python.exe tools\setup.py --game D:\Games\Crash --subtitles
+   toolchain\python\python.exe tools\setup.py --game D:\Games\Crash --remaster --extract-assets --copy-game
+   toolchain\python\python.exe tools\setup.py --game D:\Games\Crash --assets-only   :: retry only the asset export
    ```
 
    Release zips placed next to `CrashSetup.exe` are used instead of downloading them again. If only
@@ -119,16 +121,18 @@ Put each mod in `dist\mods\<name>\` (optional `load_order.txt`). Mods can replac
 HD textures without touching the game files, or replace sounds.
 
 The game's assets are **not** distributed, but you can export them from your own copy (installer option
-**ASSETS FOR MODDING**, or):
+**ASSETS FOR MODDING**, or with the bundled Python, which already has numpy and Pillow):
 
 ```bat
-python -m pip install -r tools\requirements.txt   :: once: numpy and Pillow
-python tools\assets.py all          :: everything to private\assets (about 8 minutes, 4 GB)
-python tools\textures.py export     :: or step by step: textures -> PNG
-python tools\models.py export       :: models, skeletons, animations -> glTF (.glb)
-python tools\audio.py export        :: sounds and voices -> WAV
-python tools\audio.py videos        :: Bink videos -> MP4
+set PY=toolchain\python\python.exe
+%PY% tools\assets.py all          :: everything to private\assets (about 8 minutes, 4 GB)
+%PY% tools\textures.py export     :: or step by step: textures -> PNG
+%PY% tools\models.py export       :: models, skeletons, animations -> glTF (.glb)
+%PY% tools\audio.py export        :: sounds and voices -> WAV
+%PY% tools\audio.py videos        :: Bink videos -> MP4
 ```
+
+(Another Python 3.11+ works too after `python -m pip install -r tools\requirements.txt`.)
 
 Edit the exported files and build them into a mod with `textures.py build`, `models.py build` or
 `audio.py build --mod <name>`. The full guide (formats, indexes, examples) is in
@@ -148,6 +152,8 @@ Mods made from the game's files are derived content: share them with care.
 ## Credits and licenses
 
 - Code of this project: MIT ([LICENSE](LICENSE)), by VitoMiguelF, written with Claude Code.
+- Build toolchain in the release zip: llvm-mingw (Apache 2.0 with LLVM Exceptions; mingw-w64), CMake
+  (BSD-3), Ninja (Apache 2.0), Python (PSF) with NumPy (BSD-3) and Pillow (MIT-CMU).
 - [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) by hedge-dev (MIT), with local fixes in
   [patches/XenonRecomp.patch](patches/XenonRecomp.patch).
 - FFmpeg (LGPL), NVIDIA DLSS (RTX SDK license), AMD FidelityFX FSR, SMAA (MIT), Dear ImGui (MIT), SIMDe,
@@ -203,31 +209,34 @@ de PC.
 - Os arquivos do seu Crash of the Titans (Xbox 360): a pasta com `default.xex`, `default.rcf`,
   `english.rcf`, `sound1.rcf`, `sound2.rcf` e `shaders\` (extraída do seu disco). Só o `default.xex`
   conhecido da versão comercial é suportado (o instalador confere o SHA-256).
-- Para compilar (o instalador oferece instalar o que faltar pelo `winget`): Visual Studio 2022+ ou as
-  Build Tools com **Desenvolvimento para desktop com C++**, LLVM (`clang-cl`), CMake, Ninja, Git e
-  Python 3.11+.
-- Só para exportar os assets (**ASSETS PARA MODDING**): os pacotes Python de
-  [tools/requirements.txt](tools/requirements.txt) (numpy, Pillow). O instalador os instala pelo pip
-  no mesmo Python que ele usa; à mão: `python -m pip install -r tools\requirements.txt`.
-- Cerca de 3 GB livres (mais 4,5 GB para o HD AI Remaster e 4 GB para exportar os assets).
+- Cerca de 1,5 GB livres (mais 3 GB para copiar o jogo para a pasta, 4,5 GB para o HD AI Remaster e 4 GB
+  para exportar os assets).
 
-FFmpeg (LGPL), NVIDIA DLSS e AMD FSR são baixados pelo instalador das fontes oficiais e conferidos pelo
-SHA-256 (veja [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+**Nada mais para instalar.** Desde a v1.03 o zip da release traz as próprias ferramentas de compilação em
+`toolchain\` ([llvm-mingw](https://github.com/mstorsjo/llvm-mingw) com clang, [CMake](https://cmake.org),
+[Ninja](https://ninja-build.org) e o [Python](https://www.python.org) embutido oficial com numpy e Pillow):
+sem Visual Studio, LLVM, Python ou Git, e nada é instalado no sistema. O instalador só baixa FFmpeg (LGPL),
+NVIDIA DLSS e AMD FSR das fontes oficiais, conferidos pelo SHA-256 (veja
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), e os extras opcionais que você escolher.
+
+Avançado: para compilar com um Visual Studio 2022+ / Build Tools e o `clang-cl` do LLVM instalados, escolha
+**FERRAMENTAS = VISUAL STUDIO** no instalador (ou `--toolchain msvc`); ele oferece instalar o que faltar
+pelo `winget`.
 
 ## Instalação
 
-1. Baixe **`CrashRecomp-v1.02.zip`** (a mais recente) nas [releases](https://github.com/VitoMiguelF/crashott-pc/releases) e
-   descompacte (ou faça `git clone` deste repositório).
-2. Abra o **`CrashSetup.exe`**. Escolha a pasta do jogo, confira os pré-requisitos, escolha as opções
-   (legendas, HD AI Remaster, assets para modding, copiar o jogo para a pasta) e clique em **INSTALAR**.
-   Ele recompila o código do jogo e compila tudo (de 5 a 20 minutos).
+1. Baixe **`CrashRecomp-v1.03.zip`** (a mais recente, ~150 MB) nas [releases](https://github.com/VitoMiguelF/crashott-pc/releases) e
+   descompacte. (Um `git clone` deste repositório não tem a `toolchain\`: veja o [CONTRIBUTING.md](CONTRIBUTING.md).)
+2. Abra o **`CrashSetup.exe`**. Escolha a pasta do jogo, escolha as opções (legendas, HD AI Remaster, assets
+   para modding, copiar o jogo para a pasta) e clique em **INSTALAR**. Ele recompila o código do jogo e
+   compila tudo com as ferramentas de `toolchain\` (uns 2 minutos num PC de 8 núcleos, mais nos mais lentos).
 
-   Sem a interface, o mesmo num terminal:
+   Sem a interface, o mesmo num terminal, com o Python que vem junto:
 
    ```bat
-   python tools\setup.py --game D:\Jogos\Crash --subtitles
-   python tools\setup.py --game D:\Jogos\Crash --remaster --extract-assets --copy-game
-   python tools\setup.py --game D:\Jogos\Crash --assets-only   :: tenta de novo só a exportação de assets
+   toolchain\python\python.exe tools\setup.py --game D:\Jogos\Crash --subtitles
+   toolchain\python\python.exe tools\setup.py --game D:\Jogos\Crash --remaster --extract-assets --copy-game
+   toolchain\python\python.exe tools\setup.py --game D:\Jogos\Crash --assets-only   :: tenta de novo só a exportação de assets
    ```
 
    Zips da release colocados ao lado do `CrashSetup.exe` são usados em vez de baixar de novo. Se só a
@@ -270,16 +279,18 @@ Cada mod fica em `dist\mods\<nome>\` (`load_order.txt` opcional). Um mod pode tr
 `.rcf`, acrescentar texturas HD sem mexer nos arquivos do jogo ou trocar sons.
 
 Os assets do jogo **não** são distribuídos, mas você pode exportá-los da sua cópia (opção **ASSETS PARA
-MODDING** do instalador, ou):
+MODDING** do instalador, ou com o Python que vem junto, que já tem numpy e Pillow):
 
 ```bat
-python -m pip install -r tools\requirements.txt   :: uma vez: numpy e Pillow
-python tools\assets.py all          :: tudo para private\assets (cerca de 8 minutos, 4 GB)
-python tools\textures.py export     :: ou por etapa: texturas -> PNG
-python tools\models.py export       :: modelos, esqueletos, animações -> glTF (.glb)
-python tools\audio.py export        :: sons e vozes -> WAV
-python tools\audio.py videos        :: vídeos Bink -> MP4
+set PY=toolchain\python\python.exe
+%PY% tools\assets.py all          :: tudo para private\assets (cerca de 8 minutos, 4 GB)
+%PY% tools\textures.py export     :: ou por etapa: texturas -> PNG
+%PY% tools\models.py export       :: modelos, esqueletos, animações -> glTF (.glb)
+%PY% tools\audio.py export        :: sons e vozes -> WAV
+%PY% tools\audio.py videos        :: vídeos Bink -> MP4
 ```
+
+(Outro Python 3.11+ também serve, depois de `python -m pip install -r tools\requirements.txt`.)
 
 Edite os arquivos exportados e monte o mod com `textures.py build`, `models.py build` ou
 `audio.py build --mod <nome>`. O guia completo (formatos, índices, exemplos) está em
@@ -299,6 +310,8 @@ partir dos arquivos do jogo são conteúdo derivado: compartilhe com cuidado.
 ## Créditos e licenças
 
 - Código deste projeto: MIT ([LICENSE](LICENSE)), por VitoMiguelF, escrito com o Claude Code.
+- Ferramentas de compilação do zip da release: llvm-mingw (Apache 2.0 com exceções do LLVM; mingw-w64),
+  CMake (BSD-3), Ninja (Apache 2.0), Python (PSF) com NumPy (BSD-3) e Pillow (MIT-CMU).
 - [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) da hedge-dev (MIT), com correções locais em
   [patches/XenonRecomp.patch](patches/XenonRecomp.patch).
 - FFmpeg (LGPL), NVIDIA DLSS (licença RTX SDK), AMD FidelityFX FSR, SMAA (MIT), Dear ImGui (MIT), SIMDe,

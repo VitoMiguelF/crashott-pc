@@ -589,7 +589,7 @@ def main():
         fetch_thirdparty()
         step(4, "default.xex -> C++")
         recompile()
-        step(5, "pode levar de 5 a 20 minutos")
+        step(5, "pode levar alguns minutos")
         compile_project(args.jobs)
         step(6)
         install_extras(args.subtitles, args.remaster, args.assets_dir)
