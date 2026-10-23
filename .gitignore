@@ -54,6 +54,11 @@ __pycache__/
 .vscode/
 *.user
 
+# Local AI assistant files (kept on each machine, not published)
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
 # Safety net: never commit a game dump, wherever it is copied
 *.xex
 *.rcf

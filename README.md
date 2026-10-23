@@ -142,6 +142,8 @@ Mods made from the game's files are derived content: share them with care.
   the game's code.
 - [runtime/NOTES.md](runtime/NOTES.md): the runtime's development notes (PT-BR), step by step.
 - [docs/dev_features.md](docs/dev_features.md): developer console, Lua, invincibility, teleport, unlocks, skins.
+- [docs/internals/](docs/internals/README.md): short English cheat sheets of addresses, hooks and traps per area.
+- [CONTRIBUTING.md](CONTRIBUTING.md): setting up, branches and pull requests, tests, reporting bugs.
 
 ## Credits and licenses
 
@@ -291,6 +293,8 @@ partir dos arquivos do jogo são conteúdo derivado: compartilhe com cuidado.
   do jogo.
 - [runtime/NOTES.md](runtime/NOTES.md): as notas de desenvolvimento do runtime, passo a passo.
 - [docs/dev_features.md](docs/dev_features.md): console de desenvolvedor, Lua, invencibilidade, teleporte, desbloqueios, skins.
+- [docs/internals/](docs/internals/README.md): resumos curtos em inglês de endereços, hooks e armadilhas por área.
+- [CONTRIBUTING.md](CONTRIBUTING.md): como configurar, branches e pull requests, testes, reportar bugs.
 
 ## Créditos e licenças
 

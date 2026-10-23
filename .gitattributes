@@ -2,3 +2,4 @@
 *.patch -text
 *.png binary
 *.jpg binary
+.githooks/* text eol=lf

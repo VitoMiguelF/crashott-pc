@@ -1,0 +1,11 @@
+#!/bin/sh
+# Refuses game-derived files in a commit. Enable once per clone:
+#   git config core.hooksPath .githooks
+root=$(git rev-parse --show-toplevel)
+for python in python python3 "py -3"; do
+    if $python --version >/dev/null 2>&1; then
+        exec $python "$root/tools/check_game_files.py"
+    fi
+done
+echo "pre-commit: Python not found; cannot check for game files" >&2
+exit 1
