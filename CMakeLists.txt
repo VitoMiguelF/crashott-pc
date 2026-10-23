@@ -117,8 +117,8 @@ endif()
 # Temporal upscalers (runtime/gpu/upscaler.cpp), both optional:
 # - NVIDIA DLSS (NGX SDK, thirdparty/dlss: headers, the static nvsdk_ngx_s.lib and nvngx_dlss.dll,
 #   which is copied next to CrashRecomp.exe).
-# - AMD FSR 3.1 (FidelityFX API, thirdparty/fsr: headers and the signed DLLs, loaded at run time
-#   and copied next to CrashRecomp.exe).
+# - AMD FSR 3.1 (FidelityFX API, Vulkan backend, thirdparty/fsr: include/ffx_api headers and the
+#   signed bin/amd_fidelityfx_vk.dll, loaded at run time and copied next to CrashRecomp.exe).
 set(CRASH_DLSS_DIR ${CMAKE_SOURCE_DIR}/thirdparty/dlss)
 if (EXISTS ${CRASH_DLSS_DIR}/include/nvsdk_ngx.h AND EXISTS ${CRASH_DLSS_DIR}/lib/nvsdk_ngx_s.lib)
     target_include_directories(CrashRecomp PRIVATE ${CRASH_DLSS_DIR}/include)
@@ -134,12 +134,11 @@ else()
     message(STATUS "thirdparty/dlss not found: DLSS disabled")
 endif()
 set(CRASH_FSR_DIR ${CMAKE_SOURCE_DIR}/thirdparty/fsr)
-if (EXISTS ${CRASH_FSR_DIR}/Kits/FidelityFX/api/include/ffx_api.h)
-    target_include_directories(CrashRecomp PRIVATE ${CRASH_FSR_DIR}/Kits/FidelityFX/api/include ${CRASH_FSR_DIR}/Kits/FidelityFX/upscalers/include)
+if (EXISTS ${CRASH_FSR_DIR}/include/ffx_api/vk/ffx_api_vk.h AND EXISTS ${CRASH_FSR_DIR}/bin/amd_fidelityfx_vk.dll)
+    target_include_directories(CrashRecomp PRIVATE ${CRASH_FSR_DIR}/include)
     target_compile_definitions(CrashRecomp PRIVATE CRASH_HAVE_FSR=1)
-    file(GLOB CRASH_FSR_DLLS ${CRASH_FSR_DIR}/bin/*.dll)
     add_custom_command(TARGET CrashRecomp POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_FSR_DLLS} $<TARGET_FILE_DIR:CrashRecomp>)
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_FSR_DIR}/bin/amd_fidelityfx_vk.dll $<TARGET_FILE_DIR:CrashRecomp>)
 else()
     message(STATUS "thirdparty/fsr not found: FSR disabled")
 endif()

@@ -38,6 +38,8 @@ LICENSES = {
     "ffmpeg_README.md": ROOT / "thirdparty" / "ffmpeg" / "README.md",
     "dlss_LICENSE.txt": ROOT / "thirdparty" / "dlss" / "LICENSE.txt",
     "fsr_license.md": ROOT / "thirdparty" / "fsr" / "license.md",
+    "dxc_LICENSE-MS.txt": ROOT / "thirdparty" / "dxc" / "bin" / "LICENSE-MS.txt",
+    "dxc_LICENSE-LLVM.txt": ROOT / "thirdparty" / "dxc" / "bin" / "LICENSE-LLVM.txt",
     "smaa_LICENSE.txt": ROOT / "thirdparty" / "smaa" / "LICENSE.txt",
     "imgui_LICENSE.txt": ROOT / "thirdparty" / "imgui" / "LICENSE.txt",
 }

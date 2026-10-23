@@ -827,7 +827,7 @@ namespace
         if (adapter) adapter->Release();
         if (dxgi) dxgi->Release();
         g_dlss = desc.VendorId == 0x10DE && Exists(paths::ExeDir() / "nvngx_dlss.dll");
-        g_fsr = Exists(paths::ExeDir() / "amd_fidelityfx_upscaler_dx12.dll");
+        g_fsr = Exists(paths::ExeDir() / "amd_fidelityfx_vk.dll");
         Log("[launcher] GPU %s: DLSS %s, FSR %s", Narrow(desc.Description).c_str(), g_dlss ? "yes" : "no", g_fsr ? "yes" : "no");
         return true;
     }

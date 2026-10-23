@@ -1,17 +1,15 @@
-# AMD FSR 3.1 upscaler (FidelityFX API)
+# AMD FSR 3.1 upscaler (FidelityFX API, Vulkan)
 
-Subset of the official AMD FSR SDK 2.3.0 "Redstone" (GPUOpen FidelityFX SDK),
-https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK, tag `v2.3.0` (released 2026-06-24),
-downloaded 2026-10-20. Paths keep the SDK's layout (the headers include each other relatively):
+Subset of AMD's FidelityFX SDK, https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK, tag
+`v1.1.4`, downloaded 2026-10-23 (the newer SDK 2.x only ships DirectX 12 DLLs):
 
-- `Kits/FidelityFX/api/include/`: `ffx_api.h`, `ffx_api_types.h`, `ffx_api_loader.h`,
-  `dx12/ffx_api_dx12.h`; `Kits/FidelityFX/upscalers/include/ffx_upscale.h` (unchanged);
-- `bin/amd_fidelityfx_loader_dx12.dll`, `bin/amd_fidelityfx_upscaler_dx12.dll`: the signed DLLs of
-  `Kits/FidelityFX/signedbin/` (the upscaler DLL holds FSR 3.1.5, plus FSR 4.1.1 for RDNA 4 GPUs);
-- `license.md`: the SDK's license file. The files above are under AMD's license at its top
-  (redistribution in binary form allowed if the copyright notice, permission notice and
-  disclaimers go along; no reverse engineering); the samples are MIT.
+- `include/ffx_api/`: `ffx_api.h`, `ffx_api_types.h`, `ffx_upscale.h` and `vk/ffx_api_vk.h`, from
+  `ffx-api/include/ffx_api/` (unchanged; they include each other relatively);
+- `bin/amd_fidelityfx_vk.dll`: `PrebuiltSignedDLL/amd_fidelityfx_vk.dll`, signed by AMD, with the
+  FSR 3.1.4 upscaler (and FSR 2.3.3);
+- `license.md`: the SDK's `LICENSE.txt` (MIT).
 
-`runtime/gpu/upscaler.cpp` loads the loader DLL at run time (nothing is linked) and asks for the
-FSR 3.1.x upscaler explicitly. Frame generation (`amd_fidelityfx_framegeneration_dx12.dll`) is
-not used and was not taken. The CMake build copies `bin/*.dll` next to `CrashRecomp.exe`.
+`runtime/gpu/upscaler.cpp` loads the DLL at run time (nothing is linked) and asks for the FSR 3.1.x
+upscaler explicitly, on the renderer's own Vulkan device. Frame generation is not used. The CMake
+build copies the DLL next to `CrashRecomp.exe`; `tools/setup.py` downloads these files (pinned
+SHA-256). Folders left by older checkouts (`Kits/`, the `*_dx12.dll`) are not used any more.

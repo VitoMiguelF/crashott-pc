@@ -79,25 +79,29 @@ SUBTITLES_ASSET = "CrashRecomp-v1.0-legendas.zip"
 REMASTER_PREFIX = "CrashRecomp-v1.0-HD-AI-Remaster.part"
 
 DLSS = "https://github.com/NVIDIA/DLSS/raw/v310.9.16/"
-FSR = "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/raw/v2.3.0/Kits/FidelityFX/"
+# FSR 3.1 for Vulkan: FidelityFX SDK 1.1.4 (the SDK 2.x only ships DX12 DLLs).
+FSR = "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/raw/v1.1.4/"
 # (url, destination, sha256)
 DOWNLOADS = [
     (DLSS + "include/nvsdk_ngx.h", "thirdparty/dlss/include/nvsdk_ngx.h", "dc38e7467cf415379c9d12ae1b6e4a494c453ed92720fb53e92aecb523e7b848"),
     (DLSS + "include/nvsdk_ngx_defs.h", "thirdparty/dlss/include/nvsdk_ngx_defs.h", "ea23f33497cd274860d1c25a97644fce807dcb0037c594547203343103fad03e"),
-    (DLSS + "include/nvsdk_ngx_helpers.h", "thirdparty/dlss/include/nvsdk_ngx_helpers.h", "5bcbadfe7478b802cf6d3aca4dc5ddd7d0889b99726e69c63f9e9bd555f44471"),
-    (DLSS + "include/nvsdk_ngx_helpers_cuda.h", "thirdparty/dlss/include/nvsdk_ngx_helpers_cuda.h", "f2851a76107bdf4fbcb7b261f3c35573c312d8ecb4bc18fb02d9e2cec7705042"),
-    (DLSS + "include/nvsdk_ngx_helpers_d3d.h", "thirdparty/dlss/include/nvsdk_ngx_helpers_d3d.h", "ec75224f36ed6580baaf250fa83620405ad81a1d98c2c436654a0c9cf6a6b8ba"),
     (DLSS + "include/nvsdk_ngx_params.h", "thirdparty/dlss/include/nvsdk_ngx_params.h", "943bc8cc5cdae03b6303016fbad3183636f2335ae27a2d18776798c3b4efabbc"),
+    (DLSS + "include/nvsdk_ngx_vk.h", "thirdparty/dlss/include/nvsdk_ngx_vk.h", "2d364ce7132881eb669e9498fd570d74cba563b1fbebc82c235f8e1ad2dd8b6d"),
+    (DLSS + "include/nvsdk_ngx_defs_vk.h", "thirdparty/dlss/include/nvsdk_ngx_defs_vk.h", "0a24d0861ace7d6b9362a67b7f08bea1b33ea123c5ce730b19133de8a891d031"),
+    (DLSS + "include/nvsdk_ngx_helpers_vk.h", "thirdparty/dlss/include/nvsdk_ngx_helpers_vk.h", "c192bff72138f12f770db48e12c1d8f712dfc81ea0e8e055ebb27d8dd1b31623"),
     (DLSS + "lib/Windows_x86_64/x64/nvsdk_ngx_s.lib", "thirdparty/dlss/lib/nvsdk_ngx_s.lib", "7b9a5239c1145af5f645ab472aa066f9ea79db36ac819562312aae69d65f3765"),
     (DLSS + "lib/Windows_x86_64/rel/nvngx_dlss.dll", "thirdparty/dlss/bin/nvngx_dlss.dll", "d00b5b0ab29c3ca101b70c3a5ecb3a01b7ef33766a3383a28a18623083e6123e"),
-    (FSR + "api/include/ffx_api.h", "thirdparty/fsr/Kits/FidelityFX/api/include/ffx_api.h", "e1a9d1b559eaf75f4cb401f1c43a66e2f3dc9621abfeb58b9c6fac56443177fd"),
-    (FSR + "api/include/ffx_api_types.h", "thirdparty/fsr/Kits/FidelityFX/api/include/ffx_api_types.h", "cc0adc0ffc804dd7cd03c39c15581b575e416383177ffe95060201d52cc0fc49"),
-    (FSR + "api/include/ffx_api_loader.h", "thirdparty/fsr/Kits/FidelityFX/api/include/ffx_api_loader.h", "18d1901dbbc881e8131b91c65ad44bb3b4a1de6c31435d5b75236f16727ba80e"),
-    (FSR + "api/include/dx12/ffx_api_dx12.h", "thirdparty/fsr/Kits/FidelityFX/api/include/dx12/ffx_api_dx12.h", "c9afbc3c4c673723e9e5369a666f0ff54560543b5a93537f8ff453bf1c3bf530"),
-    (FSR + "upscalers/include/ffx_upscale.h", "thirdparty/fsr/Kits/FidelityFX/upscalers/include/ffx_upscale.h", "65be36d5653eb71c10379e0204f7bb7cd6a8aeec96e6f8cffc5f59ffeb1f89bf"),
-    (FSR + "signedbin/amd_fidelityfx_loader_dx12.dll", "thirdparty/fsr/bin/amd_fidelityfx_loader_dx12.dll", "e2d85aa05a9bd9ed8b38935fdf5199372cca6f74c12015143bb6f945ee1608aa"),
-    (FSR + "signedbin/amd_fidelityfx_upscaler_dx12.dll", "thirdparty/fsr/bin/amd_fidelityfx_upscaler_dx12.dll", "d0dcccc74a43c44ba435b7a369b456e0970d8a4464e4bd683119b374f2c9fb46"),
+    (FSR + "ffx-api/include/ffx_api/ffx_api.h", "thirdparty/fsr/include/ffx_api/ffx_api.h", "408b4203545e8299ed188fbb1d9ddfe0932b73ea6e8b14fe10edcf1f45771561"),
+    (FSR + "ffx-api/include/ffx_api/ffx_api_types.h", "thirdparty/fsr/include/ffx_api/ffx_api_types.h", "dee2782813d22047c068e0fb27d1347324f8ce79d280a4672848b3b294cb12fe"),
+    (FSR + "ffx-api/include/ffx_api/ffx_upscale.h", "thirdparty/fsr/include/ffx_api/ffx_upscale.h", "1155bcdcea9c10e6a95507bc9422ca062a853ac84250f0b09a637a66836b3ac1"),
+    (FSR + "ffx-api/include/ffx_api/vk/ffx_api_vk.h", "thirdparty/fsr/include/ffx_api/vk/ffx_api_vk.h", "a50a8d5ff5689a10a6ce378f2df5569fd880c89ec46e8356aaf35eb40512edd9"),
+    (FSR + "PrebuiltSignedDLL/amd_fidelityfx_vk.dll", "thirdparty/fsr/bin/amd_fidelityfx_vk.dll", "a1624cc4238fef046f30c4d80ce3f47be63fc5f5373f49e3ee9edb9960f54c78"),
 ]
+# HLSL -> SPIR-V for the Vulkan renderer: dxcompiler.dll of Microsoft's official DXC release (signed;
+# the Windows SDK's copy has no SPIR-V backend), with its licenses.
+DXC_ZIP = ("https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip",
+           "ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1")
+DXC_FILES = {"bin/x64/dxcompiler.dll": "dxcompiler.dll", "LICENSE-MS.txt": "LICENSE-MS.txt", "LICENSE-LLVM.txt": "LICENSE-LLVM.txt"}
 FFMPEG_ZIP = ("https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/"
               "ffmpeg-n8.1.3-9-g29e619e767-win64-lgpl-shared-8.1.zip",
               "3e47bda1607740550141e37c0e49d1e5182b34699f15adfd137ee266d346811a")
@@ -403,8 +407,17 @@ def fetch_thirdparty():
                     target.parent.mkdir(parents=True, exist_ok=True)
                     with z.open(info) as src, open(target, "wb") as out:
                         shutil.copyfileobj(src, out)
+    dxc = ROOT / "thirdparty" / "dxc" / "bin"
+    if not all((dxc / name).is_file() for name in DXC_FILES.values()):
+        url, digest = DXC_ZIP
+        archive = download(url, ROOT / "build" / "downloads" / Path(url).name, digest, "DirectX Shader Compiler (SPIR-V)")
+        dxc.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive) as z:
+            for source, name in DXC_FILES.items():
+                with z.open(source) as src, open(dxc / name, "wb") as out:
+                    shutil.copyfileobj(src, out)
     progress(1.0)
-    say("FFmpeg, DLSS e FSR ok")
+    say("FFmpeg, DXC, DLSS e FSR ok")
 
 
 def recompile():

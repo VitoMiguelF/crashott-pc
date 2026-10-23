@@ -2,11 +2,10 @@
 
 // Temporal upscaling / anti-aliasing of the 3D scene (settings [graphics] upscaler):
 //
-//   - NVIDIA DLSS Super Resolution / DLAA, through the NGX SDK (thirdparty/dlss: nvsdk_ngx_s.lib,
-//     nvngx_dlss.dll next to the exe). NVIDIA RTX GPUs only.
-//   - AMD FSR 3.1 upscaler, through the FidelityFX API (thirdparty/fsr: the signed
-//     amd_fidelityfx_loader_dx12.dll / amd_fidelityfx_upscaler_dx12.dll, loaded at run time). Any
-//     GPU with Shader Model 6.2.
+//   - NVIDIA DLSS Super Resolution / DLAA, through NGX's Vulkan API (thirdparty/dlss:
+//     nvsdk_ngx_s.lib, nvngx_dlss.dll next to the exe). NVIDIA RTX GPUs only.
+//   - AMD FSR 3.1 upscaler, through the FidelityFX API's Vulkan backend (thirdparty/fsr: the signed
+//     amd_fidelityfx_vk.dll of FidelityFX SDK 1.1.4, loaded at run time). Any Vulkan 1.3 GPU.
 //
 // Upscaling only: no frame generation. The renderer (xenos_renderer.cpp, "Temporal upscaling")
 // jitters the scene's projection, builds the motion vectors and calls Evaluate between the 3D
@@ -17,9 +16,13 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace gpu::upscaler
 {
+    // Vulkan extensions the SDKs need, before the renderer creates its device (rhi::DeviceInfo).
+    void VulkanExtensions(std::vector<std::string>& instance, std::vector<std::string>& device);
+
     // Whether that upscaler can run on this machine (its DLL was found and the GPU and driver
     // support it). Known once the renderer has started; false before.
     bool Available(settings::Upscaler upscaler);

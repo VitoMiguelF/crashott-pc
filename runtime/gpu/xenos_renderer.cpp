@@ -3448,6 +3448,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         info.height = WINDOW_HEIGHT;
         info.shaderCache = g_shaderCacheDir;
         info.debug = g_debugLayer;
+        upscaler::VulkanExtensions(info.instanceExtensions, info.deviceExtensions);
         g_rhi = g_backend == rhi::Backend::Vulkan ? rhi::CreateVulkan(info) : rhi::CreateD3D12(info);
         if (!g_rhi && g_backend == rhi::Backend::Vulkan)
         {

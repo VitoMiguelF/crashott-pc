@@ -44,6 +44,8 @@
 /thirdparty/dlss/include/
 /thirdparty/fsr/bin/
 /thirdparty/fsr/Kits/
+/thirdparty/fsr/include/
+/thirdparty/dxc/bin/
 
 # Machine-specific settings of the tools (tools/buildenv.py)
 /config/local.toml

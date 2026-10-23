@@ -355,6 +355,7 @@ namespace gpu::rhi
             uint32_t m_queueFamily = 0;
             VkQueue m_queue = VK_NULL_HANDLE;
             bool m_depthClipExtension = false, m_depthBiasControl = false, m_maintenance5 = false;
+            std::vector<std::string> m_extraInstanceExtensions, m_extraDeviceExtensions;  // DeviceInfo's
             bool m_depthClamp = false, m_mirrorClampToEdge = false, m_anisotropy = false;
             bool m_d24s8 = false;  // D24_UNORM_S8_UINT can be a sampled depth attachment
             float m_maxAnisotropy = 1.0f;
@@ -522,6 +523,9 @@ namespace gpu::rhi
                 if (has(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
                     extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
             }
+            for (const std::string& name : m_extraInstanceExtensions)
+                if (has(name.c_str()) && std::none_of(extensions.begin(), extensions.end(), [&](const char* e) { return name == e; }))
+                    extensions.push_back(name.c_str());
             VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
             app.pApplicationName = "CrashRecomp";
             app.applicationVersion = 1;
@@ -633,7 +637,8 @@ namespace gpu::rhi
         {
             VkPhysicalDeviceVulkan13Features available13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
             VkPhysicalDeviceVulkan12Features available12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &available13 };
-            VkPhysicalDeviceFeatures2 available{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &available12 };
+            VkPhysicalDeviceVulkan11Features available11{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &available12 };
+            VkPhysicalDeviceFeatures2 available{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &available11 };
             vkGetPhysicalDeviceFeatures2(m_physical, &available);
             if (!available13.dynamicRendering || !available13.synchronization2 || !available12.timelineSemaphore || !available.features.geometryShader ||
                 !available13.shaderDemoteToHelperInvocation)
@@ -651,7 +656,25 @@ namespace gpu::rhi
             features12.timelineSemaphore = VK_TRUE;
             features12.samplerMirrorClampToEdge = available12.samplerMirrorClampToEdge;
             m_mirrorClampToEdge = available12.samplerMirrorClampToEdge;
-            VkPhysicalDeviceFeatures2 features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &features12 };
+            VkPhysicalDeviceVulkan11Features features11{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &features12 };
+            // What the upscalers' compute shaders use (FidelityFX: fp16, wave size control, typeless
+            // storage images; NGX: buffer device addresses), when the GPU has it.
+            features13.subgroupSizeControl = available13.subgroupSizeControl;
+            features13.computeFullSubgroups = available13.computeFullSubgroups;
+            features12.shaderFloat16 = available12.shaderFloat16;
+            features12.shaderInt8 = available12.shaderInt8;
+            features12.storageBuffer8BitAccess = available12.storageBuffer8BitAccess;
+            features12.shaderSubgroupExtendedTypes = available12.shaderSubgroupExtendedTypes;
+            features12.bufferDeviceAddress = available12.bufferDeviceAddress;
+            features11.storageBuffer16BitAccess = available11.storageBuffer16BitAccess;
+            features11.uniformAndStorageBuffer16BitAccess = available11.uniformAndStorageBuffer16BitAccess;
+            VkPhysicalDeviceFeatures2 features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &features11 };
+            features.features.shaderInt16 = available.features.shaderInt16;
+            features.features.shaderImageGatherExtended = available.features.shaderImageGatherExtended;
+            features.features.shaderStorageImageExtendedFormats = available.features.shaderStorageImageExtendedFormats;
+            features.features.shaderStorageImageReadWithoutFormat = available.features.shaderStorageImageReadWithoutFormat;
+            features.features.shaderStorageImageWriteWithoutFormat = available.features.shaderStorageImageWriteWithoutFormat;
+            features.features.fragmentStoresAndAtomics = available.features.fragmentStoresAndAtomics;
             features.features.geometryShader = VK_TRUE;
             features.features.independentBlend = available.features.independentBlend;
             features.features.samplerAnisotropy = available.features.samplerAnisotropy;
@@ -695,6 +718,28 @@ namespace gpu::rhi
                 maintenance5.maintenance5 = VK_TRUE;
                 *chain = &maintenance5;
                 chain = &maintenance5.pNext;
+            }
+
+            // The vendor SDKs' extensions the driver has (VK_EXT_buffer_device_address is left out: the
+            // core feature above replaces it and both together are invalid).
+            if (!m_extraDeviceExtensions.empty())
+            {
+                uint32_t count = 0;
+                vkEnumerateDeviceExtensionProperties(m_physical, nullptr, &count, nullptr);
+                std::vector<VkExtensionProperties> supported(count);
+                vkEnumerateDeviceExtensionProperties(m_physical, nullptr, &count, supported.data());
+                std::string missing;
+                for (const std::string& name : m_extraDeviceExtensions)
+                {
+                    if (name == "VK_EXT_buffer_device_address" || std::any_of(extensions.begin(), extensions.end(), [&](const char* e) { return name == e; }))
+                        continue;
+                    if (std::any_of(supported.begin(), supported.end(), [&](const VkExtensionProperties& e) { return name == e.extensionName; }))
+                        extensions.push_back(name.c_str());
+                    else
+                        missing += (missing.empty() ? "" : ", ") + name;
+                }
+                if (!missing.empty())
+                    Log("[vulkan] extensions asked for but missing: %s", missing.c_str());
             }
 
             float priority = 1.0f;
@@ -893,6 +938,8 @@ namespace gpu::rhi
         {
             m_hwnd = HWND(info.window);
             m_shaderCache = info.shaderCache;
+            m_extraInstanceExtensions = info.instanceExtensions;
+            m_extraDeviceExtensions = info.deviceExtensions;
             if (!vulkan::CompilerAvailable())
                 return false;
             if (!LoadLoader())

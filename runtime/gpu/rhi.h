@@ -266,6 +266,8 @@ namespace gpu::rhi
         uint32_t width = 1280, height = 720;
         std::filesystem::path shaderCache;  // userdata\shadercache (empty: no disk cache)
         bool debug = false;                 // D3D12 debug layer / Vulkan validation layers
+        // Vulkan extensions a vendor SDK asks for (DLSS's NGX), enabled when the driver has them.
+        std::vector<std::string> instanceExtensions, deviceExtensions;
     };
 
     class Device
