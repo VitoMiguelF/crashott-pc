@@ -3,7 +3,7 @@
 // Lighting remaster (settings [lighting], all off by default): screen-space ambient occlusion,
 // one-bounce indirect light and contact shadows, applied to the finished 3D scene before the game
 // draws its HUD and post-processing over it. Nothing of the game's data or drawing changes: the
-// renderer calls Apply where the temporal upscaler runs (d3d12_renderer.cpp, "Temporal
+// renderer calls Apply where the temporal upscaler runs (xenos_renderer.cpp, "Temporal
 // upscaling"): before the first 2D draw that reads this frame's scene color resolve, at the
 // scene's resolution, before DLSS/FSR.
 //
@@ -17,7 +17,7 @@
 // shadow towards them would contradict the game's own. Vertical rays give the grounding shadow
 // under characters, props and overhangs, which never disagrees with them.
 //
-// Passes (own root signature, PSOs, targets and shader-visible descriptor heap, like smaa.*):
+// Passes (rhi.h pass pipelines and targets of its own, like smaa.*):
 //   prep       view depth + normal reconstructed from depth, at the AO resolution (half or full)
 //   gather     visibility bitmask (Therrien et al. 2023, "screen space indirect lighting with
 //              visibility bitmask"): per slice, the sectors of the hemisphere hidden by the depth
@@ -31,20 +31,14 @@
 // The game's own shadows are stencil volumes with a 9-tap filter (graphics_options.h); the "soft
 // shadows" option replaces that filter by a wider rotated disk (xe_jitter.z, graphics_options.cpp).
 
-#include <windows.h>
-#include <d3d12.h>
-#include <wrl/client.h>
+#include "rhi.h"
 
 #include <array>
 #include <cstdint>
-#include <functional>
-#include <string>
 
 namespace gpu::lighting
 {
-    using CompileFunction = std::function<Microsoft::WRL::ComPtr<ID3DBlob>(const std::string& source, const char* target, const char* name)>;
-
-    bool Init(ID3D12Device* device, ID3D12CommandQueue* queue, const CompileFunction& compile);
+    bool Init(rhi::Device* device);
 
     // Which passes the current settings ask for (read every frame, so they apply live).
     struct Options
@@ -63,21 +57,11 @@ namespace gpu::lighting
     bool ToggleBypass();
     bool Ready();
 
-    // A texture of the renderer and its tracked state (transitions are recorded on the list and the
-    // state updated).
-    struct Texture
-    {
-        ID3D12Resource* resource = nullptr;
-        D3D12_RESOURCE_STATES* state = nullptr;
-    };
-
     struct Frame
     {
-        ID3D12GraphicsCommandList* list = nullptr;
-        Texture color;                        // the scene colour resolve (read, then written through colorRtv)
-        D3D12_CPU_DESCRIPTOR_HANDLE colorRtv{};
-        Texture depth;                        // R32_FLOAT window depth, same size
-        Texture motion;                       // R16G16_FLOAT, uv offset to last frame (optional)
+        rhi::Texture* color = nullptr;        // the scene colour resolve (read, then written)
+        rhi::Texture* depth = nullptr;        // R32_FLOAT window depth, same size
+        rhi::Texture* motion = nullptr;       // R16G16_FLOAT, uv offset to last frame (optional)
         uint32_t width = 0, height = 0;       // scene pixels
         std::array<double, 16> viewProj{};    // world -> clip, column-major m[col * 4 + row]
         float zScale = 1.0f, zOffset = 0.0f;  // window depth = ndc z * zScale + zOffset
@@ -85,8 +69,7 @@ namespace gpu::lighting
         uint64_t frame = 0;                   // renderer frame (descriptor slots, noise)
     };
 
-    // Records the passes on `frame.list`. Binds its own heap and root signature: the caller binds its
-    // own again afterwards. Returns false if nothing was done.
+    // Records the passes. Returns false if nothing was done.
     bool Apply(const Frame& frame, const Options& options);
 
     // GPU time of the passes, averaged since the last call (ms), and frames counted.

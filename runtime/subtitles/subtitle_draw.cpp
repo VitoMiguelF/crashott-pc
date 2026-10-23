@@ -127,7 +127,7 @@ namespace subtitles
         }
     }
 
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height)
+    void Draw(uint32_t width, uint32_t height)
     {
         static uint64_t frame;
         static settings::Values values;
@@ -163,6 +163,6 @@ namespace subtitles
         // Cutscenes: just above the bottom letterbox bar. In-game lines: above the game's hint box
         // and HUD at the bottom of the screen.
         int y = int(height) - image.height - int(height * (gameplay ? 0.19 : 0.055));
-        gpu::overlay::DrawBitmap(list, target, width, height, image.pixels.data(), image.width, image.height, x, std::max(0, y), imageVersion);
+        gpu::overlay::DrawBitmap(width, height, image.pixels.data(), image.width, image.height, x, std::max(0, y), imageVersion);
     }
 }

@@ -1,10 +1,11 @@
 #pragma once
 
-// Host renderer (Direct3D 12) driven by the command processor thread.
+// Host renderer (xenos_renderer.cpp, on Direct3D 12 or Vulkan through rhi.h) driven by the command
+// processor thread.
 //
 // The command processor keeps applying register writes to the register file as before; at each
 // draw packet it calls Draw, which reads the render state from the registers, translates the
-// current shaders, uploads vertex/index/texture data from guest memory and records a D3D12 draw.
+// current shaders, uploads vertex/index/texture data from guest memory and records a host draw.
 // Draws with RB_MODECONTROL = copy are resolves (EDRAM -> texture copies and clears). XE_SWAP
 // presents the resolved front buffer in the window.
 //
@@ -28,10 +29,14 @@ namespace gpu
 
     namespace renderer
     {
-        // Creates the window and the D3D12 device. Returns false (and logs why) if rendering is
-        // unavailable; the emulation then runs without output, as before.
+        // The graphics API, before Init / TestShaders: "d3d12" or "vulkan" (--renderer). Without it
+        // CRASH_RENDERER, else the settings' video.renderer.
+        void SetBackend(const char* name);
+        // Creates the window and the device (Vulkan falls back to D3D12 if it can't start). Returns
+        // false (and logs why) if rendering is unavailable; the emulation then runs without output.
         bool Init();
         bool IsActive();
+        const char* BackendName();  // "Direct3D 12", "Vulkan" or "none"
 
         // Translates and compiles every shader container (*.out) in `folder` (the game's shaders\
         // folder): a check of the microcode translator without running the game. Returns the

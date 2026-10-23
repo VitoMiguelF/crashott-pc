@@ -20,7 +20,6 @@
 // cleared at once (subtitles::EndCutscenes).
 
 #include <windows.h>
-#include <d3d12.h>
 #include <xinput.h>
 
 #include <cstdint>
@@ -38,5 +37,5 @@ namespace cutscenes
     void NoteFrontendNode(uint32_t node);
 
     // Render thread, once per presented frame, over the back buffer (RENDER_TARGET state).
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height);
+    void Draw(uint32_t width, uint32_t height);
 }

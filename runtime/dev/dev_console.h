@@ -26,7 +26,6 @@
 // tools/run_game.py: dev_console = [["@gameplay_ready+1", "!toggle"], [..., "god on"], ...].
 
 #include <windows.h>
-#include <d3d12.h>
 
 #include <cstdint>
 #include <string>
@@ -62,5 +61,5 @@ namespace dev::console
     void Print(const std::string& text, Tone tone = Tone::Normal);
 
     // ---- render thread, once per presented frame, over the back buffer (RENDER_TARGET) ----
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height);
+    void Draw(uint32_t width, uint32_t height);
 }

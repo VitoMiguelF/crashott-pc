@@ -1,6 +1,9 @@
 #include "upscaler.h"
 #include "../diagnostics.h"
 
+#include <windows.h>
+#include <d3d12.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -21,7 +24,8 @@ namespace gpu::upscaler
 {
     namespace
     {
-        ID3D12Device* g_device = nullptr;
+        rhi::Device* g_rhi = nullptr;
+        ID3D12Device* g_device = nullptr;  // Direct3D 12 backend only, for now
         std::wstring g_dataDir;
         bool g_dlssAvailable = false, g_fsrAvailable = false;
         // Probing loads the SDK's DLLs (NGX initialization, the 28 MB FSR provider): only the
@@ -64,6 +68,26 @@ namespace gpu::upscaler
                 result += f * float(i % base);
             }
             return result;
+        }
+
+        // The native objects of a frame (D3D12 backend), in the states the SDKs expect.
+        struct NativeFrame
+        {
+            ID3D12GraphicsCommandList* list;
+            ID3D12Resource* color;
+            ID3D12Resource* depth;
+            ID3D12Resource* motion;
+            ID3D12Resource* output;
+        };
+
+        NativeFrame Natives(const Frame& frame)
+        {
+            for (rhi::Texture* input : { frame.color, frame.depth, frame.motion })
+                g_rhi->PrepareNative(input, rhi::NativeState::ShaderRead);
+            g_rhi->PrepareNative(frame.output, rhi::NativeState::UnorderedAccess);
+            return { static_cast<ID3D12GraphicsCommandList*>(g_rhi->Native().commandList), static_cast<ID3D12Resource*>(g_rhi->NativeTexture(frame.color)),
+                     static_cast<ID3D12Resource*>(g_rhi->NativeTexture(frame.depth)), static_cast<ID3D12Resource*>(g_rhi->NativeTexture(frame.motion)),
+                     static_cast<ID3D12Resource*>(g_rhi->NativeTexture(frame.output)) };
         }
 
 #if CRASH_HAVE_DLSS
@@ -143,6 +167,7 @@ namespace gpu::upscaler
 
         bool EvaluateDlss(const Frame& frame)
         {
+            NativeFrame native = Natives(frame);
             int flags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure |
                         (frame.depthInverted ? NVSDK_NGX_DLSS_Feature_Flags_DepthInverted : 0);
             uint32_t key[5] = { frame.renderWidth, frame.renderHeight, frame.outputWidth, frame.outputHeight, uint32_t(frame.quality) | (uint32_t(flags) << 8) };
@@ -162,7 +187,7 @@ namespace gpu::upscaler
                 create.InFeatureCreateFlags = flags;
                 // Presets: the DLL's defaults (transformer K for DLAA/quality/balanced, M/L for the
                 // performance modes in DLSS 4.5).
-                NVSDK_NGX_Result result = NGX_D3D12_CREATE_DLSS_EXT(frame.list, 1, 1, &g_dlss, g_ngxParameters, &create);
+                NVSDK_NGX_Result result = NGX_D3D12_CREATE_DLSS_EXT(native.list, 1, 1, &g_dlss, g_ngxParameters, &create);
                 if (NVSDK_NGX_FAILED(result))
                 {
                     static uint32_t logged;
@@ -177,10 +202,10 @@ namespace gpu::upscaler
                     settings::UpscalerQualityName(frame.quality));
             }
             NVSDK_NGX_D3D12_DLSS_Eval_Params eval{};
-            eval.Feature.pInColor = frame.color;
-            eval.Feature.pInOutput = frame.output;
-            eval.pInDepth = frame.depth;
-            eval.pInMotionVectors = frame.motion;
+            eval.Feature.pInColor = native.color;
+            eval.Feature.pInOutput = native.output;
+            eval.pInDepth = native.depth;
+            eval.pInMotionVectors = native.motion;
             eval.InJitterOffsetX = frame.jitterX;
             eval.InJitterOffsetY = frame.jitterY;
             eval.InRenderSubrectDimensions = { frame.renderWidth, frame.renderHeight };
@@ -189,7 +214,7 @@ namespace gpu::upscaler
             eval.InMVScaleX = float(frame.renderWidth);
             eval.InMVScaleY = float(frame.renderHeight);
             eval.InFrameTimeDeltaInMsec = frame.frameTimeMs;
-            NVSDK_NGX_Result result = NGX_D3D12_EVALUATE_DLSS_EXT(frame.list, g_dlss, g_ngxParameters, &eval);
+            NVSDK_NGX_Result result = NGX_D3D12_EVALUATE_DLSS_EXT(native.list, g_dlss, g_ngxParameters, &eval);
             if (NVSDK_NGX_FAILED(result))
             {
                 static uint32_t logged;
@@ -284,6 +309,7 @@ namespace gpu::upscaler
 
         bool EvaluateFsr(const Frame& frame)
         {
+            NativeFrame native = Natives(frame);
             uint32_t flags = FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_NON_LINEAR_COLORSPACE |
                              (frame.depthInverted ? FFX_UPSCALE_ENABLE_DEPTH_INVERTED : 0u);
             uint32_t key[4] = { frame.renderWidth, frame.renderHeight, frame.outputWidth, frame.outputHeight };
@@ -325,11 +351,11 @@ namespace gpu::upscaler
             }
             ffxDispatchDescUpscale dispatch{};
             dispatch.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
-            dispatch.commandList = frame.list;
-            dispatch.color = ffxApiGetResourceDX12(frame.color, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-            dispatch.depth = ffxApiGetResourceDX12(frame.depth, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-            dispatch.motionVectors = ffxApiGetResourceDX12(frame.motion, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
-            dispatch.output = ffxApiGetResourceDX12(frame.output, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
+            dispatch.commandList = native.list;
+            dispatch.color = ffxApiGetResourceDX12(native.color, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+            dispatch.depth = ffxApiGetResourceDX12(native.depth, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+            dispatch.motionVectors = ffxApiGetResourceDX12(native.motion, FFX_API_RESOURCE_STATE_PIXEL_COMPUTE_READ);
+            dispatch.output = ffxApiGetResourceDX12(native.output, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
             dispatch.jitterOffset = { frame.jitterX, frame.jitterY };
             dispatch.motionVectorScale = { float(frame.renderWidth), float(frame.renderHeight) };
             dispatch.renderSize = { frame.renderWidth, frame.renderHeight };
@@ -396,9 +422,14 @@ namespace gpu::upscaler
         }
     }
 
-    void Init(ID3D12Device* device, settings::Upscaler wanted, const std::wstring& dataDir)
+    void Init(rhi::Device* device, settings::Upscaler wanted, const std::wstring& dataDir)
     {
-        g_device = device;
+        g_rhi = device;
+        // The SDKs run on the Direct3D 12 backend; on Vulkan (NGX Vulkan / FidelityFX Vulkan, not
+        // built yet) no upscaler is available.
+        g_device = device->Kind() == rhi::Backend::D3D12 ? static_cast<ID3D12Device*>(device->Native().device) : nullptr;
+        if (!g_device && wanted != settings::Upscaler::Off)
+            Log("[gpu] upscalers: not available on the %s renderer yet", rhi::BackendName(device->Kind()));
         g_dataDir = dataDir;
         Select(wanted);
     }
@@ -475,15 +506,18 @@ namespace gpu::upscaler
 
     bool Evaluate(const Frame& frame)
     {
+        bool ok = false;
 #if CRASH_HAVE_DLSS
         if (g_active == settings::Upscaler::Dlss)
-            return EvaluateDlss(frame);
+            ok = EvaluateDlss(frame);
 #endif
 #if CRASH_HAVE_FSR
         if (g_active == settings::Upscaler::Fsr)
-            return EvaluateFsr(frame);
+            ok = EvaluateFsr(frame);
 #endif
-        (void)frame;
-        return false;
+        // The SDKs changed the command list's descriptor heaps, root signature and pipeline.
+        if (g_rhi)
+            g_rhi->InvalidateState();
+        return ok;
     }
 }

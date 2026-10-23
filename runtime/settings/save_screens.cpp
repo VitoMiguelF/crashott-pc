@@ -1143,7 +1143,7 @@ namespace settings::save_screens
         }
     }
 
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height)
+    void Draw(uint32_t width, uint32_t height)
     {
         Visual vis;
         {
@@ -1190,6 +1190,6 @@ namespace settings::save_screens
             pixels = g_faded.data();
             version = (1ull << 63) | ++g_fadedVersion;
         }
-        gpu::overlay::DrawBitmap(list, target, width, height, pixels, int(width), int(height), 0, 0, version, gpu::overlay::BITMAP_SAVE_SCREENS);
+        gpu::overlay::DrawBitmap(width, height, pixels, int(width), int(height), 0, 0, version, gpu::overlay::BITMAP_SAVE_SCREENS);
     }
 }

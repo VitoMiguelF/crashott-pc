@@ -1122,7 +1122,7 @@ namespace dev::console
         }
     }
 
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height)
+    void Draw(uint32_t width, uint32_t height)
     {
         if (!g_open || width < 64 || height < 64)
             return;
@@ -1150,6 +1150,6 @@ namespace dev::console
             Render(lines, input, std::min(caret, input.size()), scroll, caretOn);
             g_drawnVersion = version;
         }
-        gpu::overlay::DrawBitmap(list, target, width, height, g_canvas.pixels.data(), w, h, 0, 0, version, gpu::overlay::BITMAP_CONSOLE);
+        gpu::overlay::DrawBitmap(width, height, g_canvas.pixels.data(), w, h, 0, 0, version, gpu::overlay::BITMAP_CONSOLE);
     }
 }

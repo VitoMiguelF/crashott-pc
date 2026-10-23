@@ -14,12 +14,9 @@
 //   CRASH_FRAME_STATS=<file> writes frame,ms,input_s for every frame (read by tools/run_game.py).
 //
 // The overlay image is rasterized on the CPU (overlay_font.h) into an upload buffer and copied to
-// the back buffer by a pixel shader that reads it as a StructuredBuffer (root SRV, no descriptors).
+// the back buffer by a pass whose pixel shader reads it as a StructuredBuffer (rhi.h).
 
-#include <windows.h>
-#include <d3d12.h>
-#include <wrl/client.h>
-
+#include "rhi.h"
 #include "../settings/settings.h"
 
 #include <cstdint>
@@ -29,11 +26,9 @@
 
 namespace gpu::overlay
 {
-    using CompileFunction = std::function<Microsoft::WRL::ComPtr<ID3DBlob>(const std::string& source, const char* target, const char* name)>;
-
-    // `outputDir`: where marks.txt goes (the screenshot folder). Returns false (and logs why) if
-    // the overlay cannot be drawn; the counters, marks and frame stats still work.
-    bool Init(ID3D12Device* device, DXGI_FORMAT format, const CompileFunction& compile, const std::filesystem::path& outputDir);
+    // `format`: the back buffer's. `outputDir`: where marks.txt goes (the screenshot folder). Returns
+    // false (and logs why) if the overlay cannot be drawn; the counters, marks and frame stats still work.
+    bool Init(rhi::Device* device, DXGI_FORMAT format, const std::filesystem::path& outputDir);
 
     // Once per swap, before drawing: frame timing, F1 and F2.
     void BeginFrame(uint64_t frame);
@@ -44,8 +39,9 @@ namespace gpu::overlay
     void SetMode(settings::OverlayMode mode);
     settings::OverlayMode Mode();
     bool InScreenshots();
-    // Draws over `target` (in RENDER_TARGET state).
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height);
+    // The back buffer of this present: Draw, DrawImage and DrawBitmap draw into it (width x height).
+    void BeginPresent(rhi::Texture* target);
+    void Draw(uint32_t width, uint32_t height);
     // Shows "PRINT" in the status line for a moment.
     void NoteScreenshot(uint64_t frame);
     // Shows `text` (upper case ASCII) for a moment in any mode, also with the overlay off (F8).
@@ -53,8 +49,7 @@ namespace gpu::overlay
 
     // Draws an RGBA8 image (R in the low byte, alpha-blended) of at most 512x512 pixels with its
     // top-left corner at (x, y), each pixel a `scale` x `scale` square (the settings screen).
-    void DrawImage(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height,
-                   const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, int scale);
+    void DrawImage(uint32_t width, uint32_t height, const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, int scale);
 
     // Like DrawImage, any size, 1:1 (the subtitles, subtitles/subtitle_draw.cpp; the settings
     // screen). `version` names the contents: a call with the previous call's version on the same
@@ -62,7 +57,6 @@ namespace gpu::overlay
     // caller, BITMAP_CHANNELS of them: the subtitles, the settings screen, the save screens'
     // keyboard and delete prompt, the cutscenes' skip prompt) has its own upload buffer.
     enum BitmapChannel { BITMAP_SUBTITLES, BITMAP_SETTINGS, BITMAP_SAVE_SCREENS, BITMAP_SKIP_PROMPT, BITMAP_CONSOLE, BITMAP_CHANNELS };
-    void DrawBitmap(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height,
-                    const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, uint64_t version,
+    void DrawBitmap(uint32_t width, uint32_t height, const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, uint64_t version,
                     BitmapChannel channel = BITMAP_SUBTITLES);
 }

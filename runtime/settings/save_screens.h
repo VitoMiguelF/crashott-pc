@@ -20,7 +20,6 @@
 // Drawn by the presenter over the game (gpu/d3d12_renderer.cpp), like the settings screen.
 
 #include <windows.h>
-#include <d3d12.h>
 #include <xinput.h>
 
 #include <cstdint>
@@ -43,5 +42,5 @@ namespace settings::save_screens
     bool BlocksMenuMouse();
 
     // Render thread, once per presented frame, over the back buffer (RENDER_TARGET state).
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height);
+    void Draw(uint32_t width, uint32_t height);
 }

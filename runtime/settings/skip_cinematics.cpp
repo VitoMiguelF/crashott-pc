@@ -501,7 +501,7 @@ namespace
 
 namespace cutscenes
 {
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height)
+    void Draw(uint32_t width, uint32_t height)
     {
         static Drawn drawn;
         static Look drawnLook;
@@ -553,7 +553,7 @@ namespace cutscenes
             pixels = drawn.faded.data();
             version = (1ull << 63) | ++fadedVersion;
         }
-        gpu::overlay::DrawBitmap(list, target, width, height, pixels, drawn.w, drawn.h, drawn.x, drawn.y, version,
+        gpu::overlay::DrawBitmap(width, height, pixels, drawn.w, drawn.h, drawn.x, drawn.y, version,
                                  gpu::overlay::BITMAP_SKIP_PROMPT);
     }
 }

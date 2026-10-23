@@ -8,14 +8,12 @@
 //     amd_fidelityfx_loader_dx12.dll / amd_fidelityfx_upscaler_dx12.dll, loaded at run time). Any
 //     GPU with Shader Model 6.2.
 //
-// Upscaling only: no frame generation. The renderer (d3d12_renderer.cpp, "Temporal upscaling")
+// Upscaling only: no frame generation. The renderer (xenos_renderer.cpp, "Temporal upscaling")
 // jitters the scene's projection, builds the motion vectors and calls Evaluate between the 3D
 // scene and the game's 2D passes (post-processing and HUD), which then draw at the output size.
 
+#include "rhi.h"
 #include "../settings/settings.h"
-
-#include <windows.h>
-#include <d3d12.h>
 
 #include <cstdint>
 #include <string>
@@ -28,7 +26,7 @@ namespace gpu::upscaler
 
     // Renderer startup: probes DLSS and FSR on `device` (for Available) and chooses `wanted` if
     // it is available. `dataDir`: where NGX may write its logs.
-    void Init(ID3D12Device* device, settings::Upscaler wanted, const std::wstring& dataDir);
+    void Init(rhi::Device* device, settings::Upscaler wanted, const std::wstring& dataDir);
     // Switches to `wanted` (Off if it isn't available) and releases the other one's feature or
     // context. Only with the GPU idle (the renderer's Reconfigure).
     void Select(settings::Upscaler wanted);
@@ -45,14 +43,12 @@ namespace gpu::upscaler
 
     struct Frame
     {
-        ID3D12GraphicsCommandList* list = nullptr;
-        // Inputs (render size, top-left sub-rectangle of the resources), in
-        // PIXEL_SHADER_RESOURCE | NON_PIXEL_SHADER_RESOURCE.
-        ID3D12Resource* color = nullptr;   // RGBA8, gamma-encoded (the game renders in LDR)
-        ID3D12Resource* depth = nullptr;   // R32_FLOAT, the scene's depth buffer values
-        ID3D12Resource* motion = nullptr;  // RG16_FLOAT, current -> previous position in UV units
-        // Output (output size), in UNORDERED_ACCESS.
-        ID3D12Resource* output = nullptr;  // RGBA8_UNORM
+        // Inputs (render size, top-left sub-rectangle of the textures).
+        rhi::Texture* color = nullptr;   // RGBA8, gamma-encoded (the game renders in LDR)
+        rhi::Texture* depth = nullptr;   // R32_FLOAT, the scene's depth buffer values
+        rhi::Texture* motion = nullptr;  // RG16_FLOAT, current -> previous position in UV units
+        // Output (output size, USAGE_STORAGE).
+        rhi::Texture* output = nullptr;  // RGBA8_UNORM
         uint32_t renderWidth = 0, renderHeight = 0;
         uint32_t outputWidth = 0, outputHeight = 0;
         float jitterX = 0.0f, jitterY = 0.0f;  // render pixels, as applied to the projection
@@ -63,7 +59,7 @@ namespace gpu::upscaler
         float cameraNear = 0.1f, cameraFar = 1000.0f, fovY = 1.0f;
         settings::UpscalerQuality quality = settings::UpscalerQuality::Native;
     };
-    // Records the upscaling of one frame on frame.list. False if it failed (the output was not
-    // written). It changes the command list's descriptor heaps, root signature and pipeline.
+    // Records the upscaling of one frame on the backend's command list. False if it failed (the
+    // output was not written).
     bool Evaluate(const Frame& frame);
 }

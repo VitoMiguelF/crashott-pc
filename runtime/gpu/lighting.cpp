@@ -3,16 +3,14 @@
 #include "../settings/settings.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstring>
-#include <deque>
-#include <vector>
+#include <string>
 
 namespace gpu::lighting
 {
-    using Microsoft::WRL::ComPtr;
-
     namespace
     {
         // One source, one entry point per pass (compiled with -D<PASS>).
@@ -457,19 +455,11 @@ float4 main(uint id : SV_VertexID) : SV_Position
             uint32_t control[4];
         };
         static_assert(sizeof(Constants) == 128);
-        constexpr uint32_t CONSTANT_DWORDS = sizeof(Constants) / 4;
 
-        constexpr uint32_t FRAME_SLOTS = 3;  // frames in flight (the renderer keeps at most 2 queued)
-        constexpr uint32_t TABLE = 8;        // SRVs per pass
-        constexpr uint32_t PASSES = 6;       // prep, gather, temporal, blur x2, composite
-        constexpr uint32_t QUERY_SLOTS = 4;
+        constexpr uint32_t TABLE = 8;        // textures per pass
+        constexpr uint32_t QUERY_SLOTS = 4;  // timestamp pairs (device timestamps 0..7)
 
-        struct Target
-        {
-            ComPtr<ID3D12Resource> resource;
-            D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_RENDER_TARGET;
-            D3D12_CPU_DESCRIPTOR_HANDLE rtv{};
-        };
+        using Target = rhi::Texture*;
 
         // Tunables (world units: the village's camera has near 0.5, far 1000; Crash is ~1.2 tall).
         // CRASH_LIGHTING_TUNE="radius=1.2;thickness=0.5;fade=90;shadow_length=0.8;..." overrides them.
@@ -487,32 +477,27 @@ float4 main(uint id : SV_VertexID) : SV_Position
         } g_tuning;
 
         bool g_ready = false;
-        ID3D12Device* g_device = nullptr;
-        CompileFunction g_compile;
-        ComPtr<ID3D12RootSignature> g_rootSignature;
-        ComPtr<ID3DBlob> g_vs;
-        ComPtr<ID3D12PipelineState> g_prepPipeline, g_gatherPipeline, g_temporalPipeline, g_blurPipeline, g_compositePipeline;
+        rhi::Device* g_device = nullptr;
+        rhi::Pipeline* g_prepPipeline = nullptr;
+        rhi::Pipeline* g_gatherPipeline = nullptr;
+        rhi::Pipeline* g_temporalPipeline = nullptr;
+        rhi::Pipeline* g_blurPipeline = nullptr;
+        rhi::Pipeline* g_compositePipeline = nullptr;
         DXGI_FORMAT g_compositeFormat = DXGI_FORMAT_UNKNOWN;
-        ComPtr<ID3D12DescriptorHeap> g_srvHeap, g_rtvHeap;
-        uint32_t g_srvSize = 0, g_rtvSize = 0;
 
         // AO resolution targets.
         Target g_viewZ, g_normal, g_gatherA, g_gatherS, g_blurA, g_blurS;
         Target g_historyA[2], g_historyS[2], g_historyZ[2];
-        ComPtr<ID3D12Resource> g_colorCopy;
-        D3D12_RESOURCE_STATES g_colorCopyState = D3D12_RESOURCE_STATE_COPY_DEST;
+        Target g_colorCopy;
         uint32_t g_aoWidth = 0, g_aoHeight = 0, g_sceneWidth = 0, g_sceneHeight = 0;
         DXGI_FORMAT g_colorFormat = DXGI_FORMAT_UNKNOWN;
-        std::deque<std::pair<uint64_t, ComPtr<ID3D12Resource>>> g_retired;
         uint32_t g_historyIndex = 0;
         uint64_t g_lastFrame = UINT64_MAX;
         bool g_historyValid = false;
         uint32_t g_lastFlags = 0;
 
-        // GPU timing.
-        ComPtr<ID3D12QueryHeap> g_queryHeap;
-        ComPtr<ID3D12Resource> g_queryReadback;
-        uint64_t g_timestampFrequency = 0;
+        // GPU timing (timestamps 0..QUERY_SLOTS*2 of the device).
+        bool g_timestamps = false;
         uint64_t g_querySlotFrame[QUERY_SLOTS] = { UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX };
         double g_gpuMs = 0.0;
         uint32_t g_gpuFrames = 0;
@@ -553,126 +538,66 @@ float4 main(uint id : SV_VertexID) : SV_Position
             }
         }
 
-        void Transition(ID3D12GraphicsCommandList* list, ID3D12Resource* resource, D3D12_RESOURCE_STATES& state, D3D12_RESOURCE_STATES after)
+        rhi::Pipeline* CreatePipeline(const char* pass, std::initializer_list<DXGI_FORMAT> formats)
         {
-            if (state == after)
-                return;
-            D3D12_RESOURCE_BARRIER barrier{};
-            barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-            barrier.Transition.pResource = resource;
-            barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            barrier.Transition.StateBefore = state;
-            barrier.Transition.StateAfter = after;
-            list->ResourceBarrier(1, &barrier);
-            state = after;
-        }
-
-        constexpr D3D12_RESOURCE_STATES SHADER_READ = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-
-        void Read(ID3D12GraphicsCommandList* list, Target& target) { Transition(list, target.resource.Get(), target.state, SHADER_READ); }
-        void Write(ID3D12GraphicsCommandList* list, Target& target) { Transition(list, target.resource.Get(), target.state, D3D12_RESOURCE_STATE_RENDER_TARGET); }
-        void Read(ID3D12GraphicsCommandList* list, const Texture& texture)
-        {
-            if (texture.resource && (*texture.state & SHADER_READ) != SHADER_READ)
-                Transition(list, texture.resource, *texture.state, SHADER_READ);
-        }
-
-        ComPtr<ID3D12PipelineState> CreatePipeline(const char* pass, std::initializer_list<DXGI_FORMAT> formats)
-        {
-            std::string source = std::string("#define ") + pass + " 1\n" + LIGHTING_HLSL;
-            ComPtr<ID3DBlob> ps = g_compile(source, "ps_5_1", (std::string("lighting_") + pass).c_str());
-            if (!ps)
-                return nullptr;
-            D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
-            desc.pRootSignature = g_rootSignature.Get();
-            desc.VS = { g_vs->GetBufferPointer(), g_vs->GetBufferSize() };
-            desc.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
-            desc.SampleMask = UINT_MAX;
-            desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-            desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-            desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-            desc.NumRenderTargets = UINT(formats.size());
-            uint32_t i = 0;
+            rhi::PassPipelineDesc desc;
+            desc.name = std::string("lighting_") + pass;
+            desc.vs = FULLSCREEN_VS;
+            desc.ps = std::string("#define ") + pass + " 1\n" + LIGHTING_HLSL;
+            desc.targetCount = 0;
             for (DXGI_FORMAT format : formats)
-            {
-                desc.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-                desc.RTVFormats[i++] = format;
-            }
-            desc.SampleDesc.Count = 1;
-            ComPtr<ID3D12PipelineState> pipeline;
-            if (FAILED(g_device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pipeline))))
-                return nullptr;
-            return pipeline;
+                desc.targets[desc.targetCount++] = format;
+            desc.textureCount = TABLE;
+            desc.constantBytes = sizeof(Constants);
+            // Point (s0) and linear (s1) clamp.
+            desc.samplers[1].minFilter = desc.samplers[1].magFilter = rhi::Filter::Linear;
+            desc.samplerCount = 2;
+            return g_device->CreatePassPipeline(desc);
         }
 
         constexpr DXGI_FORMAT FORMAT_Z = DXGI_FORMAT_R32_FLOAT, FORMAT_N = DXGI_FORMAT_R8G8B8A8_SNORM, FORMAT_A = DXGI_FORMAT_R16G16B16A16_FLOAT,
                               FORMAT_S = DXGI_FORMAT_R8_UNORM;
 
-        bool CreateTarget(Target& target, uint32_t index, uint32_t width, uint32_t height, DXGI_FORMAT format, uint64_t frame)
+        bool CreateTarget(Target& target, uint32_t width, uint32_t height, DXGI_FORMAT format, uint32_t usage = rhi::USAGE_SAMPLED | rhi::USAGE_RENDER_TARGET)
         {
-            if (target.resource)
-                g_retired.push_back({ frame, target.resource });
-            target = Target{};
-            D3D12_RESOURCE_DESC desc{};
-            desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-            desc.Width = width;
-            desc.Height = height;
-            desc.DepthOrArraySize = 1;
-            desc.MipLevels = 1;
-            desc.Format = format;
-            desc.SampleDesc.Count = 1;
-            desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-            D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_DEFAULT };
-            D3D12_CLEAR_VALUE clear{};
-            clear.Format = format;
-            if (FAILED(g_device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, target.state, &clear, IID_PPV_ARGS(&target.resource))))
-                return false;
-            target.rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-            target.rtv.ptr += size_t(index) * g_rtvSize;
-            g_device->CreateRenderTargetView(target.resource.Get(), nullptr, target.rtv);
-            return true;
+            if (target)
+                g_device->DestroyTexture(target);
+            rhi::TextureDesc desc;
+            desc.width = width;
+            desc.height = height;
+            desc.format = format;
+            desc.usage = usage;
+            desc.name = "lighting target";
+            target = g_device->CreateTexture(desc);
+            return target != nullptr;
         }
 
-        bool EnsureTargets(ID3D12Resource* color, uint32_t aoWidth, uint32_t aoHeight, uint32_t sceneWidth, uint32_t sceneHeight, uint64_t frame)
+        bool EnsureTargets(rhi::Texture* color, uint32_t aoWidth, uint32_t aoHeight, uint32_t sceneWidth, uint32_t sceneHeight)
         {
-            while (!g_retired.empty() && g_retired.front().first + FRAME_SLOTS <= frame)
-                g_retired.pop_front();
-            D3D12_RESOURCE_DESC colorDesc = color->GetDesc();
-            if (g_viewZ.resource && g_aoWidth == aoWidth && g_aoHeight == aoHeight && g_sceneWidth == sceneWidth && g_sceneHeight == sceneHeight &&
-                g_colorFormat == colorDesc.Format && g_colorCopy && g_colorCopy->GetDesc().Width == colorDesc.Width &&
-                g_colorCopy->GetDesc().Height == colorDesc.Height)
+            const rhi::TextureDesc& colorDesc = color->desc;
+            if (g_viewZ && g_aoWidth == aoWidth && g_aoHeight == aoHeight && g_sceneWidth == sceneWidth && g_sceneHeight == sceneHeight &&
+                g_colorFormat == colorDesc.format && g_colorCopy && g_colorCopy->desc.width == colorDesc.width && g_colorCopy->desc.height == colorDesc.height)
                 return true;
-            uint32_t index = 0;
-            bool ok = CreateTarget(g_viewZ, index++, aoWidth, aoHeight, FORMAT_Z, frame) && CreateTarget(g_normal, index++, aoWidth, aoHeight, FORMAT_N, frame) &&
-                      CreateTarget(g_gatherA, index++, aoWidth, aoHeight, FORMAT_A, frame) && CreateTarget(g_gatherS, index++, aoWidth, aoHeight, FORMAT_S, frame) &&
-                      CreateTarget(g_blurA, index++, aoWidth, aoHeight, FORMAT_A, frame) && CreateTarget(g_blurS, index++, aoWidth, aoHeight, FORMAT_S, frame);
+            bool ok = CreateTarget(g_viewZ, aoWidth, aoHeight, FORMAT_Z) && CreateTarget(g_normal, aoWidth, aoHeight, FORMAT_N) &&
+                      CreateTarget(g_gatherA, aoWidth, aoHeight, FORMAT_A) && CreateTarget(g_gatherS, aoWidth, aoHeight, FORMAT_S) &&
+                      CreateTarget(g_blurA, aoWidth, aoHeight, FORMAT_A) && CreateTarget(g_blurS, aoWidth, aoHeight, FORMAT_S);
             for (int i = 0; i < 2 && ok; i++)
-                ok = CreateTarget(g_historyA[i], index++, aoWidth, aoHeight, FORMAT_A, frame) &&
-                     CreateTarget(g_historyS[i], index++, aoWidth, aoHeight, FORMAT_S, frame) &&
-                     CreateTarget(g_historyZ[i], index++, aoWidth, aoHeight, FORMAT_Z, frame);
-            if (g_colorCopy)
-                g_retired.push_back({ frame, g_colorCopy });
-            g_colorCopy.Reset();
+                ok = CreateTarget(g_historyA[i], aoWidth, aoHeight, FORMAT_A) && CreateTarget(g_historyS[i], aoWidth, aoHeight, FORMAT_S) &&
+                     CreateTarget(g_historyZ[i], aoWidth, aoHeight, FORMAT_Z);
             if (ok)
-            {
-                colorDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-                D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_DEFAULT };
-                g_colorCopyState = D3D12_RESOURCE_STATE_COPY_DEST;
-                ok = SUCCEEDED(g_device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &colorDesc, g_colorCopyState, nullptr, IID_PPV_ARGS(&g_colorCopy)));
-            }
+                ok = CreateTarget(g_colorCopy, colorDesc.width, colorDesc.height, colorDesc.format, rhi::USAGE_SAMPLED);
             if (!ok)
             {
                 Log("[lighting] could not create the %ux%u targets", aoWidth, aoHeight);
-                g_viewZ = Target{};
                 return false;
             }
             g_aoWidth = aoWidth;
             g_aoHeight = aoHeight;
             g_sceneWidth = sceneWidth;
             g_sceneHeight = sceneHeight;
-            g_colorFormat = colorDesc.Format;
+            g_colorFormat = colorDesc.format;
             g_historyValid = false;
-            Log("[lighting] targets: scene %ux%u, AO %ux%u, colour format %d", sceneWidth, sceneHeight, aoWidth, aoHeight, int(colorDesc.Format));
+            Log("[lighting] targets: scene %ux%u, AO %ux%u, colour format %d", sceneWidth, sceneHeight, aoWidth, aoHeight, int(colorDesc.format));
             return true;
         }
 
@@ -727,115 +652,43 @@ float4 main(uint id : SV_VertexID) : SV_Position
             return r;
         }
 
-        void BindTable(ID3D12GraphicsCommandList* list, uint32_t base, uint32_t pass, std::initializer_list<ID3D12Resource*> resources)
+        void Draw(rhi::Pipeline* pipeline, std::initializer_list<rhi::Texture*> targets, uint32_t width, uint32_t height,
+                  std::initializer_list<rhi::Texture*> textures, const Constants& constants)
         {
-            D3D12_CPU_DESCRIPTOR_HANDLE cpu = g_srvHeap->GetCPUDescriptorHandleForHeapStart();
-            cpu.ptr += size_t(base + pass * TABLE) * g_srvSize;
+            rhi::PassDraw pass;
+            pass.pipeline = pipeline;
+            pass.targetCount = 0;
+            for (rhi::Texture* target : targets)
+                pass.targets[pass.targetCount++] = target;
+            pass.viewport = { 0.0f, 0.0f, float(width), float(height) };
+            pass.scissor = { 0, 0, int32_t(width), int32_t(height) };
+            pass.textureCount = TABLE;
             uint32_t i = 0;
-            for (ID3D12Resource* resource : resources)
-            {
-                D3D12_CPU_DESCRIPTOR_HANDLE handle{ cpu.ptr + size_t(i) * g_srvSize };
-                if (resource)
-                {
-                    g_device->CreateShaderResourceView(resource, nullptr, handle);
-                }
-                else
-                {
-                    D3D12_SHADER_RESOURCE_VIEW_DESC null{};
-                    null.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-                    null.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-                    null.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-                    null.Texture2D.MipLevels = 1;
-                    g_device->CreateShaderResourceView(nullptr, &null, handle);
-                }
-                i++;
-            }
-            for (; i < TABLE; i++)
-            {
-                D3D12_SHADER_RESOURCE_VIEW_DESC null{};
-                null.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-                null.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-                null.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-                null.Texture2D.MipLevels = 1;
-                g_device->CreateShaderResourceView(nullptr, &null, D3D12_CPU_DESCRIPTOR_HANDLE{ cpu.ptr + size_t(i) * g_srvSize });
-            }
-            D3D12_GPU_DESCRIPTOR_HANDLE gpu = g_srvHeap->GetGPUDescriptorHandleForHeapStart();
-            gpu.ptr += uint64_t(base + pass * TABLE) * g_srvSize;
-            list->SetGraphicsRootDescriptorTable(1, gpu);
-        }
-
-        void Draw(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pipeline, std::initializer_list<D3D12_CPU_DESCRIPTOR_HANDLE> targets, uint32_t width,
-                  uint32_t height)
-        {
-            D3D12_CPU_DESCRIPTOR_HANDLE rtvs[4];
-            uint32_t count = 0;
-            for (D3D12_CPU_DESCRIPTOR_HANDLE target : targets)
-                rtvs[count++] = target;
-            list->OMSetRenderTargets(count, rtvs, FALSE, nullptr);
-            D3D12_VIEWPORT viewport{ 0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f };
-            D3D12_RECT scissor{ 0, 0, LONG(width), LONG(height) };
-            list->RSSetViewports(1, &viewport);
-            list->RSSetScissorRects(1, &scissor);
-            list->SetPipelineState(pipeline);
-            list->DrawInstanced(3, 1, 0, 0);
+            for (rhi::Texture* texture : textures)
+                pass.textures[i++] = { texture };
+            pass.constants = &constants;
+            pass.constantBytes = sizeof(constants);
+            g_device->DrawPass(pass);
         }
 
         void ReadTimings(uint32_t slot)
         {
-            if (g_querySlotFrame[slot] == UINT64_MAX || !g_timestampFrequency)
+            if (g_querySlotFrame[slot] == UINT64_MAX || !g_timestamps)
                 return;
-            uint64_t* values = nullptr;
-            D3D12_RANGE range{ size_t(slot) * 16, size_t(slot) * 16 + 16 };
-            if (SUCCEEDED(g_queryReadback->Map(0, &range, reinterpret_cast<void**>(&values))))
+            uint64_t values[2];
+            if (g_device->ReadTimestamps(slot * 2, 2, values) && values[1] > values[0])
             {
-                uint64_t begin = values[slot * 2], end = values[slot * 2 + 1];
-                if (end > begin)
-                {
-                    g_gpuMs += double(end - begin) * 1000.0 / double(g_timestampFrequency);
-                    g_gpuFrames++;
-                }
-                D3D12_RANGE none{ 0, 0 };
-                g_queryReadback->Unmap(0, &none);
+                g_gpuMs += double(values[1] - values[0]) * 1000.0 / g_device->TimestampFrequency();
+                g_gpuFrames++;
             }
             g_querySlotFrame[slot] = UINT64_MAX;
         }
     }
 
-    bool Init(ID3D12Device* device, ID3D12CommandQueue* queue, const CompileFunction& compile)
+    bool Init(rhi::Device* device)
     {
         g_device = device;
-        g_compile = compile;
         ParseTuning();
-
-        // Root signature: 32 constants at b0, SRV table t0-t7, point (s0) and linear (s1) clamp.
-        D3D12_DESCRIPTOR_RANGE range{ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, TABLE, 0, 0, 0 };
-        D3D12_ROOT_PARAMETER parameters[2]{};
-        parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        parameters[0].Constants = { 0, 0, CONSTANT_DWORDS };
-        parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        parameters[1].DescriptorTable = { 1, &range };
-        parameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        D3D12_STATIC_SAMPLER_DESC samplers[2]{};
-        for (uint32_t i = 0; i < 2; i++)
-        {
-            samplers[i].Filter = i == 0 ? D3D12_FILTER_MIN_MAG_MIP_POINT : D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT;
-            samplers[i].AddressU = samplers[i].AddressV = samplers[i].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-            samplers[i].MaxLOD = D3D12_FLOAT32_MAX;
-            samplers[i].ShaderRegister = i;
-            samplers[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        }
-        D3D12_ROOT_SIGNATURE_DESC rootDesc{ 2, parameters, 2, samplers, D3D12_ROOT_SIGNATURE_FLAG_NONE };
-        ComPtr<ID3DBlob> blob, errors;
-        if (FAILED(D3D12SerializeRootSignature(&rootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
-            FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&g_rootSignature))))
-        {
-            Log("[lighting] could not create the root signature");
-            return false;
-        }
-        g_vs = compile(FULLSCREEN_VS, "vs_5_1", "lighting_vs");
-        if (!g_vs)
-            return false;
         g_prepPipeline = CreatePipeline("PREP", { FORMAT_Z, FORMAT_N });
         g_gatherPipeline = CreatePipeline("GATHER", { FORMAT_A, FORMAT_S });
         g_temporalPipeline = CreatePipeline("TEMPORAL", { FORMAT_A, FORMAT_S, FORMAT_Z });
@@ -845,30 +698,7 @@ float4 main(uint id : SV_VertexID) : SV_Position
             Log("[lighting] could not compile the shaders");
             return false;
         }
-        D3D12_DESCRIPTOR_HEAP_DESC srvHeap{ D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, FRAME_SLOTS * PASSES * TABLE, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE };
-        D3D12_DESCRIPTOR_HEAP_DESC rtvHeap{ D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 12, D3D12_DESCRIPTOR_HEAP_FLAG_NONE };
-        if (FAILED(device->CreateDescriptorHeap(&srvHeap, IID_PPV_ARGS(&g_srvHeap))) || FAILED(device->CreateDescriptorHeap(&rtvHeap, IID_PPV_ARGS(&g_rtvHeap))))
-            return false;
-        g_srvSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        g_rtvSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
-        // Timestamps around the passes (TakeGpuMs).
-        D3D12_QUERY_HEAP_DESC queryDesc{ D3D12_QUERY_HEAP_TYPE_TIMESTAMP, QUERY_SLOTS * 2, 0 };
-        D3D12_RESOURCE_DESC bufferDesc{};
-        bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        bufferDesc.Width = QUERY_SLOTS * 2 * sizeof(uint64_t);
-        bufferDesc.Height = 1;
-        bufferDesc.DepthOrArraySize = 1;
-        bufferDesc.MipLevels = 1;
-        bufferDesc.SampleDesc.Count = 1;
-        bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        D3D12_HEAP_PROPERTIES readback{ D3D12_HEAP_TYPE_READBACK };
-        if (queue && SUCCEEDED(queue->GetTimestampFrequency(&g_timestampFrequency)) && SUCCEEDED(device->CreateQueryHeap(&queryDesc, IID_PPV_ARGS(&g_queryHeap))))
-        {
-            if (FAILED(device->CreateCommittedResource(&readback, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                       IID_PPV_ARGS(&g_queryReadback))))
-                g_queryHeap.Reset();
-        }
+        g_timestamps = device->TimestampFrequency() > 0.0;
         g_ready = true;
         Log("[lighting] ready (radius %g, thickness %g, gi %g, contact shadow %g / %g, fade %g)", g_tuning.radius, g_tuning.thickness, g_tuning.gi,
             g_tuning.shadowLength, g_tuning.shadowThickness, g_tuning.fade);
@@ -917,17 +747,16 @@ float4 main(uint id : SV_VertexID) : SV_Position
 
     bool Apply(const Frame& frame, const Options& options)
     {
-        if (!g_ready || !options.Any() || !frame.color.resource || !frame.depth.resource || frame.width < 16 || frame.height < 16)
+        if (!g_ready || !options.Any() || !frame.color || !frame.depth || frame.width < 16 || frame.height < 16)
             return false;
-        ID3D12GraphicsCommandList* list = frame.list;
-        D3D12_RESOURCE_DESC colorDesc = frame.color.resource->GetDesc();
-        if (!g_compositePipeline || g_compositeFormat != colorDesc.Format)
+        DXGI_FORMAT colorFormat = frame.color->desc.RenderFormat();
+        if (!g_compositePipeline || g_compositeFormat != colorFormat)
         {
-            g_compositePipeline = CreatePipeline("COMPOSITE", { colorDesc.Format });
-            g_compositeFormat = colorDesc.Format;
+            g_compositePipeline = CreatePipeline("COMPOSITE", { colorFormat });
+            g_compositeFormat = colorFormat;
             if (!g_compositePipeline)
             {
-                Log("[lighting] could not create the composite pipeline for format %d", int(colorDesc.Format));
+                Log("[lighting] could not create the composite pipeline for format %d", int(colorFormat));
                 g_ready = false;
                 return false;
             }
@@ -953,7 +782,7 @@ float4 main(uint id : SV_VertexID) : SV_Position
         // (RTX 5080), half ~1 ms, and the bilateral upsampling keeps the edges.
         bool half = !options.fullResolution || frame.height > 1440;
         uint32_t aoWidth = half ? (frame.width + 1) / 2 : frame.width, aoHeight = half ? (frame.height + 1) / 2 : frame.height;
-        if (!EnsureTargets(frame.color.resource, aoWidth, aoHeight, frame.width, frame.height, frame.frame))
+        if (!EnsureTargets(frame.color, aoWidth, aoHeight, frame.width, frame.height))
             return false;
         Constants constants{};
         constants.proj[0] = float(P(0, 0));
@@ -1009,7 +838,7 @@ float4 main(uint id : SV_VertexID) : SV_Position
             return value == "ao" ? FLAG_SHOW_AO : value == "gi" ? FLAG_SHOW_IL : value == "shadow" ? FLAG_SHOW_SHADOW : value == "split" ? FLAG_SPLIT : 0u;
         }();
         uint32_t flags = (options.ao ? FLAG_AO : 0) | (options.gi ? FLAG_IL : 0) | (options.contactShadows ? FLAG_SHADOW : 0) | (half ? FLAG_HALF : 0) | show;
-        bool temporal = !noTemporal && frame.motion.resource;
+        bool temporal = !noTemporal && frame.motion;
         if (temporal)
             flags |= FLAG_TEMPORAL;
         // History: last frame drew the same passes at the same size, and no camera cut.
@@ -1022,93 +851,45 @@ float4 main(uint id : SV_VertexID) : SV_Position
         constants.control[3] = options.steps;
 
         uint32_t querySlot = uint32_t(frame.frame % QUERY_SLOTS);
-        if (g_queryHeap)
+        if (g_timestamps)
         {
             ReadTimings(querySlot);
-            list->EndQuery(g_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, querySlot * 2);
+            g_device->WriteTimestamp(querySlot * 2);
         }
-
-        uint32_t base = uint32_t(frame.frame % FRAME_SLOTS) * PASSES * TABLE;
-        ID3D12DescriptorHeap* heaps[] = { g_srvHeap.Get() };
-        list->SetDescriptorHeaps(1, heaps);
-        list->SetGraphicsRootSignature(g_rootSignature.Get());
-        list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        auto setConstants = [&](uint32_t extraFlags) {
-            constants.control[0] = flags | extraFlags;
-            list->SetGraphicsRoot32BitConstants(0, CONSTANT_DWORDS, &constants, 0);
-        };
+        constants.control[0] = flags;
 
         // Copy of the scene colour (the composite writes the original).
-        Transition(list, frame.color.resource, *frame.color.state, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        Transition(list, g_colorCopy.Get(), g_colorCopyState, D3D12_RESOURCE_STATE_COPY_DEST);
-        list->CopyResource(g_colorCopy.Get(), frame.color.resource);
-        Transition(list, g_colorCopy.Get(), g_colorCopyState, SHADER_READ);
-        Transition(list, frame.color.resource, *frame.color.state, SHADER_READ);
-        Read(list, frame.depth);
-        if (temporal)
-            Read(list, frame.motion);
+        g_device->CopyTexture(g_colorCopy, frame.color, nullptr);
 
         // Prep.
-        Write(list, g_viewZ);
-        Write(list, g_normal);
-        setConstants(0);
-        BindTable(list, base, 0, { frame.depth.resource });
-        Draw(list, g_prepPipeline.Get(), { g_viewZ.rtv, g_normal.rtv }, aoWidth, aoHeight);
-        Read(list, g_viewZ);
-        Read(list, g_normal);
+        Draw(g_prepPipeline, { g_viewZ, g_normal }, aoWidth, aoHeight, { frame.depth }, constants);
 
         // Gather.
-        Write(list, g_gatherA);
-        Write(list, g_gatherS);
-        BindTable(list, base, 1, { g_viewZ.resource.Get(), g_normal.resource.Get(), frame.color.resource, frame.depth.resource });
-        Draw(list, g_gatherPipeline.Get(), { g_gatherA.rtv, g_gatherS.rtv }, aoWidth, aoHeight);
-        Read(list, g_gatherA);
-        Read(list, g_gatherS);
+        Draw(g_gatherPipeline, { g_gatherA, g_gatherS }, aoWidth, aoHeight, { g_viewZ, g_normal, frame.color, frame.depth }, constants);
 
         // Temporal: into this frame's history targets (the other ones hold last frame's).
         uint32_t current = g_historyIndex ^ 1u, previous = g_historyIndex;
-        Write(list, g_historyA[current]);
-        Write(list, g_historyS[current]);
-        Write(list, g_historyZ[current]);
-        Read(list, g_historyA[previous]);
-        Read(list, g_historyS[previous]);
-        Read(list, g_historyZ[previous]);
-        setConstants(history ? FLAG_HISTORY : 0);
-        BindTable(list, base, 2,
-                  { g_gatherA.resource.Get(), g_gatherS.resource.Get(), g_historyA[previous].resource.Get(), g_historyS[previous].resource.Get(),
-                    g_historyZ[previous].resource.Get(), temporal ? frame.motion.resource : nullptr, g_viewZ.resource.Get() });
-        Draw(list, g_temporalPipeline.Get(), { g_historyA[current].rtv, g_historyS[current].rtv, g_historyZ[current].rtv }, aoWidth, aoHeight);
-        Read(list, g_historyA[current]);
-        Read(list, g_historyS[current]);
+        constants.control[0] = flags | (history ? FLAG_HISTORY : 0);
+        Draw(g_temporalPipeline, { g_historyA[current], g_historyS[current], g_historyZ[current] }, aoWidth, aoHeight,
+             { g_gatherA, g_gatherS, g_historyA[previous], g_historyS[previous], g_historyZ[previous], temporal ? frame.motion : nullptr, g_viewZ },
+             constants);
         g_historyIndex = current;
         g_historyValid = temporal;
 
         // Blur: history -> blur (horizontal) -> gather (vertical).
-        Write(list, g_blurA);
-        Write(list, g_blurS);
-        setConstants(0);
-        BindTable(list, base, 3, { g_historyA[current].resource.Get(), g_historyS[current].resource.Get(), g_viewZ.resource.Get(), g_normal.resource.Get() });
-        Draw(list, g_blurPipeline.Get(), { g_blurA.rtv, g_blurS.rtv }, aoWidth, aoHeight);
-        Read(list, g_blurA);
-        Read(list, g_blurS);
-        Write(list, g_gatherA);
-        Write(list, g_gatherS);
-        setConstants(FLAG_VERTICAL);
-        BindTable(list, base, 4, { g_blurA.resource.Get(), g_blurS.resource.Get(), g_viewZ.resource.Get(), g_normal.resource.Get() });
-        Draw(list, g_blurPipeline.Get(), { g_gatherA.rtv, g_gatherS.rtv }, aoWidth, aoHeight);
-        Read(list, g_gatherA);
-        Read(list, g_gatherS);
+        constants.control[0] = flags;
+        Draw(g_blurPipeline, { g_blurA, g_blurS }, aoWidth, aoHeight, { g_historyA[current], g_historyS[current], g_viewZ, g_normal }, constants);
+        constants.control[0] = flags | FLAG_VERTICAL;
+        Draw(g_blurPipeline, { g_gatherA, g_gatherS }, aoWidth, aoHeight, { g_blurA, g_blurS, g_viewZ, g_normal }, constants);
 
         // Composite into the scene colour.
-        Transition(list, frame.color.resource, *frame.color.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        setConstants(0);
-        BindTable(list, base, 5, { g_colorCopy.Get(), frame.depth.resource, g_gatherA.resource.Get(), g_gatherS.resource.Get(), g_viewZ.resource.Get() });
-        Draw(list, g_compositePipeline.Get(), { frame.colorRtv }, frame.width, frame.height);
+        constants.control[0] = flags;
+        Draw(g_compositePipeline, { frame.color }, frame.width, frame.height, { g_colorCopy, frame.depth, g_gatherA, g_gatherS, g_viewZ }, constants);
 
-        if (g_queryHeap)
+        if (g_timestamps)
         {
-            list->EndQuery(g_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, querySlot * 2 + 1);
-            list->ResolveQueryData(g_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, querySlot * 2, 2, g_queryReadback.Get(), uint64_t(querySlot) * 16);
+            g_device->WriteTimestamp(querySlot * 2 + 1);
+            g_device->ResolveTimestamps(querySlot * 2, 2);
             g_querySlotFrame[querySlot] = frame.frame;
         }
         return true;

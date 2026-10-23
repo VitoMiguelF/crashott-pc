@@ -148,6 +148,15 @@ namespace settings
                 else
                     ok = false;
             }
+            else if (name == "video.renderer")
+            {
+                if (lower == "d3d12" || lower == "dx12" || lower == "directx12")
+                    values.renderer = Renderer::D3D12;
+                else if (lower == "vulkan" || lower == "vk")
+                    values.renderer = Renderer::Vulkan;
+                else
+                    ok = false;
+            }
             else if (name == "graphics.upscaler")
             {
                 if (lower == "off")
@@ -314,7 +323,8 @@ namespace settings
                    "fps_limit = " << v.fpsLimit << "   # 30 (original) | 60 | 120 | 0 = sem limite\n"
                    "resolution = \"" << ResolutionOf(v.renderHeight).name << "\"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160 (vale ao sair da tela SETTINGS)\n"
                    "overlay = \"" << OverlayModeName(v.overlay) << "\"   # off | fps | frametime | full (F1 alterna)\n"
-                   "antialiasing = \"" << AntiAliasingName(v.antiAliasing) << "\"   # off | fxaa | smaa (pos-processamento da imagem final)\n\n"
+                   "antialiasing = \"" << AntiAliasingName(v.antiAliasing) << "\"   # off | fxaa | smaa (pos-processamento da imagem final)\n"
+                   "renderer = \"" << RendererName(v.renderer) << "\"   # d3d12 | vulkan (API grafica; ao reiniciar)\n\n"
                    "[graphics]\n"
                    "upscaler = \"" << UpscalerName(v.upscaler) << "\"   # off | dlss (DLSS/DLAA, so NVIDIA RTX) | fsr (FSR 3.1, qualquer GPU) (vale ao sair da tela SETTINGS)\n"
                    "upscaler_quality = \"" << UpscalerQualityName(v.upscalerQuality) << "\"   # native (DLAA / FSR Native AA) | quality | balanced | performance | ultra_performance (vale ao sair da tela SETTINGS)\n"
@@ -471,6 +481,11 @@ namespace settings
         }
     }
 
+    const char* RendererName(Renderer renderer)
+    {
+        return renderer == Renderer::Vulkan ? "vulkan" : "d3d12";
+    }
+
     const char* UpscalerName(Upscaler upscaler)
     {
         switch (upscaler)
@@ -577,10 +592,10 @@ namespace settings
             Log("[settings] CRASH_SETTINGS overrides: %s", overrides);
         }
         g_values = g_startup = values;
-        Log("[settings] audio %d/%d/%d/%d, window %s, vsync %s, fps limit %d, resolution %s, overlay %s, aa %s, language %s, mojo colors %s", values.masterVolume,
+        Log("[settings] audio %d/%d/%d/%d, window %s, vsync %s, fps limit %d, resolution %s, overlay %s, aa %s, renderer %s, language %s, mojo colors %s", values.masterVolume,
             values.musicVolume, values.effectsVolume, values.voiceVolume, WindowModeName(values.window), values.vsync ? "on" : "off",
             values.fpsLimit, ResolutionOf(values.renderHeight).name,
-            OverlayModeName(values.overlay), AntiAliasingName(values.antiAliasing), values.language.c_str(),
+            OverlayModeName(values.overlay), AntiAliasingName(values.antiAliasing), RendererName(values.renderer), values.language.c_str(),
             values.ps2MojoColors ? "ps2" : "xbox360");
         Log("[settings] graphics: upscaler %s (%s), sharpness %d%%, motion blur %d%%, depth of field %d%%, anisotropic %dx, shadow softness %d%%, "
             "hd textures %s, texture dump %s, hd ai remaster %s",

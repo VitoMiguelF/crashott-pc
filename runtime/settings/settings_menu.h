@@ -17,7 +17,6 @@
 // CPU at the window's resolution and redrawn only when something changes.
 
 #include <windows.h>
-#include <d3d12.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -50,7 +49,7 @@ namespace settings::menu
 
     // Render thread, once per presented frame, over the back buffer (`target`, RENDER_TARGET):
     // opens/closes, reads input, applies changes and draws the screen while it is open.
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height);
+    void Draw(uint32_t width, uint32_t height);
 
     // --settings-preview <dir>: writes every tab in English and Portuguese at a few window sizes
     // to PNG files (over a flat background) without starting the game. Returns the exit code.

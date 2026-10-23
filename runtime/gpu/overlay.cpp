@@ -6,6 +6,8 @@
 #include "../kernel/input.h"
 #include "../settings/settings.h"
 
+#include <windows.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -14,8 +16,6 @@
 #include <cstring>
 #include <deque>
 #include <vector>
-
-using Microsoft::WRL::ComPtr;
 
 namespace gpu::overlay
 {
@@ -82,16 +82,14 @@ float4 main(float4 position : SV_Position) : SV_Target
 
         // Drawing resources.
         bool g_ready = false;
-        ComPtr<ID3D12RootSignature> g_rootSignature;
-        ComPtr<ID3D12PipelineState> g_pipeline;
-        ComPtr<ID3D12Resource> g_upload;
-        uint8_t* g_uploadCpu = nullptr;
+        rhi::Device* g_device = nullptr;
+        rhi::Pipeline* g_pipeline = nullptr;
+        rhi::Buffer* g_upload = nullptr;
+        rhi::Texture* g_target = nullptr;  // BeginPresent
         uint32_t g_slice = 0;
         std::vector<uint32_t> g_image(size_t(IMAGE_W) * IMAGE_H);
         int g_imageW = IMAGE_W, g_imageH = IMAGE_H;  // the current mode's size
-        ID3D12Device* g_device = nullptr;
-        ComPtr<ID3D12Resource> g_imageUpload;  // DrawImage, created on first use
-        uint8_t* g_imageUploadCpu = nullptr;
+        rhi::Buffer* g_imageUpload = nullptr;  // DrawImage, created on first use
         uint32_t g_imageSlice = 0;
 
         // Settings.
@@ -337,67 +335,48 @@ float4 main(float4 position : SV_Position) : SV_Target
                 Graph(PAD + int(lines.size()) * LINE_H + 2);
         }
 
-        bool CreateResources(ID3D12Device* device, DXGI_FORMAT format, const CompileFunction& compile)
+        bool CreateResources(rhi::Device* device, DXGI_FORMAT format)
         {
-            ComPtr<ID3DBlob> vs = compile(OVERLAY_VS, "vs_5_1", "overlay_vs");
-            ComPtr<ID3DBlob> ps = compile(OVERLAY_PS, "ps_5_1", "overlay_ps");
-            if (!vs || !ps)
+            rhi::PassPipelineDesc desc;
+            desc.name = "overlay";
+            desc.vs = OVERLAY_VS;
+            desc.ps = OVERLAY_PS;
+            desc.targets[0] = format;
+            desc.blend = rhi::Blend::Alpha;
+            desc.bufferInput = true;
+            desc.constantBytes = 32;
+            g_pipeline = device->CreatePassPipeline(desc);
+            if (!g_pipeline)
                 return false;
+            g_upload = device->CreateBuffer(UPLOAD_SLICE_SIZE * UPLOAD_SLICES);
+            return g_upload != nullptr;
+        }
 
-            D3D12_ROOT_PARAMETER parameters[2]{};
-            parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-            parameters[0].Descriptor = { 0, 0 };
-            parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-            parameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-            parameters[1].Constants = { 0, 0, 5 };
-            parameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-            D3D12_ROOT_SIGNATURE_DESC rootDesc{ 2, parameters, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE };
-            ComPtr<ID3DBlob> blob, errors;
-            if (FAILED(D3D12SerializeRootSignature(&rootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors)) ||
-                FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&g_rootSignature))))
-                return false;
-
-            D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
-            desc.pRootSignature = g_rootSignature.Get();
-            desc.VS = { vs->GetBufferPointer(), vs->GetBufferSize() };
-            desc.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
-            D3D12_RENDER_TARGET_BLEND_DESC& blend = desc.BlendState.RenderTarget[0];
-            blend.BlendEnable = TRUE;
-            blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-            blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
-            blend.BlendOp = D3D12_BLEND_OP_ADD;
-            blend.SrcBlendAlpha = D3D12_BLEND_ZERO;
-            blend.DestBlendAlpha = D3D12_BLEND_ONE;
-            blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-            blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-            desc.SampleMask = UINT_MAX;
-            desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-            desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-            desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-            desc.NumRenderTargets = 1;
-            desc.RTVFormats[0] = format;
-            desc.SampleDesc.Count = 1;
-            if (FAILED(device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&g_pipeline))))
-                return false;
-
-            D3D12_RESOURCE_DESC bufferDesc{};
-            bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-            bufferDesc.Width = UPLOAD_SLICE_SIZE * UPLOAD_SLICES;
-            bufferDesc.Height = 1;
-            bufferDesc.DepthOrArraySize = 1;
-            bufferDesc.MipLevels = 1;
-            bufferDesc.SampleDesc.Count = 1;
-            bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-            D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_UPLOAD };
-            if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                       IID_PPV_ARGS(&g_upload))))
-                return false;
-            D3D12_RANGE noRead{ 0, 0 };
-            return SUCCEEDED(g_upload->Map(0, &noRead, reinterpret_cast<void**>(&g_uploadCpu)));
+        // Draws `imageWidth` x `imageHeight` RGBA8 pixels in `buffer` at `offset` (the image, DrawImage, DrawBitmap).
+        void DrawUploaded(uint32_t width, uint32_t height, rhi::Buffer* buffer, uint64_t offset, int imageWidth, int imageHeight, int x, int y,
+                          int scale)
+        {
+            if (!g_target)
+                return;
+            int32_t constants[8] = { x, y, imageWidth, imageHeight, std::max(scale, 1) };
+            rhi::PassDraw pass;
+            pass.pipeline = g_pipeline;
+            pass.targets[0] = g_target;
+            pass.viewport = { 0.0f, 0.0f, float(width), float(height) };
+            pass.scissor = { std::max(x, 0), std::max(y, 0), std::min(x + imageWidth * constants[4], int32_t(width)),
+                             std::min(y + imageHeight * constants[4], int32_t(height)) };
+            if (pass.scissor.left >= pass.scissor.right || pass.scissor.top >= pass.scissor.bottom)
+                return;
+            pass.buffer = buffer;
+            pass.bufferOffset = offset;
+            pass.bufferBytes = uint64_t(imageWidth) * imageHeight * 4;
+            pass.constants = constants;
+            pass.constantBytes = sizeof(constants);
+            g_device->DrawPass(pass);
         }
     }
 
-    bool Init(ID3D12Device* device, DXGI_FORMAT format, const CompileFunction& compile, const std::filesystem::path& outputDir)
+    bool Init(rhi::Device* device, DXGI_FORMAT format, const std::filesystem::path& outputDir)
     {
         QueryPerformanceFrequency(&g_frequency);
         g_device = device;
@@ -429,7 +408,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                 Log("[overlay] could not open %s", path);
         }
 
-        g_ready = CreateResources(device, format, compile);
+        g_ready = CreateResources(device, format);
         if (!g_ready)
             Log("[overlay] could not create the overlay pipeline; F1 does nothing");
         Log("[overlay] mode %s (F1 next mode, F2 mark, F12 screenshot)%s", settings::OverlayModeName(g_mode),
@@ -541,14 +520,19 @@ float4 main(float4 position : SV_Position) : SV_Target
         QueryPerformanceCounter(&g_noticeTime);
     }
 
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height)
+    void BeginPresent(rhi::Texture* target)
+    {
+        g_target = target;
+    }
+
+    void Draw(uint32_t width, uint32_t height)
     {
         if (!Visible() || !width || !height)
             return;
         Rasterize(width, height);
         uint64_t offset = UPLOAD_SLICE_SIZE * g_slice;
         g_slice = (g_slice + 1) % UPLOAD_SLICES;
-        memcpy(g_uploadCpu + offset, g_image.data(), size_t(g_imageW) * g_imageH * 4);
+        memcpy(g_upload->cpu + offset, g_image.data(), size_t(g_imageW) * g_imageH * 4);
 
         // 2x at 720p and 1080p, 3x at 1440p...
         int scale = g_scaleOverride ? g_scaleOverride : std::max(1, int(height + 240) / 480);
@@ -556,99 +540,53 @@ float4 main(float4 position : SV_Position) : SV_Target
         int x = g_corner[1] == 'r' ? int(width) - w - margin : margin;
         int y = g_corner[0] == 'b' ? int(height) - h - margin : margin;
         x = std::max(x, 0), y = std::max(y, 0);
-        int32_t constants[5] = { x, y, g_imageW, g_imageH, scale };
-
-        list->SetGraphicsRootSignature(g_rootSignature.Get());
-        list->SetPipelineState(g_pipeline.Get());
-        list->SetGraphicsRootShaderResourceView(0, g_upload->GetGPUVirtualAddress() + offset);
-        list->SetGraphicsRoot32BitConstants(1, 5, constants, 0);
-        list->OMSetRenderTargets(1, &target, FALSE, nullptr);
-        D3D12_VIEWPORT viewport{ 0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f };
-        D3D12_RECT scissor{ x, y, std::min<LONG>(x + w, LONG(width)), std::min<LONG>(y + h, LONG(height)) };
-        list->RSSetViewports(1, &viewport);
-        list->RSSetScissorRects(1, &scissor);
-        list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        list->DrawInstanced(3, 1, 0, 0);
+        DrawUploaded(width, height, g_upload, offset, g_imageW, g_imageH, x, y, scale);
     }
 
-    // Draws `imageWidth` x `imageHeight` RGBA8 pixels already in an upload buffer (DrawImage, DrawBitmap).
-    void DrawUploaded(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height,
-                      D3D12_GPU_VIRTUAL_ADDRESS pixels, int imageWidth, int imageHeight, int x, int y, int scale);
-
-    void DrawImage(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height,
-                   const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, int scale)
+    void DrawImage(uint32_t width, uint32_t height, const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, int scale)
     {
         if (!g_ready || !width || !height || imageWidth <= 0 || imageHeight <= 0 || imageWidth > MAX_IMAGE_SIDE || imageHeight > MAX_IMAGE_SIDE)
             return;
         if (!g_imageUpload)
         {
-            D3D12_RESOURCE_DESC bufferDesc{};
-            bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-            bufferDesc.Width = IMAGE_SLICE_SIZE * UPLOAD_SLICES;
-            bufferDesc.Height = 1;
-            bufferDesc.DepthOrArraySize = 1;
-            bufferDesc.MipLevels = 1;
-            bufferDesc.SampleDesc.Count = 1;
-            bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-            D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_UPLOAD };
-            D3D12_RANGE noRead{ 0, 0 };
-            if (FAILED(g_device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                         IID_PPV_ARGS(&g_imageUpload))) ||
-                FAILED(g_imageUpload->Map(0, &noRead, reinterpret_cast<void**>(&g_imageUploadCpu))))
+            g_imageUpload = g_device->CreateBuffer(IMAGE_SLICE_SIZE * UPLOAD_SLICES);
+            if (!g_imageUpload)
             {
                 Log("[overlay] could not create the image upload buffer");
-                g_imageUpload.Reset();
                 return;
             }
         }
         uint64_t offset = IMAGE_SLICE_SIZE * g_imageSlice;
         g_imageSlice = (g_imageSlice + 1) % UPLOAD_SLICES;
-        memcpy(g_imageUploadCpu + offset, pixels, size_t(imageWidth) * imageHeight * 4);
-
-        DrawUploaded(list, target, width, height, g_imageUpload->GetGPUVirtualAddress() + offset, imageWidth, imageHeight, x, y, scale);
+        memcpy(g_imageUpload->cpu + offset, pixels, size_t(imageWidth) * imageHeight * 4);
+        DrawUploaded(width, height, g_imageUpload, offset, imageWidth, imageHeight, x, y, scale);
     }
 
-    void DrawBitmap(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height,
-                    const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, uint64_t version, BitmapChannel channel)
+    void DrawBitmap(uint32_t width, uint32_t height, const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, uint64_t version,
+                    BitmapChannel channel)
     {
         // Uploaded only when the contents change, each time into the next slice (a slice is rewritten
         // UPLOAD_SLICES changes later, after the frames that read it). A bigger image gets a new buffer;
-        // the old ones stay alive (they can still be in flight) and are few (one per size step).
+        // the old one is released once the frames that read it are done.
         struct Channel
         {
-            ComPtr<ID3D12Resource> buffer;
-            std::vector<ComPtr<ID3D12Resource>> retired;
-            uint8_t* cpu = nullptr;
+            rhi::Buffer* buffer = nullptr;
             uint64_t sliceSize = 0, uploadedVersion = ~0ull;
             uint32_t slice = 0;
         };
         static Channel channels[BITMAP_CHANNELS];
         if (!g_ready || !width || !height || imageWidth <= 0 || imageHeight <= 0 || channel < 0 || channel >= BITMAP_CHANNELS)
             return;
-        auto& [buffer, retired, cpu, sliceSize, uploadedVersion, slice] = channels[channel];
+        auto& [buffer, sliceSize, uploadedVersion, slice] = channels[channel];
         uint64_t need = (uint64_t(imageWidth) * imageHeight * 4 + 0xFFFF) & ~uint64_t(0xFFFF);
         if (need > sliceSize)
         {
             if (buffer)
-                retired.push_back(buffer);
-            buffer.Reset();
-            D3D12_RESOURCE_DESC bufferDesc{};
-            bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-            bufferDesc.Width = need * UPLOAD_SLICES;
-            bufferDesc.Height = 1;
-            bufferDesc.DepthOrArraySize = 1;
-            bufferDesc.MipLevels = 1;
-            bufferDesc.SampleDesc.Count = 1;
-            bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-            D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_UPLOAD };
-            D3D12_RANGE noRead{ 0, 0 };
-            if (FAILED(g_device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &bufferDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                         IID_PPV_ARGS(&buffer))) ||
-                FAILED(buffer->Map(0, &noRead, reinterpret_cast<void**>(&cpu))))
+                g_device->DestroyBuffer(buffer);
+            buffer = g_device->CreateBuffer(need * UPLOAD_SLICES);
+            if (!buffer)
             {
-                Log("[overlay] could not create the bitmap upload buffer (%llu bytes, device removed reason 0x%08X)",
-                    (unsigned long long)(need * UPLOAD_SLICES), unsigned(g_device->GetDeviceRemovedReason()));
-                buffer.Reset();
+                Log("[overlay] could not create the bitmap upload buffer (%llu bytes)", (unsigned long long)(need * UPLOAD_SLICES));
                 sliceSize = 0;
                 return;
             }
@@ -658,27 +596,9 @@ float4 main(float4 position : SV_Position) : SV_Target
         if (version != uploadedVersion)
         {
             slice = (slice + 1) % UPLOAD_SLICES;
-            memcpy(cpu + sliceSize * slice, pixels, size_t(imageWidth) * imageHeight * 4);
+            memcpy(buffer->cpu + sliceSize * slice, pixels, size_t(imageWidth) * imageHeight * 4);
             uploadedVersion = version;
         }
-        DrawUploaded(list, target, width, height, buffer->GetGPUVirtualAddress() + sliceSize * slice, imageWidth, imageHeight, x, y, 1);
-    }
-
-    void DrawUploaded(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height,
-                      D3D12_GPU_VIRTUAL_ADDRESS pixels, int imageWidth, int imageHeight, int x, int y, int scale)
-    {
-        int32_t constants[5] = { x, y, imageWidth, imageHeight, std::max(scale, 1) };
-        list->SetGraphicsRootSignature(g_rootSignature.Get());
-        list->SetPipelineState(g_pipeline.Get());
-        list->SetGraphicsRootShaderResourceView(0, pixels);
-        list->SetGraphicsRoot32BitConstants(1, 5, constants, 0);
-        list->OMSetRenderTargets(1, &target, FALSE, nullptr);
-        D3D12_VIEWPORT viewport{ 0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f };
-        D3D12_RECT scissor{ std::max(x, 0), std::max(y, 0), std::min<LONG>(x + imageWidth * constants[4], LONG(width)),
-                            std::min<LONG>(y + imageHeight * constants[4], LONG(height)) };
-        list->RSSetViewports(1, &viewport);
-        list->RSSetScissorRects(1, &scissor);
-        list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        list->DrawInstanced(3, 1, 0, 0);
+        DrawUploaded(width, height, buffer, sliceSize * slice, imageWidth, imageHeight, x, y, 1);
     }
 }

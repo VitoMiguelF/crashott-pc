@@ -1747,7 +1747,7 @@ namespace settings::menu
         return (GetTickCount64() < g_backUntil ? XINPUT_GAMEPAD_B : 0) | MenuAutopilotButtons() | boot::Buttons();
     }
 
-    void Draw(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE target, uint32_t width, uint32_t height)
+    void Draw(uint32_t width, uint32_t height)
     {
         if (!Update() || !width || !height)
             return;
@@ -1773,7 +1773,7 @@ namespace settings::menu
             pixels = g_faded.data();
             version = (1ull << 63) | ++g_fadedVersion;
         }
-        gpu::overlay::DrawBitmap(list, target, width, height, pixels, int(width), int(height), 0, rise, version,
+        gpu::overlay::DrawBitmap(width, height, pixels, int(width), int(height), 0, rise, version,
                                  gpu::overlay::BITMAP_SETTINGS);
     }
 
