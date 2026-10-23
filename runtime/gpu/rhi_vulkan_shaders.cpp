@@ -1,0 +1,171 @@
+// HLSL -> SPIR-V for the Vulkan backend (rhi_vulkan.cpp): DXC (dxcompiler.dll, loaded at run time)
+// compiles the same HLSL as FXC does for Direct3D 12, with the registers mapped to descriptor sets
+// and bindings per binding model (rhi::Layout):
+//
+//   Draw  set 0: t0-t31 -> bindings 0-31 (sampled images, push descriptors; the validation layers of
+//                SDK 1.4.363 crash in vkCmdPushDescriptorSetKHR when the push set isn't set 0)
+//         set 1: b0-b3 -> bindings 0-3 (dynamic uniform buffers), t0 space1 -> binding 4 (the upload
+//                ring as a storage buffer, vertex data)
+//         set 2: s0-s31 -> bindings 0-31 (samplers, cached sets)
+//   Pass  set 0: b0 -> binding 0, t0-t7 -> bindings 1-8 (or the structured buffer at t0), s0-s1 ->
+//                bindings 9-10 (immutable samplers); all push descriptors
+//
+// D3D conventions kept: the backend flips the viewport (negative height) so clip space and
+// SV_Position match Direct3D; -fvk-use-dx-position-w gives SV_Position.w as Direct3D does and
+// -fvk-use-dx-layout the constant buffer packing.
+
+#include "rhi_vulkan_shaders.h"
+#include "../diagnostics.h"
+
+#include <windows.h>
+#include <unknwn.h>
+#include <objidl.h>  // IStream (WIN32_LEAN_AND_MEAN leaves the COM headers out)
+#include <dxcapi.h>
+
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace gpu::rhi::vulkan
+{
+    namespace
+    {
+        bool g_loaded = false;
+        IDxcUtils* g_utils = nullptr;
+        IDxcCompiler3* g_compiler = nullptr;
+
+        bool LoadCompiler()
+        {
+            if (g_loaded)
+                return g_compiler != nullptr;
+            g_loaded = true;
+            HMODULE module = LoadLibraryW(L"dxcompiler.dll");
+            if (!module)
+            {
+                Log("[vulkan] dxcompiler.dll not found next to the exe: only cached SPIR-V shaders can be used");
+                return false;
+            }
+            auto create = reinterpret_cast<DxcCreateInstanceProc>(reinterpret_cast<void*>(GetProcAddress(module, "DxcCreateInstance")));
+            if (!create || FAILED(create(CLSID_DxcUtils, __uuidof(IDxcUtils), reinterpret_cast<void**>(&g_utils))) ||
+                FAILED(create(CLSID_DxcCompiler, __uuidof(IDxcCompiler3), reinterpret_cast<void**>(&g_compiler))))
+            {
+                Log("[vulkan] dxcompiler.dll has no DxcCreateInstance / compiler");
+                g_compiler = nullptr;
+                return false;
+            }
+            return true;
+        }
+
+        const wchar_t* Profile(Stage stage)
+        {
+            return stage == Stage::Pixel ? L"ps_6_0" : stage == Stage::Geometry ? L"gs_6_0" : L"vs_6_0";
+        }
+
+        void BindRegister(std::vector<std::wstring>& args, const wchar_t* type, uint32_t number, uint32_t space, uint32_t binding, uint32_t set)
+        {
+            args.push_back(L"-fvk-bind-register");
+            args.push_back(std::wstring(type) + std::to_wstring(number));
+            args.push_back(std::to_wstring(space));
+            args.push_back(std::to_wstring(binding));
+            args.push_back(std::to_wstring(set));
+        }
+
+        std::vector<std::wstring> Arguments(Stage stage, Layout layout)
+        {
+            std::vector<std::wstring> args = { L"-spirv", L"-T", Profile(stage), L"-E", L"main", L"-HV", L"2018", L"-fspv-target-env=vulkan1.3",
+                                               L"-fvk-use-dx-layout", L"-fvk-use-dx-position-w", L"-Wno-conversion", L"-Wno-ignored-attributes" };
+            if (layout == Layout::Draw)
+            {
+                for (uint32_t b = 0; b < 4; b++)
+                    BindRegister(args, L"b", b, 0, b, DRAW_SET_CONSTANTS);
+                BindRegister(args, L"t", 0, 1, 4, DRAW_SET_CONSTANTS);
+                for (uint32_t i = 0; i < 32; i++)
+                {
+                    BindRegister(args, L"t", i, 0, i, DRAW_SET_TEXTURES);
+                    BindRegister(args, L"s", i, 0, i, DRAW_SET_SAMPLERS);
+                }
+            }
+            else
+            {
+                BindRegister(args, L"b", 0, 0, 0, 0);
+                for (uint32_t i = 0; i < 8; i++)
+                    BindRegister(args, L"t", i, 0, 1 + i, 0);
+                BindRegister(args, L"s", 0, 0, 9, 0);
+                BindRegister(args, L"s", 1, 0, 10, 0);
+            }
+            return args;
+        }
+
+        // Bump when the arguments change: part of the cache key.
+        constexpr const char* CACHE_VERSION = "spirv-2";
+    }
+
+    bool CompileSpirv(Stage stage, const std::string& hlsl, const char* name, Layout layout, const std::filesystem::path& cache,
+                      std::vector<uint32_t>& spirv, uint64_t* compiles, uint64_t* failures)
+    {
+        char keyText[64];
+        snprintf(keyText, sizeof(keyText), "%s/%d/%d", CACHE_VERSION, int(stage), int(layout));
+        uint64_t hash = HashBytes(hlsl.data(), hlsl.size(), HashBytes(keyText, strlen(keyText)));
+        std::vector<uint8_t> cached;
+        if (ReadCachedShader(cache, hash, "spv", cached) && cached.size() % 4 == 0)
+        {
+            spirv.resize(cached.size() / 4);
+            memcpy(spirv.data(), cached.data(), cached.size());
+            return true;
+        }
+        if (!LoadCompiler())
+            return false;
+
+        std::vector<std::wstring> args = Arguments(stage, layout);
+        std::vector<const wchar_t*> argPointers;
+        for (const std::wstring& arg : args)
+            argPointers.push_back(arg.c_str());
+        DxcBuffer source{ hlsl.data(), hlsl.size(), DXC_CP_UTF8 };
+        IDxcResult* result = nullptr;
+        if (compiles)
+            (*compiles)++;
+        HRESULT status = g_compiler->Compile(&source, argPointers.data(), uint32_t(argPointers.size()), nullptr, __uuidof(IDxcResult),
+                                             reinterpret_cast<void**>(&result));
+        if (SUCCEEDED(status) && result)
+            result->GetStatus(&status);
+        IDxcBlob* code = nullptr;
+        if (SUCCEEDED(status) && result)
+            result->GetOutput(DXC_OUT_OBJECT, __uuidof(IDxcBlob), reinterpret_cast<void**>(&code), nullptr);
+        if (FAILED(status) || !code || code->GetBufferSize() % 4)
+        {
+            if (failures)
+                (*failures)++;
+            std::string message = "?";
+            IDxcBlobUtf8* errors = nullptr;
+            if (result && SUCCEEDED(result->GetOutput(DXC_OUT_ERRORS, __uuidof(IDxcBlobUtf8), reinterpret_cast<void**>(&errors), nullptr)) && errors)
+            {
+                message.assign(errors->GetStringPointer(), errors->GetStringLength());
+                errors->Release();
+            }
+            if (message.size() > 1500)
+                message.resize(1500);
+            Log("[vulkan] shader %s failed to compile:\n%s", name, message.c_str());
+            DumpFailedShader(cache, name, hlsl);
+            if (code)
+                code->Release();
+            if (result)
+                result->Release();
+            return false;
+        }
+        spirv.resize(code->GetBufferSize() / 4);
+        memcpy(spirv.data(), code->GetBufferPointer(), code->GetBufferSize());
+        WriteCachedShader(cache, hash, "spv", spirv.data(), spirv.size() * 4);
+        code->Release();
+        result->Release();
+        return true;
+    }
+}
+
+namespace gpu::rhi
+{
+    bool TestCompileVulkan(Stage stage, const std::string& hlsl, const char* name, Layout layout, const std::filesystem::path& shaderCache)
+    {
+        std::vector<uint32_t> spirv;
+        return vulkan::CompileSpirv(stage, hlsl, name, layout, shaderCache, spirv);
+    }
+}

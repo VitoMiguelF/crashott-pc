@@ -114,6 +114,24 @@ else()
     message(STATUS "thirdparty/fsr not found: FSR disabled")
 endif()
 
+# Vulkan renderer (runtime/gpu/rhi_vulkan.cpp, video.renderer = vulkan): the Khronos headers
+# (thirdparty/vulkan, in git) with vulkan-1.dll loaded at run time (no import library), and DXC to
+# compile HLSL to SPIR-V (thirdparty/dxc: dxcapi.h in git; dxcompiler.dll with SPIR-V support,
+# loaded at run time and copied next to CrashRecomp.exe from thirdparty/dxc/bin or the Vulkan SDK).
+target_include_directories(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include ${CMAKE_SOURCE_DIR}/thirdparty/dxc/include)
+set(CRASH_DXC_DLL "")
+if (EXISTS ${CMAKE_SOURCE_DIR}/thirdparty/dxc/bin/dxcompiler.dll)
+    set(CRASH_DXC_DLL ${CMAKE_SOURCE_DIR}/thirdparty/dxc/bin/dxcompiler.dll)
+elseif (DEFINED ENV{VULKAN_SDK} AND EXISTS "$ENV{VULKAN_SDK}/Bin/dxcompiler.dll")
+    file(TO_CMAKE_PATH "$ENV{VULKAN_SDK}/Bin/dxcompiler.dll" CRASH_DXC_DLL)
+endif()
+if (CRASH_DXC_DLL)
+    add_custom_command(TARGET CrashRecomp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_DXC_DLL} $<TARGET_FILE_DIR:CrashRecomp>)
+else()
+    message(STATUS "dxcompiler.dll not found (thirdparty/dxc/bin or the Vulkan SDK): the Vulkan renderer can only use cached shaders")
+endif()
+
 # Launcher (launcher/): edits settings.toml with the game's own look before starting the game.
 # Dear ImGui (thirdparty/imgui, MIT) on Direct3D 11, plus the runtime's own settings, paths, VFS
 # and the code that reads the fonts and the frontend art from the user's default.rcf.
