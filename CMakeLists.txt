@@ -182,6 +182,7 @@ add_executable(CrashLauncher WIN32
     ${CMAKE_SOURCE_DIR}/runtime/settings/menu_art.cpp
     ${CMAKE_SOURCE_DIR}/runtime/settings/language_font.cpp
     ${CMAKE_SOURCE_DIR}/runtime/settings/language_pack.cpp
+    ${CMAKE_SOURCE_DIR}/runtime/settings/options.cpp
     ${CMAKE_SOURCE_DIR}/runtime/settings/hd_remaster.cpp)
 target_include_directories(CrashLauncher PRIVATE ${CRASH_IMGUI_DIR})
 target_compile_definitions(CrashLauncher PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)

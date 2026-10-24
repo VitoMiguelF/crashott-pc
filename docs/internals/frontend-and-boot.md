@@ -90,3 +90,19 @@ converts old F5 recordings to the direct boot.
   +8 dialogue, +12 sfx, value at +36.
 - Settings restart: `CRASH_RESTART = relaunch | exit | off`; `run_game.py` uses `exit` (exit code 4) and
   relaunches itself.
+
+## Settings rows: one definition for the game and the launcher
+
+- `runtime/settings/options.{h,cpp}`: `options::Item`, `Tabs()` (6 tabs, row order the `configuracoes*` /
+  `controles_tela` / `iluminacao_tela` profiles count on), `Key`, `Label`, `Value`, `Help`, `Percent`,
+  `Change`, `RestartOnly`, and the launcher's `LightingPreset` (ORIGINAL / REMASTER / CUSTOM). Both
+  `settings_menu.cpp` and `launcher/launcher.cpp` read them; add a new option there, not in either screen.
+- Screen-specific: `options::Context` (launcher wording, `canRestart`, DLSS/FSR availability, subtitles),
+  PLAYER 1/2 value and cycling (the game lists connected pads), key-binding capture, the launcher's SETUP
+  rows and `HeaderKeys`. ADL gotcha: a `Key(Item)` / `RestartOnly(Item)` wrapper in `settings::menu` is
+  ambiguous with `options::Key` (Item lives in `options`); call the `options::` ones directly.
+- Launcher: simple view by default (`[launcher] view = "simple" | "advanced"`, written at once by
+  `SetAdvanced` from the saved values, so other edits stay unsaved); its own UP/DOWN and A/Enter handling,
+  not ImGui nav (nav lost its focused item, NavId 0, when the window opened behind another one).
+- `graphics.hd_textures` has no row anywhere (default on); `gpu/hd_textures.cpp` always uses the HD AI
+  Remaster mod's pack when `graphics.hd_remaster` is on.

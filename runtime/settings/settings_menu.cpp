@@ -1,5 +1,6 @@
 #include "direct_boot.h"
 #include "settings_menu.h"
+#include "options.h"
 #include "settings.h"
 #include "menu_art.h"
 #include "../audio/game_volumes.h"
@@ -98,89 +99,24 @@ namespace settings::menu
         constexpr ULONGLONG REPEAT_DELAY_MS = 380;
         constexpr ULONGLONG REPEAT_MS = 90;
 
-        enum class Item
-        {
-            Master, Music, Effects, Voice,
-            Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay,
-            Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, ShadowResolution, HdRemaster,
-            Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Storage,
-            Subtitles, SubtitleSize, SubtitleBackground,
-            FreeCamera, CameraSensitivity, CameraInvertY, CameraDistance,
-            LightSsao, LightGi, LightGiIntensity, LightContactShadows, LightSoftShadows,
-            Prompts, MouseCamera, MouseSensitivity, MouseInvertY, WalkSpeed, MouseMenus,
-            Player1, Player2,
-            DevConsole,
-            HeaderSubtitles, HeaderCamera, HeaderLighting, HeaderDev,  // sub-group headings inside a tab (not selectable)
-            Bind0,  // + settings::Action: the key bindings (controls.h), one row per action
-        };
-
-        bool IsHeader(Item item)
-        {
-            return item == Item::HeaderSubtitles || item == Item::HeaderCamera || item == Item::HeaderLighting || item == Item::HeaderDev;
-        }
-
-        // The CONTROLS tab's binding rows.
-        bool IsBinding(Item item)
-        {
-            return int(item) >= int(Item::Bind0) && int(item) < int(Item::Bind0) + int(ACTION_COUNT);
-        }
-
-        Action ActionOf(Item item)
-        {
-            return Action(int(item) - int(Item::Bind0));
-        }
-
-        std::vector<Item> ControlItems()
-        {
-            std::vector<Item> items = { Item::Player1, Item::Player2, Item::Prompts, Item::MouseCamera, Item::MouseSensitivity,
-                                        Item::MouseInvertY, Item::WalkSpeed, Item::MouseMenus };
-            for (int i = 0; i < int(ACTION_COUNT); i++)
-                items.push_back(Item(int(Item::Bind0) + i));
-            return items;
-        }
+        // The items, the tabs and their rows, names, values and help: options.h (the launcher's too).
+        using options::ActionOf;
+        using options::IsBinding;
+        using options::IsHeader;
+        using options::Item;
+        using options::Tab;
+        using options::TAB_COUNT;
+        using options::Text;
 
         // A tab shows at most this many rows; longer ones (CONTROLS) scroll with the selection.
         constexpr size_t MAX_ROWS = 9;
 
-        // English and Brazilian Portuguese (the screen follows the language chosen in it).
-        struct Text
-        {
-            const char* en;
-            const char* pt;
-        };
-
-        // The tabs, switched with LB / RB (Q / E on the keyboard); the screen opens on the first.
-        // The `configuracoes*` and `controles_tela` profiles of config/run.toml rely on the order:
-        // GAME (LANGUAGE, CO-OP, ...), AUDIO, VIDEO (RESOLUTION 2nd row, ANTI-ALIASING 5th),
-        // GRAPHICS (DLSS / FSR first), CONTROLS, DEFINITIVE EDITION (the port's own extras). DOWN
-        // skips the sub-group headings.
-        struct Tab
-        {
-            const char* id;  // in the log
-            Text name;
-            std::vector<Item> items;
-        };
-        const Tab TABS[] = {
-            { "game", { "GAME", "JOGO" }, { Item::Language, Item::CoopMode, Item::InvertAxis, Item::Autosave, Item::SkipCutscenes, Item::Storage } },
-            { "audio", { "AUDIO", "ÁUDIO" },
-              { Item::Master, Item::Music, Item::Effects, Item::Voice, Item::HeaderSubtitles, Item::Subtitles, Item::SubtitleSize,
-                Item::SubtitleBackground } },
-            { "video", { "VIDEO", "VÍDEO" }, { Item::Window, Item::Resolution, Item::FpsLimit, Item::VSync, Item::AntiAliasing, Item::Overlay } },
-            { "graphics", { "GRAPHICS", "GRÁFICOS" },
-              { Item::Upscaler, Item::UpscalerQuality, Item::Sharpness, Item::MotionBlur, Item::DepthOfField, Item::Anisotropy,
-                Item::ShadowSoftness, Item::ShadowResolution } },
-            { "controls", { "CONTROLS", "CONTROLES" }, ControlItems() },
-            { "definitive", { "DEFINITIVE EDITION", "DEFINITIVE EDITION" },
-              { Item::MojoColors, Item::HdRemaster, Item::HeaderLighting, Item::LightSsao, Item::LightGi, Item::LightGiIntensity,
-                Item::LightContactShadows, Item::LightSoftShadows, Item::HeaderCamera, Item::FreeCamera, Item::CameraSensitivity,
-                Item::CameraInvertY, Item::CameraDistance, Item::HeaderDev, Item::DevConsole } },
-        };
-        constexpr int TAB_COUNT = int(std::size(TABS));
+        const Tab* const TABS = options::Tabs();
         constexpr int GAME_TAB = 0, DEFINITIVE_TAB = 5;
 
         bool Selectable(Item item)
         {
-            return item != Item::Storage && item != Item::ShadowResolution && !IsHeader(item);
+            return item != Item::Storage && !IsHeader(item);
         }
 
         std::atomic<bool> g_available{ false };
@@ -245,149 +181,13 @@ namespace settings::menu
             return Portuguese() ? text.pt : text.en;
         }
 
-        std::string OnOff(bool value)
-        {
-            return value ? T({ "ON", "LIGADO" }) : T({ "OFF", "DESLIGADO" });
-        }
-
-        // The setting behind each item, as in settings.toml (also the name in the log).
-        const char* Key(Item item)
-        {
-            if (IsBinding(item))
-            {
-                static std::string keys[ACTION_COUNT];
-                std::string& key = keys[size_t(ActionOf(item))];
-                key = std::string("controls.") + ActionId(ActionOf(item));
-                return key.c_str();
-            }
-            switch (item)
-            {
-            case Item::Master: return "audio.master";
-            case Item::Music: return "audio.music";
-            case Item::Effects: return "audio.effects";
-            case Item::Voice: return "audio.voice";
-            case Item::Window: return "video.window";
-            case Item::Resolution: return "video.resolution";
-            case Item::FpsLimit: return "video.fps_limit";
-            case Item::VSync: return "video.vsync";
-            case Item::AntiAliasing: return "video.antialiasing";
-            case Item::Overlay: return "video.overlay";
-            case Item::Upscaler: return "graphics.upscaler";
-            case Item::UpscalerQuality: return "graphics.upscaler_quality";
-            case Item::Sharpness: return "graphics.sharpness";
-            case Item::MotionBlur: return "graphics.motion_blur";
-            case Item::DepthOfField: return "graphics.depth_of_field";
-            case Item::Anisotropy: return "graphics.anisotropic_filtering";
-            case Item::ShadowSoftness: return "graphics.shadow_softness";
-            case Item::ShadowResolution: return "graphics.shadow_resolution";
-            case Item::HdRemaster: return "graphics.hd_remaster";
-            case Item::Language: return "game.language";
-            case Item::MojoColors: return "game.mojo_colors";
-            case Item::CoopMode: return "game.coop_mode";
-            case Item::InvertAxis: return "game.invert_axis";
-            case Item::Autosave: return "game.autosave";
-            case Item::SkipCutscenes: return "game.skip_cutscenes";
-            case Item::Storage: return "game.storage";
-            case Item::Subtitles: return "game.subtitles";
-            case Item::SubtitleSize: return "game.subtitle_size";
-            case Item::SubtitleBackground: return "game.subtitle_background";
-            case Item::FreeCamera: return "camera.free_camera";
-            case Item::CameraSensitivity: return "camera.sensitivity";
-            case Item::CameraInvertY: return "camera.invert_y";
-            case Item::CameraDistance: return "camera.distance";
-            case Item::DevConsole: return "dev.console";
-            case Item::LightSsao: return "lighting.ssao";
-            case Item::LightGi: return "lighting.gi";
-            case Item::LightGiIntensity: return "lighting.gi_intensity";
-            case Item::LightContactShadows: return "lighting.contact_shadows";
-            case Item::LightSoftShadows: return "lighting.soft_shadows";
-            case Item::Prompts: return "controls.prompts";
-            case Item::Player1: return "controls.player1";
-            case Item::Player2: return "controls.player2";
-            case Item::MouseCamera: return "controls.mouse_camera";
-            case Item::MouseSensitivity: return "controls.mouse_sensitivity";
-            case Item::MouseInvertY: return "controls.invert_y";
-            case Item::WalkSpeed: return "controls.walk_speed";
-            case Item::MouseMenus: return "controls.mouse_menus";
-            default: break;
-            }
-            return "";
-        }
-
+        // Key(item): the setting behind each item, as in settings.toml (also the name in the log).
+        // RestartOnly(item): the game reads it at boot; it applies after a restart, which leaving
+        // the screen offers (marked with the game's "rotate" icon). Resolution and upscaler apply
+        // when the screen closes (the renderer rebuilds its targets). Both from options.h.
         std::string Label(Item item)
         {
-            if (IsBinding(item))
-                return ActionLabel(ActionOf(item), Portuguese());
-            switch (item)
-            {
-            case Item::Master: return T({ "MASTER VOLUME", "VOLUME GERAL" });
-            case Item::Music: return T({ "MUSIC", "MÚSICA" });
-            case Item::Effects: return T({ "EFFECTS", "EFEITOS" });
-            case Item::Voice: return T({ "VOICES", "VOZES" });
-            case Item::Window: return T({ "DISPLAY MODE", "MODO DE TELA" });
-            case Item::Resolution: return T({ "RESOLUTION", "RESOLUÇÃO" });
-            case Item::FpsLimit: return T({ "FPS LIMIT", "LIMITE DE FPS" });
-            case Item::VSync: return "V-SYNC";
-            case Item::AntiAliasing: return "ANTI-ALIASING";
-            case Item::Overlay: return "OVERLAY (F1)";
-            case Item::Upscaler: return "DLSS / FSR";
-            case Item::UpscalerQuality: return T({ "UPSCALER MODE", "MODO DO UPSCALER" });
-            case Item::Sharpness: return T({ "SHARPNESS (FSR)", "NITIDEZ (FSR)" });
-            case Item::MotionBlur: return "MOTION BLUR";
-            case Item::DepthOfField: return T({ "DEPTH OF FIELD", "PROFUNDIDADE DE CAMPO" });
-            case Item::Anisotropy: return T({ "ANISOTROPIC FILTERING", "FILTRO ANISOTRÓPICO" });
-            case Item::ShadowSoftness: return T({ "SHADOW SOFTNESS", "SUAVIDADE DAS SOMBRAS" });
-            case Item::ShadowResolution: return T({ "SHADOW RESOLUTION", "RESOLUÇÃO DAS SOMBRAS" });
-            case Item::HdRemaster: return "HD AI REMASTER";
-            case Item::Language: return T({ "LANGUAGE", "IDIOMA" });
-            case Item::MojoColors: return T({ "MOJO COLORS", "CORES DO MOJO" });
-            case Item::CoopMode: return T({ "CO-OP", "COOPERATIVO" });
-            case Item::InvertAxis: return T({ "INVERT AXIS", "INVERTER EIXO" });
-            case Item::Autosave: return T({ "AUTOSAVE", "SALVAMENTO AUTOMÁTICO" });
-            case Item::SkipCutscenes: return T({ "SKIP CUTSCENES", "PULAR CENAS" });
-            case Item::Storage: return T({ "STORAGE", "ARMAZENAMENTO" });
-            case Item::Subtitles: return T({ "SUBTITLES", "LEGENDAS" });
-            case Item::SubtitleSize: return T({ "SUBTITLE SIZE", "TAMANHO DA LEGENDA" });
-            case Item::SubtitleBackground: return T({ "SUBTITLE BACKGROUND", "FUNDO DA LEGENDA" });
-            case Item::FreeCamera: return T({ "FREE CAMERA (EXPERIMENTAL)", "CÂMERA LIVRE (EXPERIMENTAL)" });
-            case Item::CameraSensitivity: return T({ "CAMERA SENSITIVITY", "SENSIBILIDADE DA CÂMERA" });
-            case Item::CameraInvertY: return T({ "INVERT CAMERA Y", "INVERTER EIXO Y" });
-            case Item::CameraDistance: return T({ "CAMERA DISTANCE", "DISTÂNCIA DA CÂMERA" });
-            case Item::LightSsao: return T({ "AMBIENT OCCLUSION (SSAO)", "OCLUSÃO DE AMBIENTE (SSAO)" });
-            case Item::LightGi: return T({ "INDIRECT LIGHT (SSGI)", "LUZ INDIRETA (SSGI)" });
-            case Item::LightGiIntensity: return T({ "INDIRECT LIGHT INTENSITY", "INTENSIDADE DA LUZ INDIRETA" });
-            case Item::LightContactShadows: return T({ "CONTACT SHADOWS", "SOMBRAS DE CONTATO" });
-            case Item::LightSoftShadows: return T({ "SOFT SHADOWS", "SOMBRAS SUAVES" });
-            case Item::Prompts: return T({ "BUTTON ICONS", "ÍCONES DOS BOTÕES" });
-            case Item::Player1: return T({ "PLAYER 1", "JOGADOR 1" });
-            case Item::Player2: return T({ "PLAYER 2", "JOGADOR 2" });
-            case Item::MouseCamera: return T({ "MOUSE CAMERA", "CÂMERA PELO MOUSE" });
-            case Item::MouseSensitivity: return T({ "MOUSE SENSITIVITY", "SENSIBILIDADE DO MOUSE" });
-            case Item::MouseInvertY: return T({ "INVERT MOUSE Y", "INVERTER Y DO MOUSE" });
-            case Item::WalkSpeed: return T({ "WALK SPEED", "VELOCIDADE AO ANDAR" });
-            case Item::MouseMenus: return T({ "MOUSE IN MENUS", "MOUSE NOS MENUS" });
-            case Item::HeaderSubtitles: return T({ "SUBTITLES", "LEGENDAS" });
-            case Item::HeaderCamera: return T({ "THIRD-PERSON CAMERA", "CÂMERA EM TERCEIRA PESSOA" });
-            case Item::HeaderLighting: return T({ "LIGHTING (REMASTER)", "ILUMINAÇÃO (REMASTER)" });
-            case Item::HeaderDev: return T({ "DEVELOPER", "DESENVOLVEDOR" });
-            case Item::DevConsole: return T({ "DEVELOPER CONSOLE", "CONSOLE DE DESENVOLVEDOR" });
-            default: break;
-            }
-            return "";
-        }
-
-        // The game reads it at boot: it applies after a restart, which leaving the screen offers
-        // (marked with the game's "rotate" icon). Resolution and upscaler apply when the screen
-        // closes (the renderer rebuilds its targets).
-        bool RestartOnly(Item item)
-        {
-            switch (item)
-            {
-            case Item::Language: case Item::MojoColors: case Item::HdRemaster:
-                return true;
-            default:
-                return false;
-            }
+            return options::Label(item, Portuguese());
         }
 
         // The game restarts by itself (CRASH_RESTART is not "off").
@@ -429,6 +229,18 @@ namespace settings::menu
             return false;
         }
 
+        // What the options' texts depend on here (options.h).
+        options::Context OptionContext()
+        {
+            options::Context context;
+            context.pt = Portuguese();
+            context.canRestart = CanRestart();
+            context.dlss = gpu::upscaler::Available(Upscaler::Dlss);
+            context.fsr = gpu::upscaler::Available(Upscaler::Fsr);
+            context.haveSubtitles = subtitles::SoundCount() > 0;
+            return context;
+        }
+
         // Two lines about the selected item.
         std::pair<std::string, std::string> Help(Item item)
         {
@@ -440,212 +252,13 @@ namespace settings::menu
                 return { T({ "A / Enter: choose a key (it takes over the first one).", "A / Enter: escolher a tecla (substitui a primeira)." }),
                          T({ "X / Backspace: back to the default.", "X / Backspace: volta ao padrão." }) };
             }
-            const char* restart = CanRestart() ? T({ "The game restarts to apply it (it asks first).", "O jogo reinicia para aplicar (pergunta antes)." })
-                                               : T({ "Applies when the game restarts.", "Vale ao reiniciar o jogo." });
-            switch (item)
-            {
-            case Item::Master: return { T({ "Volume of everything the game plays.", "Volume de tudo o que o jogo toca." }), T({ "Applies right away.", "Vale na hora." }) };
-            case Item::Music: return { T({ "Volume of the music.", "Volume da música." }), T({ "Applies right away.", "Vale na hora." }) };
-            case Item::Effects: return { T({ "Volume of the sound effects and ambience.", "Volume dos efeitos e do som ambiente." }), T({ "Applies right away.", "Vale na hora." }) };
-            case Item::Voice: return { T({ "Volume of the dialogue.", "Volume das vozes." }), T({ "Applies right away.", "Vale na hora." }) };
-            case Item::Window:
-                return { T({ "Window, borderless (a window the size of the monitor)", "Janela, sem bordas (uma janela do tamanho do monitor)" }),
-                         T({ "or exclusive fullscreen. Alt+Enter also switches.", "ou tela cheia exclusiva. Alt+Enter também alterna." }) };
-            case Item::Resolution:
-                return { T({ "Internal resolution. With DLSS/FSR on, it is", "Resolução interna. Com DLSS/FSR ligado, é a" }),
-                         T({ "the upscaler's output resolution.", "resolução de saída do upscaler." }) };
-            case Item::FpsLimit:
-                return { T({ "30 is the original. The game speed does not change.", "30 é o original. A velocidade do jogo não muda." }),
-                         T({ "With V-Sync on, also limited by the monitor.", "Com V-Sync ligado, também limitado pelo monitor." }) };
-            case Item::VSync:
-                return { T({ "Waits for the monitor's refresh: no tearing.", "Espera a atualização do monitor: sem tearing." }),
-                         T({ "Off by default.", "Desligado por padrão." }) };
-            case Item::AntiAliasing:
-                return { T({ "FXAA/SMAA smooth the edges of the final image.", "FXAA/SMAA suavizam as bordas na imagem final." }),
-                         T({ "With DLSS/FSR on it can stay off.", "Com DLSS/FSR ligado pode ficar desligado." }) };
-            case Item::Overlay:
-                return { T({ "Performance overlay: FPS, frame time and graph.", "Overlay de desempenho: FPS, frame time e gráfico." }),
-                         T({ "F1 switches it at any time.", "O F1 alterna a qualquer momento." }) };
-            case Item::Upscaler:
-                return { T({ "Temporal AA + upscaling of the 3D scene, no", "AA temporal + upscaling da cena 3D, sem" }),
-                         T({ "frame generation. DLSS: NVIDIA RTX only.", "frame generation. DLSS: só NVIDIA RTX." }) };
-            case Item::UpscalerQuality:
-                return { T({ "Native = DLAA / FSR Native AA. The others", "Nativo = DLAA / FSR Native AA. Os outros" }),
-                         T({ "draw the scene smaller and upscale it.", "desenham a cena menor e reescalam." }) };
-            case Item::Sharpness:
-                return { T({ "FSR 3.1 sharpening (RCAS) after upscaling.", "Nitidez do FSR 3.1 (RCAS) após o upscaling." }),
-                         T({ "DLSS 4 does not use it.", "O DLSS 4 não usa este ajuste." }) };
-            case Item::MotionBlur:
-                return { T({ "Strength of the game's motion blur.", "Intensidade do motion blur do jogo." }),
-                         T({ "0% turns it off, 100% = original.", "0% desliga, 100% = original." }) };
-            case Item::DepthOfField:
-                return { T({ "Distance blur of the game's scenes.", "Desfoque de distância das cenas do jogo." }),
-                         T({ "0% turns it off, 100% = original.", "0% desliga, 100% = original." }) };
-            case Item::Anisotropy:
-                return { T({ "Sharpness of textures seen at an angle", "Nitidez das texturas vistas de lado" }),
-                         T({ "(ground, walls, paths in the distance).", "(chão, paredes, caminhos ao longe)." }) };
-            case Item::ShadowSoftness:
-                return { T({ "Radius of the filter on the shadows' edges.", "Raio do filtro da borda das sombras." }),
-                         T({ "0% = hard edge, 100% = original.", "0% = borda dura, 100% = original." }) };
-            case Item::ShadowResolution:
-                return { T({ "The game uses stencil shadows, without shadow", "O jogo usa sombras por stencil, sem mapa de" }),
-                         T({ "maps. Their sharpness follows the resolution.", "sombra. A nitidez segue a resolução." }) };
-            case Item::HdRemaster:
-                if (!HdRemasterAvailable())
-                    return { T({ "The remaster files are not on this PC.", "Os arquivos do remaster não estão neste PC." }),
-                             T({ "See the README, HD AI Remaster.", "Veja o README, HD AI Remaster." }) };
-                if (HdRemasterWholeGame())
-                    return { T({ "AI-remastered textures and models (whole game).", "Texturas e modelos remasterizados por IA (jogo todo)." }),
-                             restart };
-                return { T({ "AI-remastered textures and models (level 1).", "Texturas e modelos remasterizados por IA (fase 1)." }),
-                         restart };
-            case Item::Language:
-            {
-                // Language packs (languages\): their own lines, e.g. that the voices stay in English.
-                const Language& language = LanguageById(g_values.language);
-                if (language.help[0])
-                    return { language.help[0], language.help[1] ? language.help[1] : "" };
-                return { T({ "Language of the texts and the voices.", "Idioma dos textos e das vozes." }), restart };
-            }
-            case Item::MojoColors:
-                return { T({ "PS2: large one light blue, extra large purple.", "PS2: grande azul bem claro, extra grande roxo." }),
-                         T({ "Xbox 360: all blue (the original).", "Xbox 360: todos azuis (o original)." }) };
-            case Item::CoopMode:
-                return { T({ "LEAPFROG: take turns jumping through the challenges.", "PULA-SELA: vocês se revezam pulando pelos desafios." }),
-                         T({ "PIGGYBACK: ride in your partner's backpack.", "CAVALINHO: fique na mochila do seu parceiro." }) };
-            case Item::InvertAxis:
-                return { T({ "Inverts the camera's axis (the game's own option).", "Inverte o eixo da câmera (a opção do próprio jogo)." }),
-                         T({ "Applies right away.", "Vale na hora." }) };
-            case Item::Autosave:
-                return { T({ "Saves the game in the slot chosen for it.", "Salva o jogo no slot escolhido para ele." }),
-                         T({ "Off: the game does not save by itself.", "Desligado: o jogo não salva sozinho." }) };
-            case Item::SkipCutscenes:
-                return { T({ "Hold B (ESC, SPACE, ENTER) during a cutscene or video", "Segure B (ESC, ESPAÇO, ENTER) numa cena ou vídeo" }),
-                         T({ "to skip it; a prompt shows in the corner.", "para pulá-la; um aviso aparece no canto." }) };
-            case Item::Storage:
-                return { T({ "Saves are kept on the PC, in the userdata folder.", "Os saves ficam no PC, na pasta userdata." }),
-                         T({ "The Y button of the main menu picks it.", "O botão Y do menu principal o escolhe." }) };
-            case Item::Subtitles:
-                if (!subtitles::SoundCount())
-                    return { T({ "No subtitles for this language: see", "Sem legendas para este idioma: veja" }),
-                             T({ "tools/subtitles.py (README, Legendas).", "tools/subtitles.py (README, Legendas)." }) };
-                return { T({ "Subtitles in cutscenes and dialogue (transcribed", "Legendas nas cenas e falas (transcritas" }),
-                         T({ "from the voices), in the language of the texts.", "das vozes), no idioma dos textos." }) };
-            case Item::SubtitleSize:
-                return { T({ "Size of the subtitle letters.", "Tamanho das letras da legenda." }), T({ "100% = default.", "100% = padrão." }) };
-            case Item::SubtitleBackground:
-                return { T({ "Opacity of the box behind the text.", "Opacidade da caixa atrás do texto." }),
-                         T({ "0% = outline only.", "0% = só o contorno." }) };
-            case Item::FreeCamera:
-                return { T({ "Third-person orbit camera: right stick / mouse,", "Câmera orbital em terceira pessoa: analógico" }),
-                         T({ "R3 recenters. Cutscenes keep the game's camera.", "direito / mouse, R3 recentra. Cenas: a do jogo." }) };
-            case Item::CameraSensitivity:
-                return { T({ "Turn speed of the free camera.", "Velocidade de giro da câmera livre." }), T({ "100% = default.", "100% = padrão." }) };
-            case Item::CameraInvertY:
-                return { T({ "Up on the stick / mouse looks down.", "Para cima no analógico / mouse olha para baixo." }),
-                         T({ "Free camera only.", "Só na câmera livre." }) };
-            case Item::CameraDistance:
-                return { T({ "Distance from the camera to the character.", "Distância da câmera ao personagem." }),
-                         T({ "Walls bring it closer by themselves.", "Paredes a aproximam sozinhas." }) };
-            case Item::DevConsole:
-                return { T({ "The key left of 1 (or F10) opens a console:", "A tecla antes do 1 (ou F10) abre um console:" }),
-                         T({ "unlock all, mojo, god, skin, level, lua... (help).", "unlock all, mojo, god, skin, level, lua... (help)." }) };
-            case Item::LightSsao:
-                return { T({ "Darkens corners, contacts and creases of the scene.", "Escurece cantos, contatos e dobras da cena." }),
-                         T({ "LOW: half resolution, HIGH: full. F8 toggles it all.", "BAIXA: meia resolução, ALTA: cheia. F8 liga/desliga." }) };
-            case Item::LightGi:
-                return { T({ "Light bounced by nearby surfaces tints the scene", "A luz rebatida nas superfícies próximas tinge a" }),
-                         T({ "with their colour (screen space, one bounce).", "cena com a cor delas (espaço de tela, um rebote)." }) };
-            case Item::LightGiIntensity:
-                return { T({ "Strength of the indirect light.", "Intensidade da luz indireta." }), T({ "100% = default.", "100% = padrão." }) };
-            case Item::LightContactShadows:
-                return { T({ "Small shadows under characters, objects and", "Sombras pequenas sob personagens, objetos e" }),
-                         T({ "ledges, where they meet the ground.", "beiradas, onde encostam no chão." }) };
-            case Item::LightSoftShadows:
-                return { T({ "The game's shadows with a wider, smoother filter.", "As sombras do jogo com um filtro mais largo e suave." }),
-                         T({ "SHADOW SOFTNESS (GRAPHICS) still sets the radius.", "A SUAVIDADE DAS SOMBRAS (GRÁFICOS) ajusta o raio." }) };
-            case Item::Player1:
-                return { T({ "Controller of player 1 (with the keyboard and mouse).", "Controle do jogador 1 (junto com teclado e mouse)." }),
-                         T({ "AUTO: the one that pressed START on the title screen.", "AUTO: o que apertou START na tela título." }) };
-            case Item::Player2:
-                return { T({ "Controller of player 2: B joins the game, Y leaves", "Controle do jogador 2: B entra no jogo, Y desce" }),
-                         T({ "the backpack. A single controller is always player 1.", "da mochila. Com um controle só, ele é o jogador 1." }) };
-            case Item::Prompts:
-                return { T({ "Icons in menus and hints: the last device used,", "Ícones nos menus e dicas: o último aparelho usado," }),
-                         T({ "or always Xbox / PlayStation / keyboard.", "ou sempre Xbox / PlayStation / teclado." }) };
-            case Item::MouseCamera:
-                return { T({ "The mouse turns the camera in gameplay", "O mouse gira a câmera na gameplay" }),
-                         T({ "(the cursor is hidden and kept in the window).", "(o cursor fica escondido e preso na janela)." }) };
-            case Item::MouseSensitivity:
-                return { T({ "Mouse movement -> camera speed.", "Movimento do mouse -> velocidade da câmera." }), T({ "100% = default.", "100% = padrão." }) };
-            case Item::MouseInvertY:
-                return { T({ "Mouse / camera keys: up looks down.", "Mouse / teclas da câmera: para cima olha para baixo." }), "" };
-            case Item::WalkSpeed:
-                return { T({ "How far the stick goes while WALK is held", "Quanto o analógico vai com ANDAR DEVAGAR apertado" }),
-                         T({ "(Crash walks instead of running).", "(o Crash anda em vez de correr)." }) };
-            case Item::MouseMenus:
-                return { T({ "Pointing at an item selects it, click accepts,", "Apontar um item seleciona, clique confirma," }),
-                         T({ "right button goes back, the wheel scrolls.", "botão direito volta, a roda rola." }) };
-            default: break;
-            }
-            return {};
+            return options::Help(item, g_values, OptionContext());
         }
 
         // Sliders: value, minimum, maximum and step.
         int* Percent(Item item, int* minimum = nullptr, int* maximum = nullptr, int* step = nullptr)
         {
-            int min = 0, max = 100, stepValue = 5;
-            int* value = nullptr;
-            switch (item)
-            {
-            case Item::Master: value = &g_values.masterVolume; break;
-            case Item::Music: value = &g_values.musicVolume; break;
-            case Item::Effects: value = &g_values.effectsVolume; break;
-            case Item::Voice: value = &g_values.voiceVolume; break;
-            case Item::Sharpness: value = &g_values.sharpness; stepValue = 10; break;
-            case Item::MotionBlur: value = &g_values.motionBlur; stepValue = 10; break;
-            case Item::DepthOfField: value = &g_values.depthOfField; stepValue = 10; break;
-            case Item::ShadowSoftness: value = &g_values.shadowSoftness; stepValue = 25; max = 200; break;
-            case Item::SubtitleSize: value = &g_values.subtitleSize; stepValue = 25; min = 50; max = 200; break;
-            case Item::SubtitleBackground: value = &g_values.subtitleBackground; stepValue = 25; break;
-            case Item::CameraSensitivity: value = &g_values.cameraSensitivity; stepValue = 25; min = 25; max = 300; break;
-            case Item::CameraDistance: value = &g_values.cameraDistance; stepValue = 10; min = 50; max = 200; break;
-            case Item::LightGiIntensity: value = &g_values.giIntensity; stepValue = 10; max = 200; break;
-            case Item::MouseSensitivity: value = &g_values.controls.mouseSensitivity; stepValue = 10; min = 10; max = 400; break;
-            case Item::WalkSpeed: value = &g_values.controls.walkSpeed; stepValue = 5; min = 10; max = 90; break;
-            default: break;
-            }
-            if (minimum)
-                *minimum = min;
-            if (maximum)
-                *maximum = max;
-            if (step)
-                *step = stepValue;
-            return value;
-        }
-
-        std::string UpscalerLabel(Upscaler upscaler)
-        {
-            const char* missing = T({ " (N/A)", " (N/D)" });
-            switch (upscaler)
-            {
-            case Upscaler::Dlss: return std::string("DLSS") + (gpu::upscaler::Available(Upscaler::Dlss) ? "" : missing);
-            case Upscaler::Fsr: return std::string("FSR 3.1") + (gpu::upscaler::Available(Upscaler::Fsr) ? "" : missing);
-            default: return OnOff(false);
-            }
-        }
-
-        std::string QualityLabel()
-        {
-            switch (g_values.upscalerQuality)
-            {
-            case UpscalerQuality::Quality: return T({ "QUALITY", "QUALIDADE" });
-            case UpscalerQuality::Balanced: return T({ "BALANCED", "EQUILIBRADO" });
-            case UpscalerQuality::Performance: return T({ "PERFORMANCE", "DESEMPENHO" });
-            case UpscalerQuality::UltraPerformance: return T({ "ULTRA PERFORMANCE", "ULTRA DESEMPENHO" });
-            default:
-                return g_values.upscaler == Upscaler::Fsr ? T({ "NATIVE (AA)", "NATIVO (AA)" }) : T({ "NATIVE (DLAA)", "NATIVO (DLAA)" });
-            }
+            return options::Percent(item, g_values, minimum, maximum, step);
         }
 
         // [controls] player1 / player2: "AUTO", or the controller's name ("CONTROLE 2", "DUALSENSE (USB)",
@@ -672,91 +285,11 @@ namespace settings::menu
 
         std::string Value(Item item)
         {
-            if (IsBinding(item))
-            {
-                if (g_capturing && item == TABS[g_tab].items[size_t(g_row[g_tab])])
-                    return T({ "PRESS A KEY...", "PRESSIONE UMA TECLA..." });
-                std::string keys;
-                for (uint16_t key : g_values.controls.keys[size_t(ActionOf(item))])
-                {
-                    if (key)
-                        keys += (keys.empty() ? "" : " / ") + KeyName(key);
-                }
-                return keys.empty() ? T({ "NONE", "NENHUMA" }) : keys;
-            }
-            if (int* percent = Percent(item))
-                return std::to_string(*percent) + "%";
-            switch (item)
-            {
-            case Item::Window:
-                switch (g_values.window)
-                {
-                case WindowMode::Borderless: return T({ "BORDERLESS", "SEM BORDAS" });
-                case WindowMode::Fullscreen: return T({ "FULLSCREEN", "TELA CHEIA" });
-                default: return T({ "WINDOWED", "JANELA" });
-                }
-            case Item::VSync: return OnOff(g_values.vsync);
-            case Item::AntiAliasing:
-                switch (g_values.antiAliasing)
-                {
-                case AntiAliasing::Fxaa: return "FXAA";
-                case AntiAliasing::Smaa: return "SMAA";
-                default: return OnOff(false);
-                }
-            case Item::Overlay:
-                switch (g_values.overlay)
-                {
-                case OverlayMode::Fps: return T({ "FPS ONLY", "SÓ FPS" });
-                case OverlayMode::FrameTime: return "FPS + FRAME TIME";
-                case OverlayMode::Full: return T({ "FULL", "COMPLETO" });
-                default: return OnOff(false);
-                }
-            case Item::Resolution: return ResolutionOf(g_values.renderHeight).name;
-            case Item::FpsLimit:
-                return g_values.fpsLimit ? std::to_string(g_values.fpsLimit) + (g_values.fpsLimit == 30 ? " (ORIGINAL)" : "")
-                                         : std::string(T({ "UNLIMITED", "SEM LIMITE" }));
-            case Item::Upscaler: return UpscalerLabel(g_values.upscaler);
-            case Item::UpscalerQuality: return QualityLabel();
-            case Item::Anisotropy: return g_values.anisotropy > 1 ? std::to_string(g_values.anisotropy) + "X" : OnOff(false);
-            case Item::ShadowResolution: return T({ "SAME AS RESOLUTION", "SEGUE A RESOLUÇÃO" });
-            case Item::HdRemaster: return HdRemasterAvailable() ? OnOff(g_values.hdRemaster) : T({ "UNAVAILABLE", "INDISPONÍVEL" });
-            case Item::Language: return LanguageById(g_values.language).name;
-            case Item::MojoColors: return g_values.ps2MojoColors ? "PS2" : "XBOX 360";
-            case Item::CoopMode: return g_values.coopLeapfrog ? T({ "LEAPFROG", "PULA-SELA" }) : T({ "PIGGYBACK", "CAVALINHO" });
-            case Item::InvertAxis: return OnOff(g_values.invertAxis);
-            case Item::Autosave: return OnOff(g_values.autosave);
-            case Item::SkipCutscenes: return OnOff(g_values.skipCutscenes);
-            case Item::Subtitles:
-                return g_values.subtitles && !subtitles::SoundCount() ? T({ "ON (NO TEXT)", "LIGADO (SEM TEXTO)" }) : OnOff(g_values.subtitles);
-            case Item::Storage: return "HARD DRIVE";
-            case Item::FreeCamera: return OnOff(g_values.freeCamera);
-            case Item::CameraInvertY: return OnOff(g_values.cameraInvertY);
-            case Item::DevConsole: return OnOff(g_values.devConsole);
-            case Item::LightSsao:
-                switch (g_values.ssao)
-                {
-                case AoQuality::Low: return T({ "LOW", "BAIXA" });
-                case AoQuality::High: return T({ "HIGH", "ALTA" });
-                default: return OnOff(false);
-                }
-            case Item::LightGi: return OnOff(g_values.gi);
-            case Item::LightContactShadows: return OnOff(g_values.contactShadows);
-            case Item::LightSoftShadows: return OnOff(g_values.softShadows);
-            case Item::Prompts:
-                switch (g_values.controls.prompts)
-                {
-                case PromptStyle::Xbox: return "XBOX";
-                case PromptStyle::PlayStation: return "PLAYSTATION";
-                case PromptStyle::Keyboard: return T({ "KEYBOARD", "TECLADO" });
-                default: return T({ "AUTOMATIC", "AUTOMÁTICO" });
-                }
-            case Item::Player1:
-            case Item::Player2: return PlayerDeviceText(g_values.controls.players[item == Item::Player2]);
-            case Item::MouseCamera: return OnOff(g_values.controls.mouseCamera);
-            case Item::MouseInvertY: return OnOff(g_values.controls.invertY);
-            case Item::MouseMenus: return OnOff(g_values.controls.mouseMenus);
-            default: return "";
-            }
+            if (IsBinding(item) && g_capturing && item == TABS[g_tab].items[size_t(g_row[g_tab])])
+                return T({ "PRESS A KEY...", "PRESSIONE UMA TECLA..." });
+            if (item == Item::Player1 || item == Item::Player2)
+                return PlayerDeviceText(g_values.controls.players[item == Item::Player2]);
+            return options::Value(item, g_values, OptionContext());
         }
 
         bool NeedsRestart()
@@ -1008,8 +541,8 @@ namespace settings::menu
             constexpr float MIN_TAB_GAP = 16.0f;
             const float TABS_ROOM = std::min(1060.0f, VIRTUAL_W - 2.0f * (24.0f + 22.0f + std::max(lbW, rbW)));
             float tabCell = TAB_CELL, total = 0.0f;
-            for (const Tab& tab : TABS)
-                total += Width(FontId::Large, T(tab.name), TAB_CELL);
+            for (int i = 0; i < TAB_COUNT; i++)
+                total += Width(FontId::Large, T(TABS[i].name), TAB_CELL);
             float namesRoom = TABS_ROOM - MIN_TAB_GAP * (TAB_COUNT - 1);
             if (total > namesRoom)
                 tabCell *= namesRoom / total, total = namesRoom;
@@ -1150,147 +683,24 @@ namespace settings::menu
             // The renderer reads the graphics options (anti-aliasing, motion blur, ...) every frame.
         }
 
-        template <typename E>
-        E Cycle(E value, int count, int direction)
-        {
-            return E((int(value) + count + direction) % count);
-        }
-
         void Change(int direction)
         {
             Item item = SelectedItem();
             Values before = g_values;
-            int minimum, maximum, step;
-            if (int* percent = Percent(item, &minimum, &maximum, &step))
+            if (item == Item::Player1 || item == Item::Player2)
             {
-                *percent = std::clamp(*percent + direction * step, minimum, maximum);
+                // AUTO, then the controllers connected now (and the saved one, if it is not).
+                std::string& chosen = g_values.controls.players[item == Item::Player2];
+                std::vector<std::string> keys = { "auto" };
+                for (const input::slots::Device& device : input::slots::Devices())
+                    keys.push_back(device.key);
+                if (std::find(keys.begin(), keys.end(), chosen) == keys.end())
+                    keys.push_back(chosen);
+                size_t index = size_t(std::find(keys.begin(), keys.end(), chosen) - keys.begin());
+                chosen = keys[(index + keys.size() + direction) % keys.size()];
             }
-            else
-            {
-                switch (item)
-                {
-                case Item::Window:
-                    g_values.window = Cycle(g_values.window, 3, direction);
-                    break;
-                case Item::VSync:
-                    g_values.vsync = !g_values.vsync;
-                    break;
-                case Item::FpsLimit:
-                {
-                    constexpr int LIMITS[] = { 30, 60, 120, 0 };
-                    int index = int(std::find(std::begin(LIMITS), std::end(LIMITS), g_values.fpsLimit) - std::begin(LIMITS)) % 4;
-                    g_values.fpsLimit = LIMITS[(index + 4 + direction) % 4];
-                    break;
-                }
-                case Item::Resolution:
-                {
-                    size_t count;
-                    const settings::Resolution* list = Resolutions(count);
-                    size_t index = size_t(&ResolutionOf(g_values.renderHeight) - list);
-                    g_values.renderHeight = list[(index + count + direction) % count].height;
-                    break;
-                }
-                case Item::AntiAliasing:
-                    g_values.antiAliasing = Cycle(g_values.antiAliasing, 3, direction);
-                    break;
-                case Item::Overlay:
-                    g_values.overlay = Cycle(g_values.overlay, 4, direction);
-                    break;
-                case Item::Upscaler:
-                    g_values.upscaler = Cycle(g_values.upscaler, 3, direction);
-                    break;
-                case Item::UpscalerQuality:
-                    g_values.upscalerQuality = Cycle(g_values.upscalerQuality, 5, direction);
-                    break;
-                case Item::Anisotropy:
-                {
-                    constexpr int LEVELS[] = { 1, 2, 4, 8, 16 };
-                    int index = int(std::find(std::begin(LEVELS), std::end(LEVELS), g_values.anisotropy) - std::begin(LEVELS)) % 5;
-                    g_values.anisotropy = LEVELS[(index + 5 + direction) % 5];
-                    break;
-                }
-                case Item::Language:
-                {
-                    size_t count;
-                    const Language* languages = Languages(count);
-                    size_t index = size_t(&LanguageById(g_values.language) - languages);
-                    g_values.language = languages[(index + count + direction) % count].id;
-                    break;
-                }
-                case Item::MojoColors:
-                    g_values.ps2MojoColors = !g_values.ps2MojoColors;
-                    break;
-                case Item::CoopMode:
-                    g_values.coopLeapfrog = !g_values.coopLeapfrog;
-                    break;
-                case Item::InvertAxis:
-                    g_values.invertAxis = !g_values.invertAxis;
-                    break;
-                case Item::Autosave:
-                    g_values.autosave = !g_values.autosave;
-                    break;
-                case Item::SkipCutscenes:
-                    g_values.skipCutscenes = !g_values.skipCutscenes;
-                    break;
-                case Item::HdRemaster:
-                    if (!HdRemasterAvailable())
-                        return;  // shown as unavailable; the saved value is kept for when the data is back
-                    g_values.hdRemaster = !g_values.hdRemaster;
-                    break;
-                case Item::Subtitles:
-                    g_values.subtitles = !g_values.subtitles;
-                    break;
-                case Item::FreeCamera:
-                    g_values.freeCamera = !g_values.freeCamera;
-                    break;
-                case Item::CameraInvertY:
-                    g_values.cameraInvertY = !g_values.cameraInvertY;
-                    break;
-                case Item::DevConsole:
-                    g_values.devConsole = !g_values.devConsole;
-                    break;
-                case Item::LightSsao:
-                    g_values.ssao = Cycle(g_values.ssao, 3, direction);
-                    break;
-                case Item::LightGi:
-                    g_values.gi = !g_values.gi;
-                    break;
-                case Item::LightContactShadows:
-                    g_values.contactShadows = !g_values.contactShadows;
-                    break;
-                case Item::LightSoftShadows:
-                    g_values.softShadows = !g_values.softShadows;
-                    break;
-                case Item::Prompts:
-                    g_values.controls.prompts = Cycle(g_values.controls.prompts, 4, direction);
-                    break;
-                case Item::Player1:
-                case Item::Player2:
-                {
-                    // AUTO, then the controllers connected now (and the saved one, if it is not).
-                    std::string& chosen = g_values.controls.players[item == Item::Player2];
-                    std::vector<std::string> keys = { "auto" };
-                    for (const input::slots::Device& device : input::slots::Devices())
-                        keys.push_back(device.key);
-                    if (std::find(keys.begin(), keys.end(), chosen) == keys.end())
-                        keys.push_back(chosen);
-                    size_t index = size_t(std::find(keys.begin(), keys.end(), chosen) - keys.begin());
-                    chosen = keys[(index + keys.size() + direction) % keys.size()];
-                    break;
-                }
-                case Item::MouseCamera:
-                    g_values.controls.mouseCamera = !g_values.controls.mouseCamera;
-                    break;
-                case Item::MouseInvertY:
-                    g_values.controls.invertY = !g_values.controls.invertY;
-                    break;
-                case Item::MouseMenus:
-                    g_values.controls.mouseMenus = !g_values.controls.mouseMenus;
-                    break;
-                default:
-                    return;
-                }
-            }
+            else if (!options::Change(item, g_values, direction))
+                return;
             if (!(g_values == before))
             {
                 Apply(before);

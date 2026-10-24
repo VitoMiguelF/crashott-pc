@@ -290,6 +290,12 @@ namespace settings
                 ok = ParseBool(lower, values.devConsole);
             else if (name == "dev.hulk_skin")
                 ok = ParseBool(lower, values.hulkSkin);
+            else if (name == "launcher.view")
+            {
+                ok = lower == "simple" || lower == "advanced";
+                if (ok)
+                    values.launcherAdvanced = lower == "advanced";
+            }
             else
             {
                 Log("[settings] %s:%d: unknown setting %s (ignored)", g_path.filename().string().c_str(), line, name.c_str());
@@ -359,6 +365,8 @@ namespace settings
             out << "\n[dev]\n"
                 << "console = " << (v.devConsole ? "true" : "false") << "   # console de desenvolvedor (tecla antes do 1 ou F10; guia, \"Console de desenvolvedor\"), vale na hora\n"
                 << "hulk_skin = " << (v.hulkSkin ? "true" : "false") << "   # a skin Crash_Hulk (nao usada no jogo original) no menu de skins; o console liga com \"unlock skin hulk\"\n";
+            out << "\n[launcher]\n"
+                << "view = \"" << (v.launcherAdvanced ? "advanced" : "simple") << "\"   # simple (as opcoes principais) | advanced (todas as abas): a ultima vista do CrashLauncher\n";
             return out.str();
         }
     }
