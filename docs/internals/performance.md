@@ -31,6 +31,9 @@ Full write-up: `runtime/NOTES.md` "Desempenho de CPU" (two rounds); GUIA "Desemp
   swap sequence on SCRATCH_REG1 for the guest vblank handler). 2000 Hz: ~500 fps, p99 2.7 ms. The interrupt
   thread waits on a high-resolution waitable timer (was ~72% of a core spinning in `wait_until`, now ~5%).
   Subset rendering instances: 71 -> 54 per frame. Now the game thread is ~98% busy; the CP waits are ~2%.
+- Since 2026-10-24 these native paths are the only ones on `main` (the console-tiling path and the fallback
+  switches were removed). The next frame-rate gains are in the recompiled game code (`sub_82353478` CPU
+  skinning, the game's memcpy) and Pure3D's xn layer, not in the GPU path.
 
 ## Done (no visual or gameplay change)
 

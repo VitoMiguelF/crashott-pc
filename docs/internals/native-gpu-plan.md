@@ -1,4 +1,4 @@
-# Native GPU path: plan (branch `native-gpu`)
+# Native GPU path: plan and status
 
 > **Resumo (PT-BR).** Objetivo: deixar a renderização mais nativa e mais rápida, sem a tradução da GPU do
 > Xbox 360 em tempo real, sem regressões. Medido em 2026-10-24 (base `a906172`, vila, 1080p, 5700X +
@@ -15,7 +15,11 @@
 > (5) efeitos, DLSS/FSR, iluminação e texturas HD no caminho novo; (6) limpeza e (7) desempenho. Cada
 > marco tem testes, medição, commit e tarefas para o colaborador (seção "Tarefas").
 
-Status: **Phase 0 (investigation and design)**. Nothing in the runtime has changed yet on this branch.
+Status (2026-10-24): **M0, M1, M2, M3a and M8a are done and on `main`** (the `native-gpu` branch was merged
+and deleted; work continues on `main` only). The console-tiling path and the fallback switches were removed:
+the single-pass scene, the native D3D flush/kick, the 2000 Hz vblank, the subset rendering instances and the
+shader warm-up are the only paths. Village: ~170 -> ~500 fps. What is left for "100% native" is M4 (D3D-level
+interception, in slices) and M7 (deleting the PM4/EDRAM layer): see [Road to 100% native](#road-to-100-native).
 Owner of this file: whoever lands a milestone updates its row in [Milestones](#milestones) and the
 [task board](#task-board-for-collaborators).
 
@@ -65,7 +69,7 @@ game code (CRenderManager, CRenderObject3D, ...)
         -> Xbox D3D (statically linked, no symbols): 0x82268C00-0x822845A0 + 4 draw functions at 0x823EA9A8-0x823EBBD8
           -> PM4 in the D3D ring (32 MB, gpu/ring_buffer_hook.cpp), kicked through CP_RB_WPTR (MMIO trap)
             -> runtime: command_processor.cpp (PM4 parse, register file) -> xenos_renderer.cpp (state ->
-               draws, EDRAM render targets, resolves, tile stash, textures, temporal passes, present) -> rhi_vulkan.cpp
+               draws, EDRAM render targets, resolves, textures, temporal passes, present) -> rhi_vulkan.cpp
 ```
 
 Everything below "Xbox D3D" is what the runtime emulates today. The xn layer (0x8238B000-0x823AC000) is the
@@ -157,7 +161,7 @@ overlapping 32: scissor 0-448 / 416-864 / 832-1280) under `SET_BIN_SELECT` predi
 Consequences today: the CP gets the scene late (serialization, section 1), parses it three times, and the
 tile seams need the `TileStashBeforeResolve` workaround (ice band at x = 832).
 
-Done in M2 (`runtime/gpu/tiling_hooks.cpp`, on by default, `CRASH_SINGLE_PASS=0` = the console's tiling):
+Done in M2 (`runtime/gpu/tiling_hooks.cpp`; the only path since the merge into `main`):
 - The scene targets were tile-sized host images (480x720: `xnDisplay::vf04` creates color 0, depth/stencil
   and color 1 = velocity through 0x8226A868 with width align32(1280/3 + 63)), drawn once per tile. They are
   now created at 1280x720 with explicit EDRAM bases 1440 / 2048 / 2880 in `D3DSURFACE_PARAMETERS` (Base,
@@ -171,7 +175,7 @@ Done in M2 (`runtime/gpu/tiling_hooks.cpp`, on by default, `CRASH_SINGLE_PASS=0`
   `Resolve(tile rect, point = rect origin)`); the first becomes a whole-surface resolve and the other two are
   dropped. The xn code's non-tiled branches (+1220 = 0) are dead code here: they read depth/shadow texture
   slots that are never created (and mix up indices 295/297).
-- `TileStashBeforeResolve` is off in this mode (nothing to stitch).
+- The renderer's tile stash (`TileStashBeforeResolve`) was deleted with the tiling path (no seams to stitch).
 - EDRAM: render targets are host images keyed by (EDRAM base, pitch, format, MSAA) today. On the native path
   they are keyed by the guest surface object (`D3DSurface`) instead; EDRAM aliasing tricks the game relies on
   must be kept explicitly: the depth-only clears into the velocity RT (`DEPTH_ALIAS_PS`, stencil ref 0x80 =
@@ -227,9 +231,10 @@ feed, and its test profile is in the milestone's checklist.
 Every milestone: (1) lands behind a switch, default off until parity; (2) compares captures against the PM4
 path (`menu`, `vila_sem_cena`, `iluminacao_tela`, `configuracoes`; captures in `build\native_gpu\<milestone>\`);
 (3) measures `desempenho_vila_direto` with `tools\perf\bench.py` (alone on the machine); (4) is committed on
-`native-gpu` with the profiles named in the message; (5) updates this table and the task board.
+`main` (it was `native-gpu` until the merge) with the profiles named in the message; (5) updates this table and the task board.
 
-Switch: `[video] gpu_path = "pm4" | "native"` in settings, `CRASH_GPU_PATH`, `--gpu-path`; finer switches per
+Since the merge into `main` the finished milestones have no switches (only the native paths remain). New
+slices still get a temporary switch while experimental and lose it at parity. Original plan: `[video] gpu_path = "pm4" | "native"` in settings, `CRASH_GPU_PATH`, `--gpu-path`; finer switches per
 milestone while it is experimental (`CRASH_NATIVE_TILING=0`, ...). The user's suggested order (a-g) maps as
 noted; tiling moves up from (f) to M2 because it is the measured bottleneck and does not need the rest.
 
@@ -237,7 +242,7 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
 |---|---|---|---|---|
 | M0 | This plan, `tools/d3d_map.py`, baseline measurement | - | - | done (2026-10-24) |
 | M1 | Shaders precompiled at install/first run; variants list; pipeline cache warm-up | (a) | no compile in game after the first encounter; a resolution change compiles nothing | done (2026-10-24) |
-| M2 | Scene in one pass (no predicated tiling), still on PM4 | (f) | measured **179 -> 429 fps** in the village (2.4x), CP 3.3 -> 1.4 ms/frame, draws 1,585 -> 574/frame; tile stash off | done (2026-10-24), default on, `CRASH_SINGLE_PASS=0` = tiling |
+| M2 | Scene in one pass (no predicated tiling), still on PM4 | (f) | measured **179 -> 429 fps** in the village (2.4x), CP 3.3 -> 1.4 ms/frame, draws 1,585 -> 574/frame; tile stash off | done (2026-10-24), the only path |
 | M3 | Direct draws: D3D draw hooks feed the renderer from the device shadow state, a host command stream to the render thread; PM4 only for what is not hooked yet | (b) | M3a (native flush + kick, identical PM4): 441 -> 464 fps; the transport change (M3b) no longer pays, see M3 status | M3a done (2026-10-24) |
 | M4 | Native resources: textures/buffers/shaders/render targets as host objects; resolves as copies; frontend first, then the village | (b), (c), (d) | per-draw lookups and EDRAM bookkeeping gone; slices M4.1-M4.6 in "M4 design" | designed (2026-10-24) |
 | M5 | Post effects parity: motion blur, DOF, refraction/reflection, water, heat shimmer, Bink | (d) | - | |
@@ -257,7 +262,7 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
   .ucode`, big-endian, local, game-derived: never shipped). At every start a low-priority thread translates and
   compiles both variants of every known shader (the `.out` pixel shaders + the recorded ones) that the cache
   lacks. `CrashRecomp.exe --precompile-shaders` does the same on every core; `tools/setup.py` runs it after
-  assembling `dist\` (24 x 2 in 0.85 s on 16 threads). `CRASH_NO_SHADER_WARMUP=1` skips the warm-up.
+  assembling `dist\` (24 x 2 in 0.85 s on 16 threads).
 - DXC: one compiler object per thread; cache entries are written under a temporary name and renamed.
 - Measured (scratch userdata): empty cache -> 46 compiles in the first village run; after `--precompile-shaders`
   32 (14 bound VS + 18 renderer pass shaders, once per install); switching to 1080p after one run: the warm-up
@@ -282,7 +287,7 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
 - Sampled after M2, the D3D draw functions were ~15% of the game thread: ~5% the residual fence wait and the
   rest the recompiled flush of dirty groups (0x8226E308 3.4%, 0x8226E6A8 2.8%) and the kick (0x8226C3F0 3.3%,
   the CP_RB_WPTR store through the MMIO page trap). Setters called by xn are cheap.
-- **M3a** (`runtime/gpu/d3d_native.cpp`, on by default, `CRASH_NATIVE_D3D=0` = the recompiled originals): native
+- **M3a** (`runtime/gpu/d3d_native.cpp`, always on): native
   `8226E308` / `8226E6A8` (block copies of the big-endian shadow registers; the cross-segment case still goes
   through D3D's 0x8226DCD0) and a native kick (writes the INDIRECT_BUFFER packets, hands CP_RB_WPTR to the
   command processor without the trap; the PIX/capture paths stay with the original). Output is byte-identical:
@@ -306,8 +311,7 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
   `CRASH_CP_WAIT_STATS=1` shows it), and the game waited for the command processor. `FAST_VBLANK_HZ` = 2000
   (gpu.cpp): 464 -> 485-510 fps, p99 3.7 -> 2.7 ms, 1% low 210 -> 265 fps; 4000 Hz gave nothing more. The 30 fps
   mode (60 Hz vblank, as on the console) is unchanged.
-- **Subset rendering instances** (rhi_vulkan.cpp `PipelineInsideRendering`, `CRASH_VULKAN_SUBSET_RENDERING=0` =
-  off): a draw whose attachments are a subset of the open instance's is recorded inside it with a pipeline
+- **Subset rendering instances** (rhi_vulkan.cpp `PipelineInsideRendering`, always on): a draw whose attachments are a subset of the open instance's is recorded inside it with a pipeline
   variant (`DrawPipelineKey::keepFormats`: the instance's formats, no writes to the extra slots, no depth/stencil
   test or write without depth). Instances per village frame 71 -> 54 (the stats line `rendering instances begun
   because ...` gives the reasons: depth 25, color count 11, color targets 11, none open 7 left); CP 1.27 -> 1.20
@@ -374,17 +378,39 @@ owns its hook file (`gpu/native/d3d_textures.cpp`, `gpu/native/d3d_buffers.cpp`)
 
 ## 7. Task board (for collaborators)
 
-Pick a task, put your name and branch next to it (on `native-gpu`, or a branch off it), and keep to the files
+Pick a task, put your name and branch next to it (a branch off `main`, merged by pull request), and keep to the files
 listed so two people never edit the same file.
 
 | Task | Files | Needs | Done when |
 |---|---|---|---|
-| T1 Shader precompile (M1) | `gpu/xenos_renderer.cpp` (`TestShaders` area only), `gpu/rhi_vulkan.cpp` (pipeline cache), `main.cpp` (flag), `tools/setup.py` | nothing | M1 test above passes |
-| T2 Tiling bracket trace (M2 step 1) | new `gpu/tiling_hooks.cpp` (logging only) | nothing | a table of brackets per frame in NOTES |
+| ~~T1 Shader precompile (M1)~~ done | `gpu/xenos_renderer.cpp` (`TestShaders` area only), `gpu/rhi_vulkan.cpp` (pipeline cache), `main.cpp` (flag), `tools/setup.py` | nothing | M1 test above passes |
+| ~~T2 Tiling bracket trace (M2 step 1)~~ done | new `gpu/tiling_hooks.cpp` (logging only) | nothing | a table of brackets per frame in NOTES |
 | T3 Name the D3D entry points | new `gpu/native/d3d_functions.h`, this doc 2.1 | `tools/d3d_map.py`, Xbox 360 D3D API knowledge | every entry point has a name + confidence |
 | T4 Device shadow-state layout | new `gpu/native/d3d_device.h` | T3 for the draw/flush functions | the renderer state of one draw can be rebuilt from guest memory and matches the PM4 path (logged side by side) |
-| T5 One-pass scene (M2) | `gpu/tiling_hooks.cpp`, `gpu/xenos_renderer.cpp` (`Resolve`, tile stash) | T2 | M2 checks pass, bench recorded |
-| T6 Capture comparison wrapper | new `tools/native_gpu_compare.py` (wraps `run_game.py` + `tools/perf/compare_runs.py`) | nothing | one command runs a profile on both paths and prints the per-shot difference |
+| ~~T5 One-pass scene (M2)~~ done | `gpu/tiling_hooks.cpp`, `gpu/xenos_renderer.cpp` (`Resolve`, tile stash) | T2 | M2 checks pass, bench recorded |
+| T6 Capture comparison wrapper | new `tools/native_gpu_compare.py` (wraps `run_game.py` + `tools/perf/compare_runs.py`) | nothing | one command runs a profile on two builds (or a slice on/off) and prints the per-shot difference |
+| T7 M4.1 host command stream + draws | new `gpu/native/command_stream.*`, `gpu/native/d3d_draws.cpp`, `gpu/command_processor.cpp` (one NOP case) | T4 | the village matches with the register file compared at every marker |
+| T8 M4.3 native textures | new `gpu/native/d3d_textures.cpp`, `gpu/xenos_renderer.cpp` (`GetTextureView` side only) | T7 | captures + an HD pack match; no per-draw texture hash |
+| T9 M4.4 native vertex/index buffers | new `gpu/native/d3d_buffers.cpp`, `gpu/xenos_renderer.cpp` (vertex/index upload only) | T7 | captures match; no per-draw swap/copy of vertex data |
+| T10 Bound vertex shader HLE | `gpu/native/` (D3D's vertex-declaration binding of a VS) | T3 | the bound microcode is produced from the `.out` + declaration without running the game, so `--precompile-shaders` covers the vertex shaders too |
+
+## Road to 100% native
+
+What is still emulated between the game's Direct3D calls and Vulkan, in the order to remove it:
+
+1. **M4.1** host command stream ordered by markers in the D3D ring, first used by the 4 draw functions (task
+   T7). Structural: the state of a draw reaches the renderer without PM4.
+2. **M4.2** shaders by handle (no IM_LOAD packets), then **T10**: reproduce D3D's vertex-shader binding so
+   every vertex shader can be compiled at install, not only the ones already seen.
+3. **M4.3** textures and **M4.4** vertex/index buffers as host objects (T8 and T9: independent, two people).
+4. **M4.5** render targets, clears and resolves on host images (the EDRAM aliasing cases become named special
+   cases), **M4.6** swap, Bink and the frontend.
+5. **M7**: with every D3D entry point (`tools/d3d_map.py`, 98) going through the host stream, delete the PM4
+   parser, the Xenos register file and the EDRAM emulation; the command processor becomes the render thread.
+
+Not GPU, but also emulated: the XMA audio hardware (FFmpeg decodes it) and the vblank/interrupt plumbing
+D3D's swap depends on (smaller after M7). Shader *translation* (Xenos microcode -> HLSL) stays: the game only
+has microcode; it already happens at install/start, not while playing.
 
 ## 8. Risks and open questions
 

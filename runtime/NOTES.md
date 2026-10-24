@@ -2037,6 +2037,14 @@ ative_gpu\m2\`.
 **O que fica de fora**: um VS amarrado inédito ainda compila no primeiro draw (~80 ms, uma vez por instalação), e os shaders de pass do renderer compilam na primeira execução.
 
 
+## Só a versão nativa no `main` (2026-10-24)
+
+Decisão do usuário: "vamos juntar o novo launcher com a versão native e eliminar a versão antiga, vamos trabalhar somente na nativa a partir de agora". A branch `native-gpu` recebeu o `main` (launcher simples, `e4d0701`; o único conflito foi este arquivo) e o `main` avançou até ela; a branch e o worktree `CrashRecomp-native` foram apagados depois.
+
+**O que saiu**: o caminho do tiling do console (o `BeginTiling` original, o `EndTiling` original, `gpu/tiling.h`, `CRASH_SINGLE_PASS`), o tile stash do renderer (`TileStashBeforeResolve`, `CRASH_GPU_NO_TILE_STASH`), e as chaves `CRASH_NATIVE_D3D`, `CRASH_VULKAN_SUBSET_RENDERING` e `CRASH_NO_SHADER_WARMUP`. Ficaram as ferramentas de checagem (`CRASH_NATIVE_D3D_VERIFY`, `CRASH_TRACE_TILING`, `CRASH_CP_WAIT_STATS`, `CRASH_DUMP_SHADERS`).
+
+**Conferido antes de remover**: seis fases a mais (L2_E1, L2_E4, L3_E2, L4_E1, L4_E3, L5_E2) rodaram numa passada só sem crash nem defeito visual; o `EndTiling` do meio do quadro (`0x8238CE98`, chamado por `CRenderManager::vf10`) não apareceu em nenhuma delas nem na vila: continua passando pelo mesmo substituto (um `Resolve` da superfície inteira), mas não foi exercitado. No build do `main`: `menu`, `vila_sem_cena`, `configuracoes`; a `dist` refeita com o `make_dist.py` e os shaders pré-compilados nela; a `userdata` do jogador ficou idêntica (hash dos arquivos antes e depois); o launcher abre na vista simples (`--screenshot`).
+
 ## Launcher simples + opções compartilhadas com a tela SETTINGS (2026-10-24) (`settings/options.*`, `launcher/launcher.cpp`, `settings/settings_menu.cpp`, `gpu/hd_textures.cpp`)
 
 Pedido: o launcher abria com todas as opções; queria só idioma, resolução, limite de FPS, HD AI Remaster e uma ILUMINAÇÃO única (Original / Remaster), com um AVANÇADO no canto para o resto; sem a linha de texturas HD; a aba DEFINITIVE EDITION do launcher igual à do jogo (faltavam as cinco linhas de iluminação e o título delas); e sem a linha RESOLUÇÃO DAS SOMBRAS (só informativa) na tela do jogo. Capturas em `build\launcher_menus\` (`LEIA.txt`).

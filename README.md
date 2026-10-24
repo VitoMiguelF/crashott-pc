@@ -19,6 +19,10 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
   (60 / 120 / unlimited), in a window, borderless or fullscreen, at internal resolutions up to 4K.
 - **DLSS / DLAA** (NVIDIA RTX) and **FSR 3.1** (any GPU) upscaling, FXAA / SMAA, anisotropic filtering,
   adjustable motion blur, depth of field and shadow softness.
+- **Fast native rendering path**: the scene is drawn in one pass instead of the Xbox 360's three screen
+  tiles, the game's Direct3D command building runs as native code and its shaders are compiled at install
+  and warmed up in the background. In the heaviest scene (the first level's village, unlimited FPS) this
+  went from ~170 to ~500 fps on a Ryzen 7 5700X + RTX 5080.
 - **PC controls**: keyboard and mouse with rebindable keys, mouse camera, mouse in every menu, Xbox and
   **PlayStation (DualSense)** controllers, button icons that follow the last device used, and **local
   co-op** with two controllers (choose who is player 1 and player 2 in SETTINGS > CONTROLS).
@@ -190,6 +194,10 @@ de PC.
   sem limite (60 / 120 / livre), em janela, sem bordas ou tela cheia, com resolução interna até 4K.
 - **DLSS / DLAA** (NVIDIA RTX) e **FSR 3.1** (qualquer placa), FXAA / SMAA, filtro anisotrópico, motion
   blur, profundidade de campo e suavidade das sombras ajustáveis.
+- **Renderização nativa rápida**: a cena é desenhada numa passada só em vez das três faixas de tela do
+  Xbox 360, a montagem de comandos Direct3D do jogo roda como código nativo e os shaders são compilados na
+  instalação e aquecidos em segundo plano. Na cena mais pesada (a vila da primeira fase, FPS livre) isso
+  foi de ~170 para ~500 fps num Ryzen 7 5700X + RTX 5080.
 - **Controles de PC**: teclado e mouse com teclas configuráveis, câmera pelo mouse, mouse em todos os
   menus, controles Xbox e **PlayStation (DualSense)**, ícones dos botões que seguem o último dispositivo e
   **co-op local** com dois controles (escolha quem é o jogador 1 e o 2 em SETTINGS > CONTROLES).

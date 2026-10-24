@@ -25,19 +25,17 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   surface (stencil ref 0x80 -> EDRAM word 0x00808080 = neutral velocity). The renderer also draws such
   depth-only clears into the k_8_8_8_8 colour RT at that base (`DEPTH_ALIAS_PS`; `CRASH_GPU_NO_DEPTH_ALIAS=1`
   = old behaviour). General EDRAM transfers are still missing.
-- **Tiling**: tiles are 448 px wide overlapping 32 (scissor 0-448 / 416-864 / 832-1280). Each tile resolves
-  the scene into 0x0A642000 without a clear before refraction, and its final with a clear into the same
-  texture, so tile 3 read tile 2's final (ice band at x=832). `Resolve()` keeps per-surface `pre`/`final`
-  stash copies (`TileStashBeforeResolve`; `CRASH_GPU_NO_TILE_STASH=1` disables).
-- **Single-pass scene (default since 2026-10-24, `gpu/tiling_hooks.cpp`)**: the scene targets are created at
-  1280x720 with explicit EDRAM bases 1440/2048/2880, BeginTiling is skipped, EndTiling becomes one Resolve,
-  the xn per-tile resolves collapse into one; no tile stash. 2.4x fps in the village. `CRASH_SINGLE_PASS=0`
-  = the console's predicated tiling (above). Details: [native-gpu-plan.md](native-gpu-plan.md) 3.3.
+- **Single-pass scene** (`gpu/tiling_hooks.cpp`, the only path): the console renders the 2x MSAA scene in 3
+  predicated tiles (448 px, overlapping 32) and D3D queues the scene until EndTiling. Here the scene targets
+  are created at 1280x720 with explicit EDRAM bases 1440/2048/2880, BeginTiling is skipped, EndTiling becomes
+  one Resolve and the xn per-tile resolves collapse into one (2.4x fps in the village). The tile stash that
+  fixed the ice band at the x = 832 seam went with the tiling path (no seams). Details:
+  [native-gpu-plan.md](native-gpu-plan.md) 3.3.
 - The orange translucent shapes in the top corners are the P1/P2 HUD, not artifacts.
 
 ## Vulkan renderer (`rhi.h`, `rhi_vulkan.cpp`)
 
-- `xenos_renderer.cpp` is API-agnostic: PM4 state, EDRAM render targets, resolves, tile stash, texture
+- `xenos_renderer.cpp` is API-agnostic: PM4 state, EDRAM render targets, resolves, texture
   decode and cache, temporal passes and present. It talks to an `rhi::Device` (`rhi.h`) with two binding
   models: **draws** (Xenos shaders: b0-b3, t0-t31, s0-s31, the upload ring at t0 space1) and **passes**
   (fullscreen helpers: b0, t0-t7 or a structured buffer, static samplers s0 point / s1 linear).
@@ -54,8 +52,7 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   `CRASH_VULKAN_D32=1` forces it). `XE_STENCIL` reads `.x` of a stencil view.
 - A draw whose attachments are a subset of the open rendering instance's is recorded inside it with a pipeline
   variant (`keepFormats`: the instance's formats, extra slots write-masked, depth/stencil off without depth):
-  71 -> 54 instances per village frame (`CRASH_VULKAN_SUBSET_RENDERING=0` = off; the stats line gives why the
-  remaining ones were begun).
+  71 -> 54 instances per village frame (the stats line gives why the remaining ones were begun).
 - Pitfalls found: render targets/depth packed at the driver's 1 KB alignment in shared 64 KB pages
   corrupted each other on NVIDIA (attachments get 64 KB alignment); push descriptors with immutable
   samplers sampled zeros from image views created after the first frames (the menus' second front buffer
