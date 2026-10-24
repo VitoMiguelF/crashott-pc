@@ -6,6 +6,24 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 
 **[Português do Brasil abaixo](#português-do-brasil)**
 
+> ### v1.04: almost 3x faster, and on the way to 100% native rendering
+>
+> The renderer no longer imitates the Xbox 360's GPU step by step where it doesn't need to: the scene is
+> drawn **in one pass** instead of the console's three screen tiles, the game's Direct3D command building
+> runs as **native code**, and the shaders are **compiled at install** instead of while playing.
+>
+> | Heaviest scene (L1_E1 village, 1080p, unlimited FPS) | v1.03 | **v1.04** |
+> |---|---|---|
+> | Average frame rate | ~180 fps | **~500 fps** (2.8x) |
+> | Worst 1% of frames (1% low) | ~105 fps | **~265 fps** |
+> | 99th percentile frame time | 6.6 ms | **2.7 ms** |
+> | CPU used by the vblank thread | ~70% of a core | ~5% |
+>
+> Measured on a Ryzen 7 5700X + RTX 5080. The gain is on the CPU side (the GPU was never the limit), so
+> slower CPUs should gain in a similar proportion (not measured yet: reports welcome). Next: replacing
+> the remaining Xbox 360 GPU emulation with direct Direct3D-to-Vulkan calls, step by step
+> ([the plan](docs/internals/native-gpu-plan.md#road-to-100-native)).
+
 ![Title screen](docs/screenshots/title.jpg)
 
 > **No game files are included.** You need your own legally obtained copy of Crash of the Titans for
@@ -78,7 +96,7 @@ ones with `winget`.
 
 ## Install
 
-1. Download **`CrashRecomp-v1.03.zip`** (the latest, ~150 MB) from the [releases](https://github.com/VitoMiguelF/crashott-pc/releases)
+1. Download **`CrashRecomp-v1.04.zip`** (the latest, ~150 MB) from the [releases](https://github.com/VitoMiguelF/crashott-pc/releases)
    and unzip it. (A `git clone` of this repository has no `toolchain\`: see [CONTRIBUTING.md](CONTRIBUTING.md).)
 2. Run **`CrashSetup.exe`**. Choose your game folder, pick the options (subtitles, HD AI Remaster, asset
    export for modding, copying the game into the folder) and click **INSTALL**. It recompiles the game
@@ -183,6 +201,25 @@ código PowerPC do jogo para x86-64 com o [XenonRecomp](https://github.com/hedge
 um runtime que faz o papel do Xbox 360 (gráficos, áudio, controles, arquivos, saves) e várias melhorias
 de PC.
 
+> ### v1.04: quase 3x mais rápido, e a caminho da renderização 100% nativa
+>
+> O renderizador deixou de imitar a GPU do Xbox 360 passo a passo onde não precisa: a cena é desenhada
+> **numa passada só** em vez das três faixas de tela do console, a montagem de comandos Direct3D do jogo
+> roda como **código nativo** e os shaders são **compilados na instalação**, não durante o jogo.
+>
+> | Cena mais pesada (vila do L1_E1, 1080p, FPS livre) | v1.03 | **v1.04** |
+> |---|---|---|
+> | FPS médio | ~180 fps | **~500 fps** (2,8x) |
+> | Pior 1% dos quadros (1% low) | ~105 fps | **~265 fps** |
+> | Tempo de quadro no percentil 99 | 6,6 ms | **2,7 ms** |
+> | CPU usada pela thread de vblank | ~70% de um núcleo | ~5% |
+>
+> Medido num Ryzen 7 5700X + RTX 5080. O ganho é do lado da CPU (a placa de vídeo nunca foi o limite),
+> então CPUs mais lentas devem ganhar numa proporção parecida (ainda não medido: relatos são bem-vindos).
+> Próximo passo: trocar o resto da emulação da GPU do Xbox 360
+> por chamadas diretas do Direct3D para o Vulkan, etapa por etapa
+> ([o plano](docs/internals/native-gpu-plan.md#road-to-100-native)).
+
 > **Nenhum arquivo do jogo está incluído.** Você precisa da sua própria cópia original de Crash of the
 > Titans para Xbox 360. O instalador monta tudo a partir da **sua** cópia, no **seu** PC. Este
 > repositório tem só código, ferramentas e documentação próprios. Crash of the Titans é © Activision /
@@ -248,7 +285,7 @@ pelo `winget`.
 
 ## Instalação
 
-1. Baixe **`CrashRecomp-v1.03.zip`** (a mais recente, ~150 MB) nas [releases](https://github.com/VitoMiguelF/crashott-pc/releases) e
+1. Baixe **`CrashRecomp-v1.04.zip`** (a mais recente, ~150 MB) nas [releases](https://github.com/VitoMiguelF/crashott-pc/releases) e
    descompacte. (Um `git clone` deste repositório não tem a `toolchain\`: veja o [CONTRIBUTING.md](CONTRIBUTING.md).)
 2. Abra o **`CrashSetup.exe`**. Escolha a pasta do jogo, escolha as opções (legendas, HD AI Remaster, assets
    para modding, copiar o jogo para a pasta) e clique em **INSTALAR**. Ele recompila o código do jogo e
