@@ -148,6 +148,10 @@ namespace settings
                 else
                     ok = false;
             }
+            else if (name == "video.gpu_safe_mode")  // checked by the renderer (rhi::ParseSafeMode)
+                values.gpuSafeMode = lower;
+            else if (name == "video.gpu_diagnostics")
+                ok = ParseBool(lower, values.gpuDiagnostics);
             else if (name == "video.renderer")
             {
                 // The Direct3D 12 / Vulkan choice of the 2026-10-23 builds: Vulkan is the only renderer now.
@@ -324,7 +328,9 @@ namespace settings
                    "fps_limit = " << v.fpsLimit << "   # 30 (original) | 60 | 120 | 0 = sem limite\n"
                    "resolution = \"" << ResolutionOf(v.renderHeight).name << "\"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160 (vale ao sair da tela SETTINGS)\n"
                    "overlay = \"" << OverlayModeName(v.overlay) << "\"   # off | fps | frametime | full (F1 alterna)\n"
-                   "antialiasing = \"" << AntiAliasingName(v.antiAliasing) << "\"   # off | fxaa | smaa (pos-processamento da imagem final)\n\n"
+                   "antialiasing = \"" << AntiAliasingName(v.antiAliasing) << "\"   # off | fxaa | smaa (pos-processamento da imagem final)\n"
+                   "gpu_safe_mode = \"" << v.gpuSafeMode << "\"   # off | on | lista: barriers, instances, serial, memory, depth, present, cache (telas pretas em alguns drivers; ao reiniciar)\n"
+                   "gpu_diagnostics = " << (v.gpuDiagnostics ? "true" : "false") << "   # detalhes da GPU e do driver no log (ao reiniciar)\n\n"
                    "[graphics]\n"
                    "upscaler = \"" << UpscalerName(v.upscaler) << "\"   # off | dlss (DLSS/DLAA, so NVIDIA RTX) | fsr (FSR 3.1, qualquer GPU) (vale ao sair da tela SETTINGS)\n"
                    "upscaler_quality = \"" << UpscalerQualityName(v.upscalerQuality) << "\"   # native (DLAA / FSR Native AA) | quality | balanced | performance | ultra_performance (vale ao sair da tela SETTINGS)\n"

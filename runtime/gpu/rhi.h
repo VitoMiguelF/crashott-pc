@@ -257,12 +257,31 @@ namespace gpu::rhi
         uint64_t ringWaitTicks = 0;   // ... waiting for upload ring space
     };
 
+    // GPU safe mode ([video] gpu_safe_mode, CRASH_GPU_SAFE): conservative paths, one bit each, for
+    // drivers that show black frames or tiles. ParseSafeMode reads "on"/"all", "off" or a list of
+    // the names below.
+    enum SafeMode : uint32_t
+    {
+        SAFE_BARRIERS = 1,     // "barriers": every barrier waits for all earlier work, all memory
+        SAFE_INSTANCES = 2,    // "instances": no draw recorded inside a larger rendering instance
+        SAFE_SERIAL = 4,       // "serial": the CPU waits for each frame's GPU work (no frame overlap)
+        SAFE_MEMORY = 8,       // "memory": a memory allocation per image (no sub-allocation)
+        SAFE_DEPTH = 16,       // "depth": D32S8 instead of D24S8
+        SAFE_PRESENT = 32,     // "present": no immediate present mode; keep swap chain image contents
+        SAFE_CACHE = 64,       // "cache": ignore the pipeline cache on disk
+        SAFE_ALL = 127,
+    };
+    uint32_t ParseSafeMode(const std::string& text);
+    std::string SafeModeNames(uint32_t mask);
+
     struct DeviceInfo
     {
         void* window = nullptr;  // HWND
         uint32_t width = 1280, height = 720;
         std::filesystem::path shaderCache;  // userdata\shadercache (empty: no disk cache)
         bool debug = false;                 // Vulkan validation layers (+ synchronization validation)
+        uint32_t safeMode = 0;              // SafeMode bits
+        bool diagnostics = false;           // [video] gpu_diagnostics: the device's features, limits and formats in the log
         // Vulkan extensions a vendor SDK asks for (DLSS's NGX), enabled when the driver has them.
         std::vector<std::string> instanceExtensions, deviceExtensions;
     };
@@ -284,6 +303,9 @@ namespace gpu::rhi
             uint64_t offset = 0;
         };
         virtual Upload AllocateUpload(uint64_t size, uint64_t alignment) = 0;
+        // Between true and false (nested), the uploads are for a draw not recorded yet: a
+        // submission in between (the ring full) must not free them (rhi_ring.h).
+        virtual void HoldUploads(bool hold) = 0;
 
         // Resources. Destroy* releases them once the GPU is done with them.
         virtual Texture* CreateTexture(const TextureDesc& desc) = 0;  // contents undefined (render targets: cleared to 0)

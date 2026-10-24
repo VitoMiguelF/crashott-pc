@@ -9,7 +9,8 @@
 //             fps_limit = 30 | 60 | 120 | 0 (no limit), resolution = "1280x720" | "1600x900" |
 //             "1920x1080" | "2560x1440" | "3840x2160" (internal),
 //             overlay = "off" | "fps" | "frametime" | "full" (show_fps = true|false still read),
-//             antialiasing = "off" | "fxaa" | "smaa"
+//             antialiasing = "off" | "fxaa" | "smaa", gpu_safe_mode = "off" | "on" | a list (gpu/rhi.h
+//             SafeMode), gpu_diagnostics = true|false (on the next launch)
 //   [graphics] upscaler = "off" | "dlss" | "fsr", upscaler_quality = "native" | "quality" |
 //             "balanced" | "performance" | "ultra_performance", sharpness = 0..100 (%),
 //             motion_blur = 0..100 (%), depth_of_field = 0..100 (%), anisotropic_filtering =
@@ -110,6 +111,10 @@ namespace settings
         int renderHeight = 720;  // internal resolution (Resolutions())
         OverlayMode overlay = OverlayMode::Off;
         AntiAliasing antiAliasing = AntiAliasing::Off;
+        // gpu_safe_mode: "off", "on" or a list of the renderer's conservative paths (gpu/rhi.h
+        // SafeMode); gpu_diagnostics: the GPU's details in the log. Both on the next launch.
+        std::string gpuSafeMode = "off";
+        bool gpuDiagnostics = false;
         Upscaler upscaler = Upscaler::Off;
         UpscalerQuality upscalerQuality = UpscalerQuality::Native;
         int sharpness = 0;          // %: FSR's RCAS sharpening (DLSS 4 has none)

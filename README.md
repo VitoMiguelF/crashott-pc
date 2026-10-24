@@ -129,6 +129,12 @@ ones with `winget`.
 
   Use the same Python the installer uses: if `python` isn't found or is a different one, try
   `py -3 -m pip install numpy pillow`.
+- **Black screen flicker on some GPUs (reported on an Intel UHD iGPU, issue #3).** With the game closed,
+  set `gpu_safe_mode = "on"` and `gpu_diagnostics = true` under `[video]` in `userdata\settings.toml`.
+  The safe mode turns off the renderer's riskier optimizations (it costs some FPS); the diagnostics
+  write `userdata\crashrecomp_log.txt` (GPU, driver, limits) to attach to the issue. If the safe mode
+  helps, a list instead of `"on"` (`"barriers"`, `"serial"`, `"present"`, ...) narrows down which part
+  does it.
 
 ## Playing
 
@@ -315,6 +321,12 @@ pelo `winget`.
 
   Use o mesmo Python do instalador: se `python` não for encontrado ou for outro, tente
   `py -3 -m pip install numpy pillow`.
+- **Tela preta piscando em algumas GPUs (relatado numa Intel UHD integrada, issue #3).** Com o jogo
+  fechado, ponha `gpu_safe_mode = "on"` e `gpu_diagnostics = true` em `[video]` no
+  `userdata\settings.toml`. O modo seguro desliga as otimizações mais arriscadas do renderizador (custa
+  um pouco de FPS); o diagnóstico grava `userdata\crashrecomp_log.txt` (GPU, driver, limites) para anexar
+  à issue. Se o modo seguro resolver, uma lista no lugar de `"on"` (`"barriers"`, `"serial"`,
+  `"present"`, ...) mostra qual parte resolve.
 
 ## Jogando
 

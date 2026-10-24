@@ -98,6 +98,13 @@ int main(int argc, char** argv)
     // the texts of the language pack chosen there, if any (after the SETTINGS label patch).
     settings::LoadLanguagePacks(paths::Languages());
     settings::Load(vfs::UserDataDir());
+    // [video] gpu_diagnostics: the log also goes to userdata\crashrecomp_log.txt (for a bug report).
+    if (settings::Get().gpuDiagnostics)
+    {
+        std::filesystem::path logFile = vfs::UserDataDir() / "crashrecomp_log.txt";
+        SetLogFile(logFile.wstring().c_str());
+        Log("[main] gpu_diagnostics: the log is also written to %s", logFile.string().c_str());
+    }
     // First run: the game folder picked in the dialog goes to settings.toml ([paths] game).
     if (paths::GameChosenNow())
     {

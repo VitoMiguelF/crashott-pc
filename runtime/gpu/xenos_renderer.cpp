@@ -41,6 +41,7 @@
 #include "../fs/vfs.h"
 #include "../kernel/input.h"
 #include "../kernel/memory.h"
+#include "../paths.h"
 #include "../settings/direct_boot.h"
 #include "../settings/prompt_icons.h"
 #include "../settings/quit_game.h"
@@ -2502,6 +2503,13 @@ float4 main(float4 position : SV_Position) : SV_Target
 
         void DrawImpl(const DrawPacket& packet)
         {
+            // The draw's uploads (indices, vertices, constants) come before the draw is recorded:
+            // held so a submission in between doesn't free them (rhi_ring.h).
+            struct UploadHold
+            {
+                UploadHold() { g_rhi->HoldUploads(true); }
+                ~UploadHold() { g_rhi->HoldUploads(false); }
+            } hold;
             uint32_t initiator = packet.drawInitiator;
             uint32_t primitive = initiator & 0x3F;
             uint32_t sourceSelect = (initiator >> 6) & 3;
@@ -3329,6 +3337,24 @@ float4 main(float4 position : SV_Position) : SV_Target
             Log("[gpu] internal resolution %s (%.2fx the game's 1280x720)", settings::ResolutionOf(settings::AtStartup().renderHeight).name, g_renderScale);
 
         g_debugLayer = getenv("CRASH_GPU_DEBUG") != nullptr;
+        // [video] gpu_safe_mode (CRASH_GPU_SAFE overrides it) and gpu_diagnostics (CRASH_GPU_DIAG).
+        const settings::Values& startup = settings::AtStartup();
+        const char* safeOverride = getenv("CRASH_GPU_SAFE");
+        uint32_t safeMode = rhi::ParseSafeMode(safeOverride ? safeOverride : startup.gpuSafeMode);
+        bool diagnostics = startup.gpuDiagnostics || getenv("CRASH_GPU_DIAG") != nullptr;
+        if (diagnostics && !g_debugLayer)
+        {
+            // The validation layer copied into vulkan_layers\ next to the exe (players have no Vulkan
+            // SDK): with it the diagnostics run also checks the renderer's use of Vulkan.
+            std::filesystem::path layers = paths::ExeDir() / "vulkan_layers";
+            std::error_code ignored;
+            if (std::filesystem::exists(layers / "VkLayer_khronos_validation.json", ignored))
+            {
+                SetEnvironmentVariableW(L"VK_ADD_LAYER_PATH", layers.wstring().c_str());
+                g_debugLayer = true;
+                Log("[gpu] diagnostics: validation layer from %s", layers.string().c_str());
+            }
+        }
         g_shaderCacheDir = vfs::UserDataDir() / "shadercache";
         std::error_code error;
         std::filesystem::create_directories(g_shaderCacheDir, error);
@@ -3348,6 +3374,8 @@ float4 main(float4 position : SV_Position) : SV_Target
         info.height = WINDOW_HEIGHT;
         info.shaderCache = g_shaderCacheDir;
         info.debug = g_debugLayer;
+        info.safeMode = safeMode;
+        info.diagnostics = diagnostics;
         upscaler::VulkanExtensions(info.instanceExtensions, info.deviceExtensions);
         g_rhi = rhi::CreateVulkan(info);
         if (!g_rhi)

@@ -9,6 +9,9 @@ void Log(const char* format, ...);
 // Called after every Log line with its text (at most 1023 characters), outside the log lock; it
 // must not Log itself. One observer: the replay's WAIT entries (kernel/input_record.cpp).
 void SetLogObserver(void (*observer)(const char* line));
+// Also writes the log to this file from now on (truncated first): the player's runs have no
+// console ([video] gpu_diagnostics, main.cpp).
+void SetLogFile(const wchar_t* path);
 
 // Crash reporting: a vectored handler that turns host faults inside recompiled code into a
 // report (exception, nearest guest function, guest LR/SP, last import called), and an optional

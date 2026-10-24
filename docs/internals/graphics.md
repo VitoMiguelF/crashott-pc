@@ -64,7 +64,25 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   only). The device enables the extensions they ask for (`rhi::DeviceInfo`): NGX's list, and the ones
   the FidelityFX DLL looks up by extension name (`vkGetBufferMemoryRequirements2KHR`,
   `vkSetDebugUtilsObjectNameEXT`: a null call otherwise).
-- Debug: `CRASH_GPU_DEBUG=1` (validation + sync validation; `run_game.py --set gpu_debug=true`),
+- Upload ring (`rhi_ring.h`): a draw's uploads come before the draw is recorded, so `DrawImpl` (and
+  `DrawPass`) hold them (`Device::HoldUploads`): a submission in between (ring or descriptor pool full)
+  is marked where the hold began. Without it those uploads were freed and reused under the pending draw
+  (`CRASH_VULKAN_RING_MB=8`: device lost in ~10 s). The ring peaks at ~47 MB in the village at 1080p.
+- Safe mode / diagnostics (issue #3, black flicker on an Intel UHD): `[video] gpu_safe_mode = "on"` or a
+  list of `barriers, instances, serial, memory, depth, present, cache` (`rhi::SafeMode`; `CRASH_GPU_SAFE`
+  overrides), `[video] gpu_diagnostics = true` (`CRASH_GPU_DIAG`): driver, heaps, limits, extensions,
+  per-format features, surface; the log also goes to `userdata\crashrecomp_log.txt`; a validation layer
+  copied into `vulkan_layers\` next to the exe is loaded (`VK_ADD_LAYER_PATH`). Always logged: driver,
+  heaps, limits, formats lacking a use, swap chains / VK_SUBOPTIMAL_KHR / unshown frames, ring peak and
+  mid-frame submits, memory budget.
+- Intel-like paths on this machine: `CRASH_VULKAN_D32=1`, `CRASH_VULKAN_NO_EXT=depth_clip,depth_bias_control,maintenance5`;
+  a slow GPU: `CRASH_VULKAN_GPU_LOAD=<k>` (k thousand iterations per pixel of a 64x64 pass per frame;
+  600 = ~10 ms, 1800 = ~16 ms GPU wait per frame on the RTX 5080; 2000+ with a broken ring hit a TDR).
+  Don't emulate a slow GPU with a host-signalled timeline wait: present then waits on a submission whose
+  wait isn't signalled yet (invalid; the NVIDIA driver hangs).
+- Debug: `CRASH_GPU_DEBUG=1` (validation + synchronization validation through `VK_EXT_layer_settings`;
+  `=nosync` without it, `=selftest` adds an invalid call and a write-after-write hazard to prove both
+  reach the log; `run_game.py --set gpu_debug=true`),
   `CRASH_VULKAN_DEVICE=<name part>`, `CRASH_VULKAN_TRACE=N`, `CRASH_VULKAN_TRACE_PASSES=<submit>`,
   `CRASH_VULKAN_DEDICATED=1`, `CRASH_GPU_TRACE_SWAPS=N`, `CRASH_GPU_TRACE_RESOLVE=<hex>`,
   `CRASH_GPU_DUMP_RESOLVE=<hex>`, `CRASH_GPU_DUMP_PRESENT=1`. Status, parity table and the native-Linux

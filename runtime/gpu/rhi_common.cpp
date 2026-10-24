@@ -137,4 +137,60 @@ namespace gpu::rhi
         std::filesystem::create_directories(dumpPath, error);
         std::ofstream(dumpPath / (std::string(name) + ".failed.hlsl")) << hlsl;
     }
+
+    namespace
+    {
+        struct SafeModeName
+        {
+            const char* name;
+            uint32_t bit;
+        };
+        constexpr SafeModeName SAFE_MODE_NAMES[] = { { "barriers", SAFE_BARRIERS }, { "instances", SAFE_INSTANCES }, { "serial", SAFE_SERIAL },
+                                                     { "memory", SAFE_MEMORY },     { "depth", SAFE_DEPTH },         { "present", SAFE_PRESENT },
+                                                     { "cache", SAFE_CACHE } };
+    }
+
+    uint32_t ParseSafeMode(const std::string& text)
+    {
+        std::string lower;
+        for (char c : text)
+            lower += char(tolower(uint8_t(c)));
+        if (lower.empty() || lower == "off" || lower == "false" || lower == "0" || lower == "none")
+            return 0;
+        if (lower == "on" || lower == "true" || lower == "1" || lower == "all")
+            return SAFE_ALL;
+        uint32_t mask = 0;
+        size_t start = 0;
+        while (start <= lower.size())
+        {
+            size_t end = lower.find_first_of(",;+ ", start);
+            if (end == std::string::npos)
+                end = lower.size();
+            std::string word = lower.substr(start, end - start);
+            bool known = word.empty();
+            for (const SafeModeName& entry : SAFE_MODE_NAMES)
+            {
+                if (word == entry.name)
+                {
+                    mask |= entry.bit;
+                    known = true;
+                }
+            }
+            if (!known)
+                Log("[gpu] gpu_safe_mode: unknown part \"%s\" (barriers, instances, serial, memory, depth, present, cache, all)", word.c_str());
+            start = end + 1;
+        }
+        return mask;
+    }
+
+    std::string SafeModeNames(uint32_t mask)
+    {
+        std::string names;
+        for (const SafeModeName& entry : SAFE_MODE_NAMES)
+        {
+            if (mask & entry.bit)
+                names += (names.empty() ? "" : ", ") + std::string(entry.name);
+        }
+        return names.empty() ? "off" : names;
+    }
 }

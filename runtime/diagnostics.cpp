@@ -39,6 +39,7 @@ namespace
     std::vector<std::pair<uintptr_t, uint32_t>> g_hostToGuest;
 
     std::atomic<void (*)(const char*)> g_logObserver{ nullptr };
+    FILE* g_logFile = nullptr;  // SetLogFile, under g_logMutex
 
     void VLog(const char* prefix, const char* format, va_list args)
     {
@@ -54,6 +55,16 @@ namespace
         }
         {
             std::lock_guard lock(g_logMutex);
+            if (g_logFile)
+            {
+                va_list copy;
+                va_copy(copy, args);
+                fputs(prefix, g_logFile);
+                vfprintf(g_logFile, format, copy);
+                fputc('\n', g_logFile);
+                fflush(g_logFile);
+                va_end(copy);
+            }
             fputs(prefix, stdout);
             vfprintf(stdout, format, args);
             fputc('\n', stdout);
@@ -272,6 +283,14 @@ namespace
 void SetLogObserver(void (*observer)(const char* line))
 {
     g_logObserver = observer;
+}
+
+void SetLogFile(const wchar_t* path)
+{
+    std::lock_guard lock(g_logMutex);
+    if (g_logFile)
+        fclose(g_logFile);
+    g_logFile = _wfopen(path, L"w");
 }
 
 void Log(const char* format, ...)

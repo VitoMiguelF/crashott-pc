@@ -34,6 +34,7 @@
 #include <deque>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -91,6 +92,8 @@ namespace gpu::rhi
             const char* text = getenv("CRASH_VULKAN_TRACE_PASSES");
             return text ? uint64_t(strtoull(text, nullptr, 10)) : 0ull;
         }();
+        // Messages the validation layers sent (LogStats).
+        uint64_t g_validationMessages = 0;
 #define VK_TRACE(...)                        do                                       {                                            if (g_trace)                             {                                            g_trace--;                               Log("[vulkan] " __VA_ARGS__);         }                                    } while (0)
 
         // Formats --------------------------------------------------------------------------------
@@ -302,6 +305,7 @@ namespace gpu::rhi
             void* NativeView(Texture* texture) override { return texture ? ImageView(static_cast<VulkanTexture*>(texture), View::Default) : nullptr; }
             void PrepareNative(Texture* texture, NativeState state) override;
             void InvalidateState() override { m_drawState = {}; }
+            void HoldUploads(bool hold) override { hold ? m_uploadRing.Hold() : m_uploadRing.Release(); }
 
             Timing TakeTiming() override
             {
@@ -318,6 +322,8 @@ namespace gpu::rhi
             bool CreateLogicalDevice();
             bool CreateSwapchain(uint32_t width, uint32_t height);
             void DestroySwapchainViews();
+            void NoteSuboptimal(const char* call);
+            void LogDiagnostics();
             bool CreateDrawLayouts();
             // Submission.
             void SubmitInternal(bool present);
@@ -349,6 +355,8 @@ namespace gpu::rhi
             std::filesystem::path m_shaderCache;
             HWND m_hwnd = nullptr;
             bool m_debug = false;
+            uint32_t m_safe = 0;  // SafeMode bits (rhi.h)
+            bool m_diagnostics = false;
             VkInstance m_instance = VK_NULL_HANDLE;
             VkDebugUtilsMessengerEXT m_messenger = VK_NULL_HANDLE;
             VkSurfaceKHR m_surface = VK_NULL_HANDLE;
@@ -358,7 +366,9 @@ namespace gpu::rhi
             VkDevice m_device = VK_NULL_HANDLE;
             uint32_t m_queueFamily = 0;
             VkQueue m_queue = VK_NULL_HANDLE;
-            bool m_depthClipExtension = false, m_depthBiasControl = false, m_maintenance5 = false;
+            bool m_depthClipExtension = false, m_depthBiasControl = false, m_maintenance5 = false, m_memoryBudget = false;
+            std::vector<std::string> m_enabledDeviceExtensions;
+            std::unordered_map<uint32_t, VkFormatFeatureFlags> m_formatFeatures;  // (format, usage) pairs checked by CreateTexture
             std::vector<std::string> m_extraInstanceExtensions, m_extraDeviceExtensions;  // DeviceInfo's
             bool m_depthClamp = false, m_mirrorClampToEdge = false, m_anisotropy = false;
             bool m_d24s8 = false;  // D24_UNORM_S8_UINT can be a sampled depth attachment
@@ -368,6 +378,13 @@ namespace gpu::rhi
 
             // Submission: a timeline semaphore and one command pool per submission in flight.
             VkSemaphore m_timeline = VK_NULL_HANDLE;
+            // CRASH_VULKAN_GPU_LOAD=<k> (debug): a pass of k thousand dependent iterations per pixel
+            // of a 64x64 target in every frame, so this GPU runs behind the CPU like a slow one (an
+            // integrated GPU at 1080p): frames in flight, the upload ring's reuse and the swap chain
+            // then see the timing they get there.
+            uint32_t m_gpuLoad = 0;
+            VulkanPipeline* m_gpuLoadPipeline = nullptr;
+            VulkanTexture* m_gpuLoadTarget = nullptr;
             uint64_t m_timelineValue = 0;   // the last value submitted
             uint64_t m_completedValue = 0;  // the last value known complete
             struct Context
@@ -397,6 +414,8 @@ namespace gpu::rhi
             VulkanTexture* m_fallbackBackBuffer = nullptr;    // drawn into when no image could be acquired
             uint32_t m_imageIndex = UINT32_MAX;               // acquired, not presented yet
             bool m_swapchainDirty = false;
+            uint32_t m_suboptimalStreak = 0;  // frames in a row with VK_SUBOPTIMAL_KHR (NoteSuboptimal)
+            bool m_frameSuboptimal = false;
             bool m_vsync = false;
             VkPresentModeKHR m_presentMode = VK_PRESENT_MODE_FIFO_KHR;
             std::vector<VkPresentModeKHR> m_presentModes;
@@ -472,6 +491,8 @@ namespace gpu::rhi
             struct
             {
                 uint64_t submits = 0, pipelines = 0, shaderCompiles = 0, shaderFailures = 0, renderings = 0, barriers = 0;
+                uint64_t swapchains = 0, suboptimal = 0, unshownFrames = 0;
+                uint64_t ringWaits = 0, ringSubmits = 0, ringPeak = 0;  // upload ring: waits for room, of them submits mid-frame, most bytes in use
                 // Why a rendering instance was begun: none open, color count, color targets, depth, pending barriers.
                 uint64_t renderingReasons[5] = {};
             } m_stats;
@@ -482,13 +503,22 @@ namespace gpu::rhi
         VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT,
                                                      const VkDebugUtilsMessengerCallbackDataEXT* data, void*)
         {
+            // Each message (by its id) is logged 3 times at most, and 1000 in all: a hazard repeated
+            // every frame doesn't hide the other ones.
+            static std::mutex mutex;
+            static std::unordered_map<int32_t, uint32_t> perId;
             static uint32_t logged;
-            if (logged >= 400)
+            std::lock_guard<std::mutex> lock(mutex);
+            g_validationMessages++;
+            int32_t id = data ? data->messageIdNumber : 0;
+            uint32_t& count = perId[id];
+            count++;
+            if (count > 3 || logged >= 1000)
                 return VK_FALSE;
             logged++;
             Log("[vulkan] %s: %s", severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? "error" : "warning",
                 data && data->pMessage ? data->pMessage : "?");
-            if (logged == 400)
+            if (logged == 1000)
                 Log("[vulkan] (no more validation messages are logged)");
             return VK_FALSE;
         }
@@ -512,8 +542,27 @@ namespace gpu::rhi
             auto has = [&](const char* name) {
                 return std::any_of(available.begin(), available.end(), [&](const VkExtensionProperties& e) { return strcmp(e.extensionName, name) == 0; });
             };
+            if (debug)
+            {
+                // VK_EXT_debug_utils may come from the validation layer only (not the loader or the
+                // drivers): without it no messenger is made and the layer's messages never reach the log.
+                uint32_t layerExtensions = 0;
+                if (vkEnumerateInstanceExtensionProperties("VK_LAYER_KHRONOS_validation", &layerExtensions, nullptr) == VK_SUCCESS && layerExtensions)
+                {
+                    size_t start = available.size();
+                    available.resize(start + layerExtensions);
+                    vkEnumerateInstanceExtensionProperties("VK_LAYER_KHRONOS_validation", &layerExtensions, available.data() + start);
+                    available.resize(start + layerExtensions);
+                }
+            }
             std::vector<const char*> extensions = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
             std::vector<const char*> layers;
+            // Validation: core checks + synchronization validation (hazards between passes, copies,
+            // clears and the swap chain); CRASH_GPU_DEBUG=nosync leaves synchronization out (faster).
+            static const VkBool32 enabled = VK_TRUE;
+            VkLayerSettingEXT layerSettings[1] = { { "VK_LAYER_KHRONOS_validation", "validate_sync", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &enabled } };
+            VkLayerSettingsCreateInfoEXT settingsInfo{ VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT };
+            bool syncValidation = false;
             if (debug)
             {
                 uint32_t layerCount = 0;
@@ -523,7 +572,19 @@ namespace gpu::rhi
                 bool validation = std::any_of(layerProperties.begin(), layerProperties.end(),
                                               [](const VkLayerProperties& l) { return strcmp(l.layerName, "VK_LAYER_KHRONOS_validation") == 0; });
                 if (validation)
+                {
                     layers.push_back("VK_LAYER_KHRONOS_validation");
+                    const char* mode = getenv("CRASH_GPU_DEBUG");
+                    syncValidation = !(mode && strstr(mode, "nosync"));
+                    if (syncValidation && has(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME))
+                    {
+                        extensions.push_back(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME);
+                        settingsInfo.settingCount = 1;
+                        settingsInfo.pSettings = layerSettings;
+                    }
+                    else
+                        syncValidation = false;
+                }
                 else
                     Log("[vulkan] validation layers requested but VK_LAYER_KHRONOS_validation is not installed");
                 if (has(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
@@ -538,7 +599,7 @@ namespace gpu::rhi
             app.pEngineName = "CrashRecomp";
             app.engineVersion = 1;
             app.apiVersion = apiVersion >= VK_API_VERSION_1_4 ? VK_API_VERSION_1_4 : VK_API_VERSION_1_3;
-            VkInstanceCreateInfo create{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+            VkInstanceCreateInfo create{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, settingsInfo.settingCount ? &settingsInfo : nullptr };
             create.pApplicationInfo = &app;
             create.enabledExtensionCount = uint32_t(extensions.size());
             create.ppEnabledExtensionNames = extensions.data();
@@ -548,6 +609,8 @@ namespace gpu::rhi
                 return false;
             LoadInstanceFunctions(m_instance);
             m_debug = !layers.empty();
+            if (m_debug)
+                Log("[vulkan] validation layers on%s", syncValidation ? ", with synchronization validation" : "");
             if (m_debug && vkCreateDebugUtilsMessengerEXT)
             {
                 VkDebugUtilsMessengerCreateInfoEXT messenger{ VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
@@ -557,6 +620,8 @@ namespace gpu::rhi
                 messenger.pfnUserCallback = DebugCallback;
                 vkCreateDebugUtilsMessengerEXT(m_instance, &messenger, nullptr, &m_messenger);
             }
+            if (m_debug && !m_messenger)
+                Log("[vulkan] no debug messenger (VK_EXT_debug_utils missing): the validation messages go to the layer's own output");
             VkWin32SurfaceCreateInfoKHR surface{ VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR };
             surface.hinstance = GetModuleHandleW(nullptr);
             surface.hwnd = m_hwnd;
@@ -607,6 +672,9 @@ namespace gpu::rhi
                 if (family < 0)
                     continue;
                 int score = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3 : properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
+                if (devices.size() > 1)
+                    Log("[vulkan] GPU candidate: %s (%s, Vulkan %u.%u)", properties.deviceName, score == 3 ? "discrete" : score == 2 ? "integrated" : "other",
+                        VK_API_VERSION_MAJOR(properties.apiVersion), VK_API_VERSION_MINOR(properties.apiVersion));
                 // CRASH_VULKAN_DEVICE=<part of the name> picks a GPU.
                 if (const char* wanted = getenv("CRASH_VULKAN_DEVICE"); wanted && strstr(properties.deviceName, wanted))
                     score += 10;
@@ -619,6 +687,15 @@ namespace gpu::rhi
                     m_depthClipExtension = has(VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME);
                     m_depthBiasControl = has(VK_EXT_DEPTH_BIAS_CONTROL_EXTENSION_NAME);
                     m_maintenance5 = has(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
+                    m_memoryBudget = has(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+                    // CRASH_VULKAN_NO_EXT=depth_clip,depth_bias_control,maintenance5 (debug): the paths
+                    // of a GPU without them (another vendor's driver) on this one.
+                    if (const char* off = getenv("CRASH_VULKAN_NO_EXT"))
+                    {
+                        m_depthClipExtension = m_depthClipExtension && !strstr(off, "depth_clip");
+                        m_depthBiasControl = m_depthBiasControl && !strstr(off, "depth_bias_control");
+                        m_maintenance5 = m_maintenance5 && !strstr(off, "maintenance5");
+                    }
                     uint32_t bits = families[family].timestampValidBits;
                     m_timestampMask = bits >= 64 ? ~0ull : (1ull << bits) - 1;
                 }
@@ -634,8 +711,12 @@ namespace gpu::rhi
             VkFormatProperties d24;
             vkGetPhysicalDeviceFormatProperties(m_physical, VK_FORMAT_D24_UNORM_S8_UINT, &d24);
             m_d24s8 = (d24.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) &&
-                      (d24.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) && !getenv("CRASH_VULKAN_D32");
+                      (d24.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) && !getenv("CRASH_VULKAN_D32") && !(m_safe & SAFE_DEPTH);
             m_uploadSize = std::min<uint64_t>(UPLOAD_RING_SIZE, m_properties.limits.maxStorageBufferRange & ~uint64_t(0xFFFF));
+            // CRASH_VULKAN_RING_MB=<n> (debug): a smaller upload ring, to test the ring under pressure
+            // (a slow GPU keeps more frames' uploads alive).
+            if (const char* ring = getenv("CRASH_VULKAN_RING_MB"))
+                m_uploadSize = std::clamp<uint64_t>(strtoull(ring, nullptr, 10), 4, 256) << 20;
             return true;
         }
 
@@ -748,6 +829,9 @@ namespace gpu::rhi
                     Log("[vulkan] extensions asked for but missing: %s", missing.c_str());
             }
 
+            if (m_memoryBudget)
+                extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);  // the heaps' use in LogStats
+
             float priority = 1.0f;
             VkDeviceQueueCreateInfo queue{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
             queue.queueFamilyIndex = m_queueFamily;
@@ -762,6 +846,18 @@ namespace gpu::rhi
                 return false;
             LoadDeviceFunctions(m_device);
             vkGetDeviceQueue(m_device, m_queueFamily, 0, &m_queue);
+            m_enabledDeviceExtensions.assign(extensions.begin(), extensions.end());
+            // CRASH_GPU_DEBUG=selftest: calls the layers must report, so a run shows that their
+            // messages reach the log (a clean run proves nothing otherwise).
+            if (m_debug && getenv("CRASH_GPU_DEBUG") && strstr(getenv("CRASH_GPU_DEBUG"), "selftest"))
+            {
+                VkBufferCreateInfo empty{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };  // size 0: invalid
+                empty.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+                VkBuffer buffer = VK_NULL_HANDLE;
+                if (vkCreateBuffer(m_device, &empty, nullptr, &buffer) == VK_SUCCESS && buffer)
+                    vkDestroyBuffer(m_device, buffer, nullptr);
+                Log("[vulkan] validation self-test: %llu message(s) so far", (unsigned long long)g_validationMessages);
+            }
             return true;
         }
 
@@ -800,7 +896,7 @@ namespace gpu::rhi
             // V-Sync off: immediate (tearing, like the D3D12 swap chain's), else mailbox.
             m_presentMode = VK_PRESENT_MODE_FIFO_KHR;
             if (!m_vsync)
-                m_presentMode = supports(VK_PRESENT_MODE_IMMEDIATE_KHR) ? VK_PRESENT_MODE_IMMEDIATE_KHR
+                m_presentMode = supports(VK_PRESENT_MODE_IMMEDIATE_KHR) && !(m_safe & SAFE_PRESENT) ? VK_PRESENT_MODE_IMMEDIATE_KHR
                                 : supports(VK_PRESENT_MODE_MAILBOX_KHR) ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR;
             VkExtent2D extent = capabilities.currentExtent;
             if (extent.width == UINT32_MAX)
@@ -819,7 +915,14 @@ namespace gpu::rhi
             create.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
             create.imageExtent = extent;
             create.imageArrayLayers = 1;
-            create.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            // Transfers: screenshots read the back buffer back. Only the uses the surface has.
+            create.imageUsage = (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) &
+                                capabilities.supportedUsageFlags;
+            if (!(create.imageUsage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))
+            {
+                Log("[vulkan] the window surface can't be rendered to (usage 0x%X)", capabilities.supportedUsageFlags);
+                return false;
+            }
             create.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
             create.preTransform = capabilities.currentTransform;
             create.compositeAlpha = (capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
@@ -858,6 +961,7 @@ namespace gpu::rhi
             }
             m_imageIndex = UINT32_MAX;
             m_swapchainDirty = false;
+            m_stats.swapchains++;
             static const char* const MODES[] = { "immediate", "mailbox", "fifo (v-sync)", "fifo relaxed" };
             Log("[vulkan] swap chain %ux%u, %u images, %s, %s", extent.width, extent.height, count,
                 m_swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM ? "BGRA8" : "RGBA8", m_presentMode <= 3 ? MODES[m_presentMode] : "?");
@@ -940,9 +1044,114 @@ namespace gpu::rhi
             return Check(vkAllocateDescriptorSets(m_device, &allocate, &m_constantsSet), "vkAllocateDescriptorSets");
         }
 
+        // Driver version as the vendor writes it (NVIDIA 581.57, Intel on Windows 101.6130).
+        std::string DriverVersionText(const VkPhysicalDeviceProperties& properties)
+        {
+            uint32_t v = properties.driverVersion;
+            char text[48];
+            if (properties.vendorID == 0x10DE)
+                snprintf(text, sizeof(text), "%u.%02u", v >> 22, (v >> 14) & 0xFF);
+            else if (properties.vendorID == 0x8086)
+                snprintf(text, sizeof(text), "%u.%u", v >> 14, v & 0x3FFF);
+            else
+                snprintf(text, sizeof(text), "%u.%u.%u", VK_API_VERSION_MAJOR(v), VK_API_VERSION_MINOR(v), VK_API_VERSION_PATCH(v));
+            return text;
+        }
+
+        // The formats the renderer creates images in.
+        constexpr DXGI_FORMAT IMAGE_FORMATS[] = {
+            DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM,
+            DXGI_FORMAT_R11G11B10_FLOAT, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16_FLOAT,
+            DXGI_FORMAT_R16G16_UNORM, DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R16G16B16A16_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
+            DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_BC1_UNORM, DXGI_FORMAT_BC2_UNORM,
+            DXGI_FORMAT_BC3_UNORM, DXGI_FORMAT_BC4_UNORM, DXGI_FORMAT_BC5_UNORM, DXGI_FORMAT_BC7_UNORM, DXGI_FORMAT_D24_UNORM_S8_UINT,
+            DXGI_FORMAT_D32_FLOAT_S8X24_UINT,
+        };
+
+        // What the bug reports need: the driver, the memory, the limits that differ between vendors.
+        // Always a few lines; [video] gpu_diagnostics adds the extensions, formats and the surface.
+        void VulkanDevice::LogDiagnostics()
+        {
+            VkPhysicalDevicePushDescriptorPropertiesKHR push{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR };
+            VkPhysicalDeviceDriverProperties driver{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES, &push };
+            VkPhysicalDeviceProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver };
+            vkGetPhysicalDeviceProperties2(m_physical, &properties);
+            const VkPhysicalDeviceLimits& limits = m_properties.limits;
+            const char* type = m_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? "discrete"
+                               : m_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "integrated"
+                                                                                                   : "other";
+            Log("[vulkan] driver %s (%s) %s, id %u, conformance %u.%u.%u.%u; vendor 0x%04X device 0x%04X, %s GPU", driver.driverName, driver.driverInfo,
+                DriverVersionText(m_properties).c_str(), uint32_t(driver.driverID), driver.conformanceVersion.major, driver.conformanceVersion.minor,
+                driver.conformanceVersion.subminor, driver.conformanceVersion.patch, m_properties.vendorID, m_properties.deviceID, type);
+            std::string heaps;
+            for (uint32_t i = 0; i < m_memoryProperties.memoryHeapCount; i++)
+            {
+                char text[96];
+                snprintf(text, sizeof(text), "%s%u: %llu MB%s", i ? ", " : "", i, (unsigned long long)(m_memoryProperties.memoryHeaps[i].size >> 20),
+                         (m_memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ? " device-local" : "");
+                heaps += text;
+            }
+            Log("[vulkan] memory heaps: %s", heaps.c_str());
+            Log("[vulkan] limits: 2D images %u, push descriptors %u, sampled images per stage %u, storage buffer range %u MB, uniform buffer range %u, "
+                "uniform offset alignment %llu, buffer/image granularity %llu, timestamp period %.2f ns",
+                limits.maxImageDimension2D, push.maxPushDescriptors, limits.maxPerStageDescriptorSampledImages, limits.maxStorageBufferRange >> 20,
+                limits.maxUniformBufferRange, (unsigned long long)limits.minUniformBufferOffsetAlignment, (unsigned long long)limits.bufferImageGranularity,
+                limits.timestampPeriod);
+            if (push.maxPushDescriptors < 32)
+                Log("[vulkan] warning: %u push descriptors, the draws bind 32 textures", push.maxPushDescriptors);
+            if (!m_diagnostics)
+                return;
+
+            std::string extensions;
+            for (const std::string& name : m_enabledDeviceExtensions)
+                extensions += (extensions.empty() ? "" : " ") + name;
+            Log("[vulkan] diagnostics: device extensions: %s", extensions.c_str());
+            Log("[vulkan] diagnostics: anisotropy %d (max %.0f), depth clamp %d, mirror clamp to edge %d, depth clip %d, depth bias control %d, "
+                "maintenance5 %d, memory budget %d, D24S8 sampled %d, upload ring %llu MB",
+                int(m_anisotropy), m_maxAnisotropy, int(m_depthClamp), int(m_mirrorClampToEdge), int(m_depthClipExtension), int(m_depthBiasControl),
+                int(m_maintenance5), int(m_memoryBudget), int(m_d24s8), (unsigned long long)(m_uploadSize >> 20));
+            for (uint32_t i = 0; i < m_memoryProperties.memoryTypeCount; i++)
+                Log("[vulkan] diagnostics: memory type %u: heap %u, flags 0x%X", i, m_memoryProperties.memoryTypes[i].heapIndex,
+                    m_memoryProperties.memoryTypes[i].propertyFlags);
+            // Optimal-tiling features per format: S sampled, L linear filter, C color attachment, B
+            // blend, D depth/stencil, U storage, T transfer source and destination.
+            std::string formats;
+            for (DXGI_FORMAT format : IMAGE_FORMATS)
+            {
+                VkFormatProperties props;
+                vkGetPhysicalDeviceFormatProperties(m_physical, VkFormatOf(format), &props);
+                VkFormatFeatureFlags f = props.optimalTilingFeatures;
+                char text[48];
+                snprintf(text, sizeof(text), "%s%u:%s%s%s%s%s%s%s", formats.empty() ? "" : " ", uint32_t(format),
+                         (f & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) ? "S" : "", (f & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) ? "L" : "",
+                         (f & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) ? "C" : "", (f & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT) ? "B" : "",
+                         (f & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) ? "D" : "", (f & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) ? "U" : "",
+                         (f & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT) && (f & VK_FORMAT_FEATURE_TRANSFER_DST_BIT) ? "T" : "");
+                formats += text;
+            }
+            Log("[vulkan] diagnostics: formats (DXGI: S sampled, L linear, C color, B blend, D depth, U storage, T transfer): %s", formats.c_str());
+            VkSurfaceCapabilitiesKHR capabilities{};
+            vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physical, m_surface, &capabilities);
+            uint32_t modeCount = 0;
+            vkGetPhysicalDeviceSurfacePresentModesKHR(m_physical, m_surface, &modeCount, nullptr);
+            std::vector<VkPresentModeKHR> modes(modeCount);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(m_physical, m_surface, &modeCount, modes.data());
+            std::string modeList;
+            for (VkPresentModeKHR mode : modes)
+                modeList += (modeList.empty() ? "" : " ") + std::to_string(int(mode));
+            Log("[vulkan] diagnostics: surface: images %u-%u, extent %ux%u, usage 0x%X, transforms 0x%X, composite alpha 0x%X, present modes %s "
+                "(0 immediate, 1 mailbox, 2 fifo, 3 fifo relaxed)",
+                capabilities.minImageCount, capabilities.maxImageCount, capabilities.currentExtent.width, capabilities.currentExtent.height,
+                capabilities.supportedUsageFlags, capabilities.supportedTransforms, capabilities.supportedCompositeAlpha, modeList.c_str());
+        }
+
         bool VulkanDevice::Init(const DeviceInfo& info)
         {
             m_hwnd = HWND(info.window);
+            m_safe = info.safeMode;
+            m_diagnostics = info.diagnostics;
+            if (m_safe)
+                Log("[vulkan] GPU safe mode: %s", SafeModeNames(m_safe).c_str());
             m_shaderCache = info.shaderCache;
             m_extraInstanceExtensions = info.instanceExtensions;
             m_extraDeviceExtensions = info.deviceExtensions;
@@ -959,6 +1168,7 @@ namespace gpu::rhi
                 VK_API_VERSION_MINOR(m_properties.apiVersion), VK_API_VERSION_PATCH(m_properties.apiVersion), m_properties.driverVersion,
                 m_d24s8 ? "D24S8" : "D32S8 (no sampled D24S8)", m_depthClipExtension ? ", depth clip control" : "",
                 m_depthBiasControl ? ", depth bias control" : "", m_debug ? ", validation layers" : "");
+            LogDiagnostics();
 
             // Timeline semaphore and the first command buffer.
             VkSemaphoreTypeCreateInfo timelineType{ VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO };
@@ -996,7 +1206,7 @@ namespace gpu::rhi
 
             // Pipeline cache (the driver checks the header: a cache of another GPU or driver is ignored).
             std::vector<char> cacheData;
-            if (!m_shaderCache.empty())
+            if (!m_shaderCache.empty() && !(m_safe & SAFE_CACHE))
             {
                 std::ifstream file(m_shaderCache / "vulkan_pipelines.bin", std::ios::binary);
                 if (file)
@@ -1030,6 +1240,48 @@ namespace gpu::rhi
 
             if (!CreateSwapchain(info.width, info.height))
                 return false;
+            if (m_debug && getenv("CRASH_GPU_DEBUG") && strstr(getenv("CRASH_GPU_DEBUG"), "selftest"))
+            {
+                // Two clears of an image with no barrier between them: synchronization validation
+                // must report a write-after-write hazard.
+                Transition(m_nullTexture, Access::TransferDst);
+                FlushBarriers();
+                VkClearColorValue value{};
+                VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+                vkCmdClearColorImage(m_cmd, m_nullTexture->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &range);
+                vkCmdClearColorImage(m_cmd, m_nullTexture->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &range);
+                Transition(m_nullTexture, Access::ShaderRead);
+                Log("[vulkan] validation self-test (synchronization): %llu message(s) so far", (unsigned long long)g_validationMessages);
+            }
+            if (const char* load = getenv("CRASH_VULKAN_GPU_LOAD"); load && atoi(load) > 0)
+            {
+                PassPipelineDesc desc;
+                desc.name = "gpu_load";
+                desc.ps = R"(
+cbuffer Load : register(b0) { uint iterations; uint3 unused; };
+float4 main(float4 position : SV_Position) : SV_Target
+{
+    float v = position.x * 0.001;
+    for (uint i = 0; i < iterations; i++)
+        v = frac(v * 1.0001 + 0.37);
+    return float4(v, v, v, 1);
+}
+)";
+                desc.targets[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+                desc.constantBytes = 16;
+                TextureDesc target;
+                target.width = target.height = 64;
+                target.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                target.usage = USAGE_RENDER_TARGET;
+                target.name = "gpu load";
+                m_gpuLoadPipeline = static_cast<VulkanPipeline*>(CreatePassPipeline(desc));
+                m_gpuLoadTarget = static_cast<VulkanTexture*>(CreateTexture(target));
+                if (m_gpuLoadPipeline && m_gpuLoadTarget)
+                {
+                    m_gpuLoad = uint32_t(atoi(load)) * 1000u;
+                    Log("[vulkan] debug: %u iterations of GPU load per frame (CRASH_VULKAN_GPU_LOAD)", m_gpuLoad);
+                }
+            }
             SubmitInternal(false);
             return true;
         }
@@ -1092,6 +1344,8 @@ namespace gpu::rhi
             VkResult result = vkWaitSemaphores(m_device, &wait, 10'000'000'000ull);
             if (result == VK_TIMEOUT)
                 Log("[vulkan] waited 10 s for the GPU (submission %llu): device lost?", (unsigned long long)value);
+            else if (result == VK_ERROR_DEVICE_LOST)  // every later wait fails too (the upload ring's loop would spin)
+                Fatal("[vulkan] device lost (the GPU stopped or the driver reset it) waiting for submission %llu", (unsigned long long)value);
             else
                 Check(result, "vkWaitSemaphores");
             CompletedValue();
@@ -1145,7 +1399,8 @@ namespace gpu::rhi
             if (present && m_imageIndex != UINT32_MAX)
                 signals[signalCount++] = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, m_renderFinished[m_imageIndex], 0,
                                            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0 };
-            VkSemaphoreSubmitInfo wait{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, m_pendingAcquire, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0 };
+            VkSemaphoreSubmitInfo waits[2]{};
+            uint32_t waitCount = 0;
             VkSubmitInfo2 submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
             submit.commandBufferInfoCount = 1;
             submit.pCommandBufferInfos = &command;
@@ -1153,11 +1408,12 @@ namespace gpu::rhi
             submit.pSignalSemaphoreInfos = signals;
             if (m_pendingAcquire)
             {
-                submit.waitSemaphoreInfoCount = 1;
-                submit.pWaitSemaphoreInfos = &wait;
+                waits[waitCount++] = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, m_pendingAcquire, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0 };
                 m_acquireValues[(m_acquireIndex + ACQUIRE_SEMAPHORES - 1) % ACQUIRE_SEMAPHORES] = m_timelineValue;
                 m_pendingAcquire = VK_NULL_HANDLE;
             }
+            submit.waitSemaphoreInfoCount = waitCount;
+            submit.pWaitSemaphoreInfos = waitCount ? waits : nullptr;
             VkResult result = vkQueueSubmit2(m_queue, 1, &submit, VK_NULL_HANDLE);
             if (!Check(result, "vkQueueSubmit2") && result == VK_ERROR_DEVICE_LOST)
                 Fatal("[vulkan] device lost");
@@ -1178,6 +1434,7 @@ namespace gpu::rhi
         Device::Upload VulkanDevice::AllocateUpload(uint64_t size, uint64_t alignment)
         {
             uint64_t offset = m_uploadRing.TryAllocate(size, alignment);
+            bool submitted = false;
             while (offset == UINT64_MAX)
             {
                 Collect();
@@ -1188,13 +1445,29 @@ namespace gpu::rhi
                     return {};
                 LARGE_INTEGER waitStart, waitEnd;
                 QueryPerformanceCounter(&waitStart);
+                m_stats.ringWaits++;
                 if (m_uploadRing.HasPending())
                     WaitValue(m_uploadRing.OldestPendingFence());
-                else
+                else if (!submitted)
+                {
+                    // The recorded commands hold the rest of the ring: submit them and wait.
+                    submitted = true;
+                    m_stats.ringSubmits++;
                     WaitIdle();
+                }
+                else
+                {
+                    // Uploads of commands not recorded yet fill it (not expected).
+                    static uint32_t logged;
+                    if (logged++ < 4)
+                        Log("[vulkan] upload ring full (%llu MB): %llu bytes not available", (unsigned long long)(m_uploadSize >> 20),
+                            (unsigned long long)size);
+                    return {};
+                }
                 QueryPerformanceCounter(&waitEnd);
                 m_timing.ringWaitTicks += uint64_t(waitEnd.QuadPart - waitStart.QuadPart);
             }
+            m_stats.ringPeak = std::max(m_stats.ringPeak, m_uploadRing.Used());
             return { m_upload.cpu + offset, offset };
         }
 
@@ -1219,7 +1492,7 @@ namespace gpu::rhi
             allocation.type = uint32_t(type);
             allocation.size = requirements.size;
             static const bool dedicatedOnly = getenv("CRASH_VULKAN_DEDICATED") != nullptr;  // debug: an allocation per resource
-            if (requirements.size <= BLOCK_SIZE / 4 && !dedicatedOnly)
+            if (requirements.size <= BLOCK_SIZE / 4 && !dedicatedOnly && !(m_safe & SAFE_MEMORY))
             {
                 for (size_t b = 0; b <= m_blocks.size(); b++)
                 {
@@ -1331,6 +1604,34 @@ namespace gpu::rhi
             if (texture->renderFormat != texture->format)
                 image.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
             image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            {
+                // A use the driver doesn't support for the format (once per format and use): such an
+                // image may be created anyway and then sample or render garbage or black.
+                auto [it, inserted] = m_formatFeatures.try_emplace(uint32_t(texture->renderFormat) | (uint32_t(image.usage) << 24), 0);
+                if (inserted)
+                {
+                    VkFormatProperties props, renderProps;
+                    vkGetPhysicalDeviceFormatProperties(m_physical, texture->format, &props);
+                    vkGetPhysicalDeviceFormatProperties(m_physical, texture->renderFormat, &renderProps);
+                    VkFormatFeatureFlags have = props.optimalTilingFeatures, haveRender = renderProps.optimalTilingFeatures;
+                    std::string missing;
+                    if (!(have & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
+                        missing += " sampled";
+                    if (!(have & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT) || !(have & VK_FORMAT_FEATURE_TRANSFER_DST_BIT))
+                        missing += " transfer";
+                    if ((image.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) && !(haveRender & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))
+                        missing += " color-attachment";
+                    if ((image.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) && !(haveRender & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT))
+                        missing += " blend";
+                    if ((image.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) && !(have & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT))
+                        missing += " depth-attachment";
+                    if ((image.usage & VK_IMAGE_USAGE_STORAGE_BIT) && !(have & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
+                        missing += " storage";
+                    if (!missing.empty())
+                        Log("[vulkan] warning: format %u (DXGI %u, %s) lacks:%s", uint32_t(texture->renderFormat), uint32_t(desc.format), desc.name,
+                            missing.c_str());
+                }
+            }
             if (!Check(vkCreateImage(m_device, &image, nullptr, &texture->image), "vkCreateImage"))
             {
                 Log("[vulkan] could not create a %ux%u texture (%s, DXGI %u)", desc.width, desc.height, desc.name, uint32_t(desc.format));
@@ -1483,9 +1784,17 @@ namespace gpu::rhi
             barrier.subresourceRange = { texture->depth ? VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
                                                         : VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),
                                          0, VK_REMAINING_MIP_LEVELS, 0, 1 };
-            // Present: the swap chain image's contents must be kept (the acquire semaphore orders it).
-            if (texture->swapchain && texture->access == Access::Undefined)
+            // A swap chain image just acquired: the transition waits for the acquire semaphore (its
+            // wait stage, all commands, includes this one), so it doesn't race the presentation engine.
+            if (texture->swapchain && (texture->access == Access::Undefined || texture->access == Access::Present))
                 barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+            if (m_safe & SAFE_BARRIERS)
+            {
+                // Everything before, every kind of memory access: rules out a wrong stage or access mask.
+                barrier.srcStageMask = barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+                barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+            }
             m_barriers.push_back(barrier);
             texture->access = access;
             texture->lastPass = 0;
@@ -1531,7 +1840,7 @@ namespace gpu::rhi
         VulkanPipeline* VulkanDevice::PipelineInsideRendering(VulkanPipeline* pipeline, VulkanTexture* const* colors, uint32_t colorCount,
                                                                              VulkanTexture* depth)
         {
-            if (!m_rendering.active || !m_barriers.empty() || pipeline->pass || colorCount > m_rendering.colorCount)
+            if (!m_rendering.active || !m_barriers.empty() || pipeline->pass || colorCount > m_rendering.colorCount || (m_safe & SAFE_INSTANCES))
                 return nullptr;
             if (depth && depth != m_rendering.depth)
                 return nullptr;
@@ -2216,6 +2525,18 @@ float4 main(uint id : SV_VertexID) : SV_Position
                 vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
                 m_samplerSets[samplerKey] = samplerSet;
             }
+            // The effect constants first: waiting for room in the upload ring may submit, which
+            // would end a rendering instance begun before (the draw recorded outside of it).
+            if (!m_drawState.effectsValid || memcmp(&m_drawState.effects, &draw.effects, sizeof(draw.effects)) != 0)
+            {
+                Upload upload = AllocateUpload(sizeof(draw.effects), 256);
+                if (!upload.cpu)
+                    return;
+                memcpy(upload.cpu, &draw.effects, sizeof(draw.effects));
+                m_drawState.effects = draw.effects;
+                m_drawState.effectsOffset = upload.offset;
+                m_drawState.effectsValid = true;
+            }
             // Textures first (their barriers end the rendering instance), then the attachments.
             VulkanTexture* textures[32];
             for (uint32_t i = 0; i < draw.textureCount; i++)
@@ -2257,16 +2578,6 @@ float4 main(uint id : SV_VertexID) : SV_Position
                 state.layoutBound = true;
                 state.texturesValid = false;
                 state.samplerSet = VK_NULL_HANDLE;
-            }
-            if (!state.effectsValid || memcmp(&state.effects, &draw.effects, sizeof(draw.effects)) != 0)
-            {
-                Upload upload = AllocateUpload(sizeof(draw.effects), 256);
-                if (!upload.cpu)
-                    return;
-                memcpy(upload.cpu, &draw.effects, sizeof(draw.effects));
-                state.effects = draw.effects;
-                state.effectsOffset = upload.offset;
-                state.effectsValid = true;
             }
             uint32_t offsets[4] = { uint32_t(draw.systemConstants), uint32_t(draw.vertexConstants), uint32_t(draw.pixelConstants), uint32_t(state.effectsOffset) };
             vkCmdBindDescriptorSets(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_drawLayout, vulkan::DRAW_SET_CONSTANTS, 1, &m_constantsSet, 4, offsets);
@@ -2342,6 +2653,13 @@ float4 main(uint id : SV_VertexID) : SV_Position
             VulkanTexture* targets[4];
             for (uint32_t i = 0; i < pass.targetCount; i++)
                 targets[i] = static_cast<VulkanTexture*>(pass.targets[i]);
+            // The constants are held until the pass is recorded (a full descriptor pool submits in between).
+            m_uploadRing.Hold();
+            struct Release
+            {
+                Ring& ring;
+                ~Release() { ring.Release(); }
+            } release{ m_uploadRing };
             Upload constants{};
             if (pass.constantBytes)
             {
@@ -2424,6 +2742,25 @@ float4 main(uint id : SV_VertexID) : SV_Position
             return CreateSwapchain(width, height);
         }
 
+        // VK_SUBOPTIMAL_KHR: the swap chain is made again, but only twice in a row. A driver that
+        // keeps answering it for a swap chain of the window's size would otherwise get a new swap
+        // chain (a GPU wait and new images) every frame.
+        void VulkanDevice::NoteSuboptimal(const char* call)
+        {
+            m_stats.suboptimal++;
+            if (m_frameSuboptimal)
+                return;  // acquire and present of the same frame count once
+            m_frameSuboptimal = true;
+            if (m_suboptimalStreak++ < 2)
+            {
+                m_swapchainDirty = true;
+                return;
+            }
+            if (m_suboptimalStreak == 3)
+                Log("[vulkan] %s keeps returning VK_SUBOPTIMAL_KHR for %ux%u: the swap chain is kept", call, m_swapchainExtent.width,
+                    m_swapchainExtent.height);
+        }
+
         Texture* VulkanDevice::BeginPresent()
         {
             if (m_imageIndex != UINT32_MAX)
@@ -2441,10 +2778,11 @@ float4 main(uint id : SV_VertexID) : SV_Position
                 result = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, acquire, VK_NULL_HANDLE, &m_imageIndex);
             }
             if (result == VK_SUBOPTIMAL_KHR)
-                m_swapchainDirty = true;
+                NoteSuboptimal("vkAcquireNextImageKHR");
             else if (result != VK_SUCCESS)
             {
                 Check(result, "vkAcquireNextImageKHR");
+                m_stats.unshownFrames++;
                 m_imageIndex = UINT32_MAX;
                 // This frame is drawn into a texture of the back buffer's format and not shown.
                 if (!m_fallbackBackBuffer || m_fallbackBackBuffer->desc.width != m_swapchainExtent.width ||
@@ -2465,7 +2803,9 @@ float4 main(uint id : SV_VertexID) : SV_Position
             m_acquireValues[slot] = UINT64_MAX;  // set by the submission that waits on it
             m_pendingAcquire = acquire;
             VulkanTexture* image = m_swapchainImages[m_imageIndex].get();
-            image->access = Access::Undefined;  // its old contents aren't needed
+            // Its old contents aren't needed (the present pass covers it), unless the safe mode keeps them.
+            if (!(m_safe & SAFE_PRESENT))
+                image->access = Access::Undefined;
             return image;
         }
 
@@ -2478,6 +2818,18 @@ float4 main(uint id : SV_VertexID) : SV_Position
             }
             LARGE_INTEGER submitStart, submitEnd, presentEnd;
             QueryPerformanceCounter(&submitStart);
+            if (m_gpuLoad)
+            {
+                uint32_t constants[4] = { m_gpuLoad };
+                PassDraw load;
+                load.pipeline = m_gpuLoadPipeline;
+                load.targets[0] = m_gpuLoadTarget;
+                load.viewport = { 0.0f, 0.0f, 64.0f, 64.0f };
+                load.scissor = { 0, 0, 64, 64 };
+                load.constants = constants;
+                load.constantBytes = sizeof(constants);
+                DrawPass(load);
+            }
             uint32_t imageIndex = m_imageIndex;
             if (imageIndex != UINT32_MAX)
                 Transition(m_swapchainImages[imageIndex].get(), Access::Present);
@@ -2492,11 +2844,16 @@ float4 main(uint id : SV_VertexID) : SV_Position
                 present.pSwapchains = &m_swapchain;
                 present.pImageIndices = &imageIndex;
                 VkResult result = vkQueuePresentKHR(m_queue, &present);
-                if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+                if (result == VK_ERROR_OUT_OF_DATE_KHR)
                     m_swapchainDirty = true;
+                else if (result == VK_SUBOPTIMAL_KHR)
+                    NoteSuboptimal("vkQueuePresentKHR");
                 else
                     Check(result, "vkQueuePresentKHR");
                 m_imageIndex = UINT32_MAX;
+                if (!m_frameSuboptimal)
+                    m_suboptimalStreak = 0;
+                m_frameSuboptimal = false;
             }
             QueryPerformanceCounter(&presentEnd);
             m_timing.submitTicks += uint64_t(submitEnd.QuadPart - submitStart.QuadPart);
@@ -2505,7 +2862,8 @@ float4 main(uint id : SV_VertexID) : SV_Position
             m_frameValues.push_back(m_timelineValue);
             LARGE_INTEGER waitStart, waitEnd;
             QueryPerformanceCounter(&waitStart);
-            while (m_frameValues.size() > 2)
+            // Two frames in flight; the safe mode's "serial" waits for this one.
+            while (m_frameValues.size() > ((m_safe & SAFE_SERIAL) ? 0u : 2u))
             {
                 WaitValue(m_frameValues.front());
                 m_frameValues.pop_front();
@@ -2636,6 +2994,26 @@ float4 main(uint id : SV_VertexID) : SV_Position
             const uint64_t* r = m_stats.renderingReasons;
             Log("[gpu] vulkan: rendering instances begun because none was open %llu, color count %llu, color targets %llu, depth %llu, barriers %llu",
                 (unsigned long long)r[0], (unsigned long long)r[1], (unsigned long long)r[2], (unsigned long long)r[3], (unsigned long long)r[4]);
+            if (m_debug)
+                Log("[gpu] vulkan: %llu validation message(s)", (unsigned long long)g_validationMessages);
+            std::string budget;
+            if (m_memoryBudget)
+            {
+                VkPhysicalDeviceMemoryBudgetPropertiesEXT heaps{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT };
+                VkPhysicalDeviceMemoryProperties2 memory{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &heaps };
+                vkGetPhysicalDeviceMemoryProperties2(m_physical, &memory);
+                for (uint32_t i = 0; i < memory.memoryProperties.memoryHeapCount; i++)
+                {
+                    char text[64];
+                    snprintf(text, sizeof(text), ", heap %u %llu/%llu MB", i, (unsigned long long)(heaps.heapUsage[i] >> 20),
+                             (unsigned long long)(heaps.heapBudget[i] >> 20));
+                    budget += text;
+                }
+            }
+            Log("[gpu] vulkan: %llu swap chains, %llu suboptimal, %llu frames not shown; upload ring %llu MB, peak %llu MB, %llu waits (%llu mid-frame submits)%s",
+                (unsigned long long)m_stats.swapchains, (unsigned long long)m_stats.suboptimal, (unsigned long long)m_stats.unshownFrames,
+                (unsigned long long)(m_uploadSize >> 20), (unsigned long long)(m_stats.ringPeak >> 20), (unsigned long long)m_stats.ringWaits,
+                (unsigned long long)m_stats.ringSubmits, budget.c_str());
         }
     }
 
