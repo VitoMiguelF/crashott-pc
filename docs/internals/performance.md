@@ -16,6 +16,11 @@ Full write-up: `runtime/NOTES.md` "Desempenho de CPU" (two rounds); GUIA "Desemp
   filled. Now 32 MB (`gpu/ring_buffer_hook.cpp`, `CRASH_D3D_RING_MB`).
 - D3D throttles to 1 frame in flight: Swap (sub_82274080) stores its fence in device+14788 and the next segment
   switch (0x8226CE10) waits on it. **Don't lift that**: the game reuses dynamic buffers.
+- 2026-10-24 (branch `native-gpu`, Vulkan, 162 fps): the game thread waits **62%** of the frame for the previous
+  frame's swap fence while the CP thread is 44% idle: game work (2.3 ms) + CP work (3.5 ms) = the frame time.
+  Cause: predicated tiling. Between BeginTiling (0x8227A5F8) and EndTiling (0x8227AB80) D3D appends the kicked
+  segments to a list at `device+13224` (0x8226CE40 when `device+13088` != 0) and replays it per tile only at
+  EndTiling, so the CP gets the scene late. Plan and numbers: [native-gpu-plan.md](native-gpu-plan.md).
 
 ## Done (no visual or gameplay change)
 
