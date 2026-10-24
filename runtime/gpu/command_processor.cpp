@@ -20,6 +20,7 @@
 #include <cstring>
 #include <atomic>
 #include <chrono>
+#include <map>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -225,10 +226,48 @@ namespace
 
 
     // WAIT_REG_MEM: blocks the command processor until the condition holds (polling).
+    // CRASH_CP_WAIT_STATS=1: WAIT_REG_MEM packets that did not pass at once, per polled address
+    // (time spent, how many), logged every 10 s, and the packets before the first ones. In the
+    // village the only one that blocks is D3D's swap sequence: SCRATCH_REG1 (written back to
+    // 0x0870B004) = 1, wait until the CPU clears it, which the guest's vblank handler does once
+    // the swap's 2 vblanks have gone by (gpu.cpp, FAST_VBLANK_HZ).
+    void NoteWait(uint32_t waitInfo, uint32_t pollAddress, std::chrono::steady_clock::duration waited)
+    {
+        static const bool enabled = getenv("CRASH_CP_WAIT_STATS") != nullptr;
+        if (!enabled)
+            return;
+        struct Entry
+        {
+            uint64_t count = 0, blocked = 0;
+            std::chrono::steady_clock::duration time{};
+        };
+        static std::map<uint64_t, Entry> s_entries;
+        static auto s_last = std::chrono::steady_clock::now();
+        Entry& entry = s_entries[(uint64_t(waitInfo & 0x10) << 32) | pollAddress];
+        entry.count++;
+        if (waited.count() > 0)
+        {
+            entry.blocked++;
+            entry.time += waited;
+        }
+        auto now = std::chrono::steady_clock::now();
+        if (now - s_last > std::chrono::seconds(10))
+        {
+            double seconds = std::chrono::duration<double>(now - s_last).count();
+            s_last = now;
+            for (auto& [key, value] : s_entries)
+                Log("[gpu] WAIT_REG_MEM %s 0x%08X: %llu packets, %llu blocked, %.3f ms/s waiting", (key >> 32) ? "memory" : "register",
+                    uint32_t(key), (unsigned long long)value.count, (unsigned long long)value.blocked,
+                    std::chrono::duration<double, std::milli>(value.time).count() / seconds);
+            s_entries.clear();
+        }
+    }
+
     void WaitRegisterOrMemory(uint32_t waitInfo, uint32_t pollAddress, uint32_t reference, uint32_t mask, uint32_t interval)
     {
         auto start = std::chrono::steady_clock::now();
         bool warned = false;
+        bool looped = false;
 
         while (true)
         {
@@ -245,7 +284,22 @@ namespace
             }
 
             if (Compare(waitInfo, value & mask, reference))
+            {
+                NoteWait(waitInfo, pollAddress, looped ? std::chrono::steady_clock::now() - start : std::chrono::steady_clock::duration{});
                 return;
+            }
+            static const bool stats = getenv("CRASH_CP_WAIT_STATS") != nullptr;
+            if (!looped && stats)
+            {
+                static std::atomic<uint32_t> s_logged;
+                uint32_t logged = s_logged.fetch_add(1);
+                if (logged < 8)
+                    Log("[gpu] WAIT_REG_MEM blocks: %s 0x%08X & 0x%08X = 0x%08X, function %u, reference 0x%08X", waitInfo & 0x10 ? "memory" : "register",
+                        pollAddress, mask, value & mask, waitInfo & 7, reference);
+                if (logged < 2)
+                    LogRecentPackets();
+            }
+            looped = true;
 
             if (!warned && std::chrono::steady_clock::now() - start > std::chrono::seconds(2))
             {

@@ -242,6 +242,10 @@ namespace gpu::rhi
             uint32_t textureCount = 0, constantBytes = 0, targetCount = 0;
             bool bufferInput = false;
             std::string name;
+            // Draws: the key it was made from, and the last variant for a larger rendering instance.
+            DrawPipelineKey key;
+            uint64_t variantSignature = 0;
+            VulkanPipeline* variant = nullptr;
         };
 
         class VulkanDevice final : public Device
@@ -336,6 +340,7 @@ namespace gpu::rhi
             void EndRendering();
             void BeginRendering(VulkanTexture* const* colors, uint32_t colorCount, VulkanTexture* depth);
             bool RenderingMatches(VulkanTexture* const* colors, uint32_t colorCount, VulkanTexture* depth) const;
+            VulkanPipeline* PipelineInsideRendering(VulkanPipeline* pipeline, VulkanTexture* const* colors, uint32_t colorCount, VulkanTexture* depth);
             void SetViewportScissor(const Viewport& viewport, const Rect& scissor);
             void SavePipelineCache();
 
@@ -467,6 +472,8 @@ namespace gpu::rhi
             struct
             {
                 uint64_t submits = 0, pipelines = 0, shaderCompiles = 0, shaderFailures = 0, renderings = 0, barriers = 0;
+                // Why a rendering instance was begun: none open, color count, color targets, depth, pending barriers.
+                uint64_t renderingReasons[5] = {};
             } m_stats;
         };
 
@@ -1515,10 +1522,86 @@ namespace gpu::rhi
             return true;
         }
 
+        // A draw whose attachments are a subset of the open rendering instance's (the same image in
+        // each slot it writes, the same depth or none) is recorded inside it with a variant of its
+        // pipeline made for the instance's attachments: no writes to the extra color slots, no depth
+        // or stencil test/write when the draw has no depth. In the scene, draws with and without depth
+        // and with one or two color targets (velocity) alternate: ~50 of the ~70 instances per frame
+        // in the village were begun only for that. CRASH_VULKAN_SUBSET_RENDERING=0 turns it off.
+        VulkanPipeline* VulkanDevice::PipelineInsideRendering(VulkanPipeline* pipeline, VulkanTexture* const* colors, uint32_t colorCount,
+                                                                             VulkanTexture* depth)
+        {
+            static const bool enabled = [] {
+                const char* text = getenv("CRASH_VULKAN_SUBSET_RENDERING");
+                return !(text && strcmp(text, "0") == 0);
+            }();
+            if (!enabled || !m_rendering.active || !m_barriers.empty() || pipeline->pass || colorCount > m_rendering.colorCount)
+                return nullptr;
+            if (depth && depth != m_rendering.depth)
+                return nullptr;
+            bool exact = colorCount == m_rendering.colorCount && depth == m_rendering.depth;
+            for (uint32_t i = 0; i < colorCount; i++)
+            {
+                if (colors[i] && colors[i] != m_rendering.colors[i])
+                    return nullptr;
+                exact = exact && colors[i] == m_rendering.colors[i];
+            }
+            if (exact)
+                return nullptr;  // BeginRendering keeps the instance as it is
+            uint64_t signature = uint64_t(m_rendering.colorCount) | (uint64_t(depth != nullptr) << 3) | (uint64_t(m_rendering.depth != nullptr) << 4);
+            for (uint32_t i = 0; i < m_rendering.colorCount; i++)
+                signature |= uint64_t(m_rendering.colors[i] ? uint32_t(m_rendering.colors[i]->desc.RenderFormat()) & 0xFF : 0) << (8 + 8 * i);
+            if (m_rendering.depth)
+                signature ^= uint64_t(m_rendering.depth->desc.format) << 48;
+            if (pipeline->variant && pipeline->variantSignature == signature)
+                return pipeline->variant;
+            DrawPipelineKey key = pipeline->key;
+            key.keepFormats = 1;
+            for (uint32_t i = 0; i < 4; i++)
+            {
+                VulkanTexture* attachment = i < m_rendering.colorCount ? m_rendering.colors[i] : nullptr;
+                key.colorFormats[i] = attachment ? uint32_t(attachment->desc.RenderFormat()) : 0;
+                if (i >= colorCount || !colors[i])
+                {
+                    key.colorMask &= ~(0xFu << (4 * i));
+                    key.blend[i] = 0;
+                }
+            }
+            key.colorCount = m_rendering.colorCount;
+            if (!depth && m_rendering.depth)
+            {
+                key.depthFormat = uint32_t(m_rendering.depth->desc.format);
+                key.depthControl = 0;
+                key.stencilMasks = 0;
+                key.depthBias = 0;
+                key.slopeBias = 0.0f;
+            }
+            auto* variant = static_cast<VulkanPipeline*>(GetDrawPipeline(key));
+            if (!variant)
+                return nullptr;
+            pipeline->variant = variant;
+            pipeline->variantSignature = signature;
+            return variant;
+        }
+
         void VulkanDevice::BeginRendering(VulkanTexture* const* colors, uint32_t colorCount, VulkanTexture* depth)
         {
             if (RenderingMatches(colors, colorCount, depth) && m_barriers.empty())
                 return;
+            {
+                uint32_t reason = 4;
+                if (!m_rendering.active)
+                    reason = 0;
+                else if (m_rendering.colorCount != colorCount)
+                    reason = 1;
+                else if (m_rendering.depth != depth)
+                    reason = 3;
+                else
+                    for (uint32_t i = 0; i < colorCount; i++)
+                        if (m_rendering.colors[i] != colors[i])
+                            reason = 2;
+                m_stats.renderingReasons[reason]++;
+            }
             EndRendering();
             m_passId++;
             VkExtent2D extent{ UINT32_MAX, UINT32_MAX };
@@ -1869,8 +1952,10 @@ namespace gpu::rhi
             for (uint32_t i = 0; i < key.colorCount; i++)
             {
                 uint32_t mask = (key.colorMask >> (4 * i)) & 0xF;
-                // A slot the draw doesn't write has no attachment (Draw binds a null view there).
-                colorFormats[i] = mask ? VkFormatOf(DXGI_FORMAT(key.colorFormats[i])) : VK_FORMAT_UNDEFINED;
+                // A slot the draw doesn't write has no attachment (Draw binds a null view there), unless
+                // the draw runs inside a rendering instance with more attachments (keepFormats).
+                bool attached = key.keepFormats ? key.colorFormats[i] != 0 : mask != 0;
+                colorFormats[i] = attached ? VkFormatOf(DXGI_FORMAT(key.colorFormats[i])) : VK_FORMAT_UNDEFINED;
                 VkPipelineColorBlendAttachmentState& blend = blends[i];
                 uint32_t control = key.blend[i];
                 uint32_t colorSrc = control & 0x1F, colorOp = (control >> 5) & 7, colorDst = (control >> 8) & 0x1F;
@@ -1918,6 +2003,7 @@ namespace gpu::rhi
             create.pDynamicState = &dynamic;
             create.layout = m_drawLayout;
             auto pipeline = std::make_unique<VulkanPipeline>();
+            pipeline->key = key;
             VkResult result = vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &create, nullptr, &pipeline->pipeline);
             if (result != VK_SUCCESS)
             {
@@ -2144,7 +2230,11 @@ float4 main(uint id : SV_VertexID) : SV_Position
             VulkanTexture* colors[4];
             for (uint32_t i = 0; i < draw.colorCount; i++)
                 colors[i] = static_cast<VulkanTexture*>(draw.colorTargets[i]);
-            BeginRendering(colors, draw.colorCount, static_cast<VulkanTexture*>(draw.depthTarget));
+            VulkanTexture* depthTarget = static_cast<VulkanTexture*>(draw.depthTarget);
+            if (VulkanPipeline* inside = PipelineInsideRendering(pipeline, colors, draw.colorCount, depthTarget))
+                pipeline = inside;
+            else
+                BeginRendering(colors, draw.colorCount, depthTarget);
 
             DrawState& state = m_drawState;
             if (!m_systemRange)
@@ -2547,6 +2637,9 @@ float4 main(uint id : SV_VertexID) : SV_Position
                 (unsigned long long)m_stats.submits, (unsigned long long)m_stats.renderings, (unsigned long long)m_stats.barriers,
                 (unsigned long long)m_stats.pipelines, (unsigned long long)m_stats.shaderCompiles, (unsigned long long)m_stats.shaderFailures,
                 m_blocks.size(), (unsigned long long)m_dedicatedAllocations, m_samplers.size(), m_samplerSets.size());
+            const uint64_t* r = m_stats.renderingReasons;
+            Log("[gpu] vulkan: rendering instances begun because none was open %llu, color count %llu, color targets %llu, depth %llu, barriers %llu",
+                (unsigned long long)r[0], (unsigned long long)r[1], (unsigned long long)r[2], (unsigned long long)r[3], (unsigned long long)r[4]);
         }
     }
 

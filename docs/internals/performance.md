@@ -27,6 +27,10 @@ Full write-up: `runtime/NOTES.md` "Desempenho de CPU" (two rounds); GUIA "Desemp
 - Native D3D flush + kick (`gpu/d3d_native.cpp`, byte-identical PM4, `CRASH_NATIVE_D3D_VERIFY=1`): 441 -> 464 fps.
   The kick's CP_RB_WPTR store no longer goes through the MMIO trap. Now ~19% of the game thread waits for the
   CP, whose renderer work (`DrawImpl`, Vulkan recording, ~1.25 ms/frame) is the next target.
+- M8a: the emulated vblank at 1000 Hz capped the game at 500 fps (2 vblanks per swap; the CP waited in D3D's
+  swap sequence on SCRATCH_REG1 for the guest vblank handler). 2000 Hz: ~500 fps, p99 2.7 ms. The interrupt
+  thread waits on a high-resolution waitable timer (was ~72% of a core spinning in `wait_until`, now ~5%).
+  Subset rendering instances: 71 -> 54 per frame. Now the game thread is ~98% busy; the CP waits are ~2%.
 
 ## Done (no visual or gameplay change)
 

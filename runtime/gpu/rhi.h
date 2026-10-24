@@ -172,6 +172,9 @@ namespace gpu::rhi
         Topology topology = Topology::TriangleList;
         uint8_t depthClip = 1;
         uint8_t stripCut = 0;           // primitive restart (0xFFFFFFFF)
+        // Backend use: every colorFormats entry is an attachment, also where colorMask is 0 (a draw
+        // recorded inside a rendering instance with more attachments than it writes).
+        uint8_t keepFormats = 0;
     };
 
     struct DrawCall

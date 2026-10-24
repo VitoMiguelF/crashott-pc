@@ -243,7 +243,7 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
 | M5 | Post effects parity: motion blur, DOF, refraction/reflection, water, heat shimmer, Bink | (d) | - | |
 | M6 | DLSS/FSR, lighting remaster, HD packs verified on native | (e) | - | |
 | M7 | `native` default; PM4-only workarounds removed (tile stash, depth-alias special cases that no longer apply) | (f) | simpler code | |
-| M8 | Performance: fewer render passes/barriers (~300/~650 per frame now), multi-threaded recording, state sorting | (g) | GPU-side and record time | |
+| M8 | Performance: fewer render passes/barriers (~300/~650 per frame now), multi-threaded recording, state sorting | (g) | M8a done: 2000 Hz vblank (500 fps cap) 464 -> ~500 fps, subset rendering instances, vblank thread 72% -> 5% of a core; the game thread is now the limit | M8a done (2026-10-24) |
 
 ### M1 details (shaders)
 - `renderer::PrecompileShaders(folder)` = `TestShaders` that also writes the pipeline cache; `--precompile-shaders`
@@ -284,6 +284,30 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
   state (ExecuteBuffer + WriteRegisters, ~5% of the CP), not the renderer work: postponed in favour of the CP's
   renderer cost (M8: `DrawImpl`, texture lookups, fewer render passes/barriers) and M4 (native resources, which
   remove per-draw texture/vertex lookups), which now decide the frame time together with the game code.
+
+### M8a status (2026-10-24)
+- **The 500 fps cap**: the swap waits for 2 vblanks per frame and the unlimited / 60 / 120 modes ran the
+  emulated vblank at 1000 Hz. The command processor waited up to a vblank in D3D's swap sequence at every frame
+  (`SCRATCH_REG1`, written back to 0x0870B004, = 1, `WAIT_REG_MEM` until the guest's vblank handler clears it;
+  `CRASH_CP_WAIT_STATS=1` shows it), and the game waited for the command processor. `FAST_VBLANK_HZ` = 2000
+  (gpu.cpp): 464 -> 485-510 fps, p99 3.7 -> 2.7 ms, 1% low 210 -> 265 fps; 4000 Hz gave nothing more. The 30 fps
+  mode (60 Hz vblank, as on the console) is unchanged.
+- **Subset rendering instances** (rhi_vulkan.cpp `PipelineInsideRendering`, `CRASH_VULKAN_SUBSET_RENDERING=0` =
+  off): a draw whose attachments are a subset of the open instance's is recorded inside it with a pipeline
+  variant (`DrawPipelineKey::keepFormats`: the instance's formats, no writes to the extra slots, no depth/stencil
+  test or write without depth). Instances per village frame 71 -> 54 (the stats line `rendering instances begun
+  because ...` gives the reasons: depth 25, color count 11, color targets 11, none open 7 left); CP 1.27 -> 1.20
+  ms/frame. Validation clean.
+- **Interrupt thread without spinning** (gpu.cpp): `condition_variable::wait_until` rounds to whole milliseconds
+  on Windows, so with a sub-millisecond vblank it returned at once: the thread used ~72% of a core. It now waits
+  on a high-resolution waitable timer + an event (condition variable fallback before Windows 10 1803): ~5% of a
+  core, same frame rate, 2000 vblanks/s measured. Matters on 4-core machines (Steam Deck).
+- **Where the frame goes now** (sampled, village, ~500 fps): the game thread is busy ~98% of the frame (73%
+  game/engine code, 15% xn, 9.5% D3D) and waits for the command processor only ~2%. The command processor does
+  ~1.2 ms of work per ~2 ms frame. Further renderer work (fewer instances: a sticky depth/velocity attachment
+  set; `DrawImpl` / `GetTextureView` costs) no longer raises the frame rate on this machine; it lowers CPU load
+  and helps weaker CPUs. The next frame-rate gains are in the recompiled game code (`sub_82353478` CPU skinning,
+  the game's memcpy) and xn, i.e. outside the GPU path.
 
 ### M3/M4 details
 - Identify and name each of the 98 entry points (task board T3): signature, which device fields it reads and

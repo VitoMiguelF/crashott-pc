@@ -48,6 +48,10 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   sets cached by description (set 2); passes use a regular set per pass from the command buffer's pool.
   D24S8 when sampleable (NVIDIA), else D32S8 + `VK_EXT_depth_bias_control` (AMD/RADV, Steam Deck;
   `CRASH_VULKAN_D32=1` forces it). `XE_STENCIL` reads `.x` of a stencil view.
+- A draw whose attachments are a subset of the open rendering instance's is recorded inside it with a pipeline
+  variant (`keepFormats`: the instance's formats, extra slots write-masked, depth/stencil off without depth):
+  71 -> 54 instances per village frame (`CRASH_VULKAN_SUBSET_RENDERING=0` = off; the stats line gives why the
+  remaining ones were begun).
 - Pitfalls found: render targets/depth packed at the driver's 1 KB alignment in shared 64 KB pages
   corrupted each other on NVIDIA (attachments get 64 KB alignment); push descriptors with immutable
   samplers sampled zeros from image views created after the first frames (the menus' second front buffer

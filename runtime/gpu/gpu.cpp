@@ -54,6 +54,12 @@ namespace
 
     std::mutex g_interruptMutex;
     std::condition_variable g_interruptCondition;
+    // The interrupt thread sleeps on a high-resolution waitable timer (the next vblank) and an
+    // event (an interrupt request). condition_variable::wait_until rounds to whole milliseconds on
+    // Windows, so with the sub-millisecond vblank (FAST_VBLANK_HZ) it returned at once and the
+    // thread spun: ~70% of a core. Null handles (Windows before 10 1803): the condition variable.
+    HANDLE g_interruptEvent;
+    HANDLE g_vblankTimer;
     struct InterruptRequest
     {
         uint32_t source;
@@ -181,10 +187,28 @@ namespace
         auto nextVblank = std::chrono::steady_clock::now() + VBLANK_PERIOD;
         auto nextStats = std::chrono::steady_clock::now() + STATS_PERIOD;
 
+        g_vblankTimer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        if (g_vblankTimer)
+            g_interruptEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        Log("[gpu] interrupt thread waits on %s", g_vblankTimer && g_interruptEvent ? "a high-resolution timer" : "a condition variable");
+
         while (true)
         {
+            if (g_vblankTimer && g_interruptEvent)
+            {
+                auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(nextVblank - std::chrono::steady_clock::now()).count();
+                if (remaining > 0)
+                {
+                    LARGE_INTEGER due;
+                    due.QuadPart = -std::max<LONGLONG>(1, remaining / 100);  // relative, 100 ns units
+                    SetWaitableTimerEx(g_vblankTimer, &due, 0, nullptr, nullptr, nullptr, 0);
+                    HANDLE handles[2] = { g_interruptEvent, g_vblankTimer };
+                    WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+                }
+            }
             std::unique_lock lock(g_interruptMutex);
-            g_interruptCondition.wait_until(lock, nextVblank, [] { return !g_interruptQueue.empty(); });
+            if (!g_vblankTimer || !g_interruptEvent)
+                g_interruptCondition.wait_until(lock, nextVblank, [] { return !g_interruptQueue.empty(); });
 
             while (!g_interruptQueue.empty())
             {
@@ -288,6 +312,8 @@ namespace gpu
         std::unique_lock lock(g_interruptMutex);
         g_interruptQueue.push_back({ source, cpu, wait ? &done : nullptr });
         g_interruptCondition.notify_one();
+        if (g_interruptEvent)
+            SetEvent(g_interruptEvent);
         if (wait)
             g_interruptDelivered.wait(lock, [&] { return done; });
     }
@@ -301,12 +327,18 @@ namespace gpu
         //    the village on a CPU that makes ~65 fps unlocked, 56 fps on average). There the vblank
         //    runs at 1000 Hz, as without a limit, and VdSwap paces the frames (PaceFrame): a frame
         //    that is late costs only what it took. CRASH_FRAME_LIMITER=vblank: the old way.
+        //    That fast vblank is 2000 Hz (FAST_VBLANK_HZ): at 1000 Hz the 2 vblanks per swap capped
+        //    the frame rate at 500 fps and the command processor waited up to a vblank for D3D's
+        //    swap callback at every frame (the game then waited for the command processor). With
+        //    the single-pass scene the village runs ~460 fps: 1000 -> 2000 Hz gave 464 -> 494 fps,
+        //    p99 3.7 -> 2.7 ms; 4000 Hz gave nothing more.
         static const bool vblankLimiter = [] {
             const char* text = getenv("CRASH_FRAME_LIMITER");
             return text && !strcmp(text, "vblank");
         }();
         bool paced = (fps == 60 || fps == 120) && !vblankLimiter;
-        uint32_t hz = fps && !paced ? fps * 2 : 1000;
+        constexpr uint32_t FAST_VBLANK_HZ = 2000;
+        uint32_t hz = fps && !paced ? fps * 2 : FAST_VBLANK_HZ;
         g_pacedFps = paced ? fps : 0;
         // 2. The main loop (CUberManager::vf10, sub_821FC198) adds up dt and only updates and draws
         //    once 1/60 s has gone by: the float at 0x8201EF70, read only there. Above 60 fps it
