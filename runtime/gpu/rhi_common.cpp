@@ -6,7 +6,10 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <string>
+#include <thread>
 
 namespace gpu::rhi
 {
@@ -108,8 +111,21 @@ namespace gpu::rhi
     {
         if (cache.empty())
             return;
-        std::ofstream file(CachePath(cache, hash, extension), std::ios::binary);
-        file.write(static_cast<const char*>(data), std::streamsize(size));
+        // Written under a temporary name and renamed: the shader warm-up threads and the renderer can
+        // write the same entry at once, and a reader must never see half a file.
+        std::filesystem::path path = CachePath(cache, hash, extension);
+        std::filesystem::path temporary = path;
+        temporary += ".tmp" + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+        {
+            std::ofstream file(temporary, std::ios::binary);
+            file.write(static_cast<const char*>(data), std::streamsize(size));
+            if (!file)
+                return;
+        }
+        std::error_code error;
+        std::filesystem::rename(temporary, path, error);
+        if (error)
+            std::filesystem::remove(temporary, error);
     }
 
     void DumpFailedShader(const std::filesystem::path& cache, const char* name, const std::string& hlsl)

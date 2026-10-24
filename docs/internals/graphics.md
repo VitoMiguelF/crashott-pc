@@ -6,6 +6,10 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
 
 ## Renderer facts (`runtime/gpu/`)
 
+- Shader warm-up (`shader_warmup.*`): the runtime records each translated microcode in `shadercache\ucode\` and
+  compiles both variants (720p / scaled) of every known shader at start on a low-priority thread;
+  `--precompile-shaders` (run by `tools/setup.py`) does it on every core. Most vertex shaders are made at run
+  time by D3D's vertex-declaration binding: they are not in the game files.
 - Shaders: Xenos microcode -> HLSL -> FXC SM5.1 (`shader_translator`). `--test-shaders <dir>` translates
   every shader. Debug: `CRASH_GPU_TRACE_SWAP`, `CRASH_GPU_SKIP_PS=<hashes>`, `CRASH_GPU_SHOW_RESOLVE`,
   `userdata\shaderoverride\`.

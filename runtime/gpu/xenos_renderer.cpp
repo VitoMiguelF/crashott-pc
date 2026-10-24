@@ -25,6 +25,7 @@
 #include "renderer.h"
 #include "gpu.h"
 #include "rhi.h"
+#include "shader_warmup.h"
 #include "smaa.h"
 #include "tiling.h"
 #include "upscaler.h"
@@ -466,6 +467,13 @@ namespace gpu::renderer
                     std::filesystem::path dumpPath = g_shaderCacheDir.parent_path() / "shaderdump";
                     std::filesystem::create_directories(dumpPath, error);
                     std::ofstream(dumpPath / (std::string(name) + ".hlsl")) << entry->info.hlsl;
+                    // The microcode as in guest memory (big-endian dwords): tools/shaders.py finds
+                    // where the game keeps it.
+                    std::vector<uint32_t> bigEndian(entry->ucode.size());
+                    for (size_t i = 0; i < bigEndian.size(); i++)
+                        bigEndian[i] = __builtin_bswap32(entry->ucode[i]);
+                    std::ofstream(dumpPath / (std::string(name) + ".ucode"), std::ios::binary)
+                        .write(reinterpret_cast<const char*>(bigEndian.data()), std::streamsize(bigEndian.size() * 4));
                 }
                 // userdata\shaderoverride\<name>.hlsl replaces the translated HLSL (debugging and
                 // shader mods; same interface as the files in shaderdump\).
@@ -3492,6 +3500,9 @@ float4 main(float4 position : SV_Position) : SV_Target
         displayMode.dmSize = sizeof(displayMode);
         if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &displayMode))
             Log("[gpu] primary display: %lux%lu at %lu Hz", displayMode.dmPelsWidth, displayMode.dmPelsHeight, displayMode.dmDisplayFrequency);
+        // Both variants of every known game shader into the SPIR-V cache, off the critical path.
+        if (!getenv("CRASH_NO_SHADER_WARMUP"))
+            warmup::StartBackground(g_shaderCacheDir);
         g_active = true;
         settings::menu::SetAvailable(true);
         return true;
@@ -3515,36 +3526,22 @@ float4 main(float4 position : SV_Position) : SV_Target
         {
             if (entry.path().extension() != ".out")
                 continue;
-            std::ifstream file(entry.path(), std::ios::binary);
-            std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            auto be32 = [&](size_t offset) {
-                return offset + 4 <= data.size() ? (uint32_t(data[offset]) << 24) | (uint32_t(data[offset + 1]) << 16) |
-                                                       (uint32_t(data[offset + 2]) << 8) | data[offset + 3]
-                                                 : 0u;
-            };
-            // Container: magic 0x102A1100 (pixel) / 0x102A1101 (vertex), size of the header block
-            // (the physical block follows it), ... The dword at 0x18 points at the shader
-            // definition, whose first two dwords are the microcode offset in the physical block and
-            // its size (literal constants come first).
-            uint32_t magic = be32(0), definition = be32(0x18);
-            uint32_t offset = be32(4) + be32(definition), size = be32(definition + 4);
-            if ((magic & ~1u) != 0x102A1100 || offset + size > data.size() || size % 4)
+            ShaderStage stage;
+            std::vector<uint32_t> ucode;
+            if (!warmup::ReadShaderContainer(entry.path(), stage, ucode))
             {
                 Log("[test] %s: not a shader container", entry.path().filename().string().c_str());
                 continue;
             }
-            std::vector<uint32_t> ucode(size / 4);
-            for (size_t i = 0; i < ucode.size(); i++)
-                ucode[i] = be32(offset + i * 4);
             ShaderEntry shader;
-            shader.info.stage = (magic & 1) ? ShaderStage::Vertex : ShaderStage::Pixel;
+            shader.info.stage = stage;
             shader.ucode = ucode;
             shader.info.hash = HashUcode(shader.info.stage, ucode.data(), uint32_t(ucode.size()));
             total++;
             bool ok = PrepareShader(&shader) != nullptr;
             failures += !ok;
             Log("[test] %-28s %s_%016llx %4u dwords, %3u instructions, %zu vfetch const(s), %zu texture(s)%s: %s",
-                entry.path().filename().string().c_str(), (magic & 1) ? "vs" : "ps", (unsigned long long)shader.info.hash, uint32_t(ucode.size()), shader.info.instructionCount,
+                entry.path().filename().string().c_str(), stage == ShaderStage::Vertex ? "vs" : "ps", (unsigned long long)shader.info.hash, uint32_t(ucode.size()), shader.info.instructionCount,
                 shader.info.vertexFetches.size(), shader.info.textures.size(), shader.info.usesControlFlowMachine ? ", control flow" : "",
                 ok ? "ok" : "FAILED");
         }
@@ -3564,6 +3561,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             slot->info.stage = stage;
             slot->info.hash = hash;
             slot->ucode.assign(ucode, ucode + dwordCount);
+            warmup::Record(stage, hash, ucode, dwordCount);
         }
         BindShader(stage, slot.get());
         return slot.get();  // entries live as long as the renderer (g_shaders never drops one)

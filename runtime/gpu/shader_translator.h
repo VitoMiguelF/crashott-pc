@@ -71,4 +71,6 @@ namespace gpu
     // unchanged.
     void SetRenderScaled(bool scaled);
     TranslatedShader TranslateShader(ShaderStage stage, const uint32_t* ucode, uint32_t dwordCount);
+    // The same for a given variant instead of the current one (any thread: shader_warmup.cpp).
+    TranslatedShader TranslateShader(ShaderStage stage, const uint32_t* ucode, uint32_t dwordCount, bool renderScaled);
 }

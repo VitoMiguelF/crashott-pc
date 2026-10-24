@@ -32,6 +32,7 @@ __CRT_UUID_DECL(IDxcCompiler3, 0x228B4687, 0x5A6A, 0x4730, 0x90, 0x0C, 0x97, 0x0
 #endif
 
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -39,15 +40,28 @@ namespace gpu::rhi::vulkan
 {
     namespace
     {
-        bool g_loaded = false;
+        // One compiler object per thread (DXC's objects are not thread-safe; the shader warm-up
+        // compiles on worker threads, shader_warmup.cpp). g_compiler is the first one.
+        std::once_flag g_loadOnce;
+        DxcCreateInstanceProc g_create = nullptr;
         IDxcUtils* g_utils = nullptr;
         IDxcCompiler3* g_compiler = nullptr;
+        thread_local IDxcCompiler3* t_compiler = nullptr;
+
+        bool LoadCompilerOnce();
 
         bool LoadCompiler()
         {
-            if (g_loaded)
-                return g_compiler != nullptr;
-            g_loaded = true;
+            std::call_once(g_loadOnce, [] { LoadCompilerOnce(); });
+            if (!g_compiler)
+                return false;
+            if (!t_compiler && FAILED(g_create(CLSID_DxcCompiler, __uuidof(IDxcCompiler3), reinterpret_cast<void**>(&t_compiler))))
+                t_compiler = nullptr;
+            return t_compiler != nullptr;
+        }
+
+        bool LoadCompilerOnce()
+        {
             HMODULE module = LoadLibraryW(L"dxcompiler.dll");
             if (!module)
             {
@@ -62,6 +76,8 @@ namespace gpu::rhi::vulkan
                 g_compiler = nullptr;
                 return false;
             }
+            g_create = create;
+            t_compiler = g_compiler;
             return true;
         }
 
@@ -133,7 +149,7 @@ namespace gpu::rhi::vulkan
         IDxcResult* result = nullptr;
         if (compiles)
             (*compiles)++;
-        HRESULT status = g_compiler->Compile(&source, argPointers.data(), uint32_t(argPointers.size()), nullptr, __uuidof(IDxcResult),
+        HRESULT status = t_compiler->Compile(&source, argPointers.data(), uint32_t(argPointers.size()), nullptr, __uuidof(IDxcResult),
                                              reinterpret_cast<void**>(&result));
         if (SUCCEEDED(status) && result)
             result->GetStatus(&status);
@@ -180,7 +196,7 @@ namespace gpu::rhi::vulkan
             argPointers.push_back(arg.c_str());
         DxcBuffer source{ HLSL, sizeof(HLSL) - 1, DXC_CP_UTF8 };
         IDxcResult* result = nullptr;
-        HRESULT status = g_compiler->Compile(&source, argPointers.data(), uint32_t(argPointers.size()), nullptr, __uuidof(IDxcResult),
+        HRESULT status = t_compiler->Compile(&source, argPointers.data(), uint32_t(argPointers.size()), nullptr, __uuidof(IDxcResult),
                                              reinterpret_cast<void**>(&result));
         if (SUCCEEDED(status) && result)
             result->GetStatus(&status);

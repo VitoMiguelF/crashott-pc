@@ -40,6 +40,8 @@ namespace vfs
 
     // The writable user data folder (--userdata), also used for runtime caches.
     const std::filesystem::path& UserDataDir();
+    // The game folder (read-only).
+    const std::filesystem::path& GameDir();
 
     struct ModInfo
     {

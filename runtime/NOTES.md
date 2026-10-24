@@ -2022,3 +2022,17 @@ ative_gpu\m2\`.
 
 **Onde o quadro está agora** (amostrado, vila, ~500 fps): a thread do jogo fica ocupada ~98% do quadro (73% código do jogo/engine, 15% xn, 9,5% D3D) e espera o command processor só ~2%; o CP trabalha ~1,2 ms em ~2 ms de quadro. Mais trabalho no renderer (uma depth/velocidade "grudada" na instância, o custo do `DrawImpl`/`GetTextureView`) não sobe mais o FPS nesta máquina: diminui o uso de CPU e ajuda CPUs mais fracas. Os próximos ganhos de FPS estão no código recompilado do jogo (`sub_82353478`, o skinning na CPU; o memcpy do jogo) e no xn, fora do caminho da GPU. Conferido: `menu`, `configuracoes`, `iluminacao_tela`, `fase_direta`, `vila_sem_cena` (também com tiling e com DLSS) e `vila_sem_cena` com `gpu_debug`.
 
+## GPU nativa, M1 (2026-10-24, branch `native-gpu`): shaders compilados antes do uso (`gpu/shader_warmup.*`, `--precompile-shaders`, `tools/setup.py`)
+
+**O que os arquivos do jogo têm**: os 24 pixel shaders estão em `<jogo>\shaders\*.out` (mais um nos dados do executável). Os vertex shaders que chegam à GPU **não estão em arquivo nenhum**: o D3D do Xbox amarra cada vertex shader a uma declaração de vértices em tempo de execução e reescreve as instruções de fetch. Na vila, 13 dos 14 VS só existem assim (3 pequenos são dados do exe). Achado com `CRASH_DUMP_SHADERS=1`, que agora grava também o microcódigo (`.ucode`, big-endian) ao lado do HLSL.
+
+**Variantes**: duas por shader, 720p e escalada (resolução interna diferente de 1x, cena escalada pelo DLSS/FSR ou texturas HD). `TranslateShader(..., renderScaled)` recebe a variante em vez de ler o estado global. O cache de SPIR-V é indexado pelo HLSL final, então os dois convivem.
+
+**O que mudou**: o runtime grava o microcódigo de cada shader que traduz em `userdata\shadercache\ucode\<vs|ps>_<hash>.ucode` (local; é derivado do jogo, nunca vai para release). A cada início, uma thread de prioridade baixa traduz e compila as duas variantes de todo shader conhecido (os pixel shaders dos `.out` + os gravados) que faltam no cache. `CrashRecomp.exe --precompile-shaders` faz o mesmo em todos os núcleos, e o `tools/setup.py` roda isso depois de montar a `dist\` (24 × 2 em 0,85 s com 16 threads). `CRASH_NO_SHADER_WARMUP=1` desliga o aquecimento. O DXC passou a ter um compilador por thread, e o cache é gravado com nome temporário + rename.
+
+**Medido** (userdata temporária): cache vazio = 46 compilações na primeira ida à vila; depois do `--precompile-shaders`, 32 (14 VS amarrados + 18 shaders de pass do renderer, uma vez por instalação); trocando para 1080p depois de uma execução, o aquecimento compilou as variantes escaladas de 39 shaders em 329 ms no boot e o renderer compilou **0** durante o jogo (antes eram ~2 s de compilações na primeira vez numa resolução nova). O HLSL gerado pelo aquecimento é o mesmo do renderer (o cache bateu nos 39).
+
+**A variante escalada custa?** Medido a pedido: vila 720p 532/496 fps contra 1080p 531/503 fps, GPU esperando ~0. Não custa nada mensurável nesta máquina: a variante só acrescenta umas multiplicações por leitura de textura, e o limite é a CPU. No Xbox o jogo era 720p nativo; aqui o PC desenha os mesmos draws numa imagem maior.
+
+**O que fica de fora**: um VS amarrado inédito ainda compila no primeiro draw (~80 ms, uma vez por instalação), e os shaders de pass do renderer compilam na primeira execução.
+

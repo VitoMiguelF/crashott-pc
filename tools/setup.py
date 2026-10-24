@@ -28,7 +28,8 @@ Steps (each one is skipped when its result is already up to date, so running it 
  7. optional release assets (--subtitles, --remaster): downloaded from the GitHub release (or taken
     from --assets-dir), checked against its SHA256SUMS.txt and unpacked into private\\ / languages\\;
  8. tools\\make_dist.py assembles dist\\ (the folder to play), pointing it at your dump (or copying
-    the dump into dist\\game with --copy-game);
+    the dump into dist\\game with --copy-game), and CrashRecomp.exe --precompile-shaders fills
+    dist\\userdata\\shadercache;
  9. optional: tools\\assets.py all exports the game's sounds, videos, textures and models to
     private\\assets for modding (README, "Extracting and modifying assets"). It needs the Python
     packages of tools\\requirements.txt (numpy, Pillow): the bundled Python has them; another Python
@@ -536,6 +537,24 @@ def assemble(game, copy_game):
     elif game != dist_game:
         args += ["--game", game]
     run_all(args)
+    precompile_shaders(game if not copy_game else dist_game)
+
+
+def precompile_shaders(game):
+    """Translates and compiles the game's shaders into dist\\userdata\\shadercache (both variants, every
+    core), so the first run doesn't compile them while playing (runtime/gpu/shader_warmup.h). Optional: a
+    failure only costs that first-run compile time."""
+    exe = ROOT / "dist" / "CrashRecomp.exe"
+    if not exe.is_file():
+        return
+    say(f"> {exe.name} --precompile-shaders")
+    result = subprocess.run([str(exe), "--game", str(game), "--precompile-shaders"], cwd=exe.parent, capture_output=True, text=True,
+                            errors="replace")
+    summary = [line for line in result.stdout.splitlines() + result.stderr.splitlines() if "--precompile-shaders" in line]
+    if result.returncode == 0:
+        say(summary[-1] if summary else "shaders pré-compilados")
+    else:
+        say(f"aviso: a pré-compilação dos shaders falhou (código {result.returncode}); o jogo compila no primeiro uso")
 
 
 def extract_assets(game):

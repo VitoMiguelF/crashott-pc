@@ -18,6 +18,8 @@
 //   --pads-selftest  checks which player each controller gets (local co-op, kernel/pad_slots.h) and exits
 //   --prompt-preview <folder>  draws the button icons (Xbox / PlayStation / keyboard) to PNG files and
 //               exits (settings/prompt_icons.h)
+//   --precompile-shaders  translates and compiles every known game shader, both variants, into
+//               userdata\shadercache on every core, and exits (gpu/shader_warmup.h)
 //   --restarted <pid>  given by a restart from the settings screen (settings.h, Restart): waits for
 //               the previous process to exit and skips the intros
 // Environment: CRASH_TIMEOUT=<seconds> stops the run (with a report) after that long.
@@ -30,6 +32,7 @@
 #include "fs/vfs.h"
 #include "gpu/gpu.h"
 #include "gpu/renderer.h"
+#include "gpu/shader_warmup.h"
 #include "kernel/memory.h"
 #include "kernel/xex_loader.h"
 #include "kernel/hid_pads.h"
@@ -127,6 +130,8 @@ int main(int argc, char** argv)
             return input::slots::SelfTest();
         if (strcmp(argv[i], "--hid-monitor") == 0)
             return input::hid::Monitor(i + 1 < argc ? atoi(argv[i + 1]) : 20);
+        if (strcmp(argv[i], "--precompile-shaders") == 0)
+            return gpu::warmup::Precompile(vfs::UserDataDir() / "shadercache") ? 2 : 0;
     }
     for (int i = 1; i + 1 < argc; i++)
     {

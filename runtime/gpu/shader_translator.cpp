@@ -252,8 +252,8 @@ namespace gpu
         class Translator
         {
         public:
-            Translator(ShaderStage stage, const uint32_t* ucode, uint32_t dwordCount)
-                : m_stage(stage), m_ucode(ucode), m_dwordCount(dwordCount)
+            Translator(ShaderStage stage, const uint32_t* ucode, uint32_t dwordCount, bool renderScaled)
+                : m_stage(stage), m_ucode(ucode), m_dwordCount(dwordCount), m_renderScaled(renderScaled)
             {
             }
 
@@ -263,6 +263,7 @@ namespace gpu
             ShaderStage m_stage;
             const uint32_t* m_ucode;
             uint32_t m_dwordCount;
+            bool m_renderScaled;  // the scaled variant (SetRenderScaled)
             TranslatedShader m_out;
             std::vector<Cf> m_cf;
             std::string m_body;
@@ -1032,7 +1033,7 @@ namespace gpu
                 }
                 Line("float3 uvw = %s;", coords.c_str());
                 Line("float2 size; xe_t%u.GetDimensions(size.x, size.y);", fc);
-                if (g_renderScaled)
+                if (m_renderScaled)
                     Line("size *= xe_tex_size_scale[%u].%c; // guest texels", fc >> 2, "xyzw"[fc & 3]);
                 if (fetch.TextureUnnormalized())
                     Line("uvw.xy /= size;");
@@ -1403,7 +1404,7 @@ float4 xe_unpack32(uint4 w, bool isSigned, bool normalized)
         std::string& hlsl = m_out.hlsl;
         Append(hlsl, "// Xenos %s shader %016llX, %u control flow instructions\n", IsPixel() ? "pixel" : "vertex",
                (unsigned long long)m_out.hash, uint32_t(m_cf.size()));
-        if (g_renderScaled)
+        if (m_renderScaled)
         {
             std::string common = COMMON_HLSL;
             const std::string last = "    float4 xe_tex_lod_bias[8];  // texture fetch constant LOD biases\n";
@@ -1527,7 +1528,7 @@ float4 xe_unpack32(uint4 w, bool isSigned, bool normalized)
             hlsl += "    return output;\n}\n";
         }
 
-        if (g_renderScaled)
+        if (m_renderScaled)
         {
             // Param gen's pixel position in guest pixels.
             const std::string position = "float4(input.position.xy - 0.5,";
@@ -1556,6 +1557,11 @@ float4 xe_unpack32(uint4 w, bool isSigned, bool normalized)
 
     TranslatedShader TranslateShader(ShaderStage stage, const uint32_t* ucode, uint32_t dwordCount)
     {
-        return Translator(stage, ucode, dwordCount).Run();
+        return Translator(stage, ucode, dwordCount, g_renderScaled).Run();
+    }
+
+    TranslatedShader TranslateShader(ShaderStage stage, const uint32_t* ucode, uint32_t dwordCount, bool renderScaled)
+    {
+        return Translator(stage, ucode, dwordCount, renderScaled).Run();
     }
 }

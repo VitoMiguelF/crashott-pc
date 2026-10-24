@@ -236,7 +236,7 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
 | # | Milestone | Maps to | Expected gain | Status |
 |---|---|---|---|---|
 | M0 | This plan, `tools/d3d_map.py`, baseline measurement | - | - | done (2026-10-24) |
-| M1 | Shaders precompiled at install/first run; variants list; pipeline cache warm-up | (a) | no first-use hitches | |
+| M1 | Shaders precompiled at install/first run; variants list; pipeline cache warm-up | (a) | no compile in game after the first encounter; a resolution change compiles nothing | done (2026-10-24) |
 | M2 | Scene in one pass (no predicated tiling), still on PM4 | (f) | measured **179 -> 429 fps** in the village (2.4x), CP 3.3 -> 1.4 ms/frame, draws 1,585 -> 574/frame; tile stash off | done (2026-10-24), default on, `CRASH_SINGLE_PASS=0` = tiling |
 | M3 | Direct draws: D3D draw hooks feed the renderer from the device shadow state, a host command stream to the render thread; PM4 only for what is not hooked yet | (b) | M3a (native flush + kick, identical PM4): 441 -> 464 fps; the transport change (M3b) no longer pays, see M3 status | M3a done (2026-10-24) |
 | M4 | Native resources: textures/buffers/shaders/render targets as host objects; resolves as copies; frontend first, then the village | (b), (c), (d) | per-draw lookups and EDRAM bookkeeping gone | |
@@ -245,13 +245,27 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
 | M7 | `native` default; PM4-only workarounds removed (tile stash, depth-alias special cases that no longer apply) | (f) | simpler code | |
 | M8 | Performance: fewer render passes/barriers (~300/~650 per frame now), multi-threaded recording, state sorting | (g) | M8a done: 2000 Hz vblank (500 fps cap) 464 -> ~500 fps, subset rendering instances, vblank thread 72% -> 5% of a core; the game thread is now the limit | M8a done (2026-10-24) |
 
-### M1 details (shaders)
-- `renderer::PrecompileShaders(folder)` = `TestShaders` that also writes the pipeline cache; `--precompile-shaders`
-  and a launcher/installer step; skip when `shadercache\manifest.txt` matches the exe build id + DXC version.
-- The runtime appends every (hash, variant) it compiles at run time to `variants.txt`, so the next precompile
-  covers it; ship no game-derived list.
-- Test: delete a *copy* of the test shader cache, precompile, run `vila_sem_cena` and check the log has no
-  "compiling" lines after boot; first-frame hitch gone in `desempenho_vila_direto` (max frame time).
+### M1 status (2026-10-24, `runtime/gpu/shader_warmup.*`)
+- What the game files hold: the 24 pixel shaders are `<game>\shaders\*.out` (one more lives in the executable);
+  the vertex shaders that reach the GPU are **not** in any file: Xbox D3D binds each vertex shader to a vertex
+  declaration at run time and rewrites its fetch instructions (13 of the 14 VS in the village; 3 small ones
+  are data in the exe). So the full set can't be listed from the files.
+- Two HLSL variants per shader: 720p and scaled (internal resolution != 1x, a scaled scene for DLSS/FSR, or
+  HD textures; `TranslateShader(..., renderScaled)` now takes it as a parameter). The SPIR-V cache is keyed by
+  the final HLSL.
+- The runtime records the microcode of every shader it translates (`userdata\shadercache\ucode\<vs|ps>_<hash>
+  .ucode`, big-endian, local, game-derived: never shipped). At every start a low-priority thread translates and
+  compiles both variants of every known shader (the `.out` pixel shaders + the recorded ones) that the cache
+  lacks. `CrashRecomp.exe --precompile-shaders` does the same on every core; `tools/setup.py` runs it after
+  assembling `dist\` (24 x 2 in 0.85 s on 16 threads). `CRASH_NO_SHADER_WARMUP=1` skips the warm-up.
+- DXC: one compiler object per thread; cache entries are written under a temporary name and renamed.
+- Measured (scratch userdata): empty cache -> 46 compiles in the first village run; after `--precompile-shaders`
+  32 (14 bound VS + 18 renderer pass shaders, once per install); switching to 1080p after one run: the warm-up
+  compiled the scaled variants of 39 shaders in 329 ms at boot and the renderer compiled **0** while playing
+  (it used to be ~2 s of compiles the first time a resolution was used).
+- Not covered: a bound VS never seen before still compiles on its first draw (~80 ms, once per install); the
+  renderer's own pass shaders compile on the first launch. Also measured: the scaled variant costs nothing
+  here (village 720p 532/496 fps vs 1080p 531/503 fps; the GPU waits ~0).
 
 ### M2 details (one pass) — done, see 3.3
 - Trace (`CRASH_TRACE_TILING=<n>[@<frame>]`, village frame): one bracket per frame. `BeginTiling(flags 0, 3

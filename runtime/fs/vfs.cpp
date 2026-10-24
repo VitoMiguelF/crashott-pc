@@ -180,6 +180,11 @@ namespace vfs
         return g_userDataDir;
     }
 
+    const fs::path& GameDir()
+    {
+        return g_game.root;
+    }
+
     const std::vector<ModInfo>& Mods()
     {
         return g_mods;
