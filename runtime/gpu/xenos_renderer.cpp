@@ -26,6 +26,7 @@
 #include "gpu.h"
 #include "rhi.h"
 #include "smaa.h"
+#include "tiling.h"
 #include "upscaler.h"
 #include "texture_watch.h"
 #include "graphics_options.h"
@@ -2037,7 +2038,8 @@ float4 main(float4 position : SV_Position) : SV_Target
         // Before a color resolve into `surface` covering the host rectangle `rect`.
         void TileStashBeforeResolve(ResolveSurface& surface, const rhi::Rect& rect, bool tileEnd, uint32_t base)
         {
-            static const bool disabled = getenv("CRASH_GPU_NO_TILE_STASH") != nullptr;  // debug: the old behavior
+            // Debug: the old behavior. Not needed without tiling (the single-pass scene, tiling.h).
+            static const bool disabled = getenv("CRASH_GPU_NO_TILE_STASH") != nullptr || SinglePassScene();
             if (disabled || rect.left >= rect.right || rect.top >= rect.bottom)
                 return;
             TileStash& s = g_tileStash[&surface];

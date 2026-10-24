@@ -21,6 +21,9 @@ Full write-up: `runtime/NOTES.md` "Desempenho de CPU" (two rounds); GUIA "Desemp
   Cause: predicated tiling. Between BeginTiling (0x8227A5F8) and EndTiling (0x8227AB80) D3D appends the kicked
   segments to a list at `device+13224` (0x8226CE40 when `device+13088` != 0) and replays it per tile only at
   EndTiling, so the CP gets the scene late. Plan and numbers: [native-gpu-plan.md](native-gpu-plan.md).
+- Fixed by the single-pass scene (`gpu/tiling_hooks.cpp`, M2): **179 -> 429 fps** in `desempenho_vila_direto`,
+  CP 3.3 -> 1.4 ms/frame, fence wait 62% -> 5% of the game thread. Now the game thread is the limit (63%
+  game/engine, 16% D3D building PM4, 15% Pure3D xn).
 
 ## Done (no visual or gameplay change)
 

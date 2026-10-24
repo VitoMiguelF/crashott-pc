@@ -25,6 +25,10 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   the scene into 0x0A642000 without a clear before refraction, and its final with a clear into the same
   texture, so tile 3 read tile 2's final (ice band at x=832). `Resolve()` keeps per-surface `pre`/`final`
   stash copies (`TileStashBeforeResolve`; `CRASH_GPU_NO_TILE_STASH=1` disables).
+- **Single-pass scene (default since 2026-10-24, `gpu/tiling_hooks.cpp`)**: the scene targets are created at
+  1280x720 with explicit EDRAM bases 1440/2048/2880, BeginTiling is skipped, EndTiling becomes one Resolve,
+  the xn per-tile resolves collapse into one; no tile stash. 2.4x fps in the village. `CRASH_SINGLE_PASS=0`
+  = the console's predicated tiling (above). Details: [native-gpu-plan.md](native-gpu-plan.md) 3.3.
 - The orange translucent shapes in the top corners are the P1/P2 HUD, not artifacts.
 
 ## Vulkan renderer (`rhi.h`, `rhi_vulkan.cpp`)

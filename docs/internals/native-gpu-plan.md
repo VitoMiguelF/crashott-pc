@@ -43,7 +43,7 @@ frame N+1 (D3D allows one frame in flight; we keep that, the game reuses dynamic
 the game because **the scene's commands only reach it at `EndTiling`** (section 3.3). The GPU itself waits ~0
 (DLSS or a lower resolution change nothing, as in the earlier rounds).
 
-So the order of the wins is:
+So the order of the wins is (M2 confirmed the first one: 2.4x):
 1. Let the CP (or its replacement) work **while** the game builds the frame: remove the tiling deferral.
    Theoretical ceiling ≈ max(2.3, 3.5) ms instead of the sum (≈ 1.6x), plus less CP work because each scene
    draw is processed once instead of once per tile.
@@ -157,14 +157,21 @@ overlapping 32: scissor 0-448 / 416-864 / 832-1280) under `SET_BIN_SELECT` predi
 Consequences today: the CP gets the scene late (serialization, section 1), parses it three times, and the
 tile seams need the `TileStashBeforeResolve` workaround (ice band at x = 832).
 
-Plan:
-- Render the scene **in one pass**. The host render targets are already full size (the renderer composes tiles
-  into one host image), so only the bracket changes: no deferral, one full-screen scissor, one resolve per
-  `EndTiling` with the union of the tile rects. Two ways, to be chosen by the M2 experiment:
-  a. *D3D level*: replace BeginTiling/EndTiling by "set the render target, clear as asked" / "resolve the full
-     rect, clear as asked" (the clear values and resolve flags are their arguments).
-  b. *Minimal*: keep D3D's code but stop the deferral (segments kicked normally while tiling is on), run the
-     replayed list once with every bin selected, and resolve the full rect once.
+Done in M2 (`runtime/gpu/tiling_hooks.cpp`, on by default, `CRASH_SINGLE_PASS=0` = the console's tiling):
+- The scene targets were tile-sized host images (480x720: `xnDisplay::vf04` creates color 0, depth/stencil
+  and color 1 = velocity through 0x8226A868 with width align32(1280/3 + 63)), drawn once per tile. They are
+  now created at 1280x720 with explicit EDRAM bases 1440 / 2048 / 2880 in `D3DSURFACE_PARAMETERS` (Base,
+  HierarchicalZBase, ColorExpBias): three full-size 2x surfaces overflow D3D's 2048-tile allocator (the 2nd and
+  3rd creations returned null and `Resolve` crashed reading RenderTarget[1]). Render targets are keyed by
+  (base, host width, format) without the MSAA, so the bases must also differ from the 1x post/HUD targets
+  (color at 0, depth at 720).
+- `BeginTiling` is skipped (no clear is asked for), so nothing is deferred. An `EndTiling` (xn vf05 and the
+  mid-frame 0x8238CE98) becomes one `Resolve` of the whole surface with its flags/clear values/parameters.
+- `xnContext+1220` stays set: the xn helpers keep their per-tile resolves (`SetPredication(2 << tile)` +
+  `Resolve(tile rect, point = rect origin)`); the first becomes a whole-surface resolve and the other two are
+  dropped. The xn code's non-tiled branches (+1220 = 0) are dead code here: they read depth/shadow texture
+  slots that are never created (and mix up indices 295/297).
+- `TileStashBeforeResolve` is off in this mode (nothing to stitch).
 - EDRAM: render targets are host images keyed by (EDRAM base, pitch, format, MSAA) today. On the native path
   they are keyed by the guest surface object (`D3DSurface`) instead; EDRAM aliasing tricks the game relies on
   must be kept explicitly: the depth-only clears into the velocity RT (`DEPTH_ALIAS_PS`, stencil ref 0x80 =
@@ -229,9 +236,9 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
 | # | Milestone | Maps to | Expected gain | Status |
 |---|---|---|---|---|
 | M0 | This plan, `tools/d3d_map.py`, baseline measurement | - | - | done (2026-10-24) |
-| M1 | Shaders precompiled at install/first run; variants list; pipeline cache warm-up | (a) | no first-use hitches | next |
-| M2 | Scene in one pass (no predicated tiling), still on PM4 | (f) | ~1.5-2x fps in the village (overlap + 1x scene processing); tile stash no longer needed | |
-| M3 | Direct draws: D3D draw hooks feed the renderer from the device shadow state, a host command stream to the render thread; PM4 only for what is not hooked yet | (b) | CP parse + game-side PM4 encode gone for draws | |
+| M1 | Shaders precompiled at install/first run; variants list; pipeline cache warm-up | (a) | no first-use hitches | |
+| M2 | Scene in one pass (no predicated tiling), still on PM4 | (f) | measured **179 -> 429 fps** in the village (2.4x), CP 3.3 -> 1.4 ms/frame, draws 1,585 -> 574/frame; tile stash off | done (2026-10-24), default on, `CRASH_SINGLE_PASS=0` = tiling |
+| M3 | Direct draws: D3D draw hooks feed the renderer from the device shadow state, a host command stream to the render thread; PM4 only for what is not hooked yet | (b) | after M2 the game thread is the limit and 31% of it is D3D (PM4 encode, 16%) + xn (15%): that is what M3 removes | next |
 | M4 | Native resources: textures/buffers/shaders/render targets as host objects; resolves as copies; frontend first, then the village | (b), (c), (d) | per-draw lookups and EDRAM bookkeeping gone | |
 | M5 | Post effects parity: motion blur, DOF, refraction/reflection, water, heat shimmer, Bink | (d) | - | |
 | M6 | DLSS/FSR, lighting remaster, HD packs verified on native | (e) | - | |
@@ -246,14 +253,16 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
 - Test: delete a *copy* of the test shader cache, precompile, run `vila_sem_cena` and check the log has no
   "compiling" lines after boot; first-frame hitch gone in `desempenho_vila_direto` (max frame time).
 
-### M2 details (one pass)
-1. Experiment (half a day): trace one village frame (`CRASH_GPU_TRACE_SWAP`) and list the tiling brackets
-   (count, tile rects, resolve rects/flags/destinations, clears) from the BeginTiling/EndTiling arguments.
-2. Implement option a or b of 3.3 in a new `runtime/gpu/tiling_hooks.cpp` (`PPC_FUNC` on 0x8227A5F8,
-   0x8227AB80, 0x8227B038, 0x8227B2B8; extend, don't duplicate, any existing hook).
-3. Renderer: `Resolve()` with a single full rect; `TileStashBeforeResolve` becomes a no-op when the bracket
-   was single-pass (keep the code for `pm4` + tiling).
-4. Verify: the ice band (x = 832), motion blur clears, stencil shadows, refraction/water, the HUD; bench.
+### M2 details (one pass) — done, see 3.3
+- Trace (`CRASH_TRACE_TILING=<n>[@<frame>]`, village frame): one bracket per frame. `BeginTiling(flags 0, 3
+  tiles, no clear)`, `Clear(0x1F)` + `Clear(0x2, 0x808080)` (velocity), the scene, 10 logical resolves × 3
+  tiles (scene copies to the refraction texture, depth resolves with flags 0x14), two stencil clears over the 3
+  rects, `EndTiling(0x300 = resolve + clear color and depth, to one of the two front-buffer textures)`, then a
+  `Clear(0x30)` over the 3 rects outside the bracket. `xnContext::vf101/vf102` (0x8227B038 / 0x8227B380) are
+  per-draw calls, not tiling.
+- Known leftovers: the xn code still issues 3 SetPredication calls per logical resolve (cheap); the mid-frame
+  EndTiling path (0x8238CE98, `CRenderManager::vf10`) is handled by the same hook but did not occur in the
+  village; check other levels when they are profiled.
 
 ### M3/M4 details
 - Identify and name each of the 98 entry points (task board T3): signature, which device fields it reads and
@@ -274,6 +283,9 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
   --sample-start 20 --sample-seconds 15` for a profile; `tools\perf\profile.py` names the samples).
   Wait until no `CrashRecomp.exe` runs. Never use the player's userdata.
 - Baseline (M0): 162 fps, 6.17 ms, p99 8.3 ms, CP 3.5 ms/frame (`build\desempenho\native_base_sampled.json`).
+- After M2 (same machine, window unfocused in both): tiling 179 fps / single pass **429 fps** (p99 3.3 ms, 1% low
+  214 fps), CP 1.39 ms/frame (`m2_final_tiled.json`, `m2_final_single.json`). Sampled: the game thread waits on
+  the fence 5% of the time (was 62%); 63% game/engine, 16% D3D, 15% xn; the CP thread is idle most of the time.
 
 ## 7. Task board (for collaborators)
 
