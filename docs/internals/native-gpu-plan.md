@@ -239,7 +239,7 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
 | M1 | Shaders precompiled at install/first run; variants list; pipeline cache warm-up | (a) | no compile in game after the first encounter; a resolution change compiles nothing | done (2026-10-24) |
 | M2 | Scene in one pass (no predicated tiling), still on PM4 | (f) | measured **179 -> 429 fps** in the village (2.4x), CP 3.3 -> 1.4 ms/frame, draws 1,585 -> 574/frame; tile stash off | done (2026-10-24), default on, `CRASH_SINGLE_PASS=0` = tiling |
 | M3 | Direct draws: D3D draw hooks feed the renderer from the device shadow state, a host command stream to the render thread; PM4 only for what is not hooked yet | (b) | M3a (native flush + kick, identical PM4): 441 -> 464 fps; the transport change (M3b) no longer pays, see M3 status | M3a done (2026-10-24) |
-| M4 | Native resources: textures/buffers/shaders/render targets as host objects; resolves as copies; frontend first, then the village | (b), (c), (d) | per-draw lookups and EDRAM bookkeeping gone | |
+| M4 | Native resources: textures/buffers/shaders/render targets as host objects; resolves as copies; frontend first, then the village | (b), (c), (d) | per-draw lookups and EDRAM bookkeeping gone; slices M4.1-M4.6 in "M4 design" | designed (2026-10-24) |
 | M5 | Post effects parity: motion blur, DOF, refraction/reflection, water, heat shimmer, Bink | (d) | - | |
 | M6 | DLSS/FSR, lighting remaster, HD packs verified on native | (e) | - | |
 | M7 | `native` default; PM4-only workarounds removed (tile stash, depth-alias special cases that no longer apply) | (f) | simpler code | |
@@ -322,6 +322,32 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
   set; `DrawImpl` / `GetTextureView` costs) no longer raises the frame rate on this machine; it lowers CPU load
   and helps weaker CPUs. The next frame-rate gains are in the recompiled game code (`sub_82353478` CPU skinning,
   the game's memcpy) and xn, i.e. outside the GPU path.
+
+### M4 design (2026-10-24): from PM4 to a host command stream, in slices
+
+Goal: no Xenos-level emulation left between the game's D3D calls and Vulkan. Constraint: every slice keeps the
+game working and comparable with the current path (`CRASH_NATIVE_M4=0` and per-slice switches), and none of
+them is expected to raise the frame rate on this machine (the game thread is the limit, M8a): the value is
+the architecture (and lower CPU load on weaker machines).
+
+The backbone is a **host command stream ordered by the D3D ring**: a D3D hook writes a 3-dword marker packet
+(type-3 NOP, magic, record offset) into D3D's current segment and its parameters into a host record ring; the
+command processor executes the record when it reaches the marker. Order relative to everything still in PM4
+and D3D's fence semantics (one frame in flight, buffer reuse) come for free. As slices land, less real PM4
+remains; at the end the ring carries only markers and fences and the command processor is the render thread.
+
+| Slice | D3D side (hooks) | Renderer side | Verification | Removes |
+|---|---|---|---|---|
+| M4.1 backbone + draws | the 4 draw functions (0x823EA9A8, 0x823EAE48, 0x823EB398, 0x823EB780): dirty register/constant groups (E308/E6A8 groups) and the draw parameters go into the record; the special flushes (F448 shaders, DF70, E548 fetch constants, E3C8) stay PM4 for now | `ExecuteHostRecord`: register runs into the register file, then `renderer::Draw` | verify mode: both paths, the register file compared at each marker | PM4 encode/parse of draw state |
+| M4.2 shaders by handle | `8226F448` (shader load): the D3D shader object maps to a `ShaderEntry` (created once, per bound microcode) | records carry the shader handles | same + `--precompile-shaders` covers them | IM_LOAD packets, per-draw microcode compares |
+| M4.3 textures | `xnTexture::vf11/13/14` + `8226E548` (fetch constants): host textures made at create/unlock, decoded once (decode cache), HD keys unchanged; the write watch stays as the safety net | records carry texture handles + sampler state | captures + HD pack test | per-draw `GetTextureView` lookups/hashes |
+| M4.4 vertex/index buffers | D3D buffer create/lock/unlock (xnPrimBuffer vf4-vf12): host buffers swapped at unlock; dynamic ones per frame | draws reference host buffers | captures | per-draw vertex/index swaps and copies (`BuildIndices`, vertex upload) |
+| M4.5 targets, clears, resolves | SetRenderTarget/DepthStencil, Clear (0x82284290), Resolve (0x8227F9E8): host commands on host images tied to the D3D surfaces | explicit aliasing cases (velocity clear through depth, packed depth for the stencil shadows) | captures, `iluminacao_tela`, DLSS/FSR | EDRAM keying, resolve emulation |
+| M4.6 swap, Bink, frontend | Swap (0x82274080), Bink textures (`movie::PlayerBink`) | present from the host command | `boot`, `menu`, `configuracoes` | XE_SWAP packet path |
+| M7 | the rest of the 98 entry points (`tools/d3d_map.py`) | the command processor becomes the render thread; the PM4 parser, register file and EDRAM code are deleted | full profile set | everything Xenos-level except shader translation |
+
+Collaborator split: M4.3 (textures) and M4.4 (buffers) are independent of each other once M4.1 exists; each
+owns its hook file (`gpu/native/d3d_textures.cpp`, `gpu/native/d3d_buffers.cpp`) and its renderer entry point.
 
 ### M3/M4 details
 - Identify and name each of the 98 entry points (task board T3): signature, which device fields it reads and
