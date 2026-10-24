@@ -28,6 +28,7 @@
 //             soft_shadows = true|false (the game's stencil shadows with a wider filter)
 //   [dev]     console = true|false (the developer console, dev/dev_console.h), hulk_skin =
 //             true|false (the unused Crash_Hulk skin unlocked by the console, dev/dev_skins.cpp)
+//   [launcher] view = "simple" | "advanced" (the launcher's last view; the game ignores it)
 //
 // Live: master volume, music/effects/voice volume (through the game's own volume categories,
 // audio/game_volumes.h), window mode, V-Sync, frame limit, FPS overlay, anti-aliasing, sharpness,
@@ -151,6 +152,9 @@ namespace settings
         // [paths] game: the game folder (UTF-8), when it is not next to the exe (paths.h); set by the
         // folder picker on the first run.
         std::string gamePath;
+        // [launcher] view: the launcher opens on its last view, the few main options (simple) or
+        // all the tabs (advanced); saved by the launcher as soon as it changes.
+        bool launcherAdvanced = false;
 
         bool operator==(const Values&) const = default;
     };

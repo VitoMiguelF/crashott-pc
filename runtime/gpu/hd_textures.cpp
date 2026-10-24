@@ -180,7 +180,6 @@ namespace gpu::hd
     {
         std::lock_guard lock(g_mutex);
         settings::Values values = settings::AtStartup();
-        g_enabled = values.hdTextures;
         g_dumping = values.textureDump;
         std::error_code error;
         size_t packs = 0;
@@ -189,6 +188,11 @@ namespace gpu::hd
             fs::path folder = mod.root / "hd_textures";
             if (!fs::is_directory(folder, error))
                 continue;
+            // graphics.hd_textures (only in settings.toml, on by default) switches the mods' packs;
+            // the HD AI Remaster's (hd_remaster.cpp) is used whenever graphics.hd_remaster is on.
+            bool remaster = values.hdRemaster && fs::equivalent(mod.root, settings::HdRemasterDir(), error);
+            bool use = values.hdTextures || remaster;
+            g_enabled |= use;
             size_t files = 0;
             for (auto it = fs::directory_iterator(folder, error); !error && it != fs::directory_iterator(); it.increment(error))
             {
@@ -197,11 +201,13 @@ namespace gpu::hd
                 std::transform(extension.begin(), extension.end(), extension.begin(), [](char c) { return char(tolower(uint8_t(c))); });
                 if (extension != ".dds" || !ParseKey(it->path().stem().string(), key))
                     continue;
-                if (g_index.emplace(key, PackFile{ it->path(), mod.name }).second)
+                if (!use)
+                    files++;
+                else if (g_index.emplace(key, PackFile{ it->path(), mod.name }).second)
                     files++;
             }
             packs++;
-            Log("[gpu] hd textures: mod %s has %zu texture(s)%s", mod.name.c_str(), files, g_enabled ? "" : " (graphics.hd_textures = false: not used)");
+            Log("[gpu] hd textures: mod %s has %zu texture(s)%s", mod.name.c_str(), files, use ? "" : " (graphics.hd_textures = false: not used)");
         }
         if (!packs)
             Log("[gpu] hd textures: no mod has an hd_textures folder");

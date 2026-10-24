@@ -23,7 +23,9 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
   **PlayStation (DualSense)** controllers, button icons that follow the last device used, and **local
   co-op** with two controllers (choose who is player 1 and player 2 in SETTINGS > CONTROLS).
 - **Native settings screen** in the game's own style (GAME, AUDIO, VIDEO, GRAPHICS, CONTROLS and
-  DEFINITIVE EDITION tabs), plus a **launcher** with the same options before playing.
+  DEFINITIVE EDITION tabs), plus a **launcher** before playing: a simple page with the main options
+  (language, resolution, FPS limit, HD AI Remaster, lighting ORIGINAL / REMASTER) and an ADVANCED view
+  with every tab of the settings screen (the same rows and texts: both read `runtime/settings/options.*`).
 - **Brazilian Portuguese translation** of every text, and **subtitles** for all dialogue and cutscenes
   (English transcript + PT-BR translation, optional download).
 - **Definitive Edition extras**: PS2 mojo colours, an experimental **free third-person camera**, a
@@ -116,7 +118,11 @@ Alt+Enter fullscreen, F8 lighting remaster on/off, and with **DEFINITIVE EDITION
 
 Default settings are the original experience (1280x720, 30 fps, no upscaler, extras off). Turn things on
 in **SETTINGS** (main menu or pause > OPTIONS) or in the launcher; for the HD AI Remaster, install it and
-then switch **DEFINITIVE EDITION > HD AI REMASTER** on.
+then switch **DEFINITIVE EDITION > HD AI REMASTER** on. The launcher opens on its simple view: **LIGHTING
+REMASTER** turns on the whole lighting remaster (SSAO high, indirect light, contact and soft shadows),
+ORIGINAL turns it off, and CUSTOM means a mix set one by one; **ADVANCED** (bottom-right corner, or Y / F2)
+shows every option, and the launcher remembers the last view. Mods' HD texture packs need no option: they
+load from `mods\` by themselves (`[graphics] hd_textures = false` in `settings.toml` turns them off).
 
 ## Mods and exporting the game's assets
 
@@ -188,7 +194,10 @@ de PC.
   menus, controles Xbox e **PlayStation (DualSense)**, ícones dos botões que seguem o último dispositivo e
   **co-op local** com dois controles (escolha quem é o jogador 1 e o 2 em SETTINGS > CONTROLES).
 - **Tela de configurações nativa** no estilo do jogo (abas JOGO, ÁUDIO, VÍDEO, GRÁFICOS, CONTROLES e
-  DEFINITIVE EDITION) e um **launcher** com as mesmas opções antes de jogar.
+  DEFINITIVE EDITION) e um **launcher** antes de jogar: uma página simples com as opções principais
+  (idioma, resolução, limite de FPS, HD AI Remaster, iluminação ORIGINAL / REMASTER) e a vista AVANÇADO
+  com todas as abas da tela de configurações (as mesmas linhas e textos: as duas leem
+  `runtime/settings/options.*`).
 - **Tradução completa para português do Brasil** e **legendas** em todas as falas e cenas (transcrição
   em inglês + tradução PT-BR, download opcional).
 - **Extras da Definitive Edition**: cores do mojo do PS2, **câmera livre em terceira pessoa**
@@ -273,6 +282,11 @@ cheia, F8 liga/desliga o remaster da iluminação e, com **DEFINITIVE EDITION > 
 As opções padrão são a experiência original (1280x720, 30 fps, sem upscaler, extras desligados). Ligue o
 que quiser em **SETTINGS** (menu principal ou pausa > OPÇÕES) ou no launcher. Para o HD AI Remaster,
 instale-o e ligue **DEFINITIVE EDITION > HD AI REMASTER**. Para jogar em português, IDIOMA = PORTUGUÊS (BR).
+O launcher abre na vista simples: **ILUMINAÇÃO REMASTER** liga todo o remaster da iluminação (SSAO alta, luz
+indireta, sombras de contato e suaves), ORIGINAL desliga, e PERSONALIZADO quer dizer uma mistura ajustada uma a
+uma; **AVANÇADO** (canto inferior direito, ou Y / F2) mostra todas as opções, e o launcher lembra a última vista.
+Os pacotes de texturas HD dos mods não precisam de opção: carregam sozinhos de `mods\` (`[graphics]
+hd_textures = false` no `settings.toml` os desliga).
 
 **Dois jogadores**: ligue dois controles (Xbox ou DualSense, em qualquer combinação). Na fase, aperte **B**
 no segundo controle quando aparecer JOIN GAME: o jogador 2 entra na mochila do Crash, e **Y** o faz descer.
