@@ -51,7 +51,7 @@ extern "C" PPC_FUNC(__imp__sub_8227AB80);  // EndTiling
 extern "C" PPC_FUNC(__imp__sub_8227F9E8);  // Resolve
 extern "C" PPC_FUNC(__imp__sub_82284290);  // Clear
 extern "C" PPC_FUNC(__imp__sub_82274080);  // Swap
-extern "C" PPC_FUNC(sub_8227F9E8);        // our Resolve hook below
+PPC_FUNC(sub_8227F9E8);                   // our Resolve hook below (C++ linkage, like the generated code)
 
 bool gpu::SinglePassScene()
 {

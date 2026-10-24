@@ -57,6 +57,10 @@ the patch already applied, stamped in `tools/XenonRecomp/.crashrecomp_source`):
 - 152 function imports (C++-mangled `__imp__*`, weak stubs overridden by a strong `PPC_FUNC(__imp__X)`) and 10
   xboxkrnl **variable** imports: these are not symbols; IAT slots 0x82000490-0x820005B0 hold byte-swapped
   import records that the loader patches.
+- Hooking a recompiled function: the generated code calls `sub_X` with **C++ linkage** (a weak alias of the C-linkage
+  `__imp__sub_X`). A strong `PPC_FUNC(sub_X)` overrides it; declaring it `extern "C"` first makes a separate
+  C symbol that the game never calls (the hook silently does nothing). Declare guest functions you call as plain
+  `PPC_FUNC(sub_X);` and originals as `extern "C" PPC_FUNC(__imp__sub_X);`.
 - Memory: virtual heap 0x40000000-0x7FC00000; physical 0xA0000000-0xC0000000, aliased at 0xA0000000 and
   0xC0000000 (0xE0000000 unmapped; the console offsets it by 0x1000). Critical sections owner = KTHREAD; TLS in
   the guest PCR array. KeSetAffinityThread sets PCR+0x10C.

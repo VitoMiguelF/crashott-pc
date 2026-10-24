@@ -24,6 +24,9 @@ Full write-up: `runtime/NOTES.md` "Desempenho de CPU" (two rounds); GUIA "Desemp
 - Fixed by the single-pass scene (`gpu/tiling_hooks.cpp`, M2): **179 -> 429 fps** in `desempenho_vila_direto`,
   CP 3.3 -> 1.4 ms/frame, fence wait 62% -> 5% of the game thread. Now the game thread is the limit (63%
   game/engine, 16% D3D building PM4, 15% Pure3D xn).
+- Native D3D flush + kick (`gpu/d3d_native.cpp`, byte-identical PM4, `CRASH_NATIVE_D3D_VERIFY=1`): 441 -> 464 fps.
+  The kick's CP_RB_WPTR store no longer goes through the MMIO trap. Now ~19% of the game thread waits for the
+  CP, whose renderer work (`DrawImpl`, Vulkan recording, ~1.25 ms/frame) is the next target.
 
 ## Done (no visual or gameplay change)
 

@@ -238,7 +238,7 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
 | M0 | This plan, `tools/d3d_map.py`, baseline measurement | - | - | done (2026-10-24) |
 | M1 | Shaders precompiled at install/first run; variants list; pipeline cache warm-up | (a) | no first-use hitches | |
 | M2 | Scene in one pass (no predicated tiling), still on PM4 | (f) | measured **179 -> 429 fps** in the village (2.4x), CP 3.3 -> 1.4 ms/frame, draws 1,585 -> 574/frame; tile stash off | done (2026-10-24), default on, `CRASH_SINGLE_PASS=0` = tiling |
-| M3 | Direct draws: D3D draw hooks feed the renderer from the device shadow state, a host command stream to the render thread; PM4 only for what is not hooked yet | (b) | after M2 the game thread is the limit and 31% of it is D3D (PM4 encode, 16%) + xn (15%): that is what M3 removes | next |
+| M3 | Direct draws: D3D draw hooks feed the renderer from the device shadow state, a host command stream to the render thread; PM4 only for what is not hooked yet | (b) | M3a (native flush + kick, identical PM4): 441 -> 464 fps; the transport change (M3b) no longer pays, see M3 status | M3a done (2026-10-24) |
 | M4 | Native resources: textures/buffers/shaders/render targets as host objects; resolves as copies; frontend first, then the village | (b), (c), (d) | per-draw lookups and EDRAM bookkeeping gone | |
 | M5 | Post effects parity: motion blur, DOF, refraction/reflection, water, heat shimmer, Bink | (d) | - | |
 | M6 | DLSS/FSR, lighting remaster, HD packs verified on native | (e) | - | |
@@ -263,6 +263,27 @@ noted; tiling moves up from (f) to M2 because it is the measured bottleneck and 
 - Known leftovers: the xn code still issues 3 SetPredication calls per logical resolve (cheap); the mid-frame
   EndTiling path (0x8238CE98, `CRenderManager::vf10`) is handled by the same hook but did not occur in the
   village; check other levels when they are profiled.
+
+### M3 status (2026-10-24)
+- Sampled after M2, the D3D draw functions were ~15% of the game thread: ~5% the residual fence wait and the
+  rest the recompiled flush of dirty groups (0x8226E308 3.4%, 0x8226E6A8 2.8%) and the kick (0x8226C3F0 3.3%,
+  the CP_RB_WPTR store through the MMIO page trap). Setters called by xn are cheap.
+- **M3a** (`runtime/gpu/d3d_native.cpp`, on by default, `CRASH_NATIVE_D3D=0` = the recompiled originals): native
+  `8226E308` / `8226E6A8` (block copies of the big-endian shadow registers; the cross-segment case still goes
+  through D3D's 0x8226DCD0) and a native kick (writes the INDIRECT_BUFFER packets, hands CP_RB_WPTR to the
+  command processor without the trap; the PIX/capture paths stay with the original). Output is byte-identical:
+  `CRASH_NATIVE_D3D_VERIFY=1` runs both and compares (vila_sem_cena: 2.1 M register and 0.5 M constant flushes,
+  0 mismatches). Village: 441 -> **464 fps** (both with the tile-resolve dedupe, which only became active
+  here: the M2 Resolve hook had been declared `extern "C"` and the game never called it).
+- What limits now (sampled): game thread 62% game/engine, 13% xn, 5.6% D3D, **19% waiting for the previous
+  frame's fence**; the CP is ~50% idle but is slower than the game emits during the render phase (~1.25 ms of
+  CP work per frame: `DrawImpl` 31% inclusive, Vulkan draw/rendering/present ~17%), and D3D's 1-frame-in-flight
+  lock (required: the game reuses dynamic buffers) makes the game wait at the next frame. Smaller D3D segments
+  (64/32/16 KB, now cheap without the trap) did not help (450-457 fps vs 464).
+- **M3b** (a host draw record instead of PM4 for the draw state) would remove only the CP's PM4 parse of that
+  state (ExecuteBuffer + WriteRegisters, ~5% of the CP), not the renderer work: postponed in favour of the CP's
+  renderer cost (M8: `DrawImpl`, texture lookups, fewer render passes/barriers) and M4 (native resources, which
+  remove per-draw texture/vertex lookups), which now decide the frame time together with the game code.
 
 ### M3/M4 details
 - Identify and name each of the 98 entry points (task board T3): signature, which device fields it reads and
