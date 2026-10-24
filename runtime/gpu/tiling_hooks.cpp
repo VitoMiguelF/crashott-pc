@@ -1,6 +1,6 @@
-// Predicated tiling of the scene, and the single-pass scene (docs/internals/native-gpu-plan.md, M2).
+// The scene in one pass instead of the console's predicated tiling (docs/internals/native-gpu-plan.md, M2).
 //
-// Pure3D's xnContext renders the 2x MSAA scene in 3 screen tiles (448 px wide, overlapping 32):
+// On the console, Pure3D's xnContext renders the 2x MSAA scene in 3 screen tiles (448 px wide, overlapping 32):
 // xnDisplay::vf04 (0x8238F5B0) creates the scene's color targets at tile size (480x720, from
 // align32(1280 / 3 + 63)) through 0x8226A868; xnContext::vf04 (0x8238CD00, start of frame) calls
 // BeginTiling and sets xnContext+1220 (tiling on); xnContext::vf05 (0x8238E068, end of frame) and the
@@ -10,7 +10,7 @@
 // per tile, so the command processor only sees the scene at the end of the frame and parses it three
 // times, while the game thread waits for it (runtime/NOTES.md, "GPU nativa").
 //
-// The single pass (on unless CRASH_SINGLE_PASS=0): the scene targets are created full size, with
+// Here the scene is drawn once: the scene targets are created full size, with
 // explicit EDRAM bases (three 1280x720 2x surfaces don't fit D3D's 2048-tile allocator); BeginTiling
 // is skipped, so D3D kicks the scene's segments as it builds them and the command processor works
 // while the game thread does; an EndTiling becomes one Resolve of the whole surface with its flags
@@ -39,35 +39,20 @@
 #include "../diagnostics.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
-#include "tiling.h"
 
 #include <cstdlib>
 #include <cstring>
 #include <string>
 
 extern "C" PPC_FUNC(__imp__sub_8226A868);  // create a render target (width r3, height r4, format r5, MSAA r6)
-extern "C" PPC_FUNC(__imp__sub_8227A5F8);  // BeginTiling
-extern "C" PPC_FUNC(__imp__sub_8227AB80);  // EndTiling
 extern "C" PPC_FUNC(__imp__sub_8227F9E8);  // Resolve
 extern "C" PPC_FUNC(__imp__sub_82284290);  // Clear
 extern "C" PPC_FUNC(__imp__sub_82274080);  // Swap
 PPC_FUNC(sub_8227F9E8);                   // our Resolve hook below (C++ linkage, like the generated code)
 
-bool gpu::SinglePassScene()
-{
-    static const bool on = [] {
-        const char* text = getenv("CRASH_SINGLE_PASS");
-        bool enabled = !(text && strcmp(text, "0") == 0);
-        Log("[tiling] %s", enabled ? "single-pass scene (no predicated tiling)" : "predicated tiling as on the console (CRASH_SINGLE_PASS=0)");
-        return enabled;
-    }();
-    return on;
-}
-
 namespace
 {
-    using gpu::SinglePassScene;
-    constexpr uint32_t D3D_TILING = 13088;    // device: non-zero while BeginTiling..EndTiling defers
+    constexpr uint32_t D3D_TILING = 13088;    // device: non-zero while BeginTiling..EndTiling defers (never, now)
 
     uint32_t g_frame;
 
@@ -138,7 +123,7 @@ PPC_FUNC(sub_8226A868)
     static constexpr uint32_t SCENE_BASES[3] = { 1440, 2048, 2880 };
     static uint32_t s_created;
     uint32_t width = ctx.r3.u32, height = ctx.r4.u32, format = ctx.r5.u32, msaa = ctx.r6.u32, parameters = ctx.r7.u32;
-    bool scene = SinglePassScene() && width == 480 && height == 720 && !parameters;
+    bool scene = width == 480 && height == 720 && !parameters;
     if (scene)
     {
         static const uint32_t s_parameters = GuestAlloc(16 * 3);
@@ -161,40 +146,29 @@ PPC_FUNC(sub_8227A5F8)
     static uint32_t s_used;
     if (Tracing(s_used))
         Log("[tiling] frame %u BeginTiling flags 0x%X count %u tiles %s clear color %s z %g stencil %u%s", g_frame, ctx.r4.u32, ctx.r5.u32,
-            Rects(ctx.r6.u32, ctx.r5.u32).c_str(), Color(ctx.r7.u32).c_str(), ctx.f1.f64, ctx.r9.u32, SinglePassScene() ? " (skipped)" : "");
-    if (SinglePassScene())
-    {
-        // Crash passes no clear (flags 0, pClearColor null): nothing else to do.
-        if (ctx.r4.u32 || ctx.r7.u32)
-            Log("[tiling] BeginTiling with flags 0x%X / clear color: not handled by the single pass", ctx.r4.u32);
-        return;
-    }
-    __imp__sub_8227A5F8(ctx, base);
+            Rects(ctx.r6.u32, ctx.r5.u32).c_str(), Color(ctx.r7.u32).c_str(), ctx.f1.f64, ctx.r9.u32, " (skipped)");
+    // Not run: no deferral, no tiles. Crash passes no clear here (flags 0, pClearColor null).
+    if (ctx.r4.u32 || ctx.r7.u32)
+        Log("[tiling] BeginTiling with flags 0x%X / clear color: not handled by the single pass", ctx.r4.u32);
 }
 
 PPC_FUNC(sub_8227AB80)
 {
     static uint32_t s_used;
-    bool trace = Tracing(s_used);
-    if (trace)
+    if (Tracing(s_used))
         Log("[tiling] frame %u EndTiling resolve flags 0x%X rects %s dest 0x%08X clear color %s z %g stencil %u params 0x%08X tiling %08X", g_frame,
             ctx.r4.u32, Rects(ctx.r5.u32, 3).c_str(), ctx.r6.u32, Color(ctx.r7.u32).c_str(), ctx.f1.f64, ctx.r9.u32, ctx.r10.u32,
             LoadBE32(ctx.r3.u32 + D3D_TILING));
-    if (SinglePassScene() && !LoadBE32(ctx.r3.u32 + D3D_TILING))
-    {
-        // One resolve of the whole surface with EndTiling's flags, clear values and parameters.
-        uint32_t clearColor = ctx.r7.u32, stencil = ctx.r9.u32, parameters = ctx.r10.u32;
-        ctx.r5.u64 = 0;           // pSourceRect: the whole surface
-        ctx.r7.u64 = 0;           // pDestPoint
-        ctx.r8.u64 = 0;           // DestLevel
-        ctx.r9.u64 = 0;           // DestSliceOrFace
-        ctx.r10.u64 = clearColor;
-        StoreBE32(ctx.r1.u32 + 0x5C, stencil);
-        StoreBE32(ctx.r1.u32 + 0x64, parameters);
-        sub_8227F9E8(ctx, base);
-        return;
-    }
-    __imp__sub_8227AB80(ctx, base);
+    // One resolve of the whole surface with EndTiling's flags, clear values and parameters.
+    uint32_t clearColor = ctx.r7.u32, stencil = ctx.r9.u32, parameters = ctx.r10.u32;
+    ctx.r5.u64 = 0;           // pSourceRect: the whole surface
+    ctx.r7.u64 = 0;           // pDestPoint
+    ctx.r8.u64 = 0;           // DestLevel
+    ctx.r9.u64 = 0;           // DestSliceOrFace
+    ctx.r10.u64 = clearColor;
+    StoreBE32(ctx.r1.u32 + 0x5C, stencil);
+    StoreBE32(ctx.r1.u32 + 0x64, parameters);
+    sub_8227F9E8(ctx, base);
 }
 
 PPC_FUNC(sub_8227F9E8)
@@ -204,7 +178,7 @@ PPC_FUNC(sub_8227F9E8)
         Log("[tiling] frame %u Resolve flags 0x%X rect %s dest 0x%08X point 0x%08X level %u r9 %u clear color %s z %g stencil %u params 0x%08X tiling %08X",
             g_frame, ctx.r4.u32, Rects(ctx.r5.u32, 1).c_str(), ctx.r6.u32, ctx.r7.u32, ctx.r8.u32, ctx.r9.u32, Color(ctx.r10.u32).c_str(), ctx.f1.f64,
             LoadBE32(ctx.r1.u32 + 0x5C), LoadBE32(ctx.r1.u32 + 0x64), LoadBE32(ctx.r3.u32 + D3D_TILING));
-    if (SinglePassScene() && ctx.r5.u32 && ctx.r7.u32)
+    if (ctx.r5.u32 && ctx.r7.u32)
     {
         // The xn helpers resolve once per tile rect (0-448, 416-864, 832-1280) to the same point:
         // the first becomes the whole surface, the other two have nothing left to do.

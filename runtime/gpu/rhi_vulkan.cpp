@@ -1527,15 +1527,11 @@ namespace gpu::rhi
         // pipeline made for the instance's attachments: no writes to the extra color slots, no depth
         // or stencil test/write when the draw has no depth. In the scene, draws with and without depth
         // and with one or two color targets (velocity) alternate: ~50 of the ~70 instances per frame
-        // in the village were begun only for that. CRASH_VULKAN_SUBSET_RENDERING=0 turns it off.
+        // in the village were begun only for that.
         VulkanPipeline* VulkanDevice::PipelineInsideRendering(VulkanPipeline* pipeline, VulkanTexture* const* colors, uint32_t colorCount,
                                                                              VulkanTexture* depth)
         {
-            static const bool enabled = [] {
-                const char* text = getenv("CRASH_VULKAN_SUBSET_RENDERING");
-                return !(text && strcmp(text, "0") == 0);
-            }();
-            if (!enabled || !m_rendering.active || !m_barriers.empty() || pipeline->pass || colorCount > m_rendering.colorCount)
+            if (!m_rendering.active || !m_barriers.empty() || pipeline->pass || colorCount > m_rendering.colorCount)
                 return nullptr;
             if (depth && depth != m_rendering.depth)
                 return nullptr;

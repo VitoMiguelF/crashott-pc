@@ -27,7 +27,6 @@
 #include "rhi.h"
 #include "shader_warmup.h"
 #include "smaa.h"
-#include "tiling.h"
 #include "upscaler.h"
 #include "texture_watch.h"
 #include "graphics_options.h"
@@ -1998,93 +1997,6 @@ float4 main(float4 position : SV_Position) : SV_Target
             t.jitterGuestY = t.jitterY / g_sceneScale;
         }
 
-        // Predicated tiling and mid-frame copies of the scene (NOTES step 16, "faixa no gelo"). Each
-        // tile copies its scene into the same texture before the refraction pass (resolve without
-        // clear) and ends with the final scene (resolve with clear), so when tile 3's refraction
-        // samples left of its first column it reads tile 2's final pixels, ice included: the ice is
-        // applied twice in a band at the seam (the console does the same copies, in the same order).
-        // So: when a later tile makes its first copy, keep the finals aside (`final`) and put back the
-        // earlier tiles' last copies (`pre`); at that tile's final resolve, restore the finals.
-        struct TileStash
-        {
-            rhi::Texture* pre = nullptr;
-            rhi::Texture* final = nullptr;
-            rhi::Rect preRect{};          // host rectangle of the last final resolve
-            uint64_t midFrame = UINT64_MAX, preFrame = UINT64_MAX, swapFrame = UINT64_MAX;
-            bool swapped = false;
-        };
-        std::unordered_map<const ResolveSurface*, TileStash> g_tileStash;
-
-        void CopySurfaceRegion(rhi::Texture* to, rhi::Texture* from, const rhi::Rect* rect)
-        {
-            g_rhi->CopyTexture(to, from, rect);
-        }
-
-        void ClearTileStash()
-        {
-            for (auto& [surface, stash] : g_tileStash)
-            {
-                DestroyTexture(stash.pre);
-                DestroyTexture(stash.final);
-            }
-            g_tileStash.clear();
-        }
-
-        // A copy-only texture like `surface`, holding its current contents when created.
-        void EnsureStashTexture(rhi::Texture*& stash, ResolveSurface& surface)
-        {
-            const rhi::TextureDesc& desc = surface.texture->desc;
-            if (stash && stash->desc.width == desc.width && stash->desc.height == desc.height && stash->desc.format == desc.format)
-                return;
-            DestroyTexture(stash);
-            stash = CreateTexture(desc.width, desc.height, 1, desc.format, 0, "tile stash");
-            if (!stash)
-                Fatal("[gpu] could not create a %ux%u tile stash", desc.width, desc.height);
-            CopySurfaceRegion(stash, surface.texture, nullptr);
-        }
-
-        // Before a color resolve into `surface` covering the host rectangle `rect`.
-        void TileStashBeforeResolve(ResolveSurface& surface, const rhi::Rect& rect, bool tileEnd, uint32_t base)
-        {
-            // Debug: the old behavior. Not needed without tiling (the single-pass scene, tiling.h).
-            static const bool disabled = getenv("CRASH_GPU_NO_TILE_STASH") != nullptr || SinglePassScene();
-            if (disabled || rect.left >= rect.right || rect.top >= rect.bottom)
-                return;
-            TileStash& s = g_tileStash[&surface];
-            if (s.swapped && s.swapFrame != g_frame)
-            {
-                // A tile that never ended (should not happen): give the finals back anyway.
-                CopySurfaceRegion(surface.texture, s.final, nullptr);
-                s.swapped = false;
-            }
-            if (tileEnd)
-            {
-                if (s.midFrame == g_frame)
-                {
-                    EnsureStashTexture(s.pre, surface);
-                    CopySurfaceRegion(s.pre, surface.texture, &rect);  // this tile's last copy
-                    s.preFrame = g_frame;
-                    s.preRect = rect;
-                }
-                if (s.swapped)
-                    CopySurfaceRegion(surface.texture, s.final, nullptr);  // the earlier tiles' finals
-                s.swapped = false;
-                return;
-            }
-            s.midFrame = g_frame;
-            if (s.preFrame == g_frame && !s.swapped && (rect.left != s.preRect.left || rect.top != s.preRect.top))
-            {
-                static uint32_t logged;
-                if (logged++ < 4)
-                    Log("[gpu] tile stash: copies into 0x%08X at (%d,%d) see the earlier tiles' copies, not their finals", base, int(rect.left), int(rect.top));
-                EnsureStashTexture(s.final, surface);
-                CopySurfaceRegion(s.final, surface.texture, nullptr);
-                CopySurfaceRegion(surface.texture, s.pre, nullptr);
-                s.swapped = true;
-                s.swapFrame = g_frame;
-            }
-        }
-
         void Resolve()
         {
             g_stats.resolves++;
@@ -2239,8 +2151,6 @@ float4 main(float4 position : SV_Position) : SV_Target
                 rhi::Rect hostRect{ std::max(0, ScaledFloor(float(x0 + dx), scale)), std::max(0, ScaledFloor(float(y0 + dy), scale)),
                                     std::min(int32_t(surface->hostWidth), ScaledCeil(float(x1 + dx), scale)),
                                     std::min(int32_t(surface->hostHeight), ScaledCeil(float(y1 + dy), scale)) };
-                if (!isDepth)
-                    TileStashBeforeResolve(*surface, hostRect, colorClear, destBase);
                 rhi::PassDraw pass;
                 pass.viewport = { 0.0f, 0.0f, float(surface->hostWidth), float(surface->hostHeight) };
                 pass.scissor = hostRect;
@@ -3300,7 +3210,6 @@ float4 main(float4 position : SV_Position) : SV_Target
                 DestroyTexture(t.output);
                 t.renderWidth = t.renderHeight = t.outputWidth = t.outputHeight = 0;
             }
-            ClearTileStash();
 
             size_t targets = 0, surfaces = 0;
             if (renderScale != oldRender || sceneScale != oldScene)
@@ -3501,8 +3410,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &displayMode))
             Log("[gpu] primary display: %lux%lu at %lu Hz", displayMode.dmPelsWidth, displayMode.dmPelsHeight, displayMode.dmDisplayFrequency);
         // Both variants of every known game shader into the SPIR-V cache, off the critical path.
-        if (!getenv("CRASH_NO_SHADER_WARMUP"))
-            warmup::StartBackground(g_shaderCacheDir);
+        warmup::StartBackground(g_shaderCacheDir);
         g_active = true;
         settings::menu::SetAvailable(true);
         return true;

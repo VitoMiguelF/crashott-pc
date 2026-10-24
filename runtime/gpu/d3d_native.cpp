@@ -5,17 +5,15 @@
 // big-endian load + store per dword) and the kick (0x8226C3F0), whose store to CP_RB_WPTR goes
 // through the MMIO page trap (an access violation, VirtualProtect, a single step, VirtualProtect).
 // These replacements keep D3D's state and output exactly as they were (same PM4 in the same ring;
-// CRASH_NATIVE_D3D_VERIFY=1 runs the original too and compares the bytes) and do the work natively:
-// block copies of the shadow registers, and the write pointer handed to the command processor
-// directly.
+// CRASH_NATIVE_D3D_VERIFY=1, a check for whoever changes them, runs the original too and compares the
+// bytes) and do the work natively: block copies of the shadow registers, and the write pointer
+// handed to the command processor directly.
 //
 // D3D state model (sub_823EB780, the indexed draw): five 64-bit dirty masks at device+0..+32; each bit
 // is a group of shadow registers stored in the device in Xenos register order (VS constants at +1792
 // = register 0x4000, PS constants at +5888 = 0x4400, context registers at +10240 = 0x2000, ...).
 // At a draw, D3D writes each run of dirty groups as a type-0 packet into the current segment
 // (cursor = last written dword at device+48, end at device+52) and clears the masks.
-//
-// CRASH_NATIVE_D3D=0 turns all of this off.
 
 #include "../diagnostics.h"
 #include "../kernel/kernel.h"
@@ -37,17 +35,6 @@ namespace
 {
     constexpr uint32_t DEVICE_CURSOR = 48;      // last dword written in the current segment
     constexpr uint32_t DEVICE_SEGMENT_END = 52;
-
-    bool Enabled()
-    {
-        static const bool on = [] {
-            const char* text = getenv("CRASH_NATIVE_D3D");
-            bool enabled = !(text && strcmp(text, "0") == 0);
-            Log("[d3d] native draw-state flush and kick: %s", enabled ? "on" : "off (CRASH_NATIVE_D3D=0)");
-            return enabled;
-        }();
-        return on;
-    }
 
     bool Verify()
     {
@@ -200,8 +187,6 @@ namespace
 
 PPC_FUNC(sub_8226E308)
 {
-    if (!Enabled())
-        return __imp__sub_8226E308(ctx, base);
     if (Verify())
         return VerifiedFlush(ctx, base, __imp__sub_8226E308, FlushRegisters, "registers");
     FlushRegisters(ctx, base);
@@ -209,8 +194,6 @@ PPC_FUNC(sub_8226E308)
 
 PPC_FUNC(sub_8226E6A8)
 {
-    if (!Enabled())
-        return __imp__sub_8226E6A8(ctx, base);
     if (Verify())
         return VerifiedFlush(ctx, base, __imp__sub_8226E6A8, FlushConstants, "constants");
     FlushConstants(ctx, base);
@@ -224,7 +207,7 @@ PPC_FUNC(sub_8226E6A8)
 PPC_FUNC(sub_8226C3F0)
 {
     uint32_t device = ctx.r3.u32, entries = ctx.r4.u32, count = ctx.r5.u32;
-    if (!Enabled() || (*g_memory.Translate(device + 10813) & 2) || LoadBE32(device + 21380) || LoadBE32(device + 21520))
+    if ((*g_memory.Translate(device + 10813) & 2) || LoadBE32(device + 21380) || LoadBE32(device + 21520))
         return __imp__sub_8226C3F0(ctx, base);
     uint32_t ring = LoadBE32(device + 14744), mask = LoadBE32(device + 14748);
     uint32_t write = LoadBE32(device + 10824);
