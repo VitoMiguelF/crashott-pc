@@ -134,7 +134,7 @@ ones with `winget`.
   The safe mode turns off the renderer's riskier optimizations (it costs some FPS); the diagnostics
   write `userdata\crashrecomp_log.txt` (GPU, driver, limits) to attach to the issue. If the safe mode
   helps, a list instead of `"on"` (`"barriers"`, `"serial"`, `"present"`, ...) narrows down which part
-  does it.
+  does it. `tools\gpu_report.bat` runs all of these in turn and packs the logs into `gpu_report.zip`.
 
 ## Playing
 
@@ -326,7 +326,8 @@ pelo `winget`.
   `userdata\settings.toml`. O modo seguro desliga as otimizações mais arriscadas do renderizador (custa
   um pouco de FPS); o diagnóstico grava `userdata\crashrecomp_log.txt` (GPU, driver, limites) para anexar
   à issue. Se o modo seguro resolver, uma lista no lugar de `"on"` (`"barriers"`, `"serial"`,
-  `"present"`, ...) mostra qual parte resolve.
+  `"present"`, ...) mostra qual parte resolve. O `tools\gpu_report.bat` roda tudo isso em sequência e
+  junta os logs em `gpu_report.zip`.
 
 ## Jogando
 
