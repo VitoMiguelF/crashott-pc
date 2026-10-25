@@ -10,7 +10,7 @@ voice = 100      # 0-100, dialogos (vale na hora)
 [video]
 window = "windowed"   # windowed | borderless | fullscreen
 vsync = false
-fps_limit = 30   # 30 (original) | 60 | 120 | 0 = sem limite
+fps_limit = 0   # 30 (original) | 60 | 120 | 0 = sem limite
 resolution = "1280x720"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160 (vale ao sair da tela SETTINGS)
 overlay = "off"   # off | fps | frametime | full (F1 alterna)
 antialiasing = "off"   # off | fxaa | smaa (pos-processamento da imagem final)
