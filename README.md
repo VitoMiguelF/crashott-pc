@@ -100,7 +100,7 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 
 - Windows 10/11 x64 and a GPU with **Vulkan 1.3** and an up-to-date driver (for example NVIDIA GTX 900
   or newer, AMD RX 400 or newer, Intel Iris Xe / Arc). The renderer is Vulkan only (Direct3D 12 was
-  dropped in October 2026). Linux / Steam Deck through Proton is the goal and still being tested.
+  dropped in October 2026). A native **Linux / Steam Deck** version is in testing (below).
   **DLSS** needs an NVIDIA RTX GPU; on other GPUs the installer leaves it out and the options offer
   **FSR 3.1** (any GPU above) or no upscaler.
 - Your Crash of the Titans (Xbox 360) game files: the folder with `default.xex`, `default.rcf`,
@@ -121,6 +121,22 @@ game is built on your PC from your own copy.
 Advanced: to build with an installed Visual Studio 2022+ / Build Tools and LLVM `clang-cl` instead, set
 **BUILD TOOLS = VISUAL STUDIO** in the installer (or `--toolchain msvc`); it offers to install the missing
 ones with `winget`.
+
+### Linux and Steam Deck (in testing)
+
+A native Linux version is being tested: the same game, the same launcher and the same installer
+screens, made for the Steam Deck first. It comes as **`CrashSetup-<version>-x86_64.AppImage`**: one
+file with everything inside (zig as the compiler, CMake, Ninja, Python, FFmpeg, DXC, SDL3), so nothing
+is installed on the system; like on Windows it builds the game from your own copy. Run it in the
+Steam Deck's desktop mode (or any desktop), install (default `~/Games/Crash of the Titans Definitive
+Edition`), then right click the launcher in the applications menu: **Add to Steam** puts it in Game Mode.
+
+- **DLSS** works on NVIDIA RTX GPUs with NVIDIA's driver.
+- **FSR 3.1 is not available on Linux for now**: AMD ships no Linux library and it isn't built from
+  AMD's source yet. On the Steam Deck (AMD) and other non-RTX GPUs the game runs without an upscaler.
+- Not on Linux yet: the launcher's UPDATE (run the new AppImage over the install instead).
+
+Details for developers: [docs/internals/linux_port.md](docs/internals/linux_port.md).
 
 ## Install
 
@@ -347,7 +363,7 @@ de PC.
 
 - Windows 10/11 x64 e uma placa de vídeo com **Vulkan 1.3** e driver atualizado (por exemplo NVIDIA
   GTX 900 ou mais nova, AMD RX 400 ou mais nova, Intel Iris Xe / Arc). O renderizador é só Vulkan
-  (o Direct3D 12 saiu em outubro de 2026). Linux / Steam Deck pelo Proton é o objetivo e ainda está em teste.
+  (o Direct3D 12 saiu em outubro de 2026). Uma versão nativa para **Linux / Steam Deck** está em teste (abaixo).
   O **DLSS** precisa de uma placa NVIDIA RTX; nas outras o instalador o deixa de fora e as opções oferecem o
   **FSR 3.1** (qualquer placa acima) ou nenhum upscaler.
 - Os arquivos do seu Crash of the Titans (Xbox 360): a pasta com `default.xex`, `default.rcf`,
@@ -367,6 +383,23 @@ Ele não traz nenhum arquivo do jogo nem código recompilado: o jogo é montado 
 Avançado: para compilar com um Visual Studio 2022+ / Build Tools e o `clang-cl` do LLVM instalados, escolha
 **FERRAMENTAS = VISUAL STUDIO** no instalador (ou `--toolchain msvc`); ele oferece instalar o que faltar
 pelo `winget`.
+
+### Linux e Steam Deck (em teste)
+
+Uma versão nativa para Linux está em teste: o mesmo jogo, o mesmo launcher e as mesmas telas do
+instalador, feita primeiro para o Steam Deck. Ela vem como **`CrashSetup-<versão>-x86_64.AppImage`**: um
+arquivo só com tudo dentro (o zig como compilador, CMake, Ninja, Python, FFmpeg, DXC, SDL3), então nada é
+instalado no sistema; como no Windows, ele monta o jogo a partir da sua cópia. Rode no modo desktop do
+Steam Deck (ou em qualquer desktop), instale (padrão `~/Games/Crash of the Titans Definitive Edition`) e
+clique com o botão direito no launcher no menu de aplicativos: **Adicionar à Steam** o coloca no modo de jogo.
+
+- O **DLSS** funciona em placas NVIDIA RTX com o driver da NVIDIA.
+- **O FSR 3.1 não está disponível no Linux por enquanto**: a AMD não publica uma biblioteca para Linux e
+  ela ainda não é compilada a partir do código da AMD. No Steam Deck (AMD) e nas placas que não são RTX, o
+  jogo roda sem upscaler.
+- Ainda não existe no Linux: o ATUALIZAR do launcher (rode o AppImage novo por cima da instalação).
+
+Detalhes para desenvolvedores: [docs/internals/linux_port.md](docs/internals/linux_port.md).
 
 ## Instalação
 

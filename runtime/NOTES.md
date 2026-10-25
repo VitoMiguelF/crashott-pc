@@ -2308,3 +2308,7 @@ O mesmo `crash_dlss.cpp` vira `libCrashDlss.so` com a biblioteca estática Linux
 - `CRASH_SETTINGS` separa os itens por `;`, não por vírgula.
 
 **Conferido** (RTX 5080, driver 615.78): `vila_sem_cena` com DLSS Qualidade (854x480 -> 1280x720), 21.393 quadros escalados, 0 falhas, ~490 fps, imagem certa. A sonda do launcher diz "DLSS available", e a aba GRÁFICOS oferece DLSS / FSR. O instalador AppImage roda a sonda e instala os dois arquivos (componente "dlss"). Fica de fora onde não há NVIDIA RTX, como no Windows.
+
+## Linux: sem FSR por enquanto (2026-10-25)
+
+Decisão do dono: o FSR 3.1 fica fora do Linux por enquanto. A AMD não publica a biblioteca do FidelityFX para Linux (só a `amd_fidelityfx_vk.dll` assinada), e compilá-la do código do SDK 1.1.4 (ffx-api + backend Vulkan + upscaler do FSR3, gerando as variantes de shader com um script no lugar do FidelityFX_SC, que só existe para Windows, como no PR #117 do KytyPS5) é um trabalho grande. No Linux sobram o DLSS (NVIDIA RTX) ou nenhum upscaler; no Steam Deck, nenhum. O README (EN e PT, "Linux e Steam Deck (em teste)") e o `linux_port.md` dizem isso; os textos do instalador Linux também (PLACA DE VÍDEO: "DLSS" ou "SEM UPSCALER"). O `upscaler.cpp` já procura `libamd_fidelityfx_vk.so`, para quando ela existir.

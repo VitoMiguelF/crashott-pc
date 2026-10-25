@@ -1300,7 +1300,11 @@ void StartExtraction(const std::wstring& args)
         g_inst.stepDetail.clear();
         AddLogLine(std::string(T({ "Installing to ", "Instalando em " })) + Narrow(g_inst.installDir.wstring()));
         AddLogLine(g_inst.dlss ? T({ "NVIDIA RTX GPU: DLSS included.", "Placa NVIDIA RTX: DLSS incluído." })
+#ifdef _WIN32
                                : T({ "No NVIDIA RTX GPU: DLSS left out (FSR or no upscaler).", "Sem placa NVIDIA RTX: DLSS fora (FSR ou sem upscaler)." }));
+#else
+                               : T({ "No NVIDIA RTX GPU: DLSS left out (no upscaler: no FSR on Linux yet).", "Sem placa NVIDIA RTX: DLSS fora (sem upscaler: ainda não há FSR no Linux)." }));
+#endif
         g_inst.extracting = true, g_inst.extractFinished = false;
     }
     g_inst.pendingArgs = Narrow(args);
@@ -1486,6 +1490,16 @@ InstallRow GpuRow()
     if (!g_inst.gpuKnown)
         value = T({ "CHECKING...", "VERIFICANDO..." }),
         help1 = T({ "Asking NVIDIA's driver whether DLSS runs here.", "Perguntando ao driver da NVIDIA se o DLSS roda aqui." });
+#ifndef _WIN32
+    // Linux has no FSR 3.1 yet (AMD ships no Linux library; docs/internals/linux_port.md): DLSS or none.
+    else if (g_inst.dlss)
+        value = "DLSS", help1 = T({ "NVIDIA RTX: DLSS is installed (FSR 3.1 is not on Linux yet).", "NVIDIA RTX: o DLSS é instalado (o FSR 3.1 ainda não existe no Linux)." });
+    else
+    {
+        value = T({ "NO UPSCALER", "SEM UPSCALER" });
+        help1 = T({ "DLSS needs an NVIDIA RTX GPU, and FSR 3.1 is not on Linux yet.", "O DLSS precisa de NVIDIA RTX, e o FSR 3.1 ainda não existe no Linux." });
+    }
+#else
     else if (g_inst.dlss)
         value = "DLSS + FSR", help1 = T({ "NVIDIA RTX: DLSS and FSR 3.1 are installed.", "NVIDIA RTX: o DLSS e o FSR 3.1 são instalados." });
     else
@@ -1494,6 +1508,7 @@ InstallRow GpuRow()
         help1 = gpu.vendor == settings::VENDOR_NVIDIA ? T({ "This NVIDIA GPU can't run DLSS (RTX only): FSR 3.1 instead.", "Esta NVIDIA não roda DLSS (só RTX): FSR 3.1 no lugar." })
                                                       : T({ "DLSS needs an NVIDIA RTX GPU: it is left out; FSR 3.1 instead.", "O DLSS precisa de NVIDIA RTX: fica de fora; FSR 3.1 no lugar." });
     }
+#endif
     return { { "VIDEO CARD", "PLACA DE VÍDEO" }, value, { name, help1 }, false, false, true, RowGpu };
 }
 
