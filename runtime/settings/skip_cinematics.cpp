@@ -157,6 +157,11 @@ namespace
 
 namespace cutscenes
 {
+    bool VideoPlaying()
+    {
+        return g_movie.load(std::memory_order_relaxed) >= 0;
+    }
+
     void NoteMovie(int index)
     {
         g_movie = index;

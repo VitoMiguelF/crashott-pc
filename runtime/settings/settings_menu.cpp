@@ -1131,6 +1131,11 @@ namespace settings::menu
         return g_open;
     }
 
+    uint32_t FrontendNode()
+    {
+        return g_frontendNode.load();
+    }
+
     void NoteFrontendNode(uint32_t node)
     {
         static const bool trace = getenv("CRASH_FRONTEND_TRACE") != nullptr;

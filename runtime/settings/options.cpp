@@ -367,7 +367,7 @@ namespace settings::options
                      t({ "With DLSS/FSR on it can stay off.", "Com DLSS/FSR ligado pode ficar desligado." }) };
         case Item::Aspect:
             return { t({ "Wider screens see more to the sides (21:9, 32:9);", "Telas mais largas veem mais dos lados (21:9, 32:9);" }),
-                     t({ "AUTO uses the monitor's. Applies when you leave.", "AUTO usa a do monitor. Vale ao sair da tela." }) };
+                     t({ "AUTO uses the monitor's; 16:10 sees more above.", "AUTO usa a do monitor; 16:10 vê mais em cima." }) };
         case Item::Hud16x9:
             return { t({ "On: HUD and menus in the middle 16:9 area.", "Ligado: HUD e menus na área 16:9 do meio." }),
                      t({ "Off: the HUD corners go to the screen's edges.", "Desligado: os cantos do HUD vão às bordas da tela." }) };

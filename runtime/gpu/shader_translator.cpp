@@ -1306,7 +1306,7 @@ cbuffer xe_effects : register(b3)
 // HudTransform in xenos_renderer.cpp). Mode 1: scaled around the centre except the coordinates at
 // the screen's edges (full-screen quads still cover it); 2: also a vertex at a corner zooms out of
 // the screen the other way (backgrounds keep their aspect and fill it); 4: just scaled (videos);
-// 8: the outer thirds keep their distance to the nearest edge (HUD corners at the edges); 32: done
+// 8: moved by xe_hud.w (signed), an element of a HUD corner kept at its screen edge; 32: done
 // per triangle by HUD_GS (xenos_renderer.cpp) instead, for triangles.
 float2 xe_hud_transform(float2 ndc)
 {
@@ -1319,11 +1319,7 @@ float2 xe_hud_transform(float2 ndc)
     {
         bool2 edge = bool2(px.x <= 2.0 || px.x >= xe_hud_target.z - 2.0, px.y <= 2.0 || px.y >= xe_hud_target.w - 2.0);
         if (mode & 8u)
-        {
-            // Outside the middle third: shifted towards its side's edge by what the scale took away.
-            float third = xe_hud_target.z / 6.0;
-            if (abs(d.x) > third) result.x += sign(d.x) * xe_hud.w;
-        }
+            result.x += xe_hud.w;  // the draw's side (HudDrawSide in xenos_renderer.cpp)
         if (edge.x) result.x = px.x;
         if (edge.y) result.y = px.y;
         if ((mode & 2u) && edge.x && edge.y) result = centre + d * float2(1.0 / xe_hud.y, 1.0 / xe_hud.x);

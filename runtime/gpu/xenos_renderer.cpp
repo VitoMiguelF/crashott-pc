@@ -582,12 +582,13 @@ void main(triangle XeVertexOutput input[3], inout TriangleStream<XeVertexOutput>
     float2 half = projected ? centre * min(xe_hud.xy, 1.0) : centre;
     float2 lo = min(px[0], min(px[1], px[2])), hi = max(px[0], max(px[1], px[2]));
     bool2 full = lo <= centre - half + 2.0 && hi >= centre + half - 2.0;
-    // A background: a triangle that spans the area both ways, or a big one that goes past its
-    // edges (the frontend's backgrounds are large sprites hanging out of the screen).
+    // A background: a triangle that spans the area both ways, or one big both ways that goes past
+    // its edges (the frontend's backgrounds are large sprites hanging out of the screen; the bars
+    // of button prompts are wide but low).
     float2 extent = hi - lo;
     bool past = any(lo < centre - half - 2.0) || any(hi > centre + half + 2.0);
-    bool background = (full.x && full.y) || (past && (extent.x > half.x * 0.5 || extent.y > half.y * 0.5));
-    float boxCentre = (lo.x + hi.x) * 0.5 - centre.x;
+    bool background = (full.x && full.y) || (past && extent.x > half.x * 0.5 && extent.y > half.y * 0.5);
+
     [unroll] for (uint j = 0; j < 3u; j++)
     {
         XeVertexOutput v = input[j];
@@ -605,8 +606,8 @@ void main(triangle XeVertexOutput input[3], inout TriangleStream<XeVertexOutput>
                 result = centre + d * xe_hud.xy;
                 if (!(mode & 4u))
                 {
-                    if ((mode & 8u) && !full.x && abs(boxCentre) > xe_hud_target.z / 6.0)
-                        result.x += sign(boxCentre) * xe_hud.w;
+                    if ((mode & 8u) && !full.x)
+                        result.x += xe_hud.w;  // anchored HUD: the draw's side (signed), HudDrawSide
                     if (full.x) result.x = px[j].x;
                     if (full.y) result.y = px[j].y;
                     if ((mode & 2u) && full.x && full.y) result = centre + d * float2(1.0 / xe_hud.y, 1.0 / xe_hud.x);
@@ -1560,16 +1561,18 @@ float4 main(float4 position : SV_Position) : SV_Target
         // xe_hud_transform (shader_translator.cpp): scaled around the centre, except coordinates at
         // the screen's edges, so full-screen quads (fades, screen-space passes, backgrounds) still
         // cover the screen; a background (a full-screen quad of a texture that isn't a render
-        // target) zooms to fill it. The Bink videos are just scaled, between black bars.
+        // target) zooms to fill it. The Bink videos (while cutscenes::VideoPlaying) are just
+        // scaled, between black bars.
         constexpr uint32_t HUD_WIDTH = 1280, HUD_HEIGHT = 720;
         constexpr uint64_t BINK_PS = 0xbd65c6f2d6f2d6d4ull;  // shaders\binkdecompress
+        constexpr uint32_t NODE_GAME_RUNNING = 638;           // Frontend.bfig (docs/internals/frontend-and-boot.md)
         bool g_hudCentered = true;  // settings video.hud_16_9 (Swap)
 
         struct HudDraw
         {
             uint32_t mode = 0;  // xe_hud_transform's bits; 0 = not transformed
             float scaleX = 1.0f, scaleY = 1.0f;
-            float shift = 0.0f;  // anchored HUD: guest pixels the outer thirds move out
+            float shift = 0.0f;  // anchored HUD: guest pixels a corner element moves out (signed by its side)
             bool video = false;
         };
         HudDraw g_drawHud;  // of the draw being set up (HudScissor)
@@ -1581,19 +1584,58 @@ float4 main(float4 position : SV_Position) : SV_Target
                 return g_drawHud = hud;
             hud.scaleX = std::min(1.0f, 1.0f / g_stretch);
             hud.scaleY = std::min(1.0f, g_stretch);
-            hud.video = psHash == BINK_PS;
+            // A video: the game draws the decoded Bink frame as a full-screen 2D quad.
+            hud.video = psHash == BINK_PS || (cutscenes::VideoPlaying() && !readsResolve);
             if (hud.video)
                 hud.mode = 4;
             else
             {
                 hud.mode = readsResolve ? 1u : 3u;
-                if (!g_hudCentered && g_stretch > 1.0f)
+                // HUD corners at the edges: in gameplay only (node 638 GameRunning; not the pause
+                // or the menus, whose pieces must stay together).
+                if (!g_hudCentered && g_stretch > 1.0f && settings::menu::FrontendNode() == NODE_GAME_RUNNING)
                 {
                     hud.mode |= 8u;
                     hud.shift = float(HUD_WIDTH) * 0.5f * (1.0f - hud.scaleX);
                 }
             }
             return g_drawHud = hud;
+        }
+
+        // The game's 2D vertex shader: position = (x, y, z, 1) * c4..c7 (rows).
+        constexpr uint64_t HUD_VS = 0xaecab5202246c470ull;
+
+        // Anchored HUD: -1 if every vertex of the draw is in the left 40% of the screen, 1 in the
+        // right 40%, 0 otherwise (or when it can't tell).
+        int HudDrawSide(const float* data, uint32_t startDwords, uint32_t dwords, uint32_t stride, uint32_t minIndex, uint32_t maxIndex,
+                        const SystemConstants& system, float targetWidth)
+        {
+            if (!data || maxIndex < minIndex || maxIndex - minIndex > 4096)
+                return 0;
+            uint32_t base = Reg(xenos::REG_SQ_VS_CONST) & 0x1FF;
+            float c[16];
+            for (uint32_t i = 0; i < 16; i++)
+            {
+                uint32_t bits = LoadBE32(GPU_MMIO_BEGIN + (xenos::REG_SHADER_CONSTANT_000_X + (base + 4) * 4 + i) * 4);
+                memcpy(&c[i], &bits, 4);
+            }
+            float lo = 1e30f, hi = -1e30f;
+            for (uint32_t v = minIndex; v <= maxIndex; v++)
+            {
+                int64_t at = int64_t(v) * stride - int64_t(startDwords);
+                if (at < 0 || at + 3 > int64_t(dwords))
+                    return 0;
+                float x = data[at], y = data[at + 1], z = data[at + 2];
+                float clipX = x * c[0] + y * c[4] + z * c[8] + c[12];
+                float clipW = x * c[3] + y * c[7] + z * c[11] + c[15];
+                if (!(fabsf(clipW) > 1e-6f))
+                    return 0;
+                float ndc = clipX / clipW * system.ndcScale[0] + system.ndcOffset[0];
+                float px = (ndc + 1.0f) * 0.5f * targetWidth;
+                lo = std::min(lo, px), hi = std::max(hi, px);
+            }
+            float side = float(HUD_WIDTH) * 0.4f;
+            return hi < side ? -1 : lo > float(HUD_WIDTH) - side ? 1 : 0;
         }
 
         float HudCoordinate(float value, float size, float scale)
@@ -3086,6 +3128,27 @@ float4 main(float4 position : SV_Position) : SV_Target
 
             // Wide screens: the 2D of the screen back into the middle 16:9 area (widescreen.h).
             HudDraw hud = HudTransform(sceneDraw, pitch, msaa, ps ? ps->info.hash : 0, readsResolve);
+            if (hud.mode & 8u)
+            {
+                // Anchored HUD: the side of the whole draw (its vertices through the game's 2D
+                // vertex shader), so an element moves in one piece and centred text stays whole.
+                int side = 0;
+                for (uint32_t r = 0; r < rangeCount && vs->info.hash == HUD_VS; r++)
+                {
+                    const VertexFetchBinding* position = nullptr;
+                    for (const VertexFetchBinding& binding : vs->info.vertexFetches)
+                        if (binding.fetchConstant == ranges[r].fetchConstant && !position)
+                            position = &binding;
+                    if (position && position->minOffsetDwords == 0 && position->strideDwords >= 3)
+                        side = HudDrawSide(reinterpret_cast<const float*>(ranges[r].uploaded), ranges[r].startDwords, ranges[r].dwords,
+                                           position->strideDwords, indexData.minIndex, indexData.maxIndex, system, float(targetWidth));
+                    break;
+                }
+                if (side)
+                    hud.shift *= float(side);
+                else
+                    hud.mode &= ~8u;
+            }
             if (hud.video && colorTargets[0])
                 ClearVideoBars(*colorTargets[0]);
 
@@ -3134,7 +3197,8 @@ float4 main(float4 position : SV_Position) : SV_Target
             key.vs = vs->shader;
             key.ps = ps ? ps->shader : nullptr;
             key.gs = rectList ? g_rectListGs : nullptr;
-            if (hud.mode && !rectList && polygonal && g_hudGs)
+            static const bool noHudGs = getenv("CRASH_HUD_NO_GS") != nullptr;  // debug: 2D placed per vertex
+            if (hud.mode && !rectList && polygonal && g_hudGs && !noHudGs)
             {
                 key.gs = g_hudGs;
                 hud.mode |= 32u;  // the geometry shader does it, not the vertex shader
@@ -3486,10 +3550,10 @@ float4 main(float4 position : SV_Position) : SV_Target
 
             QueryPerformanceCounter(&end);
             QueryPerformanceFrequency(&frequency);
-            Log("[gpu] reconfigured: internal resolution %s (%.2fx, aspect %.3f), %s%s%s, scene %.3fx; %zu render targets and %zu resolve surfaces recreated in %.0f ms",
-                resolution.name, renderScale, aspect, temporal ? upscaler::ActiveName().c_str() : "no upscaler",
+            Log("[gpu] reconfigured: internal resolution %s (%.2fx), %s%s%s, scene %.3fx; %zu render targets and %zu resolve surfaces recreated in %.0f ms; aspect %.3f",
+                resolution.name, renderScale, temporal ? upscaler::ActiveName().c_str() : "no upscaler",
                 temporal ? " " : "", temporal ? settings::UpscalerQualityName(wanted.upscalerQuality) : "", sceneScale, targets, surfaces,
-                double(end.QuadPart - start.QuadPart) * 1000.0 / double(frequency.QuadPart));
+                double(end.QuadPart - start.QuadPart) * 1000.0 / double(frequency.QuadPart), aspect);
         }
 
         void ParseScreenshotSettings()

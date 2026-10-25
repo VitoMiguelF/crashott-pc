@@ -39,6 +39,7 @@ namespace settings::menu
     // The frontend fight tree's current node, from its conditions (sub_820F9BA8, called every frame
     // for the screen shown; frontend_hooks.cpp). Game thread.
     void NoteFrontendNode(uint32_t node);
+    uint32_t FrontendNode();  // the last one noted (UINT32_MAX before any)
     // The game must see a neutral controller (screen open, or buttons still held after closing).
     bool BlocksGameInput();
 

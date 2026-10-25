@@ -584,7 +584,7 @@ env = { CRASH_MOUSE_TRACE = "1" }
 # Menu principal (centro dos itens, x 640): NEW GAME 235, LOAD GAME 303, CREDITS 371, SETTINGS 451,
 # EXIT GAME 520; saves em y 330, x 220 / 434 / 644...; pausa: RESUME 271, OPTIONS 337.
 # SETTINGS (720p): abas em y 97 (JOGO 180, ÁUDIO 296, VÍDEO 417, GRÁFICOS 565, CONTROLES 745), RB em
-# 1210,92; ÁUDIO: linhas em y 156/200/244/288 (volumes), 376 legendas; estrelas de x 680 a 948 (a 5ª
+# 1210,92; ÁUDIO: linhas em y 156/200/244/288 (volumes), 376 legendas; VÍDEO (8 linhas): LIMITE DE FPS em y 244; estrelas de x 680 a 948 (a 5ª
 # em 799); a seta esquerda dos valores em x 655; (B) VOLTAR em 300,642.
 input = [
     ["@main_menu"], [1.5, "SHOT"], [2, "MOUSE", 640, 236], [2.5, "MOUSE", 640, 451], [3.5, "SHOT"],
@@ -592,7 +592,7 @@ input = [
     [11, "SHOT"], [11.5, "CLICK", 296, 97], [12.5, "MOUSE", 500, 244], [13, "CLICK", 799, 244],
     [14, "LDOWN", 692, 288], [14.3, "MOUSE", 760, 288], [14.6, "MOUSE", 880, 288], [14.9, "LUP", 880, 288], [15.5, "SHOT"],
     [16, "MOUSE", 520, 376], [16.5, "CLICK", 700, 376], [17, "WHEEL", -1], [17.8, "SHOT"],
-    [18.5, "CLICK", 1210, 92], [19.5, "MOUSE", 520, 288], [20, "CLICK", 655, 288], [20.8, "SHOT"],
+    [18.5, "CLICK", 1210, 92], [19.5, "MOUSE", 520, 244], [20, "CLICK", 655, 244], [20.8, "SHOT"],
     [21.5, "CLICK", 745, 97], [22.5, "MOUSE", 500, 200], [23, "WHEEL", -9], [24, "SHOT"], [24.5, "CLICK", 300, 642],
     ["@main_menu#2"], [1.5, "SHOT"], [2.5, "MOUSE", 640, 303], [3.5, "SHOT"], [4, "CLICK", 640, 303],
     ["@save_slots"], [0.8, "SHOT"], [1, "MOUSE", 434, 330], [2, "SHOT"], [2.5, "CLICK", 220, 330],

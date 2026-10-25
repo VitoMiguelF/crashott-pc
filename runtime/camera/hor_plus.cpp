@@ -34,6 +34,8 @@
 
 extern "C" PPC_FUNC(__imp__sub_823170F8);  // pure3d::Camera::vf16 (sphere in the frustum)
 extern "C" PPC_FUNC(__imp__sub_82393980);  // pure3d::pddiBaseContext::vf29 (SetProjection(near, far, fov, aspect))
+extern "C" PPC_FUNC(__imp__sub_823939A8);  // pure3d::pddiBaseContext::vf30 (GetProjection(&near, &far, &fov, &aspect))
+extern "C" PPC_FUNC(__imp__sub_8238D248);  // pure3d::xnContext::vf119 (builds the projection matrix)
 
 namespace
 {
@@ -75,6 +77,19 @@ namespace
     }
 
     int g_logged = 0;
+
+    // The last projection widened (SetProjection): what the game asked for and what pddi got. The
+    // state (context +136) keeps near +36, far +40, fov +44, aspect +48 and the projection mode
+    // +16 (0 perspective, 1 orthographic, 2 pixels); vf119 builds the matrix of the mode. Only the
+    // perspective is widened: the orthographic one (the HUD's 2D) is made from the aspect too, and
+    // with the widened one the HUD slid down, off the screen at 32:9. GetProjection gives the game
+    // its own values back.
+    struct Projection
+    {
+        uint32_t context = 0;
+        float askedFov = 0.0f, askedAspect = 0.0f, givenFov = 0.0f, givenAspect = 0.0f;
+    };
+    thread_local Projection g_projection;
 }
 
 // vf16: is the sphere (r4: camera space x, y, z; f1: radius) in the frustum? The original's test
@@ -117,6 +132,7 @@ PPC_FUNC(sub_82393980)
         float aspect = gpu::widescreen::Aspect();
         ctx.f3.f64 = 2.0 * atan(double(tanH));
         ctx.f4.f64 = aspect;
+        g_projection = { ctx.r3.u32, fov, gameAspect, float(ctx.f3.f64), aspect };
         if (g_logged < 2)
         {
             g_logged++;
@@ -125,4 +141,38 @@ PPC_FUNC(sub_82393980)
         }
     }
     __imp__sub_82393980(ctx, base);
+}
+
+// GetProjection: the values the game set, not the widened ones.
+PPC_FUNC(sub_823939A8)
+{
+    uint32_t self = ctx.r3.u32, fovOut = ctx.r6.u32, aspectOut = ctx.r7.u32;
+    __imp__sub_823939A8(ctx, base);
+    const Projection& p = g_projection;
+    if (p.context == self && fovOut && aspectOut && LoadF(fovOut) == p.givenFov && LoadF(aspectOut) == p.givenAspect)
+    {
+        StoreF(fovOut, p.askedFov);
+        StoreF(aspectOut, p.askedAspect);
+    }
+}
+
+// vf119: the orthographic and pixel matrices with the values the game set.
+PPC_FUNC(sub_8238D248)
+{
+    uint32_t self = ctx.r3.u32;
+    uint32_t state = LoadBE32(self + 136);
+    const Projection& p = g_projection;
+    bool restore = p.context == self && state && LoadBE32(state + 16) != 0 && LoadF(state + 44) == p.givenFov &&
+                   LoadF(state + 48) == p.givenAspect;
+    if (restore)
+    {
+        StoreF(state + 44, p.askedFov);
+        StoreF(state + 48, p.askedAspect);
+    }
+    __imp__sub_8238D248(ctx, base);
+    if (restore)
+    {
+        StoreF(state + 44, p.givenFov);
+        StoreF(state + 48, p.givenAspect);
+    }
 }

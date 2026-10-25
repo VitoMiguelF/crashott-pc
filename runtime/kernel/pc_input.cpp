@@ -10,6 +10,7 @@
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
 #include "../gpu/widescreen.h"
+#include "../gpu/window.h"
 
 #include <algorithm>
 #include <array>
@@ -456,7 +457,12 @@ namespace input::pc
         // 1280x720 game image -> client pixels (the menus' 16:9 area, centred: HudRect).
         int w = g_clientW, h = g_clientH;
         if (w <= 0 || h <= 0)
-            w = 1280, h = 720;
+        {
+            // No mouse message yet: the window's client (its aspect matters on wide screens).
+            uint32_t clientW = 0, clientH = 0;
+            gpu::window::GetClientSize(clientW, clientH);
+            w = clientW ? int(clientW) : 1280, h = clientH ? int(clientH) : 720;
+        }
         float ix, iy, iw, ih;
         HudRect(w, h, ix, iy, iw, ih);
         g_scriptedMouse = true;

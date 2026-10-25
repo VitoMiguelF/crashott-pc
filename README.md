@@ -35,6 +35,10 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 
 - **Native PC game**: story, menus and saves run natively, at the original 30 fps or unlocked
   (60 / 120 / unlimited), in a window, borderless or fullscreen, at internal resolutions up to 4K.
+- **Ultrawide and 16:10**: 21:9 (2560x1080, 3440x1440...), 32:9 (5120x1440...) and 16:10 (1280x800, Steam
+  Deck) with a wider view (Hor+), the HUD and menus kept at 16:9 in the middle (or the HUD corners at the
+  screen's edges), menu backgrounds filling the screen and the videos at 16:9 between black bars.
+  SETTINGS > VIDEO > ASPECT RATIO (AUTO follows the monitor).
 - **DLSS / DLAA** (NVIDIA RTX) and **FSR 3.1** (any GPU) upscaling, FXAA / SMAA, anisotropic filtering,
   adjustable motion blur, depth of field and shadow softness.
 - **Fast native rendering path**: the scene is drawn in one pass instead of the Xbox 360's three screen
@@ -235,6 +239,10 @@ de PC.
 
 - **Jogo nativo de PC**: história, menus e saves rodam nativamente, a 30 fps como o original ou
   sem limite (60 / 120 / livre), em janela, sem bordas ou tela cheia, com resolução interna até 4K.
+- **Ultrawide e 16:10**: 21:9 (2560x1080, 3440x1440...), 32:9 (5120x1440...) e 16:10 (1280x800, Steam
+  Deck) com visão mais larga (Hor+), o HUD e os menus em 16:9 no meio (ou os cantos do HUD nas bordas da
+  tela), os fundos dos menus preenchendo a tela e os vídeos em 16:9 entre faixas pretas.
+  SETTINGS > VÍDEO > PROPORÇÃO (AUTO segue o monitor).
 - **DLSS / DLAA** (NVIDIA RTX) e **FSR 3.1** (qualquer placa), FXAA / SMAA, filtro anisotrópico, motion
   blur, profundidade de campo e suavidade das sombras ajustáveis.
 - **Renderização nativa rápida**: a cena é desenhada numa passada só em vez das três faixas de tela do

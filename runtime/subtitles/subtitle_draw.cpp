@@ -32,7 +32,7 @@ namespace subtitles
             int fontPx = std::max(12, int(std::lround(outputHeight * 0.043 * sizePercent / 100.0)));
             int outline = std::max(2, fontPx / 12);
             int padX = fontPx / 2 + outline, padY = fontPx / 5 + outline;
-            int maxWidth = int(outputWidth * 0.82);
+            int maxWidth = int(std::min(double(outputWidth), outputHeight * 16.0 / 9.0) * 0.82);  // lines of the 16:9 area on wide screens
 
             HDC dc = CreateCompatibleDC(nullptr);
             HFONT font = CreateFontW(-fontPx, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,

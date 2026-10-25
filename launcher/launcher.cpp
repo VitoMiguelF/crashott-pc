@@ -134,7 +134,7 @@ namespace
     const int SETUP_TAB = int(TABS.size()) - 1;
     // The simple view (the default): the main options on one page; LIGHTING sets all of the
     // lighting remaster's at once (opt::LightingPreset).
-    const Tab SIMPLE{ { "OPTIONS", "OPÇÕES" }, { Item::Language, Item::Resolution, Item::FpsLimit, Item::HdRemaster, Item::Lighting } };
+    const Tab SIMPLE{ { "OPTIONS", "OPÇÕES" }, { Item::Language, Item::Resolution, Item::Aspect, Item::FpsLimit, Item::HdRemaster, Item::Lighting } };
 
     // State.
     Values g_values, g_saved;

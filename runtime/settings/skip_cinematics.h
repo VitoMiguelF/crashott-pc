@@ -35,6 +35,8 @@ namespace cutscenes
     // started on another screen is over once the screen changes).
     void NoteMovie(int index);
     void NoteFrontendNode(uint32_t node);
+    // A video (Bink) is playing (any of them): the renderer shows it at 16:9 (gpu/widescreen.h).
+    bool VideoPlaying();
 
     // Render thread, once per presented frame, over the back buffer (RENDER_TARGET state).
     void Draw(uint32_t width, uint32_t height);

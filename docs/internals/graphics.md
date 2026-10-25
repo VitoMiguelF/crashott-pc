@@ -136,7 +136,40 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
 - Cost (RTX 5080): 1080p HIGH 0.75 ms GPU, LOW 0.17 ms; 4K HIGH 1.09 ms (AO capped to half res above 1440
   lines); zero CPU.
 
+## Wide screens (`gpu/widescreen.*`, `camera/hor_plus.cpp`, HUD_GS in `xenos_renderer.cpp`)
+
+Full write-up: `runtime/NOTES.md` "Ultrawide". Settings `[video] aspect` (auto / 16:9 / 16:10 / 21:9 /
+32:9), `resolution` (WxH; the width follows the aspect's list), `hud_16_9`.
+
+- The guest keeps 16:9 at 1280x720. Host targets and resolves are `g_stretch` (= aspect / 16:9) times
+  wider: every guest x goes through `XScale(scale)` (targets, resolves, clears, viewport, scissor,
+  upscaler sizes and jitter, present). The scaled shader variant gets `xe_render_scale.xy` and a float2
+  `xe_tex_size_scale` per fetch; it is used whenever `g_stretch != 1`.
+- Camera: `pure3d::Camera::vf05` sub_823176C8 = SetFOV(fov, aspect), called every frame with the
+  horizontal FOV and aspect 1; stores +20/+24 and derives +16 fov, +28 aspect (display aspect from
+  `xnDisplay::vf20` sub_8238F438 = +1688/+1692), +40/+44 projection scales, +48..+76 the side planes of
+  `vf16` sub_823170F8 (sphere test). `pddiBaseContext::vf29` sub_82393980 = SetProjection(near, far, fov,
+  aspect) into state (context +136) +36..+48, mode at +16 (0 perspective, 1 ortho, 2 pixels);
+  `vf30` sub_823939A8 = GetProjection; `xnContext::vf119` sub_8238D248 builds the matrix of the mode.
+- Hor+ = SetProjection widened (same vertical FOV) + vf16 with widened planes + vf119 building the
+  ortho/pixel matrices from the game's own fov/aspect + GetProjection returning them.
+- **Traps**: writing the widened values into the camera (+16/+28/+40/+44 or the planes) made the ice
+  shards of the village blink (other code reads them). The HUD's 2D is the ortho mode of the same
+  projection: built from the widened aspect, its y offset scaled with the aspect (HUD 124 px lower at
+  21:9, off the screen at 32:9).
+- 2D: draws into a 1280-wide 1x target (not scene, not MSAA) get `xe_hud` (b3): triangles go through
+  HUD_GS (rectangle lists: `xe_hud_transform` in the VS). W = 1 triangles (the game's 2D, 640x480
+  virtual through c4-c7) scale around the centre unless they span the width; full-screen ones zoom when
+  they read no render target. Triangles with the same W != 1 on the three vertices are the frontend's
+  sprites through a pure3d camera (W = 0.5), already placed by Hor+; big ones past the 16:9 area zoom.
+  Anchored HUD (`hud_16_9 = false`): only in node 638, per draw, from the vertices of the 2D VS
+  aecab5202246c470 (HudDrawSide). Bink: the decoded frame is drawn by the generic 2D shader, so videos
+  are known from `cutscenes::VideoPlaying()`; scaled and the bars cleared.
+- `CRASH_NO_HOR_PLUS=1` (16:9 view stretched), `CRASH_HUD_NO_GS=1` (2D per vertex), `CRASH_WINDOW_SIZE=WxH`
+  (client in screen pixels, may exceed the monitor: captures), `CRASH_MONITOR=WxH` (what AUTO sees).
+
 ## Window
 
 The present keeps the aspect ratio with black bars and the process is per-monitor DPI aware (on a high-DPI
-screen the window used to be half resolution and stretched).
+screen the window used to be half resolution and stretched). The window opens at the picture's aspect
+(720 lines at 96 DPI), fitted into the primary monitor's work area.
