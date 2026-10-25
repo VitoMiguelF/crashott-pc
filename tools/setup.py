@@ -457,7 +457,8 @@ def recompile():
     # -Wno-unused-result: its recompiler.cpp drops a [[nodiscard]] value (harmless, but it shows in the installer).
     extra = ["-DCMAKE_CXX_FLAGS=-include cstdlib -Wno-unused-result", "-DCMAKE_EXE_LINKER_FLAGS=-static"] \
         if buildenv.toolchain_kind() == "bundled" else []
-    configure = buildenv.configure_build(XENON, build, extra)
+    # Its CMakeLists (and xxHash's) ask for an old cmake_minimum_required: a warning "for project developers".
+    configure = buildenv.configure_build(XENON, build, [*extra, "-Wno-deprecated"])
     if configure:
         run_all(configure, env=env)
     run_all(["cmake", "--build", build, "--target", "XenonRecomp"], env=env)
