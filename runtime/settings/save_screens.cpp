@@ -41,6 +41,7 @@
 #include "../kernel/memory.h"
 #include "../kernel/pc_input.h"
 #include "../kernel/xam_content.h"
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <atomic>
@@ -207,7 +208,7 @@ namespace settings::save_screens
         // twice a second.
         void ReadOptions()
         {
-            ULONGLONG now = GetTickCount64();
+            ULONGLONG now = plat::TickCountMs();
             if (g_optionsTime && now - g_optionsTime < 500)
                 return;
             g_optionsTime = now;
@@ -255,7 +256,7 @@ namespace settings::save_screens
             constexpr uint16_t DIRECTIONS = XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT;
             constexpr ULONGLONG REPEAT_DELAY_MS = 380, REPEAT_MS = 100;
             uint16_t pressed = g_pressed.exchange(0), held = g_held.load();
-            ULONGLONG now = GetTickCount64();
+            ULONGLONG now = plat::TickCountMs();
             if (pressed & DIRECTIONS)
             {
                 g_heldDir = pressed & DIRECTIONS;
@@ -315,7 +316,7 @@ namespace settings::save_screens
             if (visual.mode != g_visual.mode)
                 g_zones.clear();  // the old screen's zones
             g_visual = visual;
-            g_visualTime = GetTickCount64();
+            g_visualTime = plat::TickCountMs();
         }
 
         // ---- calls into the game (the hook's context; registers restored) --------------------------
@@ -527,7 +528,7 @@ namespace settings::save_screens
                 g_nameAction = action;
                 StartKeyboard();
             }
-            g_keyboardTime = GetTickCount64();
+            g_keyboardTime = plat::TickCountMs();
             HideWheel(ctx, base, action);
 
             uint16_t pressed = TakePressed();
@@ -843,7 +844,7 @@ namespace settings::save_screens
             g_pressed |= uint16_t(buttons & ~before);
         }
         // The keyboard closes by itself if the game stops running its screen.
-        if (g_keyboardOn && GetTickCount64() - g_keyboardTime.load() > 400)
+        if (g_keyboardOn && plat::TickCountMs() - g_keyboardTime.load() > 400)
             StopKeyboard("the screen is gone");
         if (g_confirmOn)
         {
@@ -929,7 +930,7 @@ namespace settings::save_screens
             std::u32string u = menu_art::Utf32(text);
             float width = menu_art::TextWidth(font, u, cell);
             float left = x - width * align;
-            menu_art::DrawText(g_canvas, font, u, v.X(left), v.Y(y), cell * v.s, style);
+            menu_art::DrawGameText(g_canvas, font, u, v.X(left), v.Y(y), cell * v.s, style);
             return left + width;
         }
 
@@ -1149,11 +1150,11 @@ namespace settings::save_screens
         {
             std::lock_guard lock(g_mutex);
             // A screen the game stopped running (a cut to another screen) is not drawn.
-            if (g_visual.mode != Mode::None && GetTickCount64() - g_visualTime > 500)
+            if (g_visual.mode != Mode::None && plat::TickCountMs() - g_visualTime > 500)
                 g_visual = {};
             vis = g_visual;
         }
-        ULONGLONG now = GetTickCount64();
+        ULONGLONG now = plat::TickCountMs();
         if (vis.mode != g_shownMode)
         {
             // Fade in when the keyboard or the question appears (the prompt follows the selection).

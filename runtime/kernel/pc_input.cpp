@@ -11,6 +11,7 @@
 #include "../dev/dev_console.h"
 #include "../gpu/widescreen.h"
 #include "../gpu/window.h"
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <array>
@@ -268,7 +269,7 @@ namespace input::pc
             if (down)
             {
                 g_leftClicks++;
-                g_menuClickTime = GetTickCount64();
+                g_menuClickTime = plat::TickCountMs();
                 g_menuClick = true;
             }
         }
@@ -304,7 +305,7 @@ namespace input::pc
             if (x != g_cursorX.load() || y != g_cursorY.load())
             {
                 g_cursorMoves++;
-                g_lastMouseMove = GetTickCount64();
+                g_lastMouseMove = plat::TickCountMs();
             }
             g_cursorX = x, g_cursorY = y, g_clientW = clientWidth, g_clientH = clientHeight;
         }
@@ -320,7 +321,7 @@ namespace input::pc
         if (x != g_cursorX.load() || y != g_cursorY.load())
         {
             g_cursorMoves++;
-            g_lastMouseMove = GetTickCount64();
+            g_lastMouseMove = plat::TickCountMs();
         }
         g_cursorX = x, g_cursorY = y, g_clientW = clientWidth, g_clientH = clientHeight;
     }
@@ -332,7 +333,7 @@ namespace input::pc
         g_lookX += dx;
         g_lookY += dy;
         if (dx || dy)
-            g_lastMouseMove = GetTickCount64();
+            g_lastMouseMove = plat::TickCountMs();
     }
 
     void OnFocus(bool focused)
@@ -359,7 +360,7 @@ namespace input::pc
         }
         // Menus and the settings screen: visible, hidden after 3 s without moving (it comes back
         // with the first motion).
-        return GetTickCount64() - g_lastMouseMove.load() > 3000 ? CursorMode::Hidden : CursorMode::Visible;
+        return plat::TickCountMs() - g_lastMouseMove.load() > 3000 ? CursorMode::Hidden : CursorMode::Visible;
     }
 
     // ---- game thread ----
@@ -369,7 +370,7 @@ namespace input::pc
         // The Frontend tree's conditions run every frame while one of its screens is up; in
         // gameplay they stop (or sit on the in-game node, which is not a menu).
         ULONGLONG last = g_frontendTime.load();
-        if (!last || GetTickCount64() - last > 250)
+        if (!last || plat::TickCountMs() - last > 250)
             return false;
         uint32_t node = g_frontendNode.load();
         std::lock_guard lock(g_nodesMutex);
@@ -475,7 +476,7 @@ namespace input::pc
         if (click == 1 || click == 3)
         {
             g_leftClicks++;
-            g_menuClickTime = GetTickCount64();
+            g_menuClickTime = plat::TickCountMs();
             g_menuClick = true;
             g_leftHeld = click == 3;
             NoteDevice(Device::Keyboard);
@@ -533,7 +534,7 @@ namespace input::pc
     {
         if (!g_menuClick.exchange(false))
             return false;
-        return GetTickCount64() - g_menuClickTime.load() <= 400;
+        return plat::TickCountMs() - g_menuClickTime.load() <= 400;
     }
 
     int TakeMenuWheel()
@@ -554,7 +555,7 @@ namespace input::pc
     void NoteFrontendNode(uint32_t node)
     {
         g_frontendNode = node;
-        g_frontendTime = GetTickCount64();
+        g_frontendTime = plat::TickCountMs();
     }
 
     namespace

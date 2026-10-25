@@ -16,6 +16,7 @@
 #include "../kernel/pad_slots.h"
 #include "../kernel/pc_input.h"
 #include "../subtitles/subtitles.h"
+#include "../platform/platform.h"
 
 #include <windows.h>
 #include <xinput.h>
@@ -348,7 +349,7 @@ namespace settings::menu
                 cell = fitted, width = maxWidth;
             }
             float left = x - width * align;
-            menu_art::DrawText(g_canvas, font, u, v.X(left), v.Y(y), cell * v.s, style);
+            menu_art::DrawGameText(g_canvas, font, u, v.X(left), v.Y(y), cell * v.s, style);
             return left + width;
         }
 
@@ -778,7 +779,7 @@ namespace settings::menu
             g_open = false;
             g_releasing = true;
             g_closing = true;
-            g_closedAt = GetTickCount64();
+            g_closedAt = plat::TickCountMs();
             // The game leaves the options screen with its own transition (ExitBack): the PS2
             // options screen of the main menu's SETTINGS, or the in-game options.
             if (leaveScreen)
@@ -789,7 +790,7 @@ namespace settings::menu
         // Buttons that went down this frame, plus auto-repeat of a held direction.
         uint16_t Pressed(uint16_t buttons)
         {
-            ULONGLONG now = GetTickCount64();
+            ULONGLONG now = plat::TickCountMs();
             uint16_t pressed = buttons & ~g_previousButtons;
             constexpr uint16_t DIRECTIONS = XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT;
             if (pressed & DIRECTIONS)
@@ -963,17 +964,17 @@ namespace settings::menu
                 g_heldButton = 0;
                 g_open = true;
                 g_closing = false;
-                g_openedAt = GetTickCount64();
+                g_openedAt = plat::TickCountMs();
                 // The art is read at startup; give it a moment if the screen opens very early.
                 menu_art::Ready(2000);
                 Log("[settings] screen opened%s", InGame() ? " (pause menu OPTIONS)" : "");
             }
             if (!g_open)
             {
-                if (g_releasing && !buttons && GetTickCount64() >= g_backUntil)
+                if (g_releasing && !buttons && plat::TickCountMs() >= g_backUntil)
                     g_releasing = false;
                 g_previousButtons = buttons;
-                if (g_closing && GetTickCount64() - g_closedAt >= FADE_OUT_MS)
+                if (g_closing && plat::TickCountMs() - g_closedAt >= FADE_OUT_MS)
                     g_closing = false;
                 return g_closing;
             }
@@ -985,7 +986,7 @@ namespace settings::menu
                 return true;  // fading out
             }
             // Input only once the screen is shown (the game's transition first).
-            if (GetTickCount64() - g_openedAt < OPEN_DELAY_MS)
+            if (plat::TickCountMs() - g_openedAt < OPEN_DELAY_MS)
             {
                 g_previousButtons = buttons;
                 return true;
@@ -998,7 +999,7 @@ namespace settings::menu
             if (g_restartAt)
             {
                 // "Restarting..." was drawn: restart (returns only if it failed).
-                if (GetTickCount64() >= g_restartAt)
+                if (plat::TickCountMs() >= g_restartAt)
                 {
                     Set(g_values);
                     Restart();
@@ -1011,7 +1012,7 @@ namespace settings::menu
                 if (pressed & (XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_START))
                 {
                     Log("[settings] restart accepted (%s)", RestartItems().c_str());
-                    g_restartAt = GetTickCount64() + RESTART_DELAY_MS;
+                    g_restartAt = plat::TickCountMs() + RESTART_DELAY_MS;
                 }
                 else if (pressed & (XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_BACK))
                 {
@@ -1161,7 +1162,7 @@ namespace settings::menu
 
     uint16_t GameButtons()
     {
-        return (GetTickCount64() < g_backUntil ? XINPUT_GAMEPAD_B : 0) | MenuAutopilotButtons() | boot::Buttons();
+        return (plat::TickCountMs() < g_backUntil ? XINPUT_GAMEPAD_B : 0) | MenuAutopilotButtons() | boot::Buttons();
     }
 
     void Draw(uint32_t width, uint32_t height)
@@ -1170,7 +1171,7 @@ namespace settings::menu
             return;
         Render(int(width), int(height));
         // Fade (and rise) in after the game's transition; fade out when closing.
-        ULONGLONG now = GetTickCount64();
+        ULONGLONG now = plat::TickCountMs();
         float t = g_closing ? 1.0f - float(now - g_closedAt) / FADE_OUT_MS
                             : (float(now - g_openedAt) - OPEN_DELAY_MS) / FADE_IN_MS;
         t = std::clamp(t, 0.0f, 1.0f);

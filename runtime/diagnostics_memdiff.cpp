@@ -12,6 +12,7 @@
 #include "diagnostics.h"
 #include "kernel/input.h"
 #include "kernel/memory.h"
+#include "platform/platform.h"
 
 #include <windows.h>
 
@@ -241,12 +242,12 @@ namespace
             AddVectoredExceptionHandler(1, WatchHandler);
             std::thread([start] {
                 while (input::ClockMs() < int64_t(start * 1000.0))
-                    Sleep(100);
+                    plat::SleepMs(100);
                 Log("[watch] %u address(es) armed at %.1f s", g_watchCount, double(input::ClockMs()) / 1000.0);
                 while (true)
                 {
                     ArmAllThreads();
-                    Sleep(1000);
+                    plat::SleepMs(1000);
                 }
             }).detach();
         }

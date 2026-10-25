@@ -16,6 +16,7 @@
 #include "../settings/skip_cinematics.h"
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
+#include "../platform/platform.h"
 
 #include <windows.h>
 #include <xinput.h>
@@ -57,10 +58,10 @@ namespace
         ULONGLONG start = g_clockStart.load();
         if (!start)
         {
-            g_clockStart.compare_exchange_strong(start, GetTickCount64());
+            g_clockStart.compare_exchange_strong(start, plat::TickCountMs());
             start = g_clockStart.load();
         }
-        return GetTickCount64() - start;
+        return plat::TickCountMs() - start;
     }
 
     // CRASH_INPUT_SCRIPT=5000:A,9000:DOWN:1500,... presses controller 0 buttons at those times (ms
@@ -387,7 +388,7 @@ namespace input
     int64_t ClockMs()
     {
         ULONGLONG start = g_clockStart.load();
-        return start ? int64_t(GetTickCount64() - start) : -1;
+        return start ? int64_t(plat::TickCountMs() - start) : -1;
     }
 
     bool LastPress(Press& press)

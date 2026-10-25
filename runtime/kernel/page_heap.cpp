@@ -2,7 +2,7 @@
 #include "memory.h"
 #include "../diagnostics.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <cstring>
 
@@ -89,7 +89,7 @@ uint32_t PageHeap::Reserve(uint32_t fixedBase, uint32_t size, uint32_t alignment
 
     // Drop anything the demand-commit handler mapped here while the range was free, so pages
     // committed later start zeroed.
-    VirtualFree(g_memory.Translate(base), size, MEM_DECOMMIT);
+    plat::DecommitMemory(g_memory.Translate(base), size);
     return base;
 }
 
@@ -142,7 +142,7 @@ bool PageHeap::Decommit(uint32_t guest, uint32_t size)
             return false;
     }
 
-    VirtualFree(g_memory.Translate(guest), size, MEM_DECOMMIT);
+    plat::DecommitMemory(g_memory.Translate(guest), size);
     for (uint32_t i = first; i < first + count; i++)
         m_pages[i].state = State::Reserved;
 
@@ -159,7 +159,7 @@ uint32_t PageHeap::Release(uint32_t allocationBase)
 
     uint32_t first = PageIndex(allocationBase);
     uint32_t count = it->second.pageCount;
-    VirtualFree(g_memory.Translate(allocationBase), count * PAGE_SIZE, MEM_DECOMMIT);
+    plat::DecommitMemory(g_memory.Translate(allocationBase), count * PAGE_SIZE);
     for (uint32_t i = first; i < first + count; i++)
         m_pages[i] = { 0, 0, State::Free, m_pages[i].dirty };
 

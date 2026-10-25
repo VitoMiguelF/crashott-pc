@@ -14,6 +14,7 @@
 #include "hid_pads.h"
 #include "pc_input.h"
 #include "../diagnostics.h"
+#include "../platform/platform.h"
 
 #include <hidsdi.h>
 #include <setupapi.h>
@@ -235,9 +236,9 @@ namespace input::hid
                         static std::atomic<int> s_reports{ 0 };
                         static std::atomic<ULONGLONG> s_lastTrace{ 0 };
                         int n = ++s_reports;
-                        if (n <= 3 || GetTickCount64() - s_lastTrace.load() > 5000)
+                        if (n <= 3 || plat::TickCountMs() - s_lastTrace.load() > 5000)
                         {
-                            s_lastTrace = GetTickCount64();
+                            s_lastTrace = plat::TickCountMs();
                             std::string bytes;
                             for (DWORD i = 0; i < std::min<DWORD>(got, 16); i++)
                             {
@@ -254,7 +255,7 @@ namespace input::hid
                         std::lock_guard lock(pad->mutex);
                         if (Active(state, pad->state))
                         {
-                            pad->lastActive = GetTickCount64();
+                            pad->lastActive = plat::TickCountMs();
                             g_lastActive = pad->lastActive;
                             input::pc::NoteDevice(input::pc::Device::PlayStation);
                         }
@@ -476,7 +477,7 @@ namespace input::hid
     bool RecentlyActive()
     {
         ULONGLONG last = g_lastActive.load();
-        return last && GetTickCount64() - last < 1000;
+        return last && plat::TickCountMs() - last < 1000;
     }
 
     int Count(const char** firstName)
@@ -546,7 +547,7 @@ namespace input::hid
     int Monitor(int seconds)
     {
         Start();
-        Sleep(600);
+        plat::SleepMs(600);
         {
             std::lock_guard lock(g_padsMutex);
             printf("%zu controle(s) PlayStation:\n", g_pads.size());
@@ -554,8 +555,8 @@ namespace input::hid
                 printf("  %s (relatorio de entrada %u bytes, saida %u)\n", pad->name.c_str(), pad->inputLength, pad->outputLength);
         }
         std::vector<std::pair<uint32_t, XINPUT_GAMEPAD>> last;
-        ULONGLONG end = GetTickCount64() + ULONGLONG(seconds) * 1000;
-        while (GetTickCount64() < end)
+        ULONGLONG end = plat::TickCountMs() + ULONGLONG(seconds) * 1000;
+        while (plat::TickCountMs() < end)
         {
             for (const PadInfo& info : Pads())
             {
@@ -574,7 +575,7 @@ namespace input::hid
                        pad.sThumbRY, pad.bLeftTrigger, pad.bRightTrigger);
                 fflush(stdout);
             }
-            Sleep(20);
+            plat::SleepMs(20);
         }
         return 0;
     }

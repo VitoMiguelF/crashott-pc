@@ -1,10 +1,6 @@
 #include "vulkan_loader.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
+#include "../platform/platform.h"
 
 #define CRASH_VK_DEFINE(name) PFN_##name name = nullptr;
 namespace gpu::vk
@@ -19,16 +15,15 @@ namespace gpu::vk
         if (vkGetInstanceProcAddr)
             return true;
 #ifdef _WIN32
-        HMODULE library = LoadLibraryW(L"vulkan-1.dll");
-        if (!library)
-            return false;
-        vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(reinterpret_cast<void*>(GetProcAddress(library, "vkGetInstanceProcAddr")));
+        void* library = plat::OpenLibrary("vulkan-1.dll");
+#elif defined(__ANDROID__)
+        void* library = plat::OpenLibrary("libvulkan.so");
 #else
-        void* library = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+        void* library = plat::OpenLibrary("libvulkan.so.1");
+#endif
         if (!library)
             return false;
-        vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(library, "vkGetInstanceProcAddr"));
-#endif
+        vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(plat::FindSymbol(library, "vkGetInstanceProcAddr"));
         if (!vkGetInstanceProcAddr)
             return false;
 #define CRASH_VK_LOAD_GLOBAL(name) name = reinterpret_cast<PFN_##name>(vkGetInstanceProcAddr(nullptr, #name));

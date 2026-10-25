@@ -45,6 +45,7 @@
 #include "../kernel/input.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
+#include "../platform/platform.h"
 
 #include <windows.h>
 #include <xinput.h>
@@ -354,7 +355,7 @@ namespace boot
             button = XINPUT_GAMEPAD_Y;
         if (!button)
             return 0;
-        return GetTickCount64() % START_PERIOD_MS < START_HELD_MS ? button : 0;
+        return plat::TickCountMs() % START_PERIOD_MS < START_HELD_MS ? button : 0;
     }
 
     void Event(const char* name, const char* detail)

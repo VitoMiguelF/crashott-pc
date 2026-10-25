@@ -35,6 +35,11 @@
 // mod's file leaves it unchanged. Rewrites (RegisterEntryRewrite) are the same but may change the
 // entry's size. The first read of each replaced or rewritten entry is logged.
 
+namespace plat
+{
+    class File;
+}
+
 namespace rcf_overlay
 {
     class Archive;
@@ -61,8 +66,8 @@ namespace rcf_overlay
 
     uint64_t Size(const Archive& archive);
 
-    // Reads from the virtual archive; `baseFile` is the open handle of the original. Returns false
-    // on a host read error. Bytes past the end are not transferred.
-    bool Read(const Archive& archive, void* baseFile, uint64_t offset, uint8_t* data, uint32_t length,
+    // Reads from the virtual archive; `baseFile` is the open original. Returns false on a host
+    // read error. Bytes past the end are not transferred.
+    bool Read(const Archive& archive, const plat::File& baseFile, uint64_t offset, uint8_t* data, uint32_t length,
               uint32_t& transferred);
 }

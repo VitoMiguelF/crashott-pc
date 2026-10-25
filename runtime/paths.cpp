@@ -4,8 +4,7 @@
 #include "diagnostics.h"
 #include "settings/settings.h"
 
-#include <windows.h>
-#include <shobjidl.h>
+#include "platform/platform.h"
 
 #include <cstring>
 
@@ -20,9 +19,7 @@ namespace paths
 
         fs::path FindExeDir()
         {
-            wchar_t path[MAX_PATH];
-            DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
-            return fs::path(std::wstring(path, length)).parent_path();
+            return plat::ExecutablePath().parent_path();
         }
 
         bool IsDir(const fs::path& path)
@@ -37,51 +34,24 @@ namespace paths
             return fs::absolute(fs::path(text)).make_preferred();
         }
 
-        // Folder picker (first run without a game folder). Empty if cancelled.
-        fs::path PickFolder(HWND owner)
+        // Folder picker (first run without a game folder), until a game folder or cancel.
+        fs::path PickFolder(void* owner)
         {
-            fs::path chosen;
-            HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-            IFileOpenDialog* dialog = nullptr;
-            if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+            while (true)
             {
-                DWORD options = 0;
-                dialog->GetOptions(&options);
-                dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-                dialog->SetTitle(L"CrashRecomp: escolha a pasta do jogo (com default.xex e default.rcf)");
-                while (dialog->Show(owner) == S_OK)
-                {
-                    IShellItem* item = nullptr;
-                    PWSTR name = nullptr;
-                    if (SUCCEEDED(dialog->GetResult(&item)) && SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &name)))
-                    {
-                        fs::path folder(name);
-                        CoTaskMemFree(name);
-                        item->Release();
-                        if (IsGameFolder(folder))
-                        {
-                            chosen = folder;
-                            break;
-                        }
-                        MessageBoxW(owner, L"Essa pasta não tem default.xex e default.rcf.\n\n"
-                                    L"Escolha a pasta com os arquivos do seu Crash of the Titans (Xbox 360).",
-                                    L"CrashRecomp", MB_OK | MB_ICONWARNING);
-                        continue;
-                    }
-                    if (item)
-                        item->Release();
-                }
-                dialog->Release();
+                fs::path folder = plat::PickFolder("CrashRecomp: escolha a pasta do jogo (com default.xex e default.rcf)", owner);
+                if (folder.empty() || IsGameFolder(folder))
+                    return folder;
+                plat::ShowMessageBox("CrashRecomp", "Essa pasta não tem default.xex e default.rcf.\n\n"
+                                     "Escolha a pasta com os arquivos do seu Crash of the Titans (Xbox 360).",
+                                     plat::MessageKind::Warning, owner);
             }
-            if (SUCCEEDED(init))
-                CoUninitialize();
-            return chosen;
         }
     }
 
     fs::path PickGameFolder(void* owner)
     {
-        return PickFolder(static_cast<HWND>(owner));
+        return PickFolder(owner);
     }
 
     bool IsGameFolder(const fs::path& folder)
@@ -173,9 +143,9 @@ namespace paths
         {
             Log("[paths] no game folder: give --game <folder>, put the game in %s or set [paths] game in %s",
                 (player / "game").string().c_str(), (g_userData / "settings.toml").string().c_str());
-            MessageBoxW(nullptr, L"Sem a pasta do jogo não dá para abrir o CrashRecomp.\n\n"
-                        L"Coloque os arquivos do jogo (default.xex, default.rcf...) na pasta game\\ ao lado do "
-                        L"executável do jogo, ou abra de novo e escolha a pasta.", L"CrashRecomp", MB_OK | MB_ICONERROR);
+            plat::ShowMessageBox("CrashRecomp", "Sem a pasta do jogo não dá para abrir o CrashRecomp.\n\n"
+                                 "Coloque os arquivos do jogo (default.xex, default.rcf...) na pasta game\\ ao lado do "
+                                 "executável do jogo, ou abra de novo e escolha a pasta.", plat::MessageKind::Error);
             return false;
         }
         if (g_xex.empty())

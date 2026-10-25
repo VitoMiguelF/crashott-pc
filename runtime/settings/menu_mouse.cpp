@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "settings_menu.h"
 #include "save_screens.h"
+#include "../platform/platform.h"
 
 #include <windows.h>
 
@@ -110,7 +111,7 @@ namespace input::menu_mouse
     bool Live(Menu& menu)
     {
         std::lock_guard lock(g_mutex);
-        if (!g_liveTime || GetTickCount64() - g_liveTime > 150)
+        if (!g_liveTime || plat::TickCountMs() - g_liveTime > 150)
             return false;
         menu = g_live;
         return true;
@@ -289,7 +290,7 @@ PPC_FUNC(sub_820B2E98)
     {
         static std::map<uint32_t, ULONGLONG> s_seen;
         static std::map<uint32_t, int> s_index;
-        ULONGLONG now = GetTickCount64();
+        ULONGLONG now = plat::TickCountMs();
         auto& last = s_seen[menu];
         if (now - last > 2000)
         {
@@ -310,7 +311,7 @@ PPC_FUNC(sub_820B2E98)
     {
         std::lock_guard lock(g_mutex);
         g_live = live;
-        g_liveTime = GetTickCount64();
+        g_liveTime = plat::TickCountMs();
     }
     uint32_t result = ctx.r3.u32;
     MouseOnMenu(ctx, base, live);

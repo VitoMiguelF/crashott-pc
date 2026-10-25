@@ -4,6 +4,7 @@
 #include "symbols.h"
 #include "kernel/imports.h"
 #include "kernel/memory.h"
+#include "platform/platform.h"
 
 #include <ppc_config.h>
 #include <ppc_context.h>
@@ -252,7 +253,7 @@ namespace
     DWORD WINAPI WatchdogThread(LPVOID param)
     {
         DWORD seconds = DWORD(reinterpret_cast<uintptr_t>(param));
-        Sleep(seconds * 1000);
+        plat::SleepMs(seconds * 1000);
         Log("[watchdog] still running after %lu s, stopping", seconds);
         {
             std::unique_lock lock(g_threadsMutex, std::try_to_lock);

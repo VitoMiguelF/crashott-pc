@@ -15,7 +15,8 @@
 #include "../fs/rcf_overlay.h"
 #include "input.h"
 
-#include <windows.h>
+#include "../platform/file.h"
+#include "../platform/platform.h"
 
 #include <cstring>
 #include <mutex>
@@ -67,7 +68,7 @@ namespace
         vfs::VirtualPath path;
         fs::path host;
         std::string source;
-        HANDLE hostFile = INVALID_HANDLE_VALUE;
+        plat::File hostFile;
         std::shared_ptr<const rcf_overlay::Archive> archive;  // .rcf with entries replaced by mods
         bool directory{};
         bool canWrite{};
@@ -83,9 +84,7 @@ namespace
 
         void OnHandleClosed() override
         {
-            if (hostFile != INVALID_HANDLE_VALUE)
-                CloseHandle(hostFile);
-            hostFile = INVALID_HANDLE_VALUE;
+            hostFile.Close();
 
             if (deleteOnClose && path.Writable())
             {
@@ -103,30 +102,24 @@ namespace
         uint32_t attributes{};
     };
 
-    uint64_t FileTimeValue(const FILETIME& time)
-    {
-        return (uint64_t(time.dwHighDateTime) << 32) | time.dwLowDateTime;
-    }
-
-    HostInfo MakeInfo(const FILETIME& creation, const FILETIME& access, const FILETIME& write,
-                      DWORD sizeHigh, DWORD sizeLow, DWORD attributes, bool readOnlyMount)
+    HostInfo MakeInfo(const plat::FileStat& stat, bool readOnlyMount)
     {
         HostInfo info;
-        info.creation = FileTimeValue(creation);
-        info.access = FileTimeValue(access);
-        info.write = FileTimeValue(write);
+        info.creation = stat.creation;
+        info.access = stat.access;
+        info.write = stat.write;
         info.change = info.write;
-        info.size = (uint64_t(sizeHigh) << 32) | sizeLow;
+        info.size = stat.size;
         info.allocation = (info.size + 0xFFF) & ~0xFFFull;
 
-        if (attributes & FILE_ATTRIBUTE_DIRECTORY)
+        if (stat.attributes & plat::FILE_ATTR_DIRECTORY)
         {
             info.attributes = X_FILE_ATTRIBUTE_DIRECTORY;
             info.size = info.allocation = 0;
         }
         else
         {
-            info.attributes = attributes & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_ARCHIVE);
+            info.attributes = stat.attributes & (plat::FILE_ATTR_READONLY | plat::FILE_ATTR_HIDDEN | plat::FILE_ATTR_SYSTEM | plat::FILE_ATTR_ARCHIVE);
         }
         if (readOnlyMount)
             info.attributes |= X_FILE_ATTRIBUTE_READONLY;
@@ -137,24 +130,22 @@ namespace
 
     bool QueryHostPath(const fs::path& host, bool readOnlyMount, HostInfo& info)
     {
-        WIN32_FILE_ATTRIBUTE_DATA data;
-        if (!GetFileAttributesExW(host.c_str(), GetFileExInfoStandard, &data))
+        plat::FileStat stat;
+        if (!plat::StatPath(host, stat))
             return false;
-        info = MakeInfo(data.ftCreationTime, data.ftLastAccessTime, data.ftLastWriteTime,
-                        data.nFileSizeHigh, data.nFileSizeLow, data.dwFileAttributes, readOnlyMount);
+        info = MakeInfo(stat, readOnlyMount);
         return true;
     }
 
     bool QueryFile(FileObject& file, HostInfo& info)
     {
-        if (file.hostFile == INVALID_HANDLE_VALUE)
+        if (!file.hostFile.IsOpen())
             return QueryHostPath(file.host, !file.path.Writable(), info);
 
-        BY_HANDLE_FILE_INFORMATION data;
-        if (!GetFileInformationByHandle(file.hostFile, &data))
+        plat::FileStat stat;
+        if (!file.hostFile.Stat(stat))
             return false;
-        info = MakeInfo(data.ftCreationTime, data.ftLastAccessTime, data.ftLastWriteTime,
-                        data.nFileSizeHigh, data.nFileSizeLow, data.dwFileAttributes, !file.path.Writable());
+        info = MakeInfo(stat, !file.path.Writable());
         if (file.archive)
         {
             info.size = rcf_overlay::Size(*file.archive);
@@ -309,32 +300,29 @@ namespace
         }
         else
         {
-            DWORD creation = OPEN_EXISTING;
+            plat::FileDisposition creation = plat::FileDisposition::OpenExisting;
             if (writable)
             {
                 switch (disposition)
                 {
                 case X_FILE_SUPERSEDE:
-                case X_FILE_OVERWRITE_IF: creation = CREATE_ALWAYS; break;
-                case X_FILE_CREATE: creation = CREATE_NEW; break;
-                case X_FILE_OPEN_IF: creation = OPEN_ALWAYS; break;
-                case X_FILE_OVERWRITE: creation = TRUNCATE_EXISTING; break;
-                default: creation = OPEN_EXISTING; break;
+                case X_FILE_OVERWRITE_IF: creation = plat::FileDisposition::CreateAlways; break;
+                case X_FILE_CREATE: creation = plat::FileDisposition::CreateNew; break;
+                case X_FILE_OPEN_IF: creation = plat::FileDisposition::OpenAlways; break;
+                case X_FILE_OVERWRITE: creation = plat::FileDisposition::TruncateExisting; break;
+                default: creation = plat::FileDisposition::OpenExisting; break;
                 }
             }
 
             // Truncation needs write access on the host even if the title only asked to read.
-            bool truncates = creation == CREATE_ALWAYS || creation == TRUNCATE_EXISTING;
-            DWORD hostAccess = GENERIC_READ | (file->canWrite || (writable && truncates) ? GENERIC_WRITE : 0);
-            file->hostFile = CreateFileW(host.c_str(), hostAccess, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                         nullptr, creation, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (file->hostFile == INVALID_HANDLE_VALUE)
+            bool truncates = creation == plat::FileDisposition::CreateAlways || creation == plat::FileDisposition::TruncateExisting;
+            bool hostWrite = file->canWrite || (writable && truncates);
+            plat::FileError hostError;
+            if (!file->hostFile.Open(host, hostWrite, creation, &hostError))
             {
-                DWORD hostError = GetLastError();
+                std::string why = "host error: " + plat::LastErrorText();
                 delete file;
-                char why[64];
-                snprintf(why, sizeof(why), "host error %lu", hostError);
-                return fail(hostError == ERROR_ACCESS_DENIED || hostError == ERROR_SHARING_VIOLATION ? X_STATUS_ACCESS_DENIED : X_STATUS_UNSUCCESSFUL, why);
+                return fail(hostError == plat::FileError::AccessDenied ? X_STATUS_ACCESS_DENIED : X_STATUS_UNSUCCESSFUL, why.c_str());
             }
 
             if (!writable)
@@ -361,39 +349,6 @@ namespace
             information == X_FILE_CREATED ? ", created" : information == X_FILE_OVERWRITTEN || information == X_FILE_SUPERSEDED ? ", truncated" : "",
             wantsWrite && !writable ? ", write access dropped (read-only)" : "");
         return X_STATUS_SUCCESS;
-    }
-
-    // ReadFile/WriteFile at an offset, into/out of guest memory. Kernel-mode copies into guest
-    // pages that aren't committed yet fail (ERROR_NOACCESS) instead of faulting, so those go
-    // through a host buffer (whose memcpy commits on demand).
-    bool HostTransfer(HANDLE file, bool write, uint8_t* data, uint32_t length, uint64_t offset, DWORD& transferred)
-    {
-        OVERLAPPED overlapped{};
-        overlapped.Offset = DWORD(offset);
-        overlapped.OffsetHigh = DWORD(offset >> 32);
-        transferred = 0;
-
-        BOOL ok = write ? WriteFile(file, data, length, &transferred, &overlapped)
-                        : ReadFile(file, data, length, &transferred, &overlapped);
-        if (ok)
-            return true;
-
-        DWORD error = GetLastError();
-        if (error == ERROR_HANDLE_EOF)
-            return true;
-        if (error != ERROR_NOACCESS)
-            return false;
-
-        std::vector<uint8_t> buffer(length);
-        if (write)
-            memcpy(buffer.data(), data, length);
-        ok = write ? WriteFile(file, buffer.data(), length, &transferred, &overlapped)
-                   : ReadFile(file, buffer.data(), length, &transferred, &overlapped);
-        if (!ok && GetLastError() != ERROR_HANDLE_EOF)
-            return false;
-        if (!write)
-            memcpy(data, buffer.data(), transferred);
-        return true;
     }
 
     // NtReadFile/NtWriteFile(HANDLE File, HANDLE Event, void* ApcRoutine, void* ApcContext,
@@ -434,17 +389,15 @@ namespace
         }
         else if (offset == FILE_WRITE_TO_END_OF_FILE && write)
         {
-            LARGE_INTEGER size{};
-            GetFileSizeEx(file->hostFile, &size);
-            offset = uint64_t(size.QuadPart);
+            offset = file->hostFile.Size();
         }
 
-        DWORD transferred;
+        size_t transferred = 0;
         uint32_t status;
         bool ok;
         if (file->archive && !write)
         {
-            // Through a host buffer: guest pages may not be committed yet (see HostTransfer).
+            // Through a host buffer: guest pages may not be committed yet (see plat::File::ReadAt).
             std::vector<uint8_t> data(length);
             uint32_t read = 0;
             ok = rcf_overlay::Read(*file->archive, file->hostFile, offset, data.data(), length, read);
@@ -453,12 +406,14 @@ namespace
         }
         else
         {
-            ok = HostTransfer(file->hostFile, write, base + buffer, length, offset, transferred);
+            // Into/out of guest memory (pages not committed yet go through a host buffer).
+            ok = write ? file->hostFile.WriteAt(offset, base + buffer, length, transferred)
+                       : file->hostFile.ReadAt(offset, base + buffer, length, transferred);
         }
         if (!ok)
         {
-            Log("[fs] %s(%s, 0x%X bytes at 0x%llX) failed: host error %lu", api, file->path.Display().c_str(), length,
-                (unsigned long long)offset, GetLastError());
+            Log("[fs] %s(%s, 0x%X bytes at 0x%llX) failed: %s", api, file->path.Display().c_str(), length,
+                (unsigned long long)offset, plat::LastErrorText().c_str());
             status = X_STATUS_UNSUCCESSFUL;
         }
         else
@@ -466,7 +421,7 @@ namespace
             status = !write && transferred == 0 && length > 0 ? X_STATUS_END_OF_FILE : X_STATUS_SUCCESS;
             file->position = offset + transferred;
             if (!write && !file->path.Writable())
-                input::NoteGameRead(offset, transferred, _wcsicmp(file->host.filename().c_str(), L"default.rcf") == 0);
+                input::NoteGameRead(offset, transferred, plat::CompareNoCase(file->host.filename().string().c_str(), "default.rcf") == 0);
         }
 
         CompleteIo(base, ioStatus, status, transferred);
@@ -476,7 +431,7 @@ namespace
         if (logCall || logAll)
         {
             Log("[fs] %s(%s, buffer=0x%08X, 0x%X bytes at 0x%llX) lr=0x%08X -> 0x%08X, 0x%lX bytes", api, file->path.Display().c_str(),
-                buffer, length, (unsigned long long)offset, GuestLR(ctx), status, transferred);
+                buffer, length, (unsigned long long)offset, GuestLR(ctx), status, (unsigned long)transferred);
         }
         return status;
     }
@@ -650,9 +605,7 @@ PPC_FUNC(__imp__NtSetInformationFile)
         }
         else if (infoClass == 20)
         {
-            FILE_END_OF_FILE_INFO endOfFile{};
-            endOfFile.EndOfFile.QuadPart = int64_t(PPC_LOAD_U64(info));
-            if (!SetFileInformationByHandle(file->hostFile, FileEndOfFileInfo, &endOfFile, sizeof(endOfFile)))
+            if (!file->hostFile.SetSize(PPC_LOAD_U64(info)))
                 status = X_STATUS_UNSUCCESSFUL;
         }
         break;
@@ -845,8 +798,8 @@ PPC_FUNC(__imp__NtFlushBuffersFile)
         ctx.r3.u64 = X_STATUS_INVALID_HANDLE;
         return;
     }
-    if (file->canWrite && file->hostFile != INVALID_HANDLE_VALUE)
-        FlushFileBuffers(file->hostFile);
+    if (file->canWrite && file->hostFile.IsOpen())
+        file->hostFile.Flush();
     CompleteIo(base, ctx.r4.u32, X_STATUS_SUCCESS, 0);
     ctx.r3.u64 = X_STATUS_SUCCESS;
 }

@@ -20,6 +20,7 @@
 #include "../diagnostics.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
+#include "../platform/platform.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -127,13 +128,9 @@ PPC_FUNC(sub_8226C958)
 // the frame in it, and the command processor took ~25% longer per frame than with a frame limit
 // (where the game thread sleeps in the vblank wait instead): shared caches/memory bandwidth, the
 // fence's cache line bouncing, boost clocks. Now each step that says "keep waiting" pauses ~2 us
-// (_mm_pause) and every 32nd one gives the core away (SwitchToThread). The wait still ends within
+// (pause) and every 32nd one gives the core away (SwitchToThread / sched_yield). The wait still ends within
 // microseconds of the fence. CRASH_D3D_SPIN=busy: the original spin.
 extern "C" PPC_FUNC(__imp__sub_8226D968);
-
-#include <immintrin.h>
-
-extern "C" __declspec(dllimport) int __stdcall SwitchToThread();
 
 PPC_FUNC(sub_8226D968)
 {
@@ -146,9 +143,9 @@ PPC_FUNC(sub_8226D968)
         return;
     thread_local uint32_t t_steps;
     if (++t_steps % 32 == 0)
-        SwitchToThread();
+        plat::YieldThread();
     else
         for (int i = 0; i < 16; i++)
-            _mm_pause();
+            plat::CpuRelax();
 }
 

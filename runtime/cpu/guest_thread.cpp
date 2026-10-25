@@ -4,7 +4,7 @@
 #include "../kernel/objects.h"
 #include "../kernel/threads.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 namespace
 {
@@ -52,7 +52,7 @@ uint32_t RunGuestThread(uint32_t entry, uint32_t stackSize)
     ThreadObject* thread = CreateGuestThread(entry, 0, 0, stackSize, false, 0);
     // The title's main thread runs the game loop and records the GPU commands: one of the two
     // threads the frame rate depends on (the other is the command processor's).
-    SetThreadPriority(thread->hostHandle, THREAD_PRIORITY_ABOVE_NORMAL);
-    WaitForSingleObject(thread->hostHandle, INFINITE);
+    plat::SetThreadPriority(thread->hostHandle, plat::ThreadPriority::AboveNormal);
+    plat::JoinThread(thread->hostHandle);
     return thread->exitCode;
 }

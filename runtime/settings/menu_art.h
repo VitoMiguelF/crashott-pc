@@ -20,7 +20,7 @@
 //
 // Fonts: each glyph is a cell of fixed height (the line), white with an outline at ~41% alpha;
 // the game tints the fill and the outline (orange on dark brown in the pause menu, cyan on teal
-// for the selected item). DrawText does the same: alpha 0.41 -> outline colour, 1.0 -> fill.
+// for the selected item). DrawGameText does the same: alpha 0.41 -> outline colour, 1.0 -> fill.
 
 #include <cstdint>
 #include <map>
@@ -101,7 +101,7 @@ namespace settings::menu_art
     // Text in a font: `cell` is the line height in pixels (the glyph cells), (x, y) its top-left.
     // Button icons (ICON_*) inside the text are drawn in colour, `iconScale` x the cell high.
     float TextWidth(FontId font, const std::u32string& text, float cell, float iconScale = 1.0f);
-    float DrawText(Canvas& canvas, FontId font, const std::u32string& text, float x, float y, float cell, const TextStyle& style,
+    float DrawGameText(Canvas& canvas, FontId font, const std::u32string& text, float x, float y, float cell, const TextStyle& style,
                    float iconScale = 1.0f);
     // One icon `height` pixels high with its top-left at (x, y), optionally mirrored; returns its width.
     float DrawIcon(Canvas& canvas, char32_t icon, float x, float y, float height, float opacity = 1.0f, bool flipX = false);

@@ -4,8 +4,9 @@
 #include "../diagnostics.h"
 #include "../fs/vfs.h"
 #include "../gpu/overlay_font.h"
+#include "../platform/platform.h"
 
-#include <windows.h>
+#include "../platform/file.h"
 
 #include <algorithm>
 #include <cmath>
@@ -51,23 +52,13 @@ namespace settings::menu_art
 
         struct Rcf
         {
-            HANDLE file = INVALID_HANDLE_VALUE;
+            plat::File file;
             std::unordered_map<std::string, std::pair<uint32_t, uint32_t>> entries;
-
-            ~Rcf()
-            {
-                if (file != INVALID_HANDLE_VALUE)
-                    CloseHandle(file);
-            }
         };
 
-        bool ReadAt(HANDLE file, uint64_t offset, void* data, uint32_t size)
+        bool ReadAt(const plat::File& file, uint64_t offset, void* data, uint32_t size)
         {
-            OVERLAPPED o{};
-            o.Offset = DWORD(offset);
-            o.OffsetHigh = DWORD(offset >> 32);
-            DWORD read = 0;
-            return ReadFile(file, data, size, &read, &o) && read == size;
+            return file.ReadExactAt(offset, data, size);
         }
 
         bool OpenRcf(Rcf& rcf)
@@ -76,8 +67,7 @@ namespace settings::menu_art
             auto location = path ? vfs::Locate(*path) : std::nullopt;
             if (!location)
                 return false;
-            rcf.file = CreateFileW(location->host.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-            if (rcf.file == INVALID_HANDLE_VALUE)
+            if (!rcf.file.Open(location->host))
                 return false;
             uint8_t header[0x3C];
             if (!ReadAt(rcf.file, 0, header, sizeof(header)) || memcmp(header, "ATG CORE CEMENT LIBRARY", 23) != 0)
@@ -120,7 +110,7 @@ namespace settings::menu_art
                 return !data.empty();
             }
             auto it = rcf.entries.find(Lower(entry));
-            if (rcf.file == INVALID_HANDLE_VALUE || it == rcf.entries.end())
+            if (!rcf.file.IsOpen() || it == rcf.entries.end())
                 return false;
             data.resize(it->second.second);
             source = "default.rcf";
@@ -426,7 +416,7 @@ namespace settings::menu_art
 
         void Load()
         {
-            auto start = GetTickCount64();
+            auto start = plat::TickCountMs();
             Rcf rcf;
             bool open = OpenRcf(rcf);
             std::string log;
@@ -461,7 +451,7 @@ namespace settings::menu_art
             if (fonts)
                 Log("[settings] screen art: fonts %s (%zu pages, %zu glyphs) and %s (%zu pages, %zu glyphs), %d/%d images, %llu ms (%s; %s)",
                     g_fonts[0].name.c_str(), g_fonts[0].pages.size(), g_fonts[0].glyphs.size(), g_fonts[1].name.c_str(),
-                    g_fonts[1].pages.size(), g_fonts[1].glyphs.size(), art, int(Art::Count), (unsigned long long)(GetTickCount64() - start),
+                    g_fonts[1].pages.size(), g_fonts[1].glyphs.size(), art, int(Art::Count), (unsigned long long)(plat::TickCountMs() - start),
                     sources[0].c_str(), log.c_str());
             else
                 Log("[settings] screen art: the game's fonts were not found (%s); the screen uses the overlay font",
@@ -869,7 +859,7 @@ namespace settings::menu_art
         return Layout(nullptr, font, text, 0.0f, 0.0f, cell, nullptr, iconScale);
     }
 
-    float DrawText(Canvas& canvas, FontId font, const std::u32string& text, float x, float y, float cell, const TextStyle& style,
+    float DrawGameText(Canvas& canvas, FontId font, const std::u32string& text, float x, float y, float cell, const TextStyle& style,
                    float iconScale)
     {
         return Layout(&canvas, font, text, x, y, cell, &style, iconScale);

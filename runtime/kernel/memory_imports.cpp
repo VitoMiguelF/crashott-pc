@@ -7,13 +7,13 @@
 #include "memory.h"
 #include "page_heap.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <algorithm>
 
 namespace
 {
-    // Xbox 360 allocation-type / protect flags (in addition to the Windows MEM_* and PAGE_* ones).
+    // Xbox 360 allocation-type / protect flags.
     constexpr uint32_t X_MEM_COMMIT = 0x00001000;
     constexpr uint32_t X_MEM_RESERVE = 0x00002000;
     constexpr uint32_t X_MEM_DECOMMIT = 0x00004000;
@@ -250,13 +250,13 @@ PPC_FUNC(__imp__NtQueryVirtualMemory)
     {
         // Image, runtime-owned memory (stacks, kernel objects) or untracked space: describe what
         // the host has mapped, as one region bounded by the host's own region.
-        MEMORY_BASIC_INFORMATION mbi{};
-        VirtualQuery(g_memory.Translate(address), &mbi, sizeof(mbi));
-        uint32_t regionBase = g_memory.MapVirtual(mbi.BaseAddress);
-        uint32_t state = mbi.State == MEM_COMMIT ? X_MEM_COMMIT : mbi.State == MEM_RESERVE ? X_MEM_RESERVE : X_MEM_FREE;
-        uint32_t protect = mbi.State == MEM_COMMIT ? X_PAGE_READWRITE : 0;
+        plat::MemoryRegion region = plat::QueryMemory(g_memory.Translate(address));
+        uint32_t regionBase = g_memory.MapVirtual(region.base);
+        uint32_t state = region.state == plat::PageState::Committed ? X_MEM_COMMIT
+                       : region.state == plat::PageState::Reserved ? X_MEM_RESERVE : X_MEM_FREE;
+        uint32_t protect = state == X_MEM_COMMIT ? X_PAGE_READWRITE : 0;
         uint32_t type = address >= 0x82000000 && address < 0x90000000 ? X_MEM_IMAGE : X_MEM_PRIVATE;
-        WriteBasicInformation(base, info, regionBase, regionBase, X_PAGE_READWRITE, uint32_t(mbi.RegionSize),
+        WriteBasicInformation(base, info, regionBase, regionBase, X_PAGE_READWRITE, uint32_t(region.size),
                               state, protect, state == X_MEM_FREE ? 0 : type);
     }
     else
@@ -347,9 +347,8 @@ PPC_FUNC(__imp__MmQueryAddressProtect)
     }
     else
     {
-        MEMORY_BASIC_INFORMATION mbi{};
-        VirtualQuery(g_memory.Translate(address), &mbi, sizeof(mbi));
-        protect = address >= 0x10000 && mbi.State == MEM_COMMIT ? X_PAGE_READWRITE : 0;
+        bool committed = plat::QueryMemory(g_memory.Translate(address)).state == plat::PageState::Committed;
+        protect = address >= 0x10000 && committed ? X_PAGE_READWRITE : 0;
     }
 
     KERNEL_LOG("[kernel] MmQueryAddressProtect(0x%08X) lr=0x%08X -> 0x%X", address, GuestLR(ctx), protect);

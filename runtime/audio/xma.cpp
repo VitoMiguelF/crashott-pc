@@ -39,7 +39,7 @@
 #include "../diagnostics.h"
 #include "../kernel/memory.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <atomic>
@@ -789,9 +789,12 @@ namespace
     // The recompiled stw/stwbrx to the register page compile to a 32-bit `mov [mem], r32` or
     // `mov [mem], imm32`. Decoding it gives the value without ever making the page writable, so
     // stores from other threads can't slip through. Anything else falls back to single-stepping.
-    bool DecodeStore(const CONTEXT* context, uint32_t& value, uint32_t& length)
+    bool DecodeStore(const plat::FaultInfo& fault, uint32_t& value, uint32_t& length)
     {
-        const auto* code = reinterpret_cast<const uint8_t*>(context->Rip);
+#if !defined(__x86_64__) && !defined(_M_X64)
+        return false; // ARM64 hosts need their own store decoder (linux_port.md)
+#endif
+        const auto* code = reinterpret_cast<const uint8_t*>(fault.InstructionPointer());
         uint32_t i = 0;
         uint8_t rex = 0;
         if ((code[i] & 0xF0) == 0x40)
@@ -823,7 +826,7 @@ namespace
         if (opcode == 0x89)
         {
             uint32_t index = reg | ((rex & 0x04) << 1);
-            value = uint32_t((&context->Rax)[index]);
+            value = uint32_t(fault.Register(index));
         }
         else
         {
@@ -836,48 +839,42 @@ namespace
         return true;
     }
 
-    LONG CALLBACK XmaMmioHandler(PEXCEPTION_POINTERS info)
+    bool XmaMmioHandler(plat::FaultInfo& fault)
     {
-        auto* record = info->ExceptionRecord;
-
-        if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 &&
-            record->ExceptionInformation[0] == 1)
+        if (fault.kind == plat::FaultKind::AccessViolation && fault.write)
         {
-            auto* host = reinterpret_cast<void*>(record->ExceptionInformation[1]);
-            if (!g_memory.IsInGuestRange(host))
-                return EXCEPTION_CONTINUE_SEARCH;
-            uint32_t guest = g_memory.MapVirtual(host);
+            if (!g_memory.IsInGuestRange(fault.address))
+                return false;
+            uint32_t guest = g_memory.MapVirtual(fault.address);
             if (guest < TRAPPED_PAGE || guest >= TRAPPED_PAGE + 0x1000)
-                return EXCEPTION_CONTINUE_SEARCH;
+                return false;
 
             uint32_t value, length;
-            if (DecodeStore(info->ContextRecord, value, length))
+            if (DecodeStore(fault, value, length))
             {
-                info->ContextRecord->Rip += length;
+                fault.SetInstructionPointer(fault.InstructionPointer() + length);
                 g_emulatedStores++;
                 OnRegisterWrite((guest - XMA_MMIO_BEGIN) / 4, value);
-                return EXCEPTION_CONTINUE_EXECUTION;
+                return true;
             }
 
             t_pendingWrite = guest;
-            DWORD oldProtect;
-            VirtualProtect(g_memory.Translate(TRAPPED_PAGE), 0x1000, PAGE_READWRITE, &oldProtect);
-            info->ContextRecord->EFlags |= 0x100; // trap flag: single-step the store
-            return EXCEPTION_CONTINUE_EXECUTION;
+            plat::ProtectMemory(g_memory.Translate(TRAPPED_PAGE), 0x1000, plat::PageAccess::ReadWrite);
+            fault.RequestSingleStep(); // single-step the store
+            return true;
         }
 
-        if (record->ExceptionCode == EXCEPTION_SINGLE_STEP && t_pendingWrite)
+        if (fault.kind == plat::FaultKind::SingleStep && t_pendingWrite)
         {
             uint32_t guest = t_pendingWrite & ~3u;
             t_pendingWrite = 0;
-            DWORD oldProtect;
-            VirtualProtect(g_memory.Translate(TRAPPED_PAGE), 0x1000, PAGE_READONLY, &oldProtect);
+            plat::ProtectMemory(g_memory.Translate(TRAPPED_PAGE), 0x1000, plat::PageAccess::ReadOnly);
             g_steppedStores++;
             OnRegisterWrite((guest - XMA_MMIO_BEGIN) / 4, *reinterpret_cast<uint32_t*>(g_memory.Translate(guest)));
-            return EXCEPTION_CONTINUE_EXECUTION;
+            return true;
         }
 
-        return EXCEPTION_CONTINUE_SEARCH;
+        return false;
     }
 
     void LogStats()
@@ -933,9 +930,8 @@ namespace xma
         *reinterpret_cast<uint32_t*>(g_memory.Translate(XMA_MMIO_BEGIN + REG_CONTEXT_ARRAY_ADDRESS * 4)) =
             g_contextArray & (PHYSICAL_SIZE - 1);
 
-        DWORD oldProtect;
-        VirtualProtect(g_memory.Translate(TRAPPED_PAGE), 0x1000, PAGE_READONLY, &oldProtect);
-        AddVectoredExceptionHandler(1, XmaMmioHandler);
+        plat::ProtectMemory(g_memory.Translate(TRAPPED_PAGE), 0x1000, plat::PageAccess::ReadOnly);
+        plat::AddFaultHandler(XmaMmioHandler);
 
 #if CRASH_HAVE_FFMPEG
         g_ffmpeg = ffmpeg::Load();

@@ -9,8 +9,7 @@
 #include "kernel.h"
 #include "memory.h"
 #include "objects.h"
-
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <string>
 #include <unordered_map>
@@ -488,7 +487,7 @@ namespace
             if (value.compare_exchange_weak(expected, ownerBE, std::memory_order_acquire))
                 return;
             while (value.load(std::memory_order_relaxed) != 0)
-                YieldProcessor();
+                plat::CpuRelax();
         }
     }
 

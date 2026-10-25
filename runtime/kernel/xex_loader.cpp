@@ -8,7 +8,7 @@
 #include <ppc_config.h>
 #include <ppc_context.h>
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <cstring>
@@ -76,10 +76,8 @@ namespace
 
     void UpdateKeTimeStampBundle(uint32_t guest)
     {
-        FILETIME now;
-        GetSystemTimeAsFileTime(&now);
-        uint64_t systemTime = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
-        uint64_t ticks = GetTickCount64();
+        uint64_t systemTime = plat::SystemTimeFileTime();
+        uint64_t ticks = plat::TickCountMs();
         StoreBE64(guest + 0x00, ticks * 10000);
         StoreBE64(guest + 0x08, systemTime);
         StoreBE32(guest + 0x10, uint32_t(ticks));
@@ -95,7 +93,7 @@ namespace
         std::thread([guest] {
             while (true)
             {
-                Sleep(1);
+                plat::SleepMs(1);
                 UpdateKeTimeStampBundle(guest);
             }
         }).detach();

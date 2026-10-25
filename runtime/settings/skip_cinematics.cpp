@@ -32,6 +32,7 @@
 #include "../kernel/memory.h"
 #include "../kernel/pc_input.h"
 #include "../subtitles/subtitles.h"
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <atomic>
@@ -165,7 +166,7 @@ namespace cutscenes
     void NoteMovie(int index)
     {
         g_movie = index;
-        g_movieStart = GetTickCount64();
+        g_movieStart = plat::TickCountMs();
         g_movieCount++;
         g_movieNode = g_frontendNode.load();
         Log("[cutscene] video %d starts (frontend node %d)", index, int(g_movieNode.load()));
@@ -195,7 +196,7 @@ namespace cutscenes
         if (!poll)
         {
             // Other reads (the settings screen...): the game must not see the hidden buttons either.
-            if (CurrentKind(GetTickCount64()) != Kind::None && g_enabled.load())
+            if (CurrentKind(plat::TickCountMs()) != Kind::None && g_enabled.load())
                 pad.wButtons &= ~SKIP_BUTTONS;
             pad.wButtons &= ~heldMask;
             return;
@@ -205,7 +206,7 @@ namespace cutscenes
             settingsReads = 15;
             g_enabled = settings::Get().skipCutscenes;
         }
-        ULONGLONG now = GetTickCount64();
+        ULONGLONG now = plat::TickCountMs();
         Kind kind = g_enabled.load() ? CurrentKind(now) : Kind::None;
 
         // Input of any kind brings the prompt back.
@@ -319,7 +320,7 @@ PPC_FUNC(sub_821BA100)
     if (LoadBE32(action + ACTION_STATE) == STATE_PLAYING && cutsceneNode)
     {
         g_action = action;
-        g_actionSeen = GetTickCount64();
+        g_actionSeen = plat::TickCountMs();
         g_movie = -1;  // a video can't be playing under a cutscene
         bool skip = g_skipAction.load() == action;
         if (!skip && boot::SkipCinematics())
@@ -354,7 +355,7 @@ PPC_FUNC(sub_8214B210)
 {
     int movie = g_movie.exchange(-1);
     if (movie >= 0)
-        Log("[cutscene] video %d ends (after %.1f s)", movie, double(GetTickCount64() - g_movieStart.load()) / 1000.0);
+        Log("[cutscene] video %d ends (after %.1f s)", movie, double(plat::TickCountMs() - g_movieStart.load()) / 1000.0);
     __imp__sub_8214B210(ctx, base);
 }
 
@@ -485,7 +486,7 @@ namespace
                 canvas.Fill(int(bx + 4.0f * s), ky + kh - int(5.0f * s), int(bx + 4.0f * s) + fw, ky + kh - int(2.0f * s), RING);
             }
             menu_art::TextStyle keyStyle{ { 52, 28, 4, 255 }, { 236, 222, 190, 0 } };
-            menu_art::DrawText(canvas, FontId::Small, keyText, bx + (kw - keyTextW) * 0.5f, ky + (kh - cell * 0.8f) * 0.5f, cell * 0.8f, keyStyle);
+            menu_art::DrawGameText(canvas, FontId::Small, keyText, bx + (kw - keyTextW) * 0.5f, ky + (kh - cell * 0.8f) * 0.5f, cell * 0.8f, keyStyle);
         }
         else
         {
@@ -494,7 +495,7 @@ namespace
             float iconW = menu_art::IconWidth(menu_art::ICON_B, iconH);
             menu_art::DrawIcon(canvas, menu_art::ICON_B, bx + (ringSize - iconW) * 0.5f, by + (ringSize - iconH) * 0.5f, iconH);
         }
-        menu_art::DrawText(canvas, FontId::Large, label, bx + buttonW + gap, (h - cell) * 0.5f, cell, TEXT);
+        menu_art::DrawGameText(canvas, FontId::Large, label, bx + buttonW + gap, (h - cell) * 0.5f, cell, TEXT);
         canvas.Export(out.pixels);
         out.w = w, out.h = h;
         // Bottom right, in the letterbox bar of the cutscenes.
@@ -512,7 +513,7 @@ namespace cutscenes
         static Look drawnLook;
         static uint64_t fadedVersion = 0;
         Kind kind = Kind(g_kind.load());
-        ULONGLONG now = GetTickCount64();
+        ULONGLONG now = plat::TickCountMs();
         if (kind == Kind::None || !g_enabled.load() || !width || !height || !menu_art::Ready(0))
         {
             g_hitX1 = 0.0f;

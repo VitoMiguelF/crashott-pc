@@ -8,6 +8,7 @@
 #include <vulkan/vulkan.h>
 
 #include "dlss_module/crash_dlss.h"
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -492,8 +493,8 @@ namespace gpu::upscaler
     {
         if (!g_device)
             return false;
-        LARGE_INTEGER start, end, frequency;
-        QueryPerformanceCounter(&start);
+        int64_t start, end, frequency;
+        start = int64_t(plat::PerfCounter());
         bool probed = false;
         if (upscaler == settings::Upscaler::Dlss && !g_dlssProbed)
         {
@@ -511,9 +512,9 @@ namespace gpu::upscaler
         }
         if (probed)
         {
-            QueryPerformanceCounter(&end);
-            QueryPerformanceFrequency(&frequency);
-            Log("[gpu] %s probed in %.0f ms", settings::UpscalerName(upscaler), double(end.QuadPart - start.QuadPart) * 1000.0 / double(frequency.QuadPart));
+            end = int64_t(plat::PerfCounter());
+            frequency = int64_t(plat::PerfFrequency());
+            Log("[gpu] %s probed in %.0f ms", settings::UpscalerName(upscaler), double(end - start) * 1000.0 / double(frequency));
         }
         switch (upscaler)
         {

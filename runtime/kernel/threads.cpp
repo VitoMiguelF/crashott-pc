@@ -4,7 +4,7 @@
 #include "../cpu/guest_thread.h"
 #include "../diagnostics.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <mutex>
@@ -12,7 +12,7 @@
 
 namespace
 {
-    constexpr SIZE_T HOST_STACK_SIZE = 64 * 1024 * 1024;
+    constexpr size_t HOST_STACK_SIZE = 64 * 1024 * 1024;
 
     // Guest stacks are never smaller than this, whatever the title asks for: the recompiled
     // code uses the same frames as the original, but runtime helpers may need slack.
@@ -47,7 +47,7 @@ namespace
         SetCurrentThreadObject(nullptr);
     }
 
-    DWORD WINAPI GuestThreadProc(LPVOID param)
+    uint32_t GuestThreadProc(void* param)
     {
         auto* thread = static_cast<ThreadObject*>(param);
         auto& ctx = thread->context->ctx;
@@ -81,11 +81,10 @@ namespace
         thread->type = DISPATCHER_THREAD;
 
         // Always created suspended, so the guest block exists before the thread runs.
-        DWORD hostId;
-        HANDLE host = CreateThread(nullptr, HOST_STACK_SIZE, GuestThreadProc, thread,
-                                   CREATE_SUSPENDED | STACK_SIZE_PARAM_IS_A_RESERVATION, &hostId);
+        uint32_t hostId = 0;
+        plat::ThreadHandle host = plat::CreateThread(GuestThreadProc, thread, HOST_STACK_SIZE, true, &hostId);
         if (!host)
-            Fatal("CreateThread failed (%lu)", GetLastError());
+            Fatal("CreateThread failed (%s)", plat::LastErrorText().c_str());
 
         if (stackSize == 0)
             stackSize = GuestProcessDefaultStackSize();
@@ -101,7 +100,7 @@ namespace
         }
 
         if (!suspended)
-            ResumeThread(host);
+            plat::ResumeThread(host);
 
         return thread;
     }
@@ -136,8 +135,7 @@ void CallGuestFunction(PPCContext& ctx, uint32_t function, uint32_t r3, uint32_t
 
 uint32_t ResumeGuestThread(ThreadObject* thread)
 {
-    DWORD previous = ResumeThread(thread->hostHandle);
-    return previous == DWORD(-1) ? 0 : previous;
+    return plat::ResumeThread(thread->hostHandle);
 }
 
 void ExitCurrentGuestThread(uint32_t exitCode)
@@ -147,7 +145,7 @@ void ExitCurrentGuestThread(uint32_t exitCode)
         Fatal("ExTerminateThread called outside a guest thread");
 
     FinishThread(thread, exitCode);
-    ExitThread(exitCode);
+    plat::ExitThread(exitCode);
 }
 
 void ForEachGuestThread(const std::function<void(ThreadObject&)>& callback)

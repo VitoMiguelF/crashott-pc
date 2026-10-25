@@ -18,6 +18,7 @@
 #include "../paths.h"
 #include "../settings/direct_boot.h"
 #include "../settings/settings.h"
+#include "../platform/platform.h"
 
 #include <windows.h>
 
@@ -378,7 +379,7 @@ namespace dev::console
         void Close()
         {
             g_open = false;
-            g_closedAt = GetTickCount64();
+            g_closedAt = plat::TickCountMs();
             Log("[console] closed");
             boot::Event("console_close");
         }
@@ -743,7 +744,7 @@ namespace dev::console
 
     bool BlocksGameInput()
     {
-        return g_open || GetTickCount64() - g_closedAt.load() < RELEASE_MS;
+        return g_open || plat::TickCountMs() - g_closedAt.load() < RELEASE_MS;
     }
 
     bool OnKeyDown(WPARAM key, LPARAM lParam)
@@ -1129,7 +1130,7 @@ namespace dev::console
         int w = int(width), h = std::max(int(height * 0.46f), 120);
         if (!Resize(w, h))
             return;
-        bool caretOn = (GetTickCount64() / 530) % 2 == 0;
+        bool caretOn = (plat::TickCountMs() / 530) % 2 == 0;
         std::vector<Line> lines;
         std::string input;
         size_t caret;

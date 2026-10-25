@@ -2,7 +2,7 @@
 #include "memory.h"
 #include "../diagnostics.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <memory>
 #include <mutex>
@@ -50,8 +50,7 @@ namespace
     // LR of a fiber that has never run: `mr r3,r31; bl sub_823E8D80` (start routine, then bugcheck).
     constexpr uint32_t FIBER_START_STUB = 0x823E9C00;
 
-    constexpr SIZE_T HOST_FIBER_STACK_COMMIT = 256 * 1024;
-    constexpr SIZE_T HOST_FIBER_STACK_RESERVE = 64 * 1024 * 1024; // as for guest threads
+    constexpr size_t HOST_FIBER_STACK_RESERVE = 64 * 1024 * 1024; // as for guest threads
 
     struct Fiber
     {
@@ -79,7 +78,7 @@ namespace
             g_fibers.erase(it);
     }
 
-    void WINAPI HostFiberMain(void* param)
+    void HostFiberMain(void* param)
     {
         auto* fiber = static_cast<Fiber*>(param);
         PPCContext& ctx = *fiber->ctx;
@@ -108,9 +107,9 @@ namespace
         Fiber* fiber = t_currentFiber;
         if (!fiber)
         {
-            void* host = IsThreadAFiber() ? GetCurrentFiber() : ConvertThreadToFiberEx(nullptr, FIBER_FLAG_FLOAT_SWITCH);
+            void* host = plat::CurrentThreadFiber();
             if (!host)
-                Fatal("[fiber] ConvertThreadToFiberEx failed (%lu)", GetLastError());
+                Fatal("[fiber] ConvertThreadToFiber failed (%s)", plat::LastErrorText().c_str());
 
             fiber = new Fiber;
             fiber->host = host;
@@ -146,9 +145,9 @@ namespace
         fiber->guest = guest;
         fiber->ownedCtx = std::make_unique<PPCContext>(ctx); // FPSCR and the rest of the thread's state
         fiber->ctx = fiber->ownedCtx.get();
-        fiber->host = CreateFiberEx(HOST_FIBER_STACK_COMMIT, HOST_FIBER_STACK_RESERVE, FIBER_FLAG_FLOAT_SWITCH, HostFiberMain, fiber);
+        fiber->host = plat::CreateFiber(HOST_FIBER_STACK_RESERVE, HostFiberMain, fiber);
         if (!fiber->host)
-            Fatal("[fiber] CreateFiberEx failed (%lu)", GetLastError());
+            Fatal("[fiber] CreateFiber failed (%s)", plat::LastErrorText().c_str());
 
         g_fibers[guest] = fiber;
         return fiber;
@@ -165,7 +164,7 @@ namespace
 
         Fiber* fiber = it->second;
         g_fibers.erase(it);
-        DeleteFiber(fiber->host);
+        plat::DeleteFiber(fiber->host);
         delete fiber;
     }
 }
@@ -209,7 +208,7 @@ PPC_FUNC(sub_823E8D70)
 
     t_currentFiber = to;
     UpdateDiagnosticContext(to->ctx);
-    SwitchToFiber(to->host);
+    plat::SwitchToFiber(to->host);
 
     // Resumed, possibly on another thread: take that thread's PCR.
     t_currentFiber = from;

@@ -4,8 +4,7 @@
 #include "../audio/audio_output.h"
 #include "../gpu/renderer.h"
 #include "../kernel/input.h"
-
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <atomic>
 #include <thread>
@@ -28,7 +27,7 @@ namespace settings
         if (!gpu::renderer::IsActive())
             FinishQuit();
         std::thread([] {
-            Sleep(3000);
+            plat::SleepMs(3000);
             Log("[quit] no present in 3 s: exiting without waiting for the renderer");
             FinishQuit();
         }).detach();
@@ -44,10 +43,10 @@ namespace settings
         if (g_finishing.exchange(true))
         {
             for (;;)
-                Sleep(INFINITE);  // the other thread is exiting
+                plat::SleepMs(1000);  // the other thread is exiting
         }
         audio::Shutdown();
         Log("[quit] exiting with code 0");
-        ExitProcess(0);
+        plat::ExitProcess(0);
     }
 }

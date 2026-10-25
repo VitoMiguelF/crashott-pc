@@ -3,7 +3,7 @@
 #if CRASH_HAVE_FFMPEG
 #include "../diagnostics.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <filesystem>
 #include <mutex>
@@ -11,26 +11,29 @@
 
 namespace
 {
-    std::filesystem::path ExeDirectory()
+    // FFmpeg's file names: avcodec-62.dll on Windows, libavcodec.so.62 elsewhere.
+    std::string LibraryName(const char* name, int major)
     {
-        wchar_t path[MAX_PATH];
-        DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
-        return std::filesystem::path(std::wstring(path, length)).parent_path();
+#ifdef _WIN32
+        return std::string(name) + "-" + std::to_string(major) + ".dll";
+#else
+        return "lib" + std::string(name) + ".so." + std::to_string(major);
+#endif
     }
 
     // Loads avutil then avcodec from `directory` (their own dependencies, such as swresample,
-    // resolve from the same folder thanks to LOAD_WITH_ALTERED_SEARCH_PATH).
-    bool LoadFrom(const std::filesystem::path& directory, HMODULE& avutil, HMODULE& avcodec)
+    // resolve from the same folder: LOAD_WITH_ALTERED_SEARCH_PATH, or the libraries' $ORIGIN rpath).
+    bool LoadFrom(const std::filesystem::path& directory, void*& avutil, void*& avcodec)
     {
-        auto avutilPath = directory / ("avutil-" + std::to_string(LIBAVUTIL_VERSION_MAJOR) + ".dll");
-        auto avcodecPath = directory / ("avcodec-" + std::to_string(LIBAVCODEC_VERSION_MAJOR) + ".dll");
+        auto avutilPath = directory / LibraryName("avutil", LIBAVUTIL_VERSION_MAJOR);
+        auto avcodecPath = directory / LibraryName("avcodec", LIBAVCODEC_VERSION_MAJOR);
         if (!std::filesystem::exists(avutilPath) || !std::filesystem::exists(avcodecPath))
             return false;
-        avutil = LoadLibraryExW(avutilPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-        avcodec = avutil ? LoadLibraryExW(avcodecPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH) : nullptr;
+        avutil = plat::OpenLibrary(avutilPath);
+        avcodec = avutil ? plat::OpenLibrary(avcodecPath) : nullptr;
         if (!avcodec)
         {
-            Log("[ffmpeg] could not load %s (error %lu)", avcodecPath.string().c_str(), GetLastError());
+            Log("[ffmpeg] could not load %s (%s)", avcodecPath.string().c_str(), plat::LastErrorText().c_str());
             return false;
         }
         Log("[ffmpeg] loaded %s", avcodecPath.string().c_str());
@@ -38,9 +41,9 @@ namespace
     }
 
     template <typename T>
-    bool Resolve(HMODULE module, const char* name, T& function)
+    bool Resolve(void* module, const char* name, T& function)
     {
-        function = reinterpret_cast<T>(GetProcAddress(module, name));
+        function = reinterpret_cast<T>(plat::FindSymbol(module, name));
         if (!function)
             Log("[ffmpeg] missing export %s", name);
         return function != nullptr;
@@ -52,11 +55,12 @@ namespace
 
     void LoadOnce()
     {
-        HMODULE avutil = nullptr, avcodec = nullptr;
-        if (!LoadFrom(ExeDirectory(), avutil, avcodec))
+        void* avutil = nullptr;
+        void* avcodec = nullptr;
+        if (!LoadFrom(plat::ExecutablePath().parent_path(), avutil, avcodec))
         {
-            Log("[ffmpeg] avcodec-%d.dll not found next to the exe: XMA decodes to silence",
-                LIBAVCODEC_VERSION_MAJOR);
+            Log("[ffmpeg] %s not found next to the exe: XMA decodes to silence",
+                LibraryName("avcodec", LIBAVCODEC_VERSION_MAJOR).c_str());
             return;
         }
 

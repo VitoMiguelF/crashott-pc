@@ -19,51 +19,29 @@
 #include "../gpu/window.h"
 #include "../kernel/input.h"
 
-#include <windows.h>
-#include <shellapi.h>
+#include "../platform/platform.h"
 
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace settings
 {
     namespace
     {
         bool g_restarted = false;
-
-        // One argument quoted for CommandLineToArgvW / the CRT (backslashes before a quote doubled).
-        std::wstring Quote(const std::wstring& argument)
-        {
-            if (!argument.empty() && argument.find_first_of(L" \t\"") == std::wstring::npos)
-                return argument;
-            std::wstring quoted = L"\"";
-            size_t backslashes = 0;
-            for (wchar_t c : argument)
-            {
-                if (c == L'\\')
-                {
-                    backslashes++;
-                    continue;
-                }
-                quoted.append(c == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
-                backslashes = 0;
-                quoted += c;
-            }
-            quoted.append(backslashes * 2, L'\\');
-            return quoted + L"\"";
-        }
     }
 
     RestartMode GetRestartMode()
     {
         static const RestartMode mode = [] {
             const char* value = getenv("CRASH_RESTART");
-            if (!value || !*value || _stricmp(value, "relaunch") == 0)
+            if (!value || !*value || plat::CompareNoCase(value, "relaunch") == 0)
                 return RestartMode::Relaunch;
-            if (_stricmp(value, "exit") == 0)
+            if (plat::CompareNoCase(value, "exit") == 0)
                 return RestartMode::Exit;
-            if (_stricmp(value, "off") != 0 && _stricmp(value, "0") != 0)
+            if (plat::CompareNoCase(value, "off") != 0 && plat::CompareNoCase(value, "0") != 0)
                 Log("[settings] CRASH_RESTART=%s: unknown value, restarting is off", value);
             return RestartMode::Off;
         }();
@@ -77,19 +55,11 @@ namespace settings
             if (strcmp(argv[i], "--restarted") != 0)
                 continue;
             g_restarted = true;
-            DWORD parent = DWORD(strtoul(argv[i + 1], nullptr, 10));
+            uint32_t parent = uint32_t(strtoul(argv[i + 1], nullptr, 10));
             // The previous instance may still be closing: its window, audio device and files.
-            if (HANDLE process = parent ? OpenProcess(SYNCHRONIZE, FALSE, parent) : nullptr)
-            {
-                DWORD wait = WaitForSingleObject(process, 10000);
-                CloseHandle(process);
-                Log("[settings] restarted from the settings screen (previous process %lu %s)", parent,
-                    wait == WAIT_OBJECT_0 ? "has exited" : "is still running after 10 s");
-            }
-            else
-            {
-                Log("[settings] restarted from the settings screen");
-            }
+            bool exited = plat::WaitForProcessExit(parent, 10000);
+            Log("[settings] restarted from the settings screen (previous process %u %s)", parent,
+                exited ? "has exited" : "is still running after 10 s");
             return;
         }
     }
@@ -107,50 +77,41 @@ namespace settings
         {
             input::StopRecording();
             Log("[settings] restart: exiting with code %d for the caller to start the game again (CRASH_RESTART=exit)", RESTART_EXIT_CODE);
-            ExitProcess(RESTART_EXIT_CODE);
+            plat::ExitProcess(RESTART_EXIT_CODE);
         }
 
         // Same executable and arguments, without a previous --restarted <pid> nor --boot <spec>.
-        wchar_t exe[MAX_PATH];
-        DWORD length = GetModuleFileNameW(nullptr, exe, MAX_PATH);
-        std::wstring commandLine = Quote(std::wstring(exe, length));
-        int argc = 0;
-        if (LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc))
+        std::vector<std::string> arguments;
+        std::vector<std::string> current = plat::CommandLineArguments();
+        for (size_t i = 0; i < current.size(); i++)
         {
-            for (int i = 1; i < argc; i++)
+            if (current[i] == "--restarted" || current[i] == "--boot")
             {
-                if (wcscmp(argv[i], L"--restarted") == 0 || wcscmp(argv[i], L"--boot") == 0)
-                {
-                    i++;
-                    continue;
-                }
-                commandLine += L" " + Quote(argv[i]);
+                i++;
+                continue;
             }
-            LocalFree(argv);
+            arguments.push_back(current[i]);
         }
-        commandLine += L" --restarted " + std::to_wstring(GetCurrentProcessId());
+        arguments.push_back("--restarted");
+        arguments.push_back(std::to_string(plat::CurrentProcessId()));
 
         // The environment is inherited, minus the per-run overrides (see the top of the file).
-        for (const wchar_t* name : { L"CRASH_SETTINGS", L"CRASH_INPUT_SCRIPT", L"CRASH_REPLAY", L"CRASH_RECORD_INPUT", L"CRASH_BOOT" })
-            SetEnvironmentVariableW(name, nullptr);
+        for (const char* name : { "CRASH_SETTINGS", "CRASH_INPUT_SCRIPT", "CRASH_REPLAY", "CRASH_RECORD_INPUT", "CRASH_BOOT" })
+            plat::SetEnvironment(name, nullptr);
         // The window comes back where it was.
         int x, y, width, height;
         if (gpu::window::Placement(x, y, width, height))
-            SetEnvironmentVariableW(L"CRASH_RESTART_WINDOW",
-                                    (std::to_wstring(x) + L"," + std::to_wstring(y) + L"," + std::to_wstring(width) + L"," + std::to_wstring(height)).c_str());
+            plat::SetEnvironment("CRASH_RESTART_WINDOW",
+                                 (std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(width) + "," + std::to_string(height)).c_str());
 
         input::StopRecording();
-        STARTUPINFOW startup{ sizeof(startup) };
-        PROCESS_INFORMATION process{};
-        // Same console (the log keeps going to the same place) and working directory.
-        if (!CreateProcessW(exe, commandLine.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &process))
+        uint32_t pid = plat::StartSelf(arguments);
+        if (!pid)
         {
-            Log("[settings] restart failed: CreateProcess error %lu; the options apply on the next launch", GetLastError());
+            Log("[settings] restart failed (%s); the options apply on the next launch", plat::LastErrorText().c_str());
             return;
         }
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-        Log("[settings] restarting: new process %lu", process.dwProcessId);
-        ExitProcess(0);
+        Log("[settings] restarting: new process %u", pid);
+        plat::ExitProcess(0);
     }
 }

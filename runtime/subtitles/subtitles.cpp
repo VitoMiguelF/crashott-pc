@@ -6,7 +6,9 @@
 #include "../paths.h"
 #include "../settings/settings.h"
 
-#include <windows.h>
+#include "../platform/file.h"
+#include "../platform/platform.h"
+#include "../platform/text.h"
 
 #include <algorithm>
 #include <atomic>
@@ -96,7 +98,6 @@ namespace subtitles
 
         std::atomic<uint64_t> g_frames[CONTEXTS];
         std::atomic<int64_t> g_lastAdvance[CONTEXTS];  // QPC of the last decoded frame
-        LARGE_INTEGER g_frequency;
 
         std::mutex g_mutex;  // tracks, g_recentStarts
         std::unordered_map<uint32_t, std::vector<double>> g_recentStarts;  // per context: Now() of subtitled starts
@@ -125,9 +126,7 @@ namespace subtitles
         {
             if (s.empty())
                 return {};
-            int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
-            std::wstring w(size_t(n), L'\0');
-            MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
+            std::wstring w = plat::WidenUtf8(s);
             // "\n" in the file = line break.
             for (size_t i = 0; (i = w.find(L"\\n", i)) != std::wstring::npos;)
                 w.replace(i, 2, L"\n");
@@ -144,9 +143,7 @@ namespace subtitles
 
         double Now()
         {
-            LARGE_INTEGER t;
-            QueryPerformanceCounter(&t);
-            return double(t.QuadPart) / double(g_frequency.QuadPart);
+            return double(plat::PerfCounter()) / double(plat::PerfFrequency());
         }
 
         // Subtitle file: [key] blocks with sound/seconds and "start end text" lines. Entries of
@@ -224,24 +221,19 @@ namespace subtitles
             std::unordered_map<std::string, std::pair<uint32_t, uint32_t>> entries;
         };
 
-        bool ReadExact(HANDLE file, uint64_t offset, void* data, uint32_t size)
+        bool ReadExact(const plat::File& file, uint64_t offset, void* data, uint32_t size)
         {
-            OVERLAPPED o{};
-            o.Offset = DWORD(offset);
-            o.OffsetHigh = DWORD(offset >> 32);
-            DWORD read = 0;
-            return ReadFile(file, data, size, &read, &o) && read == size;
+            return file.ReadExactAt(offset, data, size);
         }
 
-        bool OpenRcf(const std::string& archive, RcfIndex& index, HANDLE& file)
+        bool OpenRcf(const std::string& archive, RcfIndex& index, plat::File& file)
         {
             auto path = vfs::Parse("D:\\" + archive + ".rcf");
             auto location = path ? vfs::Locate(*path) : std::nullopt;
             if (!location)
                 return false;
             index.host = location->host;
-            file = CreateFileW(index.host.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-            if (file == INVALID_HANDLE_VALUE)
+            if (!file.Open(index.host))
                 return false;
             uint8_t header[0x3C];
             if (!ReadExact(file, 0, header, sizeof(header)) || memcmp(header, "ATG CORE CEMENT LIBRARY", 23) != 0)
@@ -275,7 +267,7 @@ namespace subtitles
         void Fingerprint()
         {
             std::unordered_map<uint64_t, Ref> refs;
-            std::unordered_map<std::string, std::pair<RcfIndex, HANDLE>> archives;
+            std::unordered_map<std::string, std::pair<RcfIndex, plat::File>> archives;
             int found = 0, missing = 0;
             for (size_t s = 0; s < g_sounds.size(); s++)
             {
@@ -289,19 +281,17 @@ namespace subtitles
                 if (it == archives.end())
                 {
                     RcfIndex index;
-                    HANDLE file = INVALID_HANDLE_VALUE;
+                    plat::File file;
                     if (!OpenRcf(sound.archive, index, file))
                     {
                         Log("[subtitles] cannot read %s.rcf: sounds from it get no subtitles", sound.archive.c_str());
-                        if (file != INVALID_HANDLE_VALUE)
-                            CloseHandle(file);
-                        file = INVALID_HANDLE_VALUE;
+                        file.Close();
                     }
-                    it = archives.emplace(sound.archive, std::make_pair(std::move(index), file)).first;
+                    it = archives.emplace(sound.archive, std::make_pair(std::move(index), std::move(file))).first;
                 }
-                HANDLE file = it->second.second;
+                const plat::File& file = it->second.second;
                 auto entry = it->second.first.entries.find(sound.entry);
-                if (file == INVALID_HANDLE_VALUE || entry == it->second.first.entries.end() || entry->second.second < 0x80C)
+                if (!file.IsOpen() || entry == it->second.first.entries.end() || entry->second.second < 0x80C)
                 {
                     missing++;
                     continue;
@@ -348,9 +338,6 @@ namespace subtitles
                 }
                 found++;
             }
-            for (auto& [name, a] : archives)
-                if (a.second != INVALID_HANDLE_VALUE)
-                    CloseHandle(a.second);
             size_t ambiguous = std::count_if(refs.begin(), refs.end(), [](const auto& r) { return r.second.ambiguous; });
             g_refs = std::move(refs);
             g_ready = true;
@@ -380,14 +367,12 @@ namespace subtitles
 
     void Init()
     {
-        QueryPerformanceFrequency(&g_frequency);
         if (const char* offset = getenv("CRASH_SUBTITLE_OFFSET_MS"))
             g_offset = atof(offset) / 1000.0;
         g_trace = getenv("CRASH_SUBTITLE_TRACE") && strcmp(getenv("CRASH_SUBTITLE_TRACE"), "0") != 0;
-        wchar_t test[512];
-        if (DWORD n = GetEnvironmentVariableW(L"CRASH_SUBTITLE_TEST", test, 512); n > 0 && n < 512)
+        if (const char* test = getenv("CRASH_SUBTITLE_TEST"); test && *test)
         {
-            g_testText.assign(test, n);
+            g_testText = plat::WidenUtf8(test);
             for (size_t i = 0; (i = g_testText.find(L"\\n", i)) != std::wstring::npos;)
                 g_testText.replace(i, 2, L"\n");
         }
@@ -485,9 +470,7 @@ namespace subtitles
         t.startWall = Now();
         t.lastAudio = audio::SubmittedFrames();
         t.clock = t.startSeconds;
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        g_lastAdvance[context] = now.QuadPart;
+        g_lastAdvance[context] = int64_t(plat::PerfCounter());
         g_frames[context] = frames;
         g_tracks.push_back(t);
         if (!follower)
@@ -524,9 +507,7 @@ namespace subtitles
             return;
         if (g_frames[context].exchange(frames) != frames)
         {
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
-            g_lastAdvance[context] = now.QuadPart;
+            g_lastAdvance[context] = int64_t(plat::PerfCounter());
         }
     }
 
@@ -559,7 +540,7 @@ namespace subtitles
             {
                 const Sound& sound = g_sounds[t->sound];
                 double decoded = Decoded(*t);
-                double idle = t->detached ? 0.0 : now - double(g_lastAdvance[t->context]) / double(g_frequency.QuadPart);
+                double idle = t->detached ? 0.0 : now - double(g_lastAdvance[t->context]) / double(plat::PerfFrequency());
                 double elapsed = double(audioFrames - t->lastAudio) * audio::FRAME_SAMPLES / audio::SAMPLE_RATE;
                 t->lastAudio = audioFrames;
                 if (idle <= PAUSE_SECONDS)
@@ -617,8 +598,7 @@ namespace subtitles
                 g_version++;
                 if (g_trace)
                 {
-                    std::string utf8(size_t(WideCharToMultiByte(CP_UTF8, 0, g_text.c_str(), int(g_text.size()), nullptr, 0, nullptr, nullptr)), '\0');
-                    WideCharToMultiByte(CP_UTF8, 0, g_text.c_str(), int(g_text.size()), utf8.data(), int(utf8.size()), nullptr, nullptr);
+                    std::string utf8 = plat::NarrowUtf8(g_text);
                     Log("[subtitles] text: %s", g_text.empty() ? "(none)" : utf8.c_str());
                 }
             }

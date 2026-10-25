@@ -23,6 +23,7 @@
 #include "../diagnostics.h"
 #include "../kernel/input.h"
 #include "../kernel/pc_input.h"
+#include "../platform/platform.h"
 
 #include <windows.h>
 #include <xinput.h>
@@ -145,7 +146,7 @@ namespace settings
             return;
         std::lock_guard lock(g_mutex);
         g_node = node;
-        g_nodeSince = g_readyFrom = GetTickCount64();
+        g_nodeSince = g_readyFrom = plat::TickCountMs();
     }
 
     uint16_t MenuAutopilotButtons()
@@ -153,7 +154,7 @@ namespace settings
         if (!Enabled())
             return 0;
         std::lock_guard lock(g_mutex);
-        ULONGLONG now = GetTickCount64();
+        ULONGLONG now = plat::TickCountMs();
         if (now < g_pressUntil)
             return g_pressButton;
         if (g_next >= g_steps.size())

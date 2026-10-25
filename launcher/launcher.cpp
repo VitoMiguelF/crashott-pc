@@ -20,7 +20,6 @@
 // In an install of the single-file installer the menu has UPDATE: the next release's installer,
 // downloaded and run over this install (updater.inc).
 
-// windows.h first: menu_art.cpp is compiled with it, so DrawText is its DrawTextA macro there too.
 #include <windows.h>
 
 #include "../runtime/fs/vfs.h"
@@ -693,7 +692,7 @@ namespace
             if (icon)
                 ma::DrawIcon(canvas, c, float(pad), pad + px * 0.04f, px * 0.92f);
             else
-                ma::DrawText(canvas, id, std::u32string(1, c), float(pad), float(pad), px, { { 255, 255, 255, 255 }, { 0, 0, 0, 255 } });
+                ma::DrawGameText(canvas, id, std::u32string(1, c), float(pad), float(pad), px, { { 255, 255, 255, 255 }, { 0, 0, 0, 255 } });
             canvas.Export(rgba);
             advance = width;
             return true;

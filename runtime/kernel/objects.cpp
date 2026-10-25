@@ -2,7 +2,7 @@
 #include "memory.h"
 #include "../diagnostics.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <condition_variable>
 #include <unordered_map>
@@ -200,9 +200,7 @@ WaitDeadline DeadlineFromTimeout(uint32_t timeoutPtr)
     }
     else
     {
-        FILETIME fileTime;
-        GetSystemTimeAsFileTime(&fileTime);
-        int64_t current = int64_t((uint64_t(fileTime.dwHighDateTime) << 32) | fileTime.dwLowDateTime);
+        int64_t current = int64_t(plat::SystemTimeFileTime());
         relative = value > current ? value - current : 0;
     }
 

@@ -46,8 +46,7 @@
 #include "settings/settings_menu.h"
 #include "subtitles/subtitles.h"
 
-#include <windows.h>
-#include <timeapi.h>
+#include "platform/platform.h"
 
 #include <cstdio>
 #include <cstring>
@@ -75,18 +74,12 @@ int main(int argc, char** argv)
     InstallCrashHandler();
     // 1 ms timer resolution: the guest vblank (gpu.cpp) and the command processor's waits use timed
     // waits, which otherwise round up to the 15.6 ms default tick and make the frame pacing uneven.
-    timeBeginPeriod(1);
+    plat::RaiseTimerResolution();
     // Out of Windows 11's power throttling (EcoQoS) for background windows: with the window out of
     // focus it lowered the clocks of the game's threads and ignored the 1 ms timer resolution
     // above (~100 fps instead of ~125 in the village; README "Desempenho").
-    {
-        PROCESS_POWER_THROTTLING_STATE state{};
-        state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
-        state.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
-        state.StateMask = 0;  // controlled and off: never throttled
-        if (!SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state)))
-            Log("[main] could not opt out of power throttling (%lu)", GetLastError());
-    }
+    if (!plat::DisablePowerThrottling())
+        Log("[main] could not opt out of power throttling (%s)", plat::LastErrorText().c_str());
 
     XexModule module;
     if (!LoadXex(paths::Xex(), paths::Image(), module))

@@ -1,8 +1,54 @@
 // Small xboxkrnl Rtl* helpers.
 
 #include "kernel.h"
+#include "../platform/platform.h"
 
-#include <windows.h>
+#include <chrono>
+
+namespace
+{
+    // NT times (100 ns since 1601-01-01 UTC) <-> calendar fields, as FileTimeToSystemTime and
+    // SystemTimeToFileTime do (proleptic Gregorian, years 1601-30827).
+    using Ticks = std::chrono::duration<int64_t, std::ratio<1, 10000000>>;
+    constexpr std::chrono::sys_days NT_EPOCH = std::chrono::sys_days(std::chrono::year(1601) / 1 / 1);
+
+    struct TimeFields
+    {
+        uint16_t year, month, day, hour, minute, second, milliseconds, weekday;
+    };
+
+    TimeFields FieldsFromTime(uint64_t time)
+    {
+        using namespace std::chrono;
+        Ticks ticks(int64_t(time & 0x7FFFFFFFFFFFFFFFull));
+        auto dayCount = floor<days>(ticks);
+        year_month_day date(NT_EPOCH + dayCount);
+        auto rest = ticks - dayCount;
+        hh_mm_ss<Ticks> clock(rest);
+        TimeFields f;
+        f.year = uint16_t(int(date.year()));
+        f.month = uint16_t(unsigned(date.month()));
+        f.day = uint16_t(unsigned(date.day()));
+        f.hour = uint16_t(clock.hours().count());
+        f.minute = uint16_t(clock.minutes().count());
+        f.second = uint16_t(clock.seconds().count());
+        f.milliseconds = uint16_t(duration_cast<milliseconds>(clock.subseconds()).count());
+        f.weekday = uint16_t(weekday(sys_days(NT_EPOCH + dayCount)).c_encoding());
+        return f;
+    }
+
+    bool TimeFromFields(const TimeFields& f, uint64_t& time)
+    {
+        using namespace std::chrono;
+        year_month_day date{ year(f.year), month(f.month), day(f.day) };
+        if (f.year < 1601 || f.year > 30827 || !date.ok() || f.hour > 23 || f.minute > 59 || f.second > 59 || f.milliseconds > 999)
+            return false;
+        Ticks ticks = sys_days(date) - NT_EPOCH;
+        ticks += hours(f.hour) + minutes(f.minute) + seconds(f.second) + milliseconds(f.milliseconds);
+        time = uint64_t(ticks.count());
+        return true;
+    }
+}
 
 // void RtlFillMemoryUlong(void* Destination, u32 Length, u32 Pattern): Length in bytes, filled
 // with the big-endian dword Pattern.
@@ -111,9 +157,7 @@ PPC_FUNC(__imp__RtlNtStatusToDosError)
 PPC_FUNC(__imp__KeQuerySystemTime)
 {
     KERNEL_IMPORT_ENTER(KeQuerySystemTime);
-    FILETIME now;
-    GetSystemTimeAsFileTime(&now);
-    uint64_t time = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
+    uint64_t time = plat::SystemTimeFileTime();
     if (ctx.r3.u32)
         PPC_STORE_U64(ctx.r3.u32, time);
     KERNEL_LOG("[kernel] KeQuerySystemTime(0x%08X) lr=0x%08X -> 0x%016llX", ctx.r3.u32, GuestLR(ctx), (unsigned long long)time);
@@ -126,20 +170,18 @@ PPC_FUNC(__imp__RtlTimeToTimeFields)
 {
     KERNEL_IMPORT_ENTER(RtlTimeToTimeFields);
     uint64_t time = PPC_LOAD_U64(ctx.r3.u32);
-    FILETIME fileTime{ uint32_t(time), uint32_t(time >> 32) };
-    SYSTEMTIME fields{};
-    FileTimeToSystemTime(&fileTime, &fields);
+    TimeFields fields = FieldsFromTime(time);
     uint32_t out = ctx.r4.u32;
-    PPC_STORE_U16(out + 0x0, fields.wYear);
-    PPC_STORE_U16(out + 0x2, fields.wMonth);
-    PPC_STORE_U16(out + 0x4, fields.wDay);
-    PPC_STORE_U16(out + 0x6, fields.wHour);
-    PPC_STORE_U16(out + 0x8, fields.wMinute);
-    PPC_STORE_U16(out + 0xA, fields.wSecond);
-    PPC_STORE_U16(out + 0xC, fields.wMilliseconds);
-    PPC_STORE_U16(out + 0xE, fields.wDayOfWeek);
+    PPC_STORE_U16(out + 0x0, fields.year);
+    PPC_STORE_U16(out + 0x2, fields.month);
+    PPC_STORE_U16(out + 0x4, fields.day);
+    PPC_STORE_U16(out + 0x6, fields.hour);
+    PPC_STORE_U16(out + 0x8, fields.minute);
+    PPC_STORE_U16(out + 0xA, fields.second);
+    PPC_STORE_U16(out + 0xC, fields.milliseconds);
+    PPC_STORE_U16(out + 0xE, fields.weekday);
     KERNEL_LOG("[kernel] RtlTimeToTimeFields(0x%016llX) lr=0x%08X -> %04u-%02u-%02u %02u:%02u:%02u", (unsigned long long)time,
-               GuestLR(ctx), fields.wYear, fields.wMonth, fields.wDay, fields.wHour, fields.wMinute, fields.wSecond);
+               GuestLR(ctx), fields.year, fields.month, fields.day, fields.hour, fields.minute, fields.second);
 }
 
 // BOOLEAN RtlTimeFieldsToTime(TIME_FIELDS* TimeFields, u64* Time): FALSE for an invalid date.
@@ -147,18 +189,18 @@ PPC_FUNC(__imp__RtlTimeFieldsToTime)
 {
     KERNEL_IMPORT_ENTER(RtlTimeFieldsToTime);
     uint32_t in = ctx.r3.u32;
-    SYSTEMTIME fields{};
-    fields.wYear = PPC_LOAD_U16(in + 0x0);
-    fields.wMonth = PPC_LOAD_U16(in + 0x2);
-    fields.wDay = PPC_LOAD_U16(in + 0x4);
-    fields.wHour = PPC_LOAD_U16(in + 0x6);
-    fields.wMinute = PPC_LOAD_U16(in + 0x8);
-    fields.wSecond = PPC_LOAD_U16(in + 0xA);
-    fields.wMilliseconds = PPC_LOAD_U16(in + 0xC);
-    FILETIME fileTime{};
-    bool ok = SystemTimeToFileTime(&fields, &fileTime) != 0;
+    TimeFields fields{};
+    fields.year = PPC_LOAD_U16(in + 0x0);
+    fields.month = PPC_LOAD_U16(in + 0x2);
+    fields.day = PPC_LOAD_U16(in + 0x4);
+    fields.hour = PPC_LOAD_U16(in + 0x6);
+    fields.minute = PPC_LOAD_U16(in + 0x8);
+    fields.second = PPC_LOAD_U16(in + 0xA);
+    fields.milliseconds = PPC_LOAD_U16(in + 0xC);
+    uint64_t time = 0;
+    bool ok = TimeFromFields(fields, time);
     if (ok && ctx.r4.u32)
-        PPC_STORE_U64(ctx.r4.u32, (uint64_t(fileTime.dwHighDateTime) << 32) | fileTime.dwLowDateTime);
-    KERNEL_LOG("[kernel] RtlTimeFieldsToTime(%04u-%02u-%02u) lr=0x%08X -> %u", fields.wYear, fields.wMonth, fields.wDay, GuestLR(ctx), ok);
+        PPC_STORE_U64(ctx.r4.u32, time);
+    KERNEL_LOG("[kernel] RtlTimeFieldsToTime(%04u-%02u-%02u) lr=0x%08X -> %u", fields.year, fields.month, fields.day, GuestLR(ctx), ok);
     ctx.r3.u64 = ok;
 }

@@ -27,7 +27,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 namespace
 {
@@ -648,8 +648,8 @@ namespace
         Log("[gpu] command processor thread started");
         // The thread the frame rate depends on most (it translates every draw): ahead of the
         // normal-priority ones, which matters most with the window out of focus.
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
-        SetThreadDescription(GetCurrentThread(), L"gpu command processor");
+        plat::SetCurrentThreadPriority(plat::ThreadPriority::AboveNormal);
+        plat::SetCurrentThreadName("gpu command processor");
         while (true)
         {
             {

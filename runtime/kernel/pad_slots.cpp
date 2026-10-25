@@ -12,6 +12,7 @@
 #include "kernel.h"
 #include "pc_input.h"
 #include "../settings/settings.h"
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <array>
@@ -529,7 +530,7 @@ namespace input::slots
         void Refresh()
         {
             std::lock_guard lock(g_mutex);
-            ULONGLONG now = GetTickCount64();
+            ULONGLONG now = plat::TickCountMs();
             if (g_lastUpdate && now - g_lastUpdate < UPDATE_MS)
                 return;
             g_lastUpdate = now;

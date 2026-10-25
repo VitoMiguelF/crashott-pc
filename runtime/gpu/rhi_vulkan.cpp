@@ -28,6 +28,7 @@
 #include "rhi_vulkan_shaders.h"
 #include "vulkan_loader.h"
 #include "../diagnostics.h"
+#include "../platform/platform.h"
 
 #include <windows.h>
 
@@ -373,7 +374,7 @@ namespace gpu::rhi
                 // Once: the warm-up keeps adding parts, so the queue can drain more than once.
                 if (++m_precompileDone == m_precompileTotal && !m_precompileLogged.exchange(true))
                     Log("[vulkan] start-up compiles done: %u (pipelines of earlier runs and parts of known shaders) in %llu ms", m_precompileTotal.load(),
-                        (unsigned long long)(GetTickCount64() - m_precompileStart));
+                        (unsigned long long)(plat::TickCountMs() - m_precompileStart));
             }
             Pipeline* CreatePassPipeline(const PassPipelineDesc& desc) override;
 
@@ -593,7 +594,7 @@ namespace gpu::rhi
             std::deque<std::function<void()>> m_jobs[2];  // [0] urgent, [1] start-up
             uint32_t m_workerCount = 0;
             std::atomic<uint32_t> m_precompileDone{ 0 }, m_precompileTotal{ 0 };
-            ULONGLONG m_precompileStart = GetTickCount64();
+            ULONGLONG m_precompileStart = plat::TickCountMs();
             std::atomic<bool> m_precompileLogged{ false };
             struct
             {
@@ -1707,8 +1708,8 @@ float4 main(float4 position : SV_Position) : SV_Target
                     break;
                 if (size > m_uploadSize)
                     return {};
-                LARGE_INTEGER waitStart, waitEnd;
-                QueryPerformanceCounter(&waitStart);
+                int64_t waitStart, waitEnd;
+                waitStart = int64_t(plat::PerfCounter());
                 m_stats.ringWaits++;
                 if (m_uploadRing.HasPending())
                     WaitValue(m_uploadRing.OldestPendingFence());
@@ -1728,8 +1729,8 @@ float4 main(float4 position : SV_Position) : SV_Target
                             (unsigned long long)size);
                     return {};
                 }
-                QueryPerformanceCounter(&waitEnd);
-                m_timing.ringWaitTicks += uint64_t(waitEnd.QuadPart - waitStart.QuadPart);
+                waitEnd = int64_t(plat::PerfCounter());
+                m_timing.ringWaitTicks += uint64_t(waitEnd - waitStart);
             }
             m_stats.ringPeak = std::max(m_stats.ringPeak, m_uploadRing.Used());
             return { m_upload.cpu + offset, offset };
@@ -2380,14 +2381,14 @@ float4 main(float4 position : SV_Position) : SV_Target
                 return known;
             std::vector<uint32_t> spirv;
             uint64_t compiles = m_stats.shaderCompiles;
-            LARGE_INTEGER start, end;
-            QueryPerformanceCounter(&start);
+            int64_t start, end;
+            start = int64_t(plat::PerfCounter());
             bool compiled = vulkan::CompileSpirv(stage, hlsl, name, layout, m_shaderCache, spirv, &m_stats.shaderCompiles, &m_stats.shaderFailures);
-            QueryPerformanceCounter(&end);
+            end = int64_t(plat::PerfCounter());
             if (m_stats.shaderCompiles != compiles)
             {
                 m_timing.shaders++;
-                m_timing.shaderTicks += uint64_t(end.QuadPart - start.QuadPart);
+                m_timing.shaderTicks += uint64_t(end - start);
             }
             if (!compiled)
                 return nullptr;
@@ -2763,7 +2764,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                 return VK_NULL_HANDLE;
             // CRASH_VULKAN_COLD=1 (measurements): an unused specialization constant with a value of
             // this run, so the driver's own shader cache misses as on a first run.
-            static const uint32_t s_nonce = getenv("CRASH_VULKAN_COLD") ? uint32_t(GetTickCount64() * 2654435761ull) | 1u : 0u;
+            static const uint32_t s_nonce = getenv("CRASH_VULKAN_COLD") ? uint32_t(plat::TickCountMs() * 2654435761ull) | 1u : 0u;
             static const VkSpecializationMapEntry s_nonceEntry{ 4000, 0, 4 };
             static const VkSpecializationInfo s_nonceInfo{ 1, &s_nonceEntry, 4, &s_nonce };
             for (uint32_t i = 0; i < stageCount && s_nonce; i++)
@@ -2941,11 +2942,11 @@ float4 main(float4 position : SV_Position) : SV_Target
                 return pipeline;
             if (pipeline->failed)
                 return nullptr;
-            LARGE_INTEGER start, end;
-            QueryPerformanceCounter(&start);
+            int64_t start, end;
+            start = int64_t(plat::PerfCounter());
             bool waits = false;
             bool ready = PrepareProgram(program, deferrable, waits);
-            QueryPerformanceCounter(&end);
+            end = int64_t(plat::PerfCounter());
             if (waits)
             {
                 m_compileStats.deferred++;
@@ -2955,7 +2956,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
             // Time the recording thread spent compiling (or waiting for a worker that was).
             m_timing.pipelines++;
-            m_timing.pipelineTicks += uint64_t(end.QuadPart - start.QuadPart);
+            m_timing.pipelineTicks += uint64_t(end - start);
             m_compileStats.stalls++;
             m_stats.pipelines++;
             pipeline->failed = !ready;
@@ -3046,7 +3047,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             if (records.size() > MAX_PRECOMPILE)
                 records.erase(records.begin(), records.end() - MAX_PRECOMPILE);
             std::vector<Program*> programs;
-            m_precompileStart = GetTickCount64();
+            m_precompileStart = plat::TickCountMs();
             {
                 std::lock_guard<std::mutex> lock(m_programMutex);
                 for (const ProgramKey& record : records)
@@ -3241,12 +3242,12 @@ float4 main(uint id : SV_VertexID) : SV_Position
             create.pColorBlendState = &colorBlend;
             create.pDynamicState = &dynamic;
             create.layout = pipeline->layout;
-            LARGE_INTEGER start, end;
-            QueryPerformanceCounter(&start);
+            int64_t start, end;
+            start = int64_t(plat::PerfCounter());
             bool created = Check(vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &create, nullptr, &pipeline->pipeline), desc.name.c_str());
-            QueryPerformanceCounter(&end);
+            end = int64_t(plat::PerfCounter());
             m_timing.pipelines++;
-            m_timing.pipelineTicks += uint64_t(end.QuadPart - start.QuadPart);
+            m_timing.pipelineTicks += uint64_t(end - start);
             if (!created)
                 return nullptr;
             m_stats.pipelines++;
@@ -3594,8 +3595,8 @@ float4 main(uint id : SV_VertexID) : SV_Position
                 m_vsync = vsync;
                 m_swapchainDirty = true;  // another present mode, from the next frame
             }
-            LARGE_INTEGER submitStart, submitEnd, presentEnd;
-            QueryPerformanceCounter(&submitStart);
+            int64_t submitStart, submitEnd, presentEnd;
+            submitStart = int64_t(plat::PerfCounter());
             if (m_gpuLoad)
             {
                 uint32_t constants[4] = { m_gpuLoad };
@@ -3612,7 +3613,7 @@ float4 main(uint id : SV_VertexID) : SV_Position
             if (imageIndex != UINT32_MAX)
                 Transition(m_swapchainImages[imageIndex].get(), Access::Present);
             SubmitInternal(imageIndex != UINT32_MAX);
-            QueryPerformanceCounter(&submitEnd);
+            submitEnd = int64_t(plat::PerfCounter());
             if (imageIndex != UINT32_MAX)
             {
                 VkPresentInfoKHR present{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
@@ -3633,30 +3634,30 @@ float4 main(uint id : SV_VertexID) : SV_Position
                     m_suboptimalStreak = 0;
                 m_frameSuboptimal = false;
             }
-            QueryPerformanceCounter(&presentEnd);
-            m_timing.submitTicks += uint64_t(submitEnd.QuadPart - submitStart.QuadPart);
-            m_timing.presentTicks = std::max(m_timing.presentTicks, uint64_t(presentEnd.QuadPart - submitEnd.QuadPart));
+            presentEnd = int64_t(plat::PerfCounter());
+            m_timing.submitTicks += uint64_t(submitEnd - submitStart);
+            m_timing.presentTicks = std::max(m_timing.presentTicks, uint64_t(presentEnd - submitEnd));
 
             m_frameValues.push_back(m_timelineValue);
             m_presents++;
             m_profiling = m_profilePool && m_presents + 1 >= m_profileFirst && m_presents + 1 <= m_profileLast;
-            LARGE_INTEGER waitStart, waitEnd;
-            QueryPerformanceCounter(&waitStart);
+            int64_t waitStart, waitEnd;
+            waitStart = int64_t(plat::PerfCounter());
             // Two frames in flight; the safe mode's "serial" waits for this one.
             while (m_frameValues.size() > ((m_safe & SAFE_SERIAL) ? 0u : 2u))
             {
                 WaitValue(m_frameValues.front());
                 m_frameValues.pop_front();
             }
-            QueryPerformanceCounter(&waitEnd);
-            m_timing.frameWaitTicks += uint64_t(waitEnd.QuadPart - waitStart.QuadPart);
-            if (m_unsavedPipelines && GetTickCount64() - m_lastCacheSave > 10000)
+            waitEnd = int64_t(plat::PerfCounter());
+            m_timing.frameWaitTicks += uint64_t(waitEnd - waitStart);
+            if (m_unsavedPipelines && plat::TickCountMs() - m_lastCacheSave > 10000)
                 SavePipelineCache();
         }
 
         void VulkanDevice::SavePipelineCache()
         {
-            m_lastCacheSave = GetTickCount64();
+            m_lastCacheSave = plat::TickCountMs();
             m_unsavedPipelines = 0;
             if (m_shaderCache.empty() || !m_pipelineCache)
                 return;

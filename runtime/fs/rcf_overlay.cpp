@@ -1,7 +1,7 @@
 #include "rcf_overlay.h"
 #include "../diagnostics.h"
 
-#include <windows.h>
+#include "../platform/file.h"
 
 #include <algorithm>
 #include <atomic>
@@ -36,7 +36,7 @@ namespace rcf_overlay
     {
         uint64_t offset{};  // in the virtual archive
         uint64_t size{};
-        HANDLE file = INVALID_HANDLE_VALUE;  // a mod's file, or
+        plat::File file;                     // a mod's file, or
         std::vector<uint8_t> data;           // the entry rebuilt by rewrites/patches (built-ins)
         std::string entry, source;           // for the log
         uint32_t index{};                    // directory record
@@ -54,13 +54,6 @@ namespace rcf_overlay
     class Archive
     {
     public:
-        ~Archive()
-        {
-            for (auto& r : replacements)
-                if (r.file != INVALID_HANDLE_VALUE)
-                    CloseHandle(r.file);
-        }
-
         uint64_t baseSize{};
         uint64_t size{};
         uint32_t directoryOffset{};
@@ -108,21 +101,17 @@ namespace rcf_overlay
             return text;
         }
 
-        bool ReadAt(HANDLE file, uint64_t offset, void* data, uint32_t length, uint32_t& transferred)
+        bool ReadAt(const plat::File& file, uint64_t offset, void* data, uint32_t length, uint32_t& transferred)
         {
-            OVERLAPPED overlapped{};
-            overlapped.Offset = DWORD(offset);
-            overlapped.OffsetHigh = DWORD(offset >> 32);
-            DWORD read = 0;
-            BOOL ok = ReadFile(file, data, length, &read, &overlapped);
-            transferred = read;
-            return ok || GetLastError() == ERROR_HANDLE_EOF;
+            size_t read = 0;
+            bool ok = file.ReadAt(offset, data, length, read);
+            transferred = uint32_t(read);
+            return ok;
         }
 
-        bool ReadExact(HANDLE file, uint64_t offset, void* data, uint32_t length)
+        bool ReadExact(const plat::File& file, uint64_t offset, void* data, uint32_t length)
         {
-            uint32_t transferred;
-            return ReadAt(file, offset, data, length, transferred) && transferred == length;
+            return file.ReadExactAt(offset, data, length);
         }
 
         struct Index
@@ -134,7 +123,7 @@ namespace rcf_overlay
         // Directory index of each entry, keyed by lowercase name ("package\7efdcd91.p3d").
         // Names are listed in data-offset order, so the i-th name is the entry with the i-th
         // smallest offset (tools/rcf.py).
-        bool ReadIndex(HANDLE file, Archive& archive, Index& index)
+        bool ReadIndex(const plat::File& file, Archive& archive, Index& index)
         {
             uint8_t header[0x3C];
             if (!ReadExact(file, 0, header, sizeof(header)) || memcmp(header, MAGIC, sizeof(MAGIC) - 1) != 0)
@@ -192,7 +181,7 @@ namespace rcf_overlay
         // patchers in registration order. A replaced entry, or a resized result, becomes an
         // in-memory replacement (laid out with the others afterwards); an original entry patched
         // at its own size becomes byte patches at its original offset.
-        void ApplyBuiltins(HANDLE file, const std::string& stem, const std::string& display, Archive& archive, const Index& index,
+        void ApplyBuiltins(const plat::File& file, const std::string& stem, const std::string& display, Archive& archive, const Index& index,
                            std::unordered_map<uint32_t, size_t>& replaced)
         {
             std::lock_guard lock(g_builtinMutex);
@@ -220,7 +209,7 @@ namespace rcf_overlay
                 if (modReplacement)
                 {
                     original.resize(size_t(modReplacement->size));
-                    read = modReplacement->file != INVALID_HANDLE_VALUE
+                    read = modReplacement->file.IsOpen()
                                ? ReadExact(modReplacement->file, 0, original.data(), uint32_t(original.size()))
                                : (original = modReplacement->data, true);
                     source = " (" + modReplacement->source + ")";
@@ -274,10 +263,9 @@ namespace rcf_overlay
                         modReplacement->originalOffset = offset;
                         modReplacement->originalSize = size;
                     }
-                    else if (modReplacement->file != INVALID_HANDLE_VALUE)
+                    else if (modReplacement->file.IsOpen())
                     {
-                        CloseHandle(modReplacement->file);
-                        modReplacement->file = INVALID_HANDLE_VALUE;
+                        modReplacement->file.Close();
                     }
                     if (patched.size() == original.size())
                         Log("[fs] rcf overlay: %s %s%s: built-in patch(es) \"%s\"", display.c_str(), entry.c_str(), source.c_str(), applied.c_str());
@@ -432,21 +420,19 @@ namespace rcf_overlay
             if (folders.empty() && !builtins)
                 return nullptr;
 
-            HANDLE file = CreateFileW(host.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                      nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (file == INVALID_HANDLE_VALUE)
+            plat::File file;
+            if (!file.Open(host))
                 return nullptr;
             auto archive = std::make_shared<Archive>();
             Index index;
-            LARGE_INTEGER size{};
-            bool ok = GetFileSizeEx(file, &size) && ReadIndex(file, *archive, index);
+            uint64_t size = file.Size();
+            bool ok = ReadIndex(file, *archive, index);
             if (!ok)
             {
-                CloseHandle(file);
                 Log("[fs] rcf overlay: %s is not a readable RCF archive, mod entries ignored", path.Display().c_str());
                 return nullptr;
             }
-            archive->baseSize = uint64_t(size.QuadPart);
+            archive->baseSize = size;
             std::string display = path.Display();
 
             // First mod in load order wins for each entry.
@@ -472,21 +458,17 @@ namespace rcf_overlay
             for (auto& [entry, source] : chosen)
             {
                 Replacement replacement;
-                replacement.file = CreateFileW(source.second.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                                               FILE_ATTRIBUTE_NORMAL, nullptr);
-                LARGE_INTEGER fileSize{};
-                if (replacement.file == INVALID_HANDLE_VALUE || !GetFileSizeEx(replacement.file, &fileSize) || fileSize.QuadPart > 0xFFFFFFFFll)
+                uint64_t fileSize = replacement.file.Open(source.second) ? replacement.file.Size() : 0;
+                if (!replacement.file.IsOpen() || fileSize > 0xFFFFFFFFull)
                 {
                     Log("[fs] rcf overlay: could not use %s (mod %s)", source.second.string().c_str(), source.first.c_str());
-                    if (replacement.file != INVALID_HANDLE_VALUE)
-                        CloseHandle(replacement.file);
                     continue;
                 }
                 replacement.index = index.byName[entry];
                 const uint8_t* record = &archive->directory[replacement.index * 12];
                 replacement.originalOffset = LoadBE32(record + 4);
                 replacement.originalSize = LoadBE32(record + 8);
-                replacement.size = uint64_t(fileSize.QuadPart);
+                replacement.size = fileSize;
                 replacement.entry = entry;
                 replacement.source = "mod " + source.first;
                 replaced.emplace(replacement.index, archive->replacements.size());
@@ -495,7 +477,7 @@ namespace rcf_overlay
             // After the mod files, so that a replaced entry is patched as the mod has it.
             if (builtins)
                 ApplyBuiltins(file, stem, display, *archive, index, replaced);
-            CloseHandle(file);
+            file.Close();
             if (archive->replacements.empty() && archive->patches.empty())
                 return nullptr;
 
@@ -514,9 +496,7 @@ namespace rcf_overlay
                 {
                     Log("[fs] rcf overlay: WARNING: %s %s (%s, %llu bytes) does not fit in the 4 GB the archive format can address; the "
                         "original entry is served", display.c_str(), it->entry.c_str(), it->source.c_str(), (unsigned long long)it->size);
-                    if (it->file != INVALID_HANDLE_VALUE)
-                        CloseHandle(it->file);
-                    it->file = INVALID_HANDLE_VALUE;
+                    it->file.Close();
                 }
                 archive->replacements.erase(over, archive->replacements.end());
             }
@@ -590,7 +570,7 @@ namespace rcf_overlay
         return archive.size;
     }
 
-    bool Read(const Archive& archive, void* baseFile, uint64_t offset, uint8_t* data, uint32_t length, uint32_t& transferred)
+    bool Read(const Archive& archive, const plat::File& baseFile, uint64_t offset, uint8_t* data, uint32_t length, uint32_t& transferred)
     {
         transferred = 0;
         if (offset >= archive.size)
@@ -610,7 +590,7 @@ namespace rcf_overlay
             if (next != archive.replacements.end() && at >= next->offset)
             {
                 chunk = uint32_t(std::min<uint64_t>(remaining, next->offset + next->size - at));
-                if (next->file == INVALID_HANDLE_VALUE)
+                if (!next->file.IsOpen())
                     memcpy(out, next->data.data() + (at - next->offset), chunk);
                 else
                 {

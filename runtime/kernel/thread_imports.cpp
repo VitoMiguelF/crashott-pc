@@ -12,9 +12,10 @@
 #include "threads.h"
 #include "../cpu/guest_thread.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <bit>
+#include <x86intrin.h> // __rdtsc: x86-only, like the recompiled mftb (linux_port.md)
 #include <mutex>
 #include <thread>
 
@@ -271,7 +272,7 @@ PPC_FUNC(__imp__KeDelayExecutionThread)
     WaitDeadline deadline = DeadlineFromTimeout(intervalPtr);
 
     if (!deadline || *deadline <= std::chrono::steady_clock::now())
-        SwitchToThread();
+        plat::YieldThread();
     else
         std::this_thread::sleep_until(*deadline);
 
@@ -288,14 +289,12 @@ PPC_FUNC(__imp__KeQueryPerformanceFrequency)
 
     static const uint64_t frequency = []
     {
-        LARGE_INTEGER qpcFrequency, qpcStart, qpcEnd;
-        QueryPerformanceFrequency(&qpcFrequency);
-        QueryPerformanceCounter(&qpcStart);
+        uint64_t start = plat::PerfCounter();
         uint64_t tscStart = __rdtsc();
-        Sleep(50);
-        QueryPerformanceCounter(&qpcEnd);
+        plat::SleepMs(50);
+        uint64_t end = plat::PerfCounter();
         uint64_t tscEnd = __rdtsc();
-        double seconds = double(qpcEnd.QuadPart - qpcStart.QuadPart) / double(qpcFrequency.QuadPart);
+        double seconds = plat::PerfSeconds(start, end);
         return uint64_t(double(tscEnd - tscStart) / seconds);
     }();
 

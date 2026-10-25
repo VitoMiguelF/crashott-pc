@@ -17,9 +17,14 @@
 #include "rhi_vulkan_shaders.h"
 #include "../diagnostics.h"
 
+#include "../platform/platform.h"
+
+#ifdef _WIN32
 #include <windows.h>
 #include <unknwn.h>
 #include <objidl.h>  // IStream (WIN32_LEAN_AND_MEAN leaves the COM headers out)
+#endif
+// Elsewhere dxcapi.h brings DXC's own WinAdapter.h (IUnknown, HRESULT, __uuidof).
 // dxcapi.h's __declspec(uuid(...)) is unknown to mingw's clang (the GUIDs are declared below).
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunknown-attributes"
@@ -66,13 +71,17 @@ namespace gpu::rhi::vulkan
 
         bool LoadCompilerOnce()
         {
-            HMODULE module = LoadLibraryW(L"dxcompiler.dll");
+#ifdef _WIN32
+            void* module = plat::OpenLibrary("dxcompiler.dll");
+#else
+            void* module = plat::OpenLibrary("libdxcompiler.so");
+#endif
             if (!module)
             {
-                Log("[vulkan] dxcompiler.dll not found next to the exe: only cached SPIR-V shaders can be used");
+                Log("[vulkan] dxcompiler not found next to the exe: only cached SPIR-V shaders can be used");
                 return false;
             }
-            auto create = reinterpret_cast<DxcCreateInstanceProc>(reinterpret_cast<void*>(GetProcAddress(module, "DxcCreateInstance")));
+            auto create = reinterpret_cast<DxcCreateInstanceProc>(plat::FindSymbol(module, "DxcCreateInstance"));
             if (!create || FAILED(create(CLSID_DxcUtils, __uuidof(IDxcUtils), reinterpret_cast<void**>(&g_utils))) ||
                 FAILED(create(CLSID_DxcCompiler, __uuidof(IDxcCompiler3), reinterpret_cast<void**>(&g_compiler))))
             {

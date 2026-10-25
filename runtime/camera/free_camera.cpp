@@ -33,6 +33,7 @@
 #include "../kernel/pc_input.h"
 #include "../kernel/memory.h"
 #include "../settings/settings.h"
+#include "../platform/platform.h"
 
 #include <windows.h>
 
@@ -216,7 +217,7 @@ namespace
         bool hasHeading = false;
         bool mounted = false;        // logged state
         bool r3Down = false;
-        LARGE_INTEGER lastTime{};
+        int64_t lastTime{};
         const char* reason = "";     // why it is not active (log)
         bool loggedActive = false;
     } g;
@@ -299,10 +300,10 @@ namespace
     // After the game wrote its camera: replace it with the orbit (blended in and out).
     void Update(PPCContext& ctx, uint8_t* base, uint32_t controller, float gameDt)
     {
-        LARGE_INTEGER now, frequency;
-        QueryPerformanceCounter(&now);
-        QueryPerformanceFrequency(&frequency);
-        float dt = g.lastTime.QuadPart ? float(double(now.QuadPart - g.lastTime.QuadPart) / double(frequency.QuadPart)) : 0.0f;
+        int64_t now, frequency;
+        now = int64_t(plat::PerfCounter());
+        frequency = int64_t(plat::PerfFrequency());
+        float dt = g.lastTime ? float(double(now - g.lastTime) / double(frequency)) : 0.0f;
         g.lastTime = now;
         dt = std::clamp(dt, 0.0f, 0.1f);
         bool paused = !(gameDt > 0.0f);

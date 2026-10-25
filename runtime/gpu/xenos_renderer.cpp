@@ -53,6 +53,7 @@
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
 #include "../subtitles/subtitle_draw.h"
+#include "../platform/platform.h"
 
 #include <windows.h>
 
@@ -1074,13 +1075,13 @@ float4 main(float4 position : SV_Position) : SV_Target
             if (!inserted)
                 return hdTexture.failed ? nullptr : &hdTexture;
             hdTexture.failed = true;
-            LARGE_INTEGER t0, t1, t2, t3, frequency;
-            QueryPerformanceFrequency(&frequency);
-            QueryPerformanceCounter(&t0);
+            int64_t t0, t1, t2, t3, frequency;
+            frequency = int64_t(plat::PerfFrequency());
+            t0 = int64_t(plat::PerfCounter());
             hd::Image image;
             if (!hd::Load(key, srgb, image))
                 return nullptr;
-            QueryPerformanceCounter(&t1);
+            t1 = int64_t(plat::PerfCounter());
             if (image.width < guestWidth || image.height < guestHeight ||
                 uint64_t(image.width) * guestHeight != uint64_t(image.height) * guestWidth)
             {
@@ -1099,9 +1100,9 @@ float4 main(float4 position : SV_Position) : SV_Target
             uint64_t levelOffsets[16];
             uint32_t levels = std::min(image.levels, 16u);
             uint64_t totalBytes = UploadLayout(image.format, image.width, image.height, levels, footprints, levelOffsets);
-            QueryPerformanceCounter(&t2);
+            t2 = int64_t(plat::PerfCounter());
             rhi::Device::Upload upload = AllocateUpload(totalBytes, rhi::UPLOAD_PLACEMENT_ALIGNMENT);
-            QueryPerformanceCounter(&t3);
+            t3 = int64_t(plat::PerfCounter());
             if (!upload.cpu)
             {
                 Log("[gpu] hd texture %016llX: %llu bytes don't fit the upload ring (%s)", (unsigned long long)key,
@@ -1121,9 +1122,8 @@ float4 main(float4 position : SV_Position) : SV_Target
             hdTexture.height = image.height;
             hdTexture.failed = false;
             g_stats.hdTextures++;
-            LARGE_INTEGER t4;
-            QueryPerformanceCounter(&t4);
-            auto ms = [&](LARGE_INTEGER a, LARGE_INTEGER b) { return double(b.QuadPart - a.QuadPart) * 1000.0 / double(frequency.QuadPart); };
+            int64_t t4 = int64_t(plat::PerfCounter());
+            auto ms = [&](int64_t a, int64_t b) { return double(b - a) * 1000.0 / double(frequency); };
             Log("[gpu] hd texture %016llX: %ux%u -> %ux%u, %u mip(s), DXGI %u (%s); %.1f ms (load %.1f, create %.1f, upload wait %.1f, copy %.1f)",
                 (unsigned long long)key, guestWidth, guestHeight, image.width, image.height, image.levels, uint32_t(image.format), image.source.c_str(),
                 ms(t0, t4), ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4));
@@ -1843,7 +1843,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             rhi::Texture* motion = nullptr;
             rhi::Texture* output = nullptr;
             uint32_t renderWidth = 0, renderHeight = 0, outputWidth = 0, outputHeight = 0;
-            LARGE_INTEGER lastTime{};
+            int64_t lastTime{};
             uint64_t evaluations = 0, failures = 0;
             double evaluateMs = 0.0;  // CPU time in upscaler::Evaluate since the last stats line
         } g_temporal;
@@ -2159,10 +2159,10 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
 
             // Upscale.
-            LARGE_INTEGER now, frequency;
-            QueryPerformanceCounter(&now);
-            QueryPerformanceFrequency(&frequency);
-            float frameMs = t.lastTime.QuadPart ? float(double(now.QuadPart - t.lastTime.QuadPart) * 1000.0 / double(frequency.QuadPart)) : 33.3f;
+            int64_t now, frequency;
+            now = int64_t(plat::PerfCounter());
+            frequency = int64_t(plat::PerfFrequency());
+            float frameMs = t.lastTime ? float(double(now - t.lastTime) * 1000.0 / double(frequency)) : 33.3f;
             t.lastTime = now;
             upscaler::Frame frame;
             frame.color = input.texture;
@@ -2214,11 +2214,11 @@ float4 main(float4 position : SV_Position) : SV_Target
                 }
                 return;
             }
-            LARGE_INTEGER evaluateStart, evaluateEnd;
-            QueryPerformanceCounter(&evaluateStart);
+            int64_t evaluateStart, evaluateEnd;
+            evaluateStart = int64_t(plat::PerfCounter());
             ok = upscaler::Evaluate(frame);
-            QueryPerformanceCounter(&evaluateEnd);
-            t.evaluateMs += double(evaluateEnd.QuadPart - evaluateStart.QuadPart) * 1000.0 / double(frequency.QuadPart);
+            evaluateEnd = int64_t(plat::PerfCounter());
+            t.evaluateMs += double(evaluateEnd - evaluateStart) * 1000.0 / double(frequency);
             if (!ok)
             {
                 t.failures++;
@@ -2772,18 +2772,16 @@ float4 main(float4 position : SV_Position) : SV_Target
         {
             if (!g_profileFrame)
                 return;
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
-            g_profileLast = uint64_t(now.QuadPart);
+            int64_t now = int64_t(plat::PerfCounter());
+            g_profileLast = uint64_t(now);
         }
         void ProfileMark(int bucket)
         {
             if (!g_profileFrame)
                 return;
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
-            g_profileTicks[bucket] += uint64_t(now.QuadPart) - g_profileLast;
-            g_profileLast = uint64_t(now.QuadPart);
+            int64_t now = int64_t(plat::PerfCounter());
+            g_profileTicks[bucket] += uint64_t(now) - g_profileLast;
+            g_profileLast = uint64_t(now);
         }
 
         void DrawImpl(const DrawPacket& packet)
@@ -3546,8 +3544,8 @@ float4 main(float4 position : SV_Position) : SV_Target
         void Reconfigure()
         {
             settings::Values wanted = settings::Get();
-            LARGE_INTEGER start, end, frequency;
-            QueryPerformanceCounter(&start);
+            int64_t start, end, frequency;
+            start = int64_t(plat::PerfCounter());
             WaitIdle();
 
             const settings::Resolution& resolution = settings::ResolutionOf(wanted.aspect, wanted.renderHeight);
@@ -3638,12 +3636,12 @@ float4 main(float4 position : SV_Position) : SV_Target
             g_rhi->Submit();  // the clears of the new resources
             settings::RendererApplied(wanted.renderHeight, wanted.aspect, wanted.upscaler, wanted.upscalerQuality);
 
-            QueryPerformanceCounter(&end);
-            QueryPerformanceFrequency(&frequency);
+            end = int64_t(plat::PerfCounter());
+            frequency = int64_t(plat::PerfFrequency());
             Log("[gpu] reconfigured: internal resolution %s (%.2fx), %s%s%s, scene %.3fx; %zu render targets and %zu resolve surfaces recreated in %.0f ms; aspect %.3f",
                 resolution.name, renderScale, temporal ? upscaler::ActiveName().c_str() : "no upscaler",
                 temporal ? " " : "", temporal ? settings::UpscalerQualityName(wanted.upscalerQuality) : "", sceneScale, targets, surfaces,
-                double(end.QuadPart - start.QuadPart) * 1000.0 / double(frequency.QuadPart), aspect);
+                double(end - start) * 1000.0 / double(frequency), aspect);
         }
 
         void ParseScreenshotSettings()
@@ -3929,14 +3927,14 @@ float4 main(float4 position : SV_Position) : SV_Target
                 s_compileMode = options.shaderCompilation;
                 g_rhi->SetShaderCompilation(RhiShaderCompilation(s_compileMode));
             }
-            static const ULONGLONG s_start = GetTickCount64();
+            static const ULONGLONG s_start = plat::TickCountMs();
             static bool s_precompiling = true;
             uint32_t done = 0, total = 0;
             if (s_precompiling)
                 g_rhi->PrecompileProgress(done, total);
             if (s_precompiling && done >= total)
                 s_precompiling = false;
-            else if (s_precompiling && GetTickCount64() - s_start > 3000 && g_stats.swaps % 15 == 0)
+            else if (s_precompiling && plat::TickCountMs() - s_start > 3000 && g_stats.swaps % 15 == 0)
                 overlay::Notice((settings::options::Portuguese(options) ? "PREPARANDO SHADERS... " : "PREPARING SHADERS... ") +
                                 std::to_string(done * 100 / std::max(total, 1u)) + "%");
         }
@@ -4188,7 +4186,7 @@ float4 main(float4 position : SV_Position) : SV_Target
 
         // Frame pacing stats: host time between presents, logged every 300 frames.
         {
-            static LARGE_INTEGER s_frequency, s_last;
+            static int64_t s_frequency, s_last;
             static double s_sum, s_max;
             static uint32_t s_count, s_hitches;
             static rhi::Timing s_timing;
@@ -4197,17 +4195,16 @@ float4 main(float4 position : SV_Position) : SV_Target
             s_timing.submitTicks += timing.submitTicks;
             s_timing.ringWaitTicks += timing.ringWaitTicks;
             s_timing.presentTicks = std::max(s_timing.presentTicks, timing.presentTicks);
-            LARGE_INTEGER now;
-            QueryPerformanceCounter(&now);
-            if (!s_frequency.QuadPart)
-                QueryPerformanceFrequency(&s_frequency);
-            if (s_last.QuadPart)
+            int64_t now = int64_t(plat::PerfCounter());
+            if (!s_frequency)
+                s_frequency = int64_t(plat::PerfFrequency());
+            if (s_last)
             {
-                double ms = double(now.QuadPart - s_last.QuadPart) * 1000.0 / double(s_frequency.QuadPart);
+                double ms = double(now - s_last) * 1000.0 / double(s_frequency);
                 s_sum += ms;
                 s_max = std::max(s_max, ms);
                 s_count++;
-                double toMs = 1000.0 / double(s_frequency.QuadPart);
+                double toMs = 1000.0 / double(s_frequency);
                 double pipelineMs = double(timing.pipelineTicks) * toMs, shaderMs = double(timing.shaderTicks) * toMs;
                 // Hitches over 50 ms and what compiled in them (first use of a shader or pipeline).
                 if (ms > 50.0)
@@ -4233,16 +4230,16 @@ float4 main(float4 position : SV_Position) : SV_Target
                 if (s_count == 300)
                 {
                     Log("[gpu] present pacing: %u frames, avg %.2f ms, max %.2f ms, %u over 50 ms; waiting for the GPU %.2f ms/frame, submit %.2f ms/frame, longest Present %.2f ms, ring waits %.2f ms/frame; window %s",
-                        s_count, s_sum / s_count, s_max, s_hitches, double(s_timing.frameWaitTicks) * 1000.0 / double(s_frequency.QuadPart) / s_count,
-                        double(s_timing.submitTicks) * 1000.0 / double(s_frequency.QuadPart) / s_count, double(s_timing.presentTicks) * 1000.0 / double(s_frequency.QuadPart),
-                        double(s_timing.ringWaitTicks) * 1000.0 / double(s_frequency.QuadPart) / s_count,
+                        s_count, s_sum / s_count, s_max, s_hitches, double(s_timing.frameWaitTicks) * 1000.0 / double(s_frequency) / s_count,
+                        double(s_timing.submitTicks) * 1000.0 / double(s_frequency) / s_count, double(s_timing.presentTicks) * 1000.0 / double(s_frequency),
+                        double(s_timing.ringWaitTicks) * 1000.0 / double(s_frequency) / s_count,
                         GetForegroundWindow() == g_hwnd ? "focused" : "not focused");
                     s_timing = {};
                     std::string profile;
                     for (int i = 0; i < 10; i++)
                     {
                         char text[64];
-                        snprintf(text, sizeof(text), "%s%s %.2f", i ? ", " : "", PROFILE_NAMES[i], double(g_profileTicks[i]) * 4.0 * 1000.0 / double(s_frequency.QuadPart) / 300.0);
+                        snprintf(text, sizeof(text), "%s%s %.2f", i ? ", " : "", PROFILE_NAMES[i], double(g_profileTicks[i]) * 4.0 * 1000.0 / double(s_frequency) / 300.0);
                         profile += text;
                         g_profileTicks[i] = 0;
                     }

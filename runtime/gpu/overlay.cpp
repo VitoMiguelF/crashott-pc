@@ -5,6 +5,7 @@
 #include "../diagnostics.h"
 #include "../kernel/input.h"
 #include "../settings/settings.h"
+#include "../platform/platform.h"
 
 #include <windows.h>
 
@@ -102,20 +103,20 @@ float4 main(float4 position : SV_Position) : SV_Target
         FILE* g_frameStats = nullptr;
 
         // Counters.
-        LARGE_INTEGER g_frequency{};
-        LARGE_INTEGER g_lastFrame{};
+        int64_t g_frequency{};
+        int64_t g_lastFrame{};
         uint64_t g_frame = 0;
         double g_lastMs = 0.0;
         std::deque<double> g_history;           // frame times (ms), newest at the back
-        std::deque<LARGE_INTEGER> g_swapTimes;  // swaps in the last second, for FPS
+        std::deque<int64_t> g_swapTimes;  // swaps in the last second, for FPS
         double g_fps = 0.0;
-        LARGE_INTEGER g_fpsUpdated{};
+        int64_t g_fpsUpdated{};
         double g_averageMs = 0.0, g_maxMs = 0.0, g_lowMs = 0.0;
         uint32_t g_marks = 0;
         std::string g_toast;
-        LARGE_INTEGER g_toastTime{};
+        int64_t g_toastTime{};
         std::string g_notice;  // Notice: shown in every mode
-        LARGE_INTEGER g_noticeTime{};
+        int64_t g_noticeTime{};
 
         bool EnvFlag(const char* name)
         {
@@ -123,9 +124,9 @@ float4 main(float4 position : SV_Position) : SV_Target
             return value && *value && strcmp(value, "0") != 0;
         }
 
-        double Seconds(const LARGE_INTEGER& from, const LARGE_INTEGER& to)
+        double Seconds(int64_t from, int64_t to)
         {
-            return double(to.QuadPart - from.QuadPart) / double(g_frequency.QuadPart);
+            return double(to - from) / double(g_frequency);
         }
 
         // Input clock in seconds with one decimal, or "--" before the first controller read.
@@ -142,7 +143,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         void Toast(std::string text)
         {
             g_toast = std::move(text);
-            QueryPerformanceCounter(&g_toastTime);
+            g_toastTime = int64_t(plat::PerfCounter());
         }
 
         void UpdateWindowStats()
@@ -241,8 +242,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                 snprintf(line, sizeof(line), "\x01 REC %02d:%02d  F5 PARA", seconds / 60, seconds % 60);
                 recordLine = line;
             }
-            LARGE_INTEGER noticeNow;
-            QueryPerformanceCounter(&noticeNow);
+            int64_t noticeNow = int64_t(plat::PerfCounter());
             bool notice = !g_notice.empty() && Seconds(g_noticeTime, noticeNow) < TOAST_SECONDS;
             if (g_mode == settings::OverlayMode::Off)
             {
@@ -311,8 +311,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                 }
                 if (record.recording)
                     lines.push_back({ recordLine, RECORDING });
-                LARGE_INTEGER now;
-                QueryPerformanceCounter(&now);
+                int64_t now = int64_t(plat::PerfCounter());
                 if (!g_toast.empty() && Seconds(g_toastTime, now) < TOAST_SECONDS)
                     lines.push_back({ g_toast, TOAST });
                 else
@@ -378,7 +377,7 @@ float4 main(float4 position : SV_Position) : SV_Target
 
     bool Init(rhi::Device* device, DXGI_FORMAT format, const std::filesystem::path& outputDir)
     {
-        QueryPerformanceFrequency(&g_frequency);
+        g_frequency = int64_t(plat::PerfFrequency());
         g_device = device;
         // CRASH_OVERLAY (run.toml `overlay`) wins over settings.toml for that run: 1/true = full,
         // or a mode name (off, fps, frametime, full).
@@ -420,9 +419,8 @@ float4 main(float4 position : SV_Position) : SV_Target
     {
         g_frame = frame;
         input::SetFrame(frame);
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        if (g_lastFrame.QuadPart)
+        int64_t now = int64_t(plat::PerfCounter());
+        if (g_lastFrame)
         {
             g_lastMs = Seconds(g_lastFrame, now) * 1000.0;
             g_history.push_back(g_lastMs);
@@ -445,7 +443,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         g_swapTimes.push_back(now);
         while (g_swapTimes.size() > 1 && Seconds(g_swapTimes.front(), now) > 1.0)
             g_swapTimes.pop_front();
-        if (!g_fpsUpdated.QuadPart || Seconds(g_fpsUpdated, now) >= 0.5)
+        if (!g_fpsUpdated || Seconds(g_fpsUpdated, now) >= 0.5)
         {
             double span = Seconds(g_swapTimes.front(), now);
             g_fps = g_swapTimes.size() > 1 && span > 0.0 ? double(g_swapTimes.size() - 1) / span : 0.0;
@@ -486,8 +484,7 @@ float4 main(float4 position : SV_Position) : SV_Target
     bool Visible()
     {
         // Off still shows the recording indicator.
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
+        int64_t now = int64_t(plat::PerfCounter());
         bool notice = !g_notice.empty() && Seconds(g_noticeTime, now) < TOAST_SECONDS;
         return g_ready && (g_mode != settings::OverlayMode::Off || input::Recording() || notice);
     }
@@ -517,7 +514,7 @@ float4 main(float4 position : SV_Position) : SV_Target
     void Notice(const std::string& text)
     {
         g_notice = text;
-        QueryPerformanceCounter(&g_noticeTime);
+        g_noticeTime = int64_t(plat::PerfCounter());
     }
 
     void BeginPresent(rhi::Texture* target)

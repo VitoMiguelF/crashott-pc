@@ -1,6 +1,5 @@
 // Button icons for the device in use (prompt_icons.h).
 
-// windows.h first: it turns DrawText into DrawTextA, and menu_art.cpp defines it after windows.h.
 #include <windows.h>
 
 #include "prompt_icons.h"
@@ -257,7 +256,7 @@ namespace settings::prompts
             }
             // Fill only: the font's outline (41 % alpha around each letter) makes small labels blobby.
             menu_art::TextStyle style{ color, { color.r, color.g, color.b, 0 }, 1.0f };
-            menu_art::DrawText(canvas, menu_art::FontId::Large, u, cx - width * 0.5f, cy - cell * 0.5f, cell, style);
+            menu_art::DrawGameText(canvas, menu_art::FontId::Large, u, cx - width * 0.5f, cy - cell * 0.5f, cell, style);
         }
 
         menu_art::Image ToImage(const Canvas& c)

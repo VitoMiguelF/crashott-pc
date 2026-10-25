@@ -81,6 +81,13 @@ target_compile_options(XexImage PRIVATE -w)
 # (runtime/paths.h). The image is decrypted from <game>\default.xex at startup.
 file(GLOB_RECURSE CRASH_RUNTIME_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/runtime/*.cpp)
 list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "/runtime/xex_image/|/runtime/gpu/dlss_module/")
+# OS backends (runtime/platform/ and the window/input/audio ones): *_win32.cpp on Windows,
+# *_posix.cpp and *_sdl.cpp (SDL3) elsewhere. See docs/internals/linux_port.md.
+if (WIN32)
+    list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "_(posix|sdl)\\.cpp$")
+else()
+    list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "_win32\\.cpp$")
+endif()
 add_executable(CrashRecomp ${CRASH_RUNTIME_SOURCES})
 target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
     hid setupapi windowscodecs)
@@ -190,6 +197,8 @@ add_executable(CrashLauncher WIN32
     ${CRASH_IMGUI_DIR}/backends/imgui_impl_win32.cpp
     ${CRASH_IMGUI_DIR}/backends/imgui_impl_dx11.cpp
     ${CMAKE_SOURCE_DIR}/runtime/paths.cpp
+    ${CMAKE_SOURCE_DIR}/runtime/platform/platform_win32.cpp
+    ${CMAKE_SOURCE_DIR}/runtime/platform/file_win32.cpp
     ${CMAKE_SOURCE_DIR}/runtime/fs/vfs.cpp
     ${CMAKE_SOURCE_DIR}/runtime/gpu/png_writer.cpp
     ${CMAKE_SOURCE_DIR}/runtime/settings/settings.cpp
@@ -202,7 +211,7 @@ add_executable(CrashLauncher WIN32
 target_include_directories(CrashLauncher PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
 target_compile_definitions(CrashLauncher PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 target_compile_options(CrashLauncher PRIVATE -Wno-deprecated-declarations)
-target_link_libraries(CrashLauncher PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi uuid bcrypt winhttp)
+target_link_libraries(CrashLauncher PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi uuid bcrypt winhttp winmm)
 
 # Installer (launcher/installer.inc): the launcher's look in front of tools/setup.py. The same
 # sources with CRASH_INSTALLER; the release bundle ships it prebuilt as CrashSetup.exe (our code
@@ -212,7 +221,7 @@ add_executable(CrashSetup WIN32 ${CRASH_LAUNCHER_SOURCES})
 target_include_directories(CrashSetup PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
 target_compile_definitions(CrashSetup PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS CRASH_INSTALLER)
 target_compile_options(CrashSetup PRIVATE -Wno-deprecated-declarations -Wno-unused-function)
-target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32 uuid bcrypt)
+target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32 uuid bcrypt winmm)
 
 # The player's folder (dist\): CrashRecomp.exe + DLLs, languages\, data\ (optional, derived from the
 # user's game), and mods\ / userdata\ / game\ kept as they are. `cmake --build build --target dist`

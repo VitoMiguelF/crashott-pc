@@ -10,7 +10,7 @@
 #include <ppc_config.h>
 #include <ppc_context.h>
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <atomic>
 #include <chrono>
@@ -54,12 +54,11 @@ namespace
 
     std::mutex g_interruptMutex;
     std::condition_variable g_interruptCondition;
-    // The interrupt thread sleeps on a high-resolution waitable timer (the next vblank) and an
-    // event (an interrupt request). condition_variable::wait_until rounds to whole milliseconds on
+    // The interrupt thread sleeps on a high-resolution waitable timer (the next vblank) that an
+    // interrupt request wakes. condition_variable::wait_until rounds to whole milliseconds on
     // Windows, so with the sub-millisecond vblank (FAST_VBLANK_HZ) it returned at once and the
-    // thread spun: ~70% of a core. Null handles (Windows before 10 1803): the condition variable.
-    HANDLE g_interruptEvent;
-    HANDLE g_vblankTimer;
+    // thread spun: ~70% of a core. Null (POSIX, Windows before 10 1803): the condition variable.
+    plat::TimerWait* g_vblankTimer;
     struct InterruptRequest
     {
         uint32_t source;
@@ -96,40 +95,34 @@ namespace
     // single-steps the store, then protects the page again and reports the value written. Another
     // thread writing while the page is briefly writable isn't seen; the command processor also
     // polls CP_RB_WPTR, so that only delays it.
-    LONG CALLBACK MmioHandler(PEXCEPTION_POINTERS info)
+    bool MmioHandler(plat::FaultInfo& fault)
     {
-        auto* record = info->ExceptionRecord;
-
-        if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 &&
-            record->ExceptionInformation[0] == 1)
+        if (fault.kind == plat::FaultKind::AccessViolation && fault.write)
         {
-            auto* host = reinterpret_cast<void*>(record->ExceptionInformation[1]);
-            if (!g_memory.IsInGuestRange(host))
-                return EXCEPTION_CONTINUE_SEARCH;
+            if (!g_memory.IsInGuestRange(fault.address))
+                return false;
 
-            uint32_t guest = g_memory.MapVirtual(host);
+            uint32_t guest = g_memory.MapVirtual(fault.address);
             if (guest < GPU_MMIO_BEGIN || guest >= GPU_MMIO_BEGIN + 0x1000)
-                return EXCEPTION_CONTINUE_SEARCH;
+                return false;
 
             t_pendingWrite = guest;
-            DWORD oldProtect;
-            VirtualProtect(TrappedPage(), 0x1000, PAGE_READWRITE, &oldProtect);
-            info->ContextRecord->EFlags |= 0x100; // trap flag: single-step the store
-            return EXCEPTION_CONTINUE_EXECUTION;
+            plat::ProtectMemory(TrappedPage(), 0x1000, plat::PageAccess::ReadWrite);
+            fault.RequestSingleStep(); // single-step the store
+            return true;
         }
 
-        if (record->ExceptionCode == EXCEPTION_SINGLE_STEP && t_pendingWrite)
+        if (fault.kind == plat::FaultKind::SingleStep && t_pendingWrite)
         {
             uint32_t guest = t_pendingWrite & ~3u;
             t_pendingWrite = 0;
 
-            DWORD oldProtect;
-            VirtualProtect(TrappedPage(), 0x1000, PAGE_READONLY, &oldProtect);
+            plat::ProtectMemory(TrappedPage(), 0x1000, plat::PageAccess::ReadOnly);
             OnGuestRegisterWrite((guest - GPU_MMIO_BEGIN) / 4, LoadBE32(guest));
-            return EXCEPTION_CONTINUE_EXECUTION;
+            return true;
         }
 
-        return EXCEPTION_CONTINUE_SEARCH;
+        return false;
     }
 
     void LogStats()
@@ -187,27 +180,19 @@ namespace
         auto nextVblank = std::chrono::steady_clock::now() + VBLANK_PERIOD;
         auto nextStats = std::chrono::steady_clock::now() + STATS_PERIOD;
 
-        g_vblankTimer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-        if (g_vblankTimer)
-            g_interruptEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        Log("[gpu] interrupt thread waits on %s", g_vblankTimer && g_interruptEvent ? "a high-resolution timer" : "a condition variable");
+        g_vblankTimer = plat::CreateTimerWait();
+        Log("[gpu] interrupt thread waits on %s", g_vblankTimer ? "a high-resolution timer" : "a condition variable");
 
         while (true)
         {
-            if (g_vblankTimer && g_interruptEvent)
+            if (g_vblankTimer)
             {
                 auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(nextVblank - std::chrono::steady_clock::now()).count();
                 if (remaining > 0)
-                {
-                    LARGE_INTEGER due;
-                    due.QuadPart = -std::max<LONGLONG>(1, remaining / 100);  // relative, 100 ns units
-                    SetWaitableTimerEx(g_vblankTimer, &due, 0, nullptr, nullptr, nullptr, 0);
-                    HANDLE handles[2] = { g_interruptEvent, g_vblankTimer };
-                    WaitForMultipleObjects(2, handles, FALSE, INFINITE);
-                }
+                    plat::WaitTimer(g_vblankTimer, remaining);
             }
             std::unique_lock lock(g_interruptMutex);
-            if (!g_vblankTimer || !g_interruptEvent)
+            if (!g_vblankTimer)
                 g_interruptCondition.wait_until(lock, nextVblank, [] { return !g_interruptQueue.empty(); });
 
             while (!g_interruptQueue.empty())
@@ -265,9 +250,8 @@ namespace gpu
         WriteRegister(REG_INTERRUPT_STATUS, 1);    // vblank
         WriteRegister(0x1961, 0x050002D0);         // AVIVO_D1MODE_VIEWPORT_SIZE: 1280x720
 
-        DWORD oldProtect;
-        VirtualProtect(TrappedPage(), 0x1000, PAGE_READONLY, &oldProtect);
-        AddVectoredExceptionHandler(1, MmioHandler);
+        plat::ProtectMemory(TrappedPage(), 0x1000, plat::PageAccess::ReadOnly);
+        plat::AddFaultHandler(MmioHandler);
 
         AddDiagnosticReporter(LogStats);
         SetFrameLimit(uint32_t(settings::Get().fpsLimit));
@@ -312,8 +296,8 @@ namespace gpu
         std::unique_lock lock(g_interruptMutex);
         g_interruptQueue.push_back({ source, cpu, wait ? &done : nullptr });
         g_interruptCondition.notify_one();
-        if (g_interruptEvent)
-            SetEvent(g_interruptEvent);
+        if (g_vblankTimer)
+            plat::WakeTimer(g_vblankTimer);
         if (wait)
             g_interruptDelivered.wait(lock, [&] { return done; });
     }
@@ -390,7 +374,7 @@ namespace gpu
             if (sleep > std::chrono::nanoseconds(0))
                 std::this_thread::sleep_for(sleep);
             while (std::chrono::steady_clock::now() < s_next)
-                YieldProcessor();
+                plat::CpuRelax();
         }
         s_next += period;
     }

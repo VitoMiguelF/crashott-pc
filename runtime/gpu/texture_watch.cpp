@@ -4,7 +4,9 @@
 #include "../diagnostics.h"
 #include "../kernel/memory.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
+
+#include <mutex>
 
 #include <algorithm>
 #include <atomic>
@@ -25,38 +27,36 @@ namespace
     // Protect and the handler both change protection and g_clean together: otherwise a fault
     // handled between Protect's marking and its VirtualProtect could leave a page writable but
     // marked clean.
-    SRWLOCK g_lock = SRWLOCK_INIT;
+    std::mutex g_lock;
     std::atomic<uint64_t> g_faults;
 
-    void SetProtection(uint32_t physical, uint32_t size, DWORD protection)
+    void SetProtection(uint32_t physical, uint32_t size, plat::PageAccess access)
     {
-        DWORD old;
-        VirtualProtect(g_memory.Translate(PHYSICAL_VIEW_A + physical), size, protection, &old);
-        VirtualProtect(g_memory.Translate(PHYSICAL_VIEW_C + physical), size, protection, &old);
+        plat::ProtectMemory(g_memory.Translate(PHYSICAL_VIEW_A + physical), size, access);
+        plat::ProtectMemory(g_memory.Translate(PHYSICAL_VIEW_C + physical), size, access);
     }
 
-    LONG CALLBACK WriteFaultHandler(PEXCEPTION_POINTERS info)
+    bool WriteFaultHandler(plat::FaultInfo& fault)
     {
-        auto* record = info->ExceptionRecord;
-        if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record->NumberParameters < 2 || record->ExceptionInformation[0] != 1)
-            return EXCEPTION_CONTINUE_SEARCH;
-        auto* host = reinterpret_cast<void*>(record->ExceptionInformation[1]);
-        if (!g_memory.IsInGuestRange(host))
-            return EXCEPTION_CONTINUE_SEARCH;
-        uint32_t guest = g_memory.MapVirtual(host);
+        if (fault.kind != plat::FaultKind::AccessViolation || !fault.write)
+            return false;
+        if (!g_memory.IsInGuestRange(fault.address))
+            return false;
+        uint32_t guest = g_memory.MapVirtual(fault.address);
         if (guest < PHYSICAL_VIEW_A || guest >= PHYSICAL_VIEW_E)
-            return EXCEPTION_CONTINUE_SEARCH;
+            return false;
         // Both physical views are committed read-write except for what Protect made read-only,
         // so a write fault here is always one of ours (even if the page is no longer marked
         // clean: Protect may have just been undone by another thread's fault on the same block).
         uint32_t block = (guest & (PHYSICAL_SIZE - 1)) & ~(UNPROTECT_BLOCK - 1);
-        AcquireSRWLockExclusive(&g_lock);
-        for (uint32_t page = block / PAGE; page < (block + UNPROTECT_BLOCK) / PAGE; page++)
-            g_clean[page].store(0, std::memory_order_relaxed);
-        SetProtection(block, UNPROTECT_BLOCK, PAGE_READWRITE);
-        ReleaseSRWLockExclusive(&g_lock);
+        {
+            std::lock_guard lock(g_lock);
+            for (uint32_t page = block / PAGE; page < (block + UNPROTECT_BLOCK) / PAGE; page++)
+                g_clean[page].store(0, std::memory_order_relaxed);
+            SetProtection(block, UNPROTECT_BLOCK, plat::PageAccess::ReadWrite);
+        }
         g_faults.fetch_add(1, std::memory_order_relaxed);
-        return EXCEPTION_CONTINUE_EXECUTION;
+        return true;
     }
 }
 
@@ -75,7 +75,7 @@ namespace gpu::watch
             Log("[gpu] texture write watch off: physical memory is not aliased");
             return false;
         }
-        AddVectoredExceptionHandler(1, WriteFaultHandler);
+        plat::AddFaultHandler(WriteFaultHandler);
         g_enabled = true;
         Log("[gpu] texture write watch on: stable textures are not hashed again until written");
         return true;
@@ -92,11 +92,10 @@ namespace gpu::watch
             return;
         size = std::min<uint32_t>(size, PHYSICAL_SIZE - physical);
         uint32_t first = physical / PAGE, last = (physical + size - 1) / PAGE;
-        AcquireSRWLockExclusive(&g_lock);
+        std::lock_guard lock(g_lock);
         for (uint32_t page = first; page <= last; page++)
             g_clean[page].store(1, std::memory_order_relaxed);
-        SetProtection(first * PAGE, (last - first + 1) * PAGE, PAGE_READONLY);
-        ReleaseSRWLockExclusive(&g_lock);
+        SetProtection(first * PAGE, (last - first + 1) * PAGE, plat::PageAccess::ReadOnly);
     }
 
     bool Clean(uint32_t physical, uint32_t size)

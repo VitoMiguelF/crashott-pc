@@ -6,7 +6,7 @@
 #include "../diagnostics.h"
 #include "../fs/vfs.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <atomic>
@@ -111,14 +111,14 @@ namespace gpu::warmup
 
         // Every source in both variants, on `threads` threads (the variant in use first, given to
         // `device`). Returns the failures.
-        int CompileAll(const std::vector<Source>& sources, const std::filesystem::path& shaderCache, uint32_t threads, int priority,
+        int CompileAll(const std::vector<Source>& sources, const std::filesystem::path& shaderCache, uint32_t threads, plat::ThreadPriority priority,
                        rhi::Device* device = nullptr, bool scaled = false)
         {
             std::atomic<size_t> next{ 0 };
             std::atomic<int> failures{ 0 };
             auto work = [&] {
-                if (priority != THREAD_PRIORITY_NORMAL)
-                    SetThreadPriority(GetCurrentThread(), priority);
+                if (priority != plat::ThreadPriority::Normal)
+                    plat::SetCurrentThreadPriority(priority);
                 for (size_t job; (job = next.fetch_add(1)) < sources.size() * 2;)
                 {
                     bool inUse = job < sources.size();
@@ -182,10 +182,10 @@ namespace gpu::warmup
     void StartBackground(const std::filesystem::path& shaderCache, rhi::Device* device, bool scaled)
     {
         std::thread([shaderCache, device, scaled] {
-            SetThreadDescription(GetCurrentThread(), L"shader warm-up");
+            plat::SetCurrentThreadName("shader warm-up");
             auto start = std::chrono::steady_clock::now();
             std::vector<Source> sources = Sources(shaderCache);
-            int failures = CompileAll(sources, shaderCache, 1, THREAD_PRIORITY_LOWEST, device, scaled);
+            int failures = CompileAll(sources, shaderCache, 1, plat::ThreadPriority::Lowest, device, scaled);
             Log("[gpu] shader warm-up: %zu shaders x 2 variants checked in %.0f ms (%d failed)", sources.size(),
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), failures);
         }).detach();
@@ -198,7 +198,7 @@ namespace gpu::warmup
         auto start = std::chrono::steady_clock::now();
         std::vector<Source> sources = Sources(shaderCache);
         uint32_t threads = std::max(1u, std::thread::hardware_concurrency());
-        int failures = CompileAll(sources, shaderCache, threads, THREAD_PRIORITY_NORMAL);
+        int failures = CompileAll(sources, shaderCache, threads, plat::ThreadPriority::Normal);
         Log("[gpu] --precompile-shaders: %zu shaders x 2 variants in %.0f ms on %u threads, %d failed (cache %s)", sources.size(),
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), threads, failures,
             shaderCache.string().c_str());
