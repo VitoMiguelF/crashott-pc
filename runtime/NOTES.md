@@ -2268,3 +2268,15 @@ O Deck tem a raiz somente leitura, sem pacman, compilador nem headers. Então o 
 - Um `dist/` novo não tem `data/subtitles` (é o extra `--subtitles`) e o `settings.toml` padrão tem `subtitles = false`: para testar o texto, `--data` + `CRASH_SETTINGS=game.subtitles=true` + `CRASH_SUBTITLE_TEST`.
 
 **Conferido.** Um clone limpo + `toolchain/` rodando o setup com o Python portátil e `PATH=/usr/bin:/bin`: os 9 passos, `--precompile-shaders` (24 shaders x 2, 0 falhas), o jogo do `dist/` no menu com som (FFmpeg do lado do exe, 0 erros de decodificação) e legenda de teste desenhada (Noto Sans). XenonRecomp + recompilação + build do zero em cerca de 1 minuto (16 threads). No repositório: `python3 tools/run_game.py vila_sem_cena` (543 fps médio, todos os eventos) e `menu` (831 fps) passam com o build do zig.
+
+## Linux: o instalador AppImage (2026-10-25) (`tools/make_appimage.py`, `tools/appimage_install.py`, `tools/make_installer.py`)
+
+O equivalente do `CrashSetup.exe` para Linux, com o Steam Deck (modo desktop) em primeiro lugar: `python3 tools/make_appimage.py <tag>` gera `release/<tag>/CrashSetup-<tag>-x86_64.AppImage`. Interface simples nesta primeira versão (zenity, kdialog ou terminal); a do Windows (ImGui + SDL3, com controle) fica para depois, por cima do mesmo pacote. Detalhes em `docs/internals/linux_port.md`, "The installer".
+
+- **Conteúdo:** o mesmo `collect()` do `make_installer.py` (agora com a lista de terceiros como parâmetro) com os arquivos Linux do `thirdparty/` e a `toolchain/` de Linux, mais `tools/appimage_install.py`; sem launcher, DLSS e FSR. 176 MB (squashfs zstd). Nada do jogo: extraído e varrido, só aparecem nomes da toolchain com "generated"/"private" no nome.
+- **Montagem:** appimagetool 1.9.1 (traz o mksquashfs) + runtime type2 20251108, fixados por SHA-256 em `build/downloads/appimage`; roda extraído (`APPIMAGE_EXTRACT_AND_RUN=1`), sem FUSE nem sudo.
+- **Instalação:** o AppRun roda o `appimage_install.py` com o Python do pacote: pede o dump (confere como o setup.py), a pasta (padrão `~/Games/Crash of the Titans Definitive Edition`) e as legendas, copia o projeto para `<pasta>/CrashRecomp`, roda o `setup.py --copy-game --play-dir <pasta>` (barra de progresso com as linhas `@@`) e cria a entrada de menu `crashrecomp-crashottde.desktop`. No Deck, o "Adicionar à Steam" do menu do KDE leva o jogo ao modo de jogo.
+
+**Armadilha.** O appimagetool (GLib) recusou os argumentos com "Área de trabalho" ("Sequência de bytes inválida"): o script passa os caminhos relativos ao projeto e `LC_ALL=C.UTF-8`.
+
+**Conferido.** `release/test/CrashSetup-test-x86_64.AppImage --game <dump> --dir <pasta> --yes --text` com `env -i PATH=/usr/bin:/bin` (e um `XDG_DATA_HOME` de teste): instalação completa em 1 min 8 s (16 threads, com a cópia de 3,1 GB do dump), e o `CrashOTTDE` instalado abre no menu com som, achando `game/`, `userdata/` ao lado e `CrashRecomp/languages`. Falta testar as janelas à mão e um Steam Deck.

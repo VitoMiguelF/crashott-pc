@@ -131,8 +131,9 @@ def worktree_files():
     return {n: ROOT / n for n in names if n and (ROOT / n).is_file()}
 
 
-def collect(worktree=False):
-    """[(component, path, bytes or Path)] of everything in the payload."""
+def collect(worktree=False, thirdparty=None):
+    """[(component, path, bytes or Path)] of everything in the payload. thirdparty: THIRDPARTY, or the
+    Linux list of tools/make_appimage.py."""
     if worktree:
         files = worktree_files()
     else:
@@ -159,7 +160,7 @@ def collect(worktree=False):
         rel = f.relative_to(toolchain.TOOLCHAIN)
         if f.is_file() and not SKIP_PARTS.intersection(rel.parts):
             entries.append((component(f"toolchain/{rel.as_posix()}"), f"toolchain/{rel.as_posix()}", f))
-    for part, target, source in THIRDPARTY:
+    for part, target, source in THIRDPARTY if thirdparty is None else thirdparty:
         if not source.exists():
             raise SystemExit(f"falta {source}: rode tools\\setup.py (FFmpeg, DXC, FSR, DLSS) e compile o CrashDlss "
                              "(cmake --build build --target CrashDlss)")

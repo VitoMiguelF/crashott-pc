@@ -159,7 +159,7 @@ Not done yet:
    with SDL's queue.
 5. Steam Deck: run under Gamescope (fullscreen, 1280×800, the Hor+ path), Deck controls through
    SDL (Steam Input exposes them as a gamepad), and suspend/resume.
-6. tools: ~~buildenv / run_game POSIX branch, FFmpeg/DXC `.so` files~~ (done, see "Building on a Steam Deck"); packaging (`make_installer.py --linux`), our own SDL3 build.
+6. tools: ~~buildenv / run_game POSIX branch, FFmpeg/DXC `.so` files~~ (done, see "Building on a Steam Deck"); ~~packaging~~ (the AppImage, see "The installer"); our own SDL3 build; the installer's ImGui UI.
 7. Optional: DLSS (NGX Linux), FSR 3.1 from source, launcher.
 
 ## Building on a Steam Deck (`setup.py` on Linux)
@@ -186,7 +186,32 @@ accepts it.
 
 Still to do for the Deck: run it on one (build time on 4 Zen 2 cores, Game Mode / Gamescope, Steam
 Input); our own SDL3 with every backend loaded at run time (built once at release time, against the
-Steam Runtime 3 sysroot), shipped next to the exe; the installer.
+Steam Runtime 3 sysroot), shipped next to the exe.
+
+## The installer: `CrashSetup-<tag>-x86_64.AppImage`
+
+`python3 tools/make_appimage.py <tag>` (on Linux, after `toolchain.py fetch` and a `setup.py` run that
+left thirdparty/'s Linux files) builds `release/<tag>/CrashSetup-<tag>-x86_64.AppImage`, the
+counterpart of CrashSetup.exe: ~176 MB (zstd squashfs), 30,000 files, of which toolchain/ is ~560 MB
+and thirdparty/ ~140 MB unpacked. The payload is `make_installer.collect()` with the Linux
+third-party list (no launcher, DLSS or FSR) plus `tools/appimage_install.py`; no game file, no
+recompiled code. It is packed by appimagetool 1.9.1 (it carries mksquashfs; run with
+`APPIMAGE_EXTRACT_AND_RUN=1`, so no FUSE or sudo on the release machine) with the type2 runtime
+20251108, both pinned. GLib's option parser refused the paths with "Área" under some locales: the
+script passes them relative to the project, with `LC_ALL=C.UTF-8`.
+
+When run, AppRun starts `tools/appimage_install.py` with the bundled Python. It asks for the dump
+(checked like setup.py: the files and default.xex's SHA-256), the install folder (default
+`~/Games/Crash of the Titans Definitive Edition`) and the subtitles; copies the project into
+`<install>/CrashRecomp`; runs its `setup.py --copy-game --play-dir <install>`, the `@@step` /
+`@@progress` lines driving a zenity progress window (or kdialog + qdbus, or the terminal); and writes
+`~/.local/share/applications/crashrecomp-crashottde.desktop`, whose right-click "Add to Steam" in the
+Deck's desktop mode puts the game in Game Mode. `--game <dir> --dir <dir> --yes --text` installs with
+no questions. The installed layout is Windows' (`CrashOTTDE`, the .so files, game/, userdata/, mods/
+next to it; the project with languages/ and data/ in CrashRecomp/).
+
+Measured here (16 threads): the whole install, with the 3.1 GB copy of the dump and the build, in
+1 min 8 s, from `env -i PATH=/usr/bin:/bin`. Not tried yet: the dialogs by hand, and a Steam Deck.
 
 ## x86-only code (for an ARM64 / Android build)
 
