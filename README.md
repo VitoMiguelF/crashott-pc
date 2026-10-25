@@ -6,23 +6,27 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 
 **[Português do Brasil abaixo](#português-do-brasil)**
 
-> ### v1.04: almost 3x faster, and on the way to 100% native rendering
+> ### v1.05: ultrawide, no shader stutter, and updates from the launcher
 >
-> The renderer no longer imitates the Xbox 360's GPU step by step where it doesn't need to: the scene is
-> drawn **in one pass** instead of the console's three screen tiles, the game's Direct3D command building
-> runs as **native code**, and the shaders are **compiled at install** instead of while playing.
+> - **Ultrawide (21:9, 32:9) and 16:10 with Hor+**: the same vertical view, more of the world on both
+>   sides, nothing stretched or cropped. The HUD and menus stay at 16:9 in the middle (or the HUD
+>   corners at the screen's edges), menu backgrounds fill the screen, and videos play at 16:9 between
+>   black bars. SETTINGS > VIDEO > ASPECT RATIO (AUTO follows the monitor).
+> - **Shaders compiled in the background**: the first time an effect appeared, the game used to stop to
+>   build it (~34 ms each, up to 1.6 s in one frame in the village, and all of it again after every
+>   driver update). Now each part is compiled once, linked in under 1 ms and optimized on a worker
+>   thread, and the pipelines of earlier sessions are rebuilt at start: **no hitches** in the village or
+>   level 3, cold cache or not. GRAPHICS > SHADER COMPILATION (SYNCHRONOUS brings back the old way).
+> - **UPDATE in the launcher**: when a new release is out, the launcher shows it; one click downloads
+>   only the new installer, checks it and installs over the same folder, keeping saves, options and mods.
+> - **One-file installer**: `CrashSetup-v1.05.exe`, offline, choose where to install, shortcuts, and
+>   DLSS installed only on a GPU that runs it.
 >
-> | Heaviest scene (L1_E1 village, 1080p, unlimited FPS) | v1.03 | **v1.04** |
-> |---|---|---|
-> | Average frame rate | ~180 fps | **~500 fps** (2.8x) |
-> | Worst 1% of frames (1% low) | ~105 fps | **~265 fps** |
-> | 99th percentile frame time | 6.6 ms | **2.7 ms** |
-> | CPU used by the vblank thread | ~70% of a core | ~5% |
+> ![The same moment at 16:9 and at 21:9](docs/screenshots/ultrawide.jpg)
 >
-> Measured on a Ryzen 7 5700X + RTX 5080. The gain is on the CPU side (the GPU was never the limit), so
-> slower CPUs should gain in a similar proportion (not measured yet: reports welcome). Next: replacing
-> the remaining Xbox 360 GPU emulation with direct Direct3D-to-Vulkan calls, step by step
-> ([the plan](docs/internals/native-gpu-plan.md#road-to-100-native)).
+> v1.04 made the game almost 3x faster (one-pass scene, native D3D command building: ~180 -> ~500 fps
+> in the village on a Ryzen 7 5700X + RTX 5080); next is replacing the remaining Xbox 360 GPU emulation
+> with direct Direct3D-to-Vulkan calls ([the plan](docs/internals/native-gpu-plan.md#road-to-100-native)).
 
 ![Title screen](docs/screenshots/title.jpg)
 
@@ -241,23 +245,27 @@ código PowerPC do jogo para x86-64 com o [XenonRecomp](https://github.com/hedge
 um runtime que faz o papel do Xbox 360 (gráficos, áudio, controles, arquivos, saves) e várias melhorias
 de PC.
 
-> ### v1.04: quase 3x mais rápido, e a caminho da renderização 100% nativa
+> ### v1.05: ultrawide, sem engasgo de shader e atualização pelo launcher
 >
-> O renderizador deixou de imitar a GPU do Xbox 360 passo a passo onde não precisa: a cena é desenhada
-> **numa passada só** em vez das três faixas de tela do console, a montagem de comandos Direct3D do jogo
-> roda como **código nativo** e os shaders são **compilados na instalação**, não durante o jogo.
+> - **Ultrawide (21:9, 32:9) e 16:10 com Hor+**: a mesma visão na vertical e mais do mundo dos dois
+>   lados, sem esticar nem cortar. O HUD e os menus ficam em 16:9 no meio (ou os cantos do HUD nas bordas
+>   da tela), os fundos dos menus preenchem a tela e os vídeos passam em 16:9 entre faixas pretas.
+>   SETTINGS > VÍDEO > PROPORÇÃO (AUTO segue o monitor).
+> - **Shaders compilados em segundo plano**: na primeira vez que um efeito aparecia, o jogo parava para
+>   montá-lo (~34 ms cada, até 1,6 s num quadro só na vila, e tudo de novo a cada atualização do driver).
+>   Agora cada parte é compilada uma vez, ligada em menos de 1 ms e otimizada numa thread à parte, e as
+>   pipelines das sessões anteriores são refeitas na abertura: **nenhum engasgo** na vila nem na fase 3,
+>   com o cache frio ou não. GRÁFICOS > COMPILAÇÃO DE SHADERS (SINCRONIZADA volta ao jeito antigo).
+> - **ATUALIZAR no launcher**: quando sai uma release nova, o launcher avisa; um clique baixa só o
+>   instalador novo, confere e instala por cima na mesma pasta, mantendo saves, opções e mods.
+> - **Instalador num arquivo só**: `CrashSetup-v1.05.exe`, offline, com a escolha de onde instalar,
+>   atalhos, e o DLSS instalado só numa placa que o roda.
 >
-> | Cena mais pesada (vila do L1_E1, 1080p, FPS livre) | v1.03 | **v1.04** |
-> |---|---|---|
-> | FPS médio | ~180 fps | **~500 fps** (2,8x) |
-> | Pior 1% dos quadros (1% low) | ~105 fps | **~265 fps** |
-> | Tempo de quadro no percentil 99 | 6,6 ms | **2,7 ms** |
-> | CPU usada pela thread de vblank | ~70% de um núcleo | ~5% |
+> ![O mesmo momento em 16:9 e em 21:9](docs/screenshots/ultrawide.jpg)
 >
-> Medido num Ryzen 7 5700X + RTX 5080. O ganho é do lado da CPU (a placa de vídeo nunca foi o limite),
-> então CPUs mais lentas devem ganhar numa proporção parecida (ainda não medido: relatos são bem-vindos).
-> Próximo passo: trocar o resto da emulação da GPU do Xbox 360
-> por chamadas diretas do Direct3D para o Vulkan, etapa por etapa
+> A v1.04 deixou o jogo quase 3x mais rápido (cena numa passada só, montagem de comandos D3D nativa: de
+> ~180 para ~500 fps na vila num Ryzen 7 5700X + RTX 5080); o próximo passo é trocar o resto da emulação
+> da GPU do Xbox 360 por chamadas diretas do Direct3D para o Vulkan
 > ([o plano](docs/internals/native-gpu-plan.md#road-to-100-native)).
 
 > **Nenhum arquivo do jogo está incluído.** Você precisa da sua própria cópia original de Crash of the
