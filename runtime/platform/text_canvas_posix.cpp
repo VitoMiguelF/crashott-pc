@@ -318,6 +318,14 @@ namespace plat
             m_impl->DrawLine(m_width, m_height, x, y, text, 0, m_height);
     }
 
+    int TextCanvas::TextWidth(const std::wstring& text) const
+    {
+        if (!m_impl->font)
+            return 0;
+        std::lock_guard lock(m_impl->font->mutex);
+        return LineWidth(*m_impl->font, text);
+    }
+
     void TextCanvas::MeasureWrapped(const std::wstring& text, int maxWidth, int& width, int& height)
     {
         width = height = 0;
@@ -380,6 +388,7 @@ namespace plat
     bool TextCanvas::Resize(int, int) { return false; }
     void TextCanvas::Clear() {}
     void TextCanvas::Draw(int, int, const std::wstring&) {}
+    int TextCanvas::TextWidth(const std::wstring&) const { return 0; }
 
     void TextCanvas::MeasureWrapped(const std::wstring&, int, int& width, int& height)
     {

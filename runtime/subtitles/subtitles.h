@@ -21,7 +21,8 @@
 // that moment, minus a fixed delay (CRASH_SUBTITLE_OFFSET_MS, default 280), never past what was
 // decoded, and frozen while a stream stops decoding for over 3.5 s (pause, skip). A context that
 // moves on to other audio ends a stream it hadn't finished (skipped scene); a clip already decoded
-// whole keeps playing. Three subtitled sounds started on one context within 0.5 s are a load-time
+// whole keeps playing. A line may end after its sound (barks get 1.5 s on screen): the sound's track
+// lives until its last line ends. Three subtitled sounds started on one context within 0.5 s are a load-time
 // unpack, not playback, and are dropped. CRASH_SUBTITLE_TRACE=1 logs all of it;
 // CRASH_SUBTITLE_TEST=<text> shows a fixed text (style checks).
 //

@@ -30,6 +30,10 @@ Subtitle file format (UTF-8):
     seconds = 103.363                             (archive, entry) and its length
     3.20 6.85 AKU AKU: Crash! Wake up!            start end [SPEAKER:] text (\\n = line break)
 
+Colour tags in the text (runtime/subtitles/subtitle_draw.cpp): {cor=amarelo}AKU AKU:{/cor} Crash!
+colours the part between them; a name of COLOR_NAMES or {cor=#RRGGBB}, and they nest. `check`
+lists unknown colours and unbalanced tags (the game would show them as text).
+
 A translation only needs the [key] lines and the timed lines (copy english.txt and translate
 the text after the times); keys or times it leaves out fall back to nothing (no English mixed in).
 """
@@ -348,11 +352,43 @@ def list_cmd(args):
         print(f"{k:40} {v['seconds']:7.2f} s  {len(v['lines']):3} line(s)")
 
 
+# Colour tags of the subtitle text (runtime/subtitles/subtitle_draw.cpp, NAMED_COLORS).
+BASE_COLORS = ["amarelo", "laranja", "vermelho", "rosa", "roxo", "azul", "ciano", "verde", "cinza", "verdeAzulado",
+               "cinzaAzulado"]
+COLOR_NAMES = {"branco"} | {b + v for b in BASE_COLORS for v in ("", "Escuro", "Claro")}
+TAG = re.compile(r"\{([^{}]{0,31})\}")
+
+
+def tag_problems(text):
+    """Colour tags the game would show as text, or leave open."""
+    problems, depth = [], 0
+    for m in TAG.finditer(text):
+        tag = m.group(1)
+        if tag == "/cor":
+            if depth == 0:
+                problems.append("{/cor} without {cor=...}")
+            depth = max(0, depth - 1)
+        elif tag.startswith("cor="):
+            value = tag[4:].lower()
+            if value in {n.lower() for n in COLOR_NAMES} or re.fullmatch(r"#?[0-9a-f]{6}", value):
+                depth += 1
+            else:
+                problems.append(f"unknown colour {{{tag}}} (names: branco, {', '.join(BASE_COLORS)}, "
+                                "each also ...Escuro / ...Claro, or #RRGGBB)")
+    if depth:
+        problems.append("{cor=...} without {/cor} (the colour runs to the end of the line)")
+    return problems
+
+
 def check(args):
     eng, errors = parse(ENGLISH)
     path = ROOT / "languages" / args.lang / "subtitles.txt"
     tr, errors2 = parse(path)
     errors += errors2
+    for name, data in (("english", eng), (args.lang, tr)):
+        for k, v in data.items():
+            for start, _, text in v["lines"]:
+                errors += [f"{name}: [{k}] {start:.2f}: {p}" for p in tag_problems(text)]
     for k, v in eng.items():
         if k not in tr:
             errors.append(f"{args.lang}: [{k}] missing")

@@ -83,6 +83,9 @@ namespace subtitles
                                     // what was decoded, frozen while the stream doesn't decode
             bool detached = false;  // the context moved on after decoding the whole sound
             double decodedEnd = 0.0;
+            uint64_t id = 0;
+            uint64_t replacedBy = 0;  // detached: the subtitled sound that took its context; once that one
+                                      // shows a line, this one shows none once its audio is over
         };
 
         std::vector<Sound> g_sounds;
@@ -102,6 +105,7 @@ namespace subtitles
         std::mutex g_mutex;  // tracks, g_recentStarts
         std::unordered_map<uint32_t, std::vector<double>> g_recentStarts;  // per context: Now() of subtitled starts
         std::vector<Track> g_tracks;
+        uint64_t g_nextTrackId = 1;
         std::wstring g_text;
         bool g_gameplay = false;  // g_text has a line of an in-game clip (not a cutscene)
         uint64_t g_version = 0;
@@ -268,7 +272,8 @@ namespace subtitles
         {
             std::unordered_map<uint64_t, Ref> refs;
             std::unordered_map<std::string, std::pair<RcfIndex, plat::File>> archives;
-            int found = 0, missing = 0;
+            std::unordered_map<uint64_t, int> sameAudio;  // hash of the audio data (header path excluded) -> first sound
+            int found = 0, missing = 0, duplicates = 0;
             for (size_t s = 0; s < g_sounds.size(); s++)
             {
                 Sound& sound = g_sounds[s];
@@ -319,6 +324,24 @@ namespace subtitles
                 for (uint32_t b = 1; b < blocks && b * 4 <= seekSize; b++)
                     sound.blockStart[b] = BE32(&data[0x80C + formatSize + (b - 1) * 4]);
 
+                // The same audio under two names (monkey3/amb17_003_doom3 = answer_monkey3_04, the same
+                // .wav filed twice): every fingerprint would be shared, and shared means ambiguous, so
+                // neither got subtitles. The first one in the file with lines answers for both.
+                auto [same, firstOfAudio] = sameAudio.emplace(Fnv(&data[0x800], data.size() - 0x800), int(s));
+                if (!firstOfAudio)
+                {
+                    if (g_sounds[same->second].lines.empty() && !sound.lines.empty())
+                    {
+                        for (auto& [hash, ref] : refs)
+                            if (ref.sound == same->second)
+                                ref.sound = int(s);
+                        same->second = int(s);
+                    }
+                    duplicates++;
+                    found++;
+                    continue;
+                }
+
                 auto add = [&](uint64_t hash, int block, int stream) {
                     auto [r, inserted] = refs.emplace(hash, Ref{ int(s), block, stream, false });
                     if (!inserted && (r->second.sound != int(s) || r->second.block != block))
@@ -341,8 +364,8 @@ namespace subtitles
             size_t ambiguous = std::count_if(refs.begin(), refs.end(), [](const auto& r) { return r.second.ambiguous; });
             g_refs = std::move(refs);
             g_ready = true;
-            Log("[subtitles] %d sound(s) recognizable (%zu fingerprints, %zu ambiguous), %d not found in the archives", found,
-                g_refs.size(), ambiguous, missing);
+            Log("[subtitles] %d sound(s) recognizable (%zu fingerprints, %zu ambiguous; %d with the same audio as an earlier one), "
+                "%d not found in the archives", found, g_refs.size(), ambiguous, duplicates, missing);
         }
 
         fs::path FindFile(const settings::Language& language, fs::path& english)
@@ -446,13 +469,16 @@ namespace subtitles
 
         std::lock_guard lock(g_mutex);
         auto track = std::find_if(g_tracks.begin(), g_tracks.end(), [&](const Track& t) { return t.context == context && !t.detached; });
+        uint64_t movedOn = 0;  // id of the track this context leaves (still playing from memory)
         if (track != g_tracks.end())
         {
             if (ref && track->sound == ref->sound && ref->block > 0)
                 return;  // the next block of the sound being played
             if (!ref && it != g_refs.end())
                 return;  // ambiguous (silence shared by several sounds): assume it continues
-            if (!KeepAfterContextReuse(*track))
+            if (KeepAfterContextReuse(*track))
+                movedOn = track->id;
+            else
                 g_tracks.erase(track);
         }
         if (!ref)
@@ -470,6 +496,7 @@ namespace subtitles
         t.startWall = Now();
         t.lastAudio = audio::SubmittedFrames();
         t.clock = t.startSeconds;
+        t.id = g_nextTrackId++;
         g_lastAdvance[context] = int64_t(plat::PerfCounter());
         g_frames[context] = frames;
         g_tracks.push_back(t);
@@ -496,6 +523,10 @@ namespace subtitles
                 return;
             }
         }
+        if (movedOn)
+            for (Track& old : g_tracks)
+                if (old.id == movedOn)
+                    old.replacedBy = t.id;
         if (!follower && g_trace)
             Log("[subtitles] %s starts on XMA context %u (block %d, at %.2f s; audio frame %llu)", sound.key.c_str(), context, ref->block,
                 t.startSeconds, (unsigned long long)t.lastAudio);
@@ -533,22 +564,36 @@ namespace subtitles
         {
             const double now = Now();
             const uint64_t audioFrames = audio::SubmittedFrames();
-            std::wstring text;
-            bool fromClip = false;
+            struct Shown
+            {
+                uint64_t id, replacedBy;
+                std::wstring text;
+                bool clip;
+                bool audioOver;  // only the line's extra reading time is left (barks: at least 1.5 s)
+            };
+            std::vector<Shown> active;
             std::vector<int> shown;  // sounds already handled (multi-stream sounds have a track per stream)
             for (auto t = g_tracks.begin(); t != g_tracks.end();)
             {
                 const Sound& sound = g_sounds[t->sound];
                 double decoded = Decoded(*t);
-                double idle = t->detached ? 0.0 : now - double(g_lastAdvance[t->context]) / double(plat::PerfFrequency());
+                double audioEnd = sound.seconds > 0.0 ? sound.seconds : decoded;
+                bool whole = decoded >= audioEnd - 0.15;
+                // A line may outlast a short clip (barks get at least 1.5 s on screen): the track lives
+                // until its last line ends.
+                double end = audioEnd;
+                for (const Line& line : sound.lines)
+                    end = std::max(end, line.end);
+                // A sound decoded whole plays from the title's memory: its context has nothing left to
+                // decode, so standing still there is no pause (taking it for one froze the clock, hid the
+                // line and brought it back next to the next sound on that context).
+                double idle = t->detached || whole ? 0.0 : now - double(g_lastAdvance[t->context]) / double(plat::PerfFrequency());
                 double elapsed = double(audioFrames - t->lastAudio) * audio::FRAME_SAMPLES / audio::SAMPLE_RATE;
                 t->lastAudio = audioFrames;
                 if (idle <= PAUSE_SECONDS)
                     t->clock += elapsed;
-                double end = sound.seconds > 0.0 ? sound.seconds : decoded;
                 // Never ahead of what was decoded, except once the whole sound is: then the clock runs
                 // past the end (with the output delay) and the track finishes.
-                bool whole = decoded >= end - 0.15;
                 t->clock = std::min(t->clock, whole ? end + g_offset + 1.0 : decoded);
                 if (idle > FORGET_SECONDS || t->clock >= end + g_offset + 0.3)
                 {
@@ -574,22 +619,38 @@ namespace subtitles
                     }
                 }
                 // A clip decoded whole right away may be a load-time decode: shown once that's ruled out.
-                bool pending = decoded >= end - 0.15 && now - t->startWall < HOLD_SECONDS;
+                bool pending = whole && now - t->startWall < HOLD_SECONDS;
                 if (idle <= PAUSE_SECONDS && !pending)
                 {
                     double at = t->clock - g_offset;
+                    Shown s{ t->id, t->replacedBy, {}, sound.key.find('/') != std::string::npos, at >= audioEnd };
                     for (const Line& line : sound.lines)
                     {
                         if (at >= line.start && at < line.end)
                         {
-                            if (!text.empty())
-                                text += L'\n';
-                            text += line.text;
-                            fromClip |= sound.key.find('/') != std::string::npos;
+                            if (!s.text.empty())
+                                s.text += L'\n';
+                            s.text += line.text;
                         }
                     }
+                    if (!s.text.empty())
+                        active.push_back(std::move(s));
                 }
                 ++t;
+            }
+            std::wstring text;
+            bool fromClip = false;
+            for (const Shown& s : active)
+            {
+                // The sound that took its context is on screen and this one's audio is over: its
+                // stretched line ends here. While its audio still plays (a clip decoded whole plays from
+                // memory, so the title can start the next voice on the same context) both stay.
+                if (s.replacedBy && s.audioOver && std::any_of(active.begin(), active.end(), [&](const Shown& o) { return o.id == s.replacedBy; }))
+                    continue;
+                if (!text.empty())
+                    text += L'\n';
+                text += s.text;
+                fromClip |= s.clip;
             }
             if (text != g_text || fromClip != g_gameplay)
             {

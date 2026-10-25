@@ -38,6 +38,8 @@ namespace plat
         void Clear();
         // One line, top-left at (x, y).
         void Draw(int x, int y, const std::wstring& text);
+        // Width of `text` drawn as one line (the subtitles place each colour run with it).
+        int TextWidth(const std::wstring& text) const;
         // Word-wrapped at `maxWidth`, lines centred: the size it takes, and the drawing.
         void MeasureWrapped(const std::wstring& text, int maxWidth, int& width, int& height);
         void DrawWrapped(const std::wstring& text, int x, int y, int width, int height);

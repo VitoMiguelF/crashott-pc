@@ -96,6 +96,14 @@ namespace plat
         TextOutW(m_impl->dc, x, y, text.c_str(), int(text.size()));
     }
 
+    int TextCanvas::TextWidth(const std::wstring& text) const
+    {
+        SIZE size{};
+        if (!text.empty())
+            GetTextExtentPoint32W(m_impl->dc, text.c_str(), int(text.size()), &size);
+        return int(size.cx);
+    }
+
     void TextCanvas::MeasureWrapped(const std::wstring& text, int maxWidth, int& width, int& height)
     {
         RECT measure{ 0, 0, maxWidth, 0 };
