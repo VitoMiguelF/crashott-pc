@@ -5,6 +5,7 @@
 // Decompression is LZMS through the Compression API (cabinet.dll, part of Windows since 8), loaded
 // at run time: nothing to link or ship.
 
+#ifdef _WIN32
 struct PayloadFile
 {
     std::string component;  // "base", "dlss"
@@ -264,3 +265,190 @@ std::string ExtractPayload(const Payload& payload, const fs::path& dest, const s
         error = "cancelled";
     return error;
 }
+
+#else
+// Linux: the files are the AppImage's payload/ folder (tools/make_appimage.py), read-only in its mount,
+// with payload/.crashrecomp_payload listing them: "tag <tag>", then "file <component> <size> <path>"
+// and "link <component> <path> <target>" (symbolic links, kept as links). The extraction is a copy.
+
+struct PayloadFile
+{
+    std::string component;  // "base", "modding", "dlss"
+    uint64_t offset = 0, size = 0;
+    std::wstring path;      // relative, with slashes
+    std::string link;       // a symbolic link's target ("" for a file)
+};
+
+struct Payload
+{
+    bool present = false;
+    std::string tag;
+    fs::path root;          // the payload folder
+    std::vector<PayloadFile> files;
+
+    uint64_t Bytes(const std::set<std::string>& skip) const
+    {
+        uint64_t total = 0;
+        for (const PayloadFile& f : files)
+            if (!skip.count(f.component))
+                total += f.size;
+        return total;
+    }
+};
+Payload g_payload;
+
+// The payload next to this exe in the AppImage ($APPDIR/payload, the exe being $APPDIR/usr/bin/CrashSetup).
+Payload ReadPayload()
+{
+    Payload payload;
+    std::vector<fs::path> roots;
+    if (const char* appdir = getenv("APPDIR"); appdir && *appdir)
+        roots.push_back(fs::path(appdir) / "payload");
+    roots.push_back(plat::ExecutablePath().parent_path().parent_path().parent_path() / "payload");
+    for (const fs::path& root : roots)
+    {
+        FILE* f = fopen((root / ".crashrecomp_payload").c_str(), "rb");
+        if (!f)
+            continue;
+        char line[4096];
+        while (fgets(line, sizeof(line), f))
+        {
+            line[strcspn(line, "\r\n")] = 0;
+            std::string text = line;
+            if (text.rfind("tag ", 0) == 0)
+                payload.tag = text.substr(4);
+            else if (text.rfind("file ", 0) == 0 || text.rfind("link ", 0) == 0)
+            {
+                bool link = text[0] == 'l';
+                size_t a = text.find(' ', 5);
+                if (a == std::string::npos)
+                    continue;
+                PayloadFile file;
+                file.component = text.substr(5, a - 5);
+                std::string rest = text.substr(a + 1);
+                if (link)
+                {
+                    size_t tab = rest.find('\t');  // "<path>\t<target>": paths may have spaces
+                    if (tab == std::string::npos)
+                        continue;
+                    file.path = Widen(rest.substr(0, tab));
+                    file.link = rest.substr(tab + 1);
+                }
+                else
+                {
+                    size_t b = rest.find(' ');
+                    if (b == std::string::npos)
+                        continue;
+                    file.size = strtoull(rest.c_str(), nullptr, 10);
+                    file.path = Widen(rest.substr(b + 1));
+                }
+                payload.files.push_back(std::move(file));
+            }
+        }
+        fclose(f);
+        payload.present = !payload.files.empty();
+        payload.root = root;
+        break;
+    }
+    return payload;
+}
+
+struct ExtractProgress
+{
+    std::atomic<uint64_t> done{ 0 }, total{ 0 };  // bytes
+    std::atomic<bool> cancel{ false };
+};
+
+bool CreateDirectories(const fs::path& dir, std::string& error)
+{
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec && !fs::is_directory(dir))
+    {
+        error = dir.string() + ": " + ec.message();
+        return false;
+    }
+    return true;
+}
+
+// Copies every file whose component isn't in `skip` into `dest` (a file already there with the same
+// size is kept: a reinstall over an install), on a few threads. Returns "" or what went wrong.
+std::string ExtractPayload(const Payload& payload, const fs::path& dest, const std::set<std::string>& skip, ExtractProgress& progress)
+{
+    std::vector<const PayloadFile*> files;
+    for (const PayloadFile& f : payload.files)
+        if (!skip.count(f.component))
+        {
+            files.push_back(&f);
+            progress.total += f.size;
+        }
+    std::atomic<size_t> next{ 0 };
+    std::mutex errorMutex;
+    std::string firstError;
+    auto work = [&] {
+        std::vector<char> buffer(1 << 20);
+        for (;;)
+        {
+            size_t i = next++;
+            if (i >= files.size() || progress.cancel)
+                return;
+            const PayloadFile& file = *files[i];
+            fs::path target = dest / file.path;
+            std::string error;
+            if (!CreateDirectories(target.parent_path(), error))
+            {
+                std::lock_guard lock(errorMutex);
+                if (firstError.empty())
+                    firstError = error;
+                progress.cancel = true;
+                return;
+            }
+            std::error_code ec;
+            if (!file.link.empty())
+            {
+                fs::remove(target, ec);
+                fs::create_symlink(file.link, target, ec);
+                continue;
+            }
+            fs::path source = payload.root / file.path;
+            if (fs::is_regular_file(target, ec) && fs::file_size(target, ec) == file.size)
+            {
+                progress.done += file.size;
+                continue;
+            }
+            FILE* in = fopen(source.c_str(), "rb");
+            FILE* out = in ? fopen(target.c_str(), "wb") : nullptr;
+            bool ok = in && out;
+            size_t read;
+            while (ok && (read = fread(buffer.data(), 1, buffer.size(), in)) > 0)
+            {
+                ok = fwrite(buffer.data(), 1, read, out) == read;
+                progress.done += read;
+            }
+            if (in)
+                fclose(in);
+            if (out)
+                ok = fclose(out) == 0 && ok;
+            if (ok)
+                fs::permissions(target, fs::status(source, ec).permissions(), ec);  // the executables stay executable
+            else
+            {
+                std::lock_guard lock(errorMutex);
+                if (firstError.empty())
+                    firstError = target.string() + ": " + strerror(errno);
+                progress.cancel = true;
+                return;
+            }
+        }
+    };
+    unsigned threads = std::clamp(std::thread::hardware_concurrency(), 1u, 4u);
+    std::vector<std::thread> pool;
+    for (unsigned t = 0; t < threads; t++)
+        pool.emplace_back(work);
+    for (std::thread& t : pool)
+        t.join();
+    if (!firstError.empty())
+        return firstError;
+    return progress.cancel ? "cancelled" : "";
+}
+#endif

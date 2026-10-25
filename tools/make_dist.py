@@ -33,8 +33,8 @@ also the project the game was built from (the runtime finds languages\\ and data
         CrashRecomp\\                    languages\\, data\\, licencas\\ + the project (toolchain\\, build\\...)
 No LEIA.txt files there.
 
-On Linux the same, with CrashRecomp / CrashOTTDE (no .exe), no launcher and the .so files the build put
-next to the exe (FFmpeg, DXC; the exe finds them with its $ORIGIN rpath) instead of the DLLs.
+On Linux the same, with CrashRecomp / CrashOTTDE and CrashLauncher (no .exe) and the .so files the build
+put next to the exe (FFmpeg, DXC, SDL3; the exes find them with their $ORIGIN rpath) instead of the DLLs.
 """
 import argparse
 import os
@@ -111,7 +111,8 @@ Veja o README do projeto: "Mods de entradas de .rcf", "Extraindo e modificando a
 LEIA_LINUX = """CrashRecomp - Crash of the Titans (Xbox 360) recompilado para Linux
 ===================================================================
 
-Para jogar: ./CrashRecomp (ou adicione-o à Steam como jogo não-Steam).
+Para jogar: ./CrashLauncher (as opções, com a cara do jogo, e JOGAR) ou ./CrashRecomp direto.
+No Steam Deck, adicione o CrashLauncher à Steam como jogo não-Steam.
 
 Pastas
   game/       o seu jogo (default.xex, default.rcf, english.rcf, sound1.rcf...). Se o jogo
@@ -256,7 +257,10 @@ def main():
         if not launcher.is_file():
             print(f"aviso: {launcher} não existe (cmake --build build --target CrashLauncher)")
     else:
-        files = [exe, *sorted(f for f in exe.parent.glob("*.so*") if f.is_file())]
+        launcher = exe.parent / "CrashLauncher"
+        files = [exe, *([launcher] if launcher.is_file() else []), *sorted(f for f in exe.parent.glob("*.so*") if f.is_file())]
+        if not launcher.is_file():
+            print(f"aviso: {launcher} não existe (cmake --build build --target CrashLauncher)")
     changed = [f.name for f in files if copy_if_newer(f, game_exe if f == exe else out / f.name)]
     print(f"exe e DLLs: {', '.join(changed) if changed else 'já atualizados'}")
     if (support / "languages").resolve() != (ROOT / "languages").resolve():

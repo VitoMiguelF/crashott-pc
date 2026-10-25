@@ -233,6 +233,14 @@ namespace plat
         }
     }
 
+    std::string SystemFontFile(FontFace face, bool bold)
+    {
+        if (!LoadApi())
+            return {};
+        std::lock_guard lock(g_mutex);
+        return FontFile(face, bold);
+    }
+
     struct TextCanvas::Impl
     {
         Font* font = nullptr;
@@ -350,6 +358,11 @@ namespace plat
 #else
 namespace plat
 {
+    std::string SystemFontFile(FontFace, bool)
+    {
+        return {};
+    }
+
     struct TextCanvas::Impl
     {
     };

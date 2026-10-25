@@ -106,6 +106,12 @@ else()
         add_library(SDL3::SDL3 SHARED IMPORTED)
         set_target_properties(SDL3::SDL3 PROPERTIES IMPORTED_LOCATION ${CRASH_SDL3_DIR}/lib/libSDL3.so.0
             IMPORTED_SONAME libSDL3.so.0 INTERFACE_INCLUDE_DIRECTORIES ${CRASH_SDL3_DIR}/include)
+        # tools/linux_sdl3.py's build (every backend by dlopen, glibc 2.29) goes next to the exe; the
+        # Steam Runtime's (setup.py's .debs) doesn't: it needs libraries a bare SteamOS may lack.
+        if (EXISTS ${CRASH_SDL3_DIR}/.portable)
+            add_custom_command(TARGET CrashRecomp POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_SDL3_DIR}/lib/libSDL3.so.0 $<TARGET_FILE_DIR:CrashRecomp>)
+        endif()
     else()
         find_package(SDL3 REQUIRED CONFIG)
     endif()
@@ -263,8 +269,8 @@ else()
     message(STATUS "${CRASH_DXC_NAME} not found (thirdparty/dxc/bin or the Vulkan SDK): the Vulkan renderer can only use cached shaders")
 endif()
 
-# The launcher and the installer are Win32 + Direct3D 11 (Windows only; on Linux the game starts
-# directly and its own settings screen does the rest, docs/internals/linux_port.md).
+# The launcher and the installer: Win32 + Direct3D 11 on Windows, SDL3 + SDL_Renderer elsewhere (the
+# same launcher/ sources; docs/internals/linux_port.md).
 if (WIN32)
     # Launcher (launcher/): edits settings.toml with the game's own look before starting the game.
     # Dear ImGui (thirdparty/imgui, MIT) on Direct3D 11, plus the runtime's own settings, paths, VFS
@@ -308,6 +314,48 @@ if (WIN32)
     target_compile_definitions(CrashSetup PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS CRASH_INSTALLER)
     target_compile_options(CrashSetup PRIVATE -Wno-deprecated-declarations -Wno-unused-function)
     target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32 uuid bcrypt winmm version)
+    set(CRASH_DIST_LAUNCHER CrashLauncher)
+else()
+    # Linux: the same screens with SDL3 (window, input, dialogs) and Dear ImGui's SDL3 + SDL_Renderer
+    # backends; the system font through fontconfig (platform/text_canvas_posix.cpp, dlopen'ed).
+    set(CRASH_IMGUI_DIR ${CMAKE_SOURCE_DIR}/thirdparty/imgui)
+    set(CRASH_LAUNCHER_LINUX_SOURCES
+        ${CMAKE_SOURCE_DIR}/launcher/launcher.cpp
+        ${CMAKE_SOURCE_DIR}/launcher/launcher_stubs.cpp
+        ${CRASH_IMGUI_DIR}/imgui.cpp
+        ${CRASH_IMGUI_DIR}/imgui_draw.cpp
+        ${CRASH_IMGUI_DIR}/imgui_tables.cpp
+        ${CRASH_IMGUI_DIR}/imgui_widgets.cpp
+        ${CRASH_IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
+        ${CRASH_IMGUI_DIR}/backends/imgui_impl_sdlrenderer3.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/paths.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/platform/platform_posix.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/platform/platform_sdl.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/platform/file_posix.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/platform/image_posix.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/platform/text_canvas_posix.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/fs/vfs.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/gpu/png_writer.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/settings.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/controls.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/menu_art.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/language_font.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/language_pack.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/options.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/hd_remaster.cpp)
+    foreach(CRASH_TARGET CrashLauncher CrashSetup)
+        add_executable(${CRASH_TARGET} ${CRASH_LAUNCHER_LINUX_SOURCES})
+        target_include_directories(${CRASH_TARGET} PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include
+            ${CMAKE_SOURCE_DIR}/thirdparty/stb ${CRASH_FREETYPE_INCLUDE})
+        if (CRASH_FREETYPE_INCLUDE)
+            target_compile_definitions(${CRASH_TARGET} PRIVATE CRASH_HAVE_FREETYPE=1)
+        endif()
+        target_link_libraries(${CRASH_TARGET} PRIVATE SDL3::SDL3 Threads::Threads ${CMAKE_DL_LIBS})
+        # libSDL3.so.0 next to the exe (the installed launcher), or in ../lib (the installer in its AppImage).
+        target_link_options(${CRASH_TARGET} PRIVATE "-Wl,-rpath,\$ORIGIN:\$ORIGIN/../lib" -Wl,--disable-new-dtags -Wl,--gc-sections)
+        set_target_properties(${CRASH_TARGET} PROPERTIES SKIP_BUILD_RPATH ON)
+    endforeach()
+    target_compile_definitions(CrashSetup PRIVATE CRASH_INSTALLER)
     set(CRASH_DIST_LAUNCHER CrashLauncher)
 endif()
 

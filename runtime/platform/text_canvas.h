@@ -15,6 +15,12 @@ namespace plat
         Monospace, // Consolas
     };
 
+#ifndef _WIN32
+    // The font file fontconfig picks for `face` ("" without fontconfig / FreeType): the launcher's
+    // Dear ImGui text (Segoe UI on Windows).
+    std::string SystemFontFile(FontFace face, bool bold = false);
+#endif
+
     class TextCanvas
     {
     public:

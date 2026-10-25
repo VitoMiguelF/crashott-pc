@@ -14,9 +14,16 @@ the game is built from the player's dump on the player's machine), with the Linu
   FreeType's headers, SDL3 from the Steam Runtime): thirdparty/ as `python3 tools/setup.py` left it, so
   the install works offline but for the optional subtitles.
 
-AppDir/AppRun starts tools/appimage_install.py with the bundled Python; appimagetool 1.9.1 (it carries
-mksquashfs; run extracted, so FUSE isn't needed here) packs it with the type2 runtime 20251108, both
-pinned by SHA-256 and kept in build/downloads/appimage.
+AppDir/AppRun starts the graphical installer, usr/bin/CrashSetup (launcher/installer.inc built for Linux:
+the same screens as CrashSetup.exe, with the game's look; our code only), with usr/lib/libSDL3.so.0
+(tools/linux_sdl3.py's portable build). It reads payload/.crashrecomp_payload, the index written here
+("tag", "file <component> <size> <path>", "link <component> <path>\t<target>"). With --text, or with no
+display, AppRun runs tools/appimage_install.py with the bundled Python instead (dialogs or the
+terminal). appimagetool 1.9.1 (it carries mksquashfs; run extracted, so FUSE isn't needed here) packs it
+with the type2 runtime 20251108, both pinned by SHA-256 and kept in build/downloads/appimage.
+
+Build first (the release machine): python3 tools/linux_sdl3.py, then python3 tools/setup.py (the
+toolchain, thirdparty/, build/CrashSetup).
 """
 import argparse
 import os
@@ -46,15 +53,21 @@ LINUX_THIRDPARTY = [
     ("base", "thirdparty/sdl3", ROOT / "thirdparty" / "sdl3"),
 ]
 # The Windows-only parts of the payload a Linux install has no use for.
-SKIP_PREFIXES = ("launcher/", "thirdparty/dlss/", "thirdparty/fsr/", "thirdparty/imgui/backends/imgui_impl_win32",
+# (launcher/ stays: setup.py builds CrashLauncher from it.)
+SKIP_PREFIXES = ("thirdparty/dlss/", "thirdparty/fsr/", "thirdparty/imgui/backends/imgui_impl_win32",
                  "thirdparty/imgui/backends/imgui_impl_dx")
 
 APPRUN = """#!/bin/sh
-# CrashSetup (Linux): the installer (tools/appimage_install.py) with the Python carried in the AppImage.
+# CrashSetup (Linux): the graphical installer, or with --text (or no display) tools/appimage_install.py
+# with the Python carried in the AppImage.
 HERE="$(dirname "$(readlink -f "$0")")"
-export PYTHONDONTWRITEBYTECODE=1
-unset PYTHONHOME PYTHONPATH
-exec "$HERE/payload/toolchain/python/bin/python3" -I "$HERE/payload/tools/appimage_install.py" "$@"
+export APPDIR="${APPDIR:-$HERE}"
+if [ "$1" = "--text" ] || { [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; }; then
+    export PYTHONDONTWRITEBYTECODE=1
+    unset PYTHONHOME PYTHONPATH
+    exec "$HERE/payload/toolchain/python/bin/python3" -I "$HERE/payload/tools/appimage_install.py" "$@"
+fi
+exec "$HERE/usr/bin/CrashSetup" "$@"
 """
 
 DESKTOP = """[Desktop Entry]
@@ -102,9 +115,12 @@ def icon_png():
 
 
 def write_payload(appdir, entries, tag):
+    """The files under AppDir/payload and their index (.crashrecomp_payload, read by installer_payload.inc)."""
     payload = appdir / "payload"
-    count = 0
-    for _, path, data in entries:
+    entries = list(entries) + [("base", ".crashrecomp_version", (tag + "\n").encode("ascii")),
+                               ("base", "crashrecomp.png", icon_png())]
+    index = [f"tag {tag}"]
+    for component, path, data in entries:
         if path.startswith(SKIP_PREFIXES):
             continue
         dest = payload / path
@@ -113,12 +129,13 @@ def write_payload(appdir, entries, tag):
             dest.write_bytes(data)
         elif Path(data).is_symlink():
             os.symlink(os.readlink(data), dest)
+            index.append(f"link {component} {path}\t{os.readlink(data)}")
+            continue
         else:
             shutil.copy2(data, dest)
-        count += 1
-    (payload / ".crashrecomp_version").write_text(tag + "\n", encoding="ascii")
-    (payload / "crashrecomp.png").write_bytes(icon_png())
-    return count
+        index.append(f"file {component} {dest.stat().st_size} {path}")
+    (payload / ".crashrecomp_payload").write_text("\n".join(index) + "\n", encoding="utf-8")
+    return len(index) - 1
 
 
 def size_of(folder):
@@ -149,6 +166,16 @@ def main():
         shutil.rmtree(appdir)
     appdir.mkdir(parents=True)
     count = write_payload(appdir, entries, args.tag)
+    # The graphical installer (our code, built by setup.py's CMake run) and the portable SDL3 it runs with.
+    setup_exe, sdl = ROOT / "build" / "CrashSetup", ROOT / "thirdparty" / "sdl3" / "lib" / "libSDL3.so.0"
+    if not setup_exe.is_file():
+        raise SystemExit("build/CrashSetup não existe: rode python3 tools/setup.py (ou cmake --build build --target CrashSetup)")
+    if not (ROOT / "thirdparty" / "sdl3" / ".portable").is_file():
+        raise SystemExit("thirdparty/sdl3 não é o SDL3 portátil: rode python3 tools/linux_sdl3.py")
+    (appdir / "usr" / "bin").mkdir(parents=True)
+    (appdir / "usr" / "lib").mkdir(parents=True)
+    shutil.copy2(setup_exe, appdir / "usr" / "bin" / "CrashSetup")
+    shutil.copy2(sdl, appdir / "usr" / "lib" / "libSDL3.so.0")
     (appdir / "AppRun").write_text(APPRUN, encoding="ascii")
     (appdir / "AppRun").chmod(0o755)
     (appdir / "crashrecomp.desktop").write_text(DESKTOP, encoding="utf-8")

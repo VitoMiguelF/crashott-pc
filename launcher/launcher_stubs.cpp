@@ -7,7 +7,13 @@
 #include "../runtime/fs/rcf_overlay.h"
 #include "../runtime/settings/prompt_icons.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include "../runtime/platform/platform.h"
+
+#include <filesystem>
+#endif
 
 #include <cstdarg>
 #include <cstdio>
@@ -21,6 +27,21 @@ namespace
 
     FILE* LogFile()
     {
+#ifndef _WIN32
+        // Next to the exe; the installer's (inside its read-only AppImage) goes to the temporary folder.
+        if (!g_log)
+        {
+#ifdef CRASH_INSTALLER
+            const char* name = "CrashSetup.log";
+#else
+            const char* name = "launcher.log";
+#endif
+            g_log = fopen((plat::ExecutablePath().parent_path() / name).c_str(), "w");
+            if (!g_log)
+                g_log = fopen((std::filesystem::temp_directory_path() / name).c_str(), "w");
+        }
+        return g_log;
+#else
         if (!g_log)
         {
             wchar_t path[MAX_PATH];
@@ -34,6 +55,7 @@ namespace
             g_log = _wfopen(file.c_str(), L"w");
         }
         return g_log;
+#endif
     }
 }
 
@@ -59,7 +81,11 @@ void Log(const char* format, ...)
     vsnprintf(text, sizeof(text), format, args);
     va_end(args);
     Log("[fatal] %s", text);
+#ifdef _WIN32
     MessageBoxA(nullptr, text, "CrashLauncher", MB_OK | MB_ICONERROR);
+#else
+    plat::ShowMessageBox("CrashLauncher", text, plat::MessageKind::Error);
+#endif
     std::exit(1);
 }
 

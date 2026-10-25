@@ -8,6 +8,7 @@
 // and its last screen has PLAY.
 // Included inside launcher.cpp's anonymous namespace (not in CRASH_INSTALLER).
 
+#ifdef _WIN32
 const wchar_t* LATEST_RELEASE = L"https://api.github.com/repos/VitoMiguelF/crashott-pc/releases/latest";
 const wchar_t* SHORTCUT_NAME = L"Crash of the Titans - Definitive Edition.lnk";  // installer.inc's
 
@@ -435,3 +436,17 @@ void DrawUpdateModal(float l, float t, float r, float cx)
         break;
     }
 }
+#else
+// Linux: no UPDATE yet (it would download the next CrashSetup-<tag>-x86_64.AppImage and run it).
+void StartUpdateCheck() {}
+void StopUpdater() {}
+bool UpdateOffered() { return false; }
+void OpenUpdate() {}
+void PollUpdate() {}
+std::string UpdateLabel(bool& available)
+{
+    available = false;
+    return T({ "UPDATE", "ATUALIZAR" });
+}
+void DrawUpdateModal(float, float, float, float) { g_modal = Modal::None; }
+#endif

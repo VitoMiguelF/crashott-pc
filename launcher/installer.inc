@@ -40,6 +40,37 @@
 
 #include "installer_payload.inc"
 
+#ifndef _WIN32
+using HWND = void*;  // the dialogs' owner on Windows
+
+// A question in the system's message box (before the window exists too): the index of the button chosen,
+// -1 if closed. buttons[0] is the default.
+int AskButtons(const char* title, const std::string& text, std::initializer_list<const char*> buttons, bool warning = false)
+{
+    std::vector<SDL_MessageBoxButtonData> data;
+    int id = 0;
+    for (const char* label : buttons)
+    {
+        SDL_MessageBoxButtonData button{};
+        button.flags = id == 0 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT;
+        button.buttonID = id++;
+        button.text = label;
+        data.push_back(button);
+    }
+    SDL_MessageBoxData box{};
+    box.flags = warning ? SDL_MESSAGEBOX_WARNING : SDL_MESSAGEBOX_INFORMATION;
+    box.window = g_window;
+    box.title = title;
+    box.message = text.c_str();
+    box.numbuttons = int(data.size());
+    box.buttons = data.data();
+    int chosen = -1;
+    if (!SDL_ShowMessageBox(&box, &chosen))
+        return -1;
+    return chosen;
+}
+#endif
+
 // --- the game dump --------------------------------------------------------------------------
 // Asked for before the window opens (AskForDump, from WinMain): the screen is drawn with the art
 // of that dump, so without one it would open plain. A dump is compatible when it has the files the
@@ -51,6 +82,7 @@ const wchar_t* const DUMP_FILES[] = { L"default.xex", L"default.rcf", L"english.
 
 // The command line's code page (__argv, std::filesystem's narrow paths, Relaunch): a game folder with
 // accents goes through it as the ANSI string, not UTF-8.
+#ifdef _WIN32
 std::string Ansi(const std::wstring& text)
 {
     int n = WideCharToMultiByte(CP_ACP, 0, text.c_str(), int(text.size()), nullptr, 0, nullptr, nullptr);
@@ -58,14 +90,25 @@ std::string Ansi(const std::wstring& text)
     WideCharToMultiByte(CP_ACP, 0, text.c_str(), int(text.size()), out.data(), n, nullptr, nullptr);
     return out;
 }
+#else
+std::string Ansi(const std::wstring& text) { return Narrow(text); }  // the arguments are UTF-8 here
+#endif
 
 // The installer speaks the language of Windows: Portuguese on a Portuguese Windows, else English.
 // CRASH_SETUP_LANGUAGE=en|pt picks one (tests).
 bool InstallerPt()
 {
+#ifdef _WIN32
     if (const char* forced = getenv("CRASH_SETUP_LANGUAGE"); forced && *forced)
         return _strnicmp(forced, "pt", 2) == 0;
     return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_PORTUGUESE;
+#else
+    // CRASH_SETUP_LANGUAGE, else the locale (LANGUAGE, LC_ALL, LC_MESSAGES, LANG: "pt_BR.UTF-8").
+    for (const char* name : { "CRASH_SETUP_LANGUAGE", "LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG" })
+        if (const char* value = getenv(name); value && *value)
+            return strncasecmp(value, "pt", 2) == 0;
+    return false;
+#endif
 }
 
 // Why `folder` can't be used, in two lines (English, Portuguese), or empty lines when it is a
@@ -126,6 +169,45 @@ fs::path FindDumpIn(const fs::path& chosen)
 // Asks for the game folder until a compatible one is chosen; empty if the player gives up.
 fs::path AskForDump(HWND owner)
 {
+#ifndef _WIN32
+    (void)owner;
+    bool pt = InstallerPt();
+    const char* caption = pt ? "Crash of the Titans: Definitive Edition - Instalação" : "Crash of the Titans: Definitive Edition - Setup";
+    fs::path chosen;
+    for (;;)
+    {
+        fs::path picked = plat::PickFolder(pt ? "Escolha a pasta do seu Crash of the Titans (Xbox 360): a que tem default.xex e default.rcf"
+                                              : "Choose the folder of your Crash of the Titans (Xbox 360): the one with default.xex and default.rcf");
+        if (!picked.empty())
+            picked = FindDumpIn(picked);
+        if (picked.empty())
+        {
+            std::string text = pt ? "O instalador precisa da pasta do seu Crash of the Titans (Xbox 360) para continuar: o jogo é montado a "
+                                    "partir dela, e nenhum arquivo do jogo vem no instalador.\n\nEscolher a pasta agora?"
+                                  : "The installer needs the folder of your Crash of the Titans (Xbox 360) to go on: the game is built from "
+                                    "it, and no game file comes with the installer.\n\nChoose the folder now?";
+            if (AskButtons(caption, text, { pt ? "Escolher" : "Choose", pt ? "Sair" : "Quit" }) != 0)
+                break;
+            continue;
+        }
+        DumpProblem problem = CheckDump(picked);
+        if (problem.Ok())
+        {
+            chosen = picked;
+            break;
+        }
+        const std::string* lines = pt ? problem.pt : problem.en;
+        std::string text = picked.string() + "\n\n" + lines[0] + (lines[1].empty() ? "" : "\n" + lines[1]) +
+                           (pt ? "\n\nEscolha a pasta com os arquivos do seu disco do jogo (default.xex, default.rcf, english.rcf, "
+                                 "sound1.rcf, sound2.rcf e shaders/)."
+                               : "\n\nChoose the folder with the files of your game disc (default.xex, default.rcf, english.rcf, "
+                                 "sound1.rcf, sound2.rcf and shaders/).");
+        if (AskButtons(caption, text, { pt ? "Tentar de novo" : "Retry", pt ? "Cancelar" : "Cancel" }, true) != 0)
+            break;
+    }
+    Log("[setup] game folder %s", chosen.empty() ? "not chosen" : chosen.string().c_str());
+    return chosen;
+#else
     bool pt = InstallerPt();
     const wchar_t* caption = pt ? L"Crash of the Titans: Definitive Edition - Instalação" : L"Crash of the Titans: Definitive Edition - Setup";
     HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -185,6 +267,7 @@ fs::path AskForDump(HWND owner)
         CoUninitialize();
     Log("[setup] game folder %s", chosen.empty() ? "not chosen" : Narrow(chosen.wstring()).c_str());
     return chosen;
+#endif
 }
 
 struct InstallStep
@@ -275,8 +358,14 @@ struct Installer
     std::string error, hint, finishedDir;
     bool gameReady = false;        // "@@game-ready": dist\ can be played even if a later step fails
     bool processDone = false;
+#ifdef _WIN32
     DWORD exitCode = 0;
     HANDLE job = nullptr, process = nullptr;
+#else
+    int exitCode = 0;
+    pid_t process = 0;      // setup.py, leader of its own process group (CANCEL kills the group)
+    bool cancelled = false;
+#endif
     std::thread reader;
     FILE* logFile = nullptr;
     int finalCode = 0;             // --autofinish exit code
@@ -291,7 +380,11 @@ fs::path Root() { return g_inst.bundle ? g_inst.installDir / PROJECT_FOLDER : pa
 fs::path PlayDir() { return g_inst.bundle ? g_inst.installDir : paths::ExeDir() / L"dist"; }
 fs::path SetupLog() { return (g_inst.bundle ? g_inst.installDir : paths::ExeDir()) / L"setup.log"; }
 fs::path SetupScript() { return Root() / "tools" / "setup.py"; }
+#ifdef _WIN32
 fs::path BundledPython() { return Root() / "toolchain" / "python" / "python.exe"; }
+#else
+fs::path BundledPython() { return Root() / "toolchain" / "python" / "bin" / "python3"; }
+#endif
 bool UsesBundledToolchain() { return g_inst.toolchain != "msvc"; }
 fs::path Requirements() { return Root() / "tools" / "requirements.txt"; }
 
@@ -299,6 +392,7 @@ std::wstring ToolchainArg() { return g_inst.toolchainChosen ? L" --toolchain " +
 
 // --- install folder, space, shortcuts --------------------------------------------------------
 
+#ifdef _WIN32
 const wchar_t* REGISTRY_KEY = L"Software\\CrashRecomp";
 
 fs::path KnownFolder(REFKNOWNFOLDERID id)
@@ -311,8 +405,50 @@ fs::path KnownFolder(REFKNOWNFOLDERID id)
     return out;
 }
 
+#endif
+
 const wchar_t* INSTALL_FOLDER_NAME = L"Crash of the Titans Definitive Edition";
 
+#ifndef _WIN32
+// Where the last install folder is remembered: $XDG_CONFIG_HOME/crashrecomp/install_dir.
+fs::path InstallDirMemory()
+{
+    const char* config = getenv("XDG_CONFIG_HOME");
+    const char* home = getenv("HOME");
+    fs::path base = config && *config ? fs::path(config) : fs::path(home ? home : "/tmp") / ".config";
+    return base / "crashrecomp" / "install_dir";
+}
+
+// The last install folder, else ~/Games/Crash of the Titans Definitive Edition (where Steam Deck
+// users keep non-Steam games; Heroic and Lutris use the same folder).
+fs::path DefaultInstallDir()
+{
+    if (FILE* f = fopen(InstallDirMemory().c_str(), "rb"))
+    {
+        char line[4096] = "";
+        bool ok = fgets(line, sizeof(line), f) != nullptr;
+        fclose(f);
+        line[strcspn(line, "\r\n")] = 0;
+        if (ok && line[0])
+            return fs::path(line);
+    }
+    const char* home = getenv("HOME");
+    return fs::path(home ? home : "/tmp") / "Games" / INSTALL_FOLDER_NAME;
+}
+
+void RememberInstallDir()
+{
+    std::error_code error;
+    fs::create_directories(InstallDirMemory().parent_path(), error);
+    if (FILE* f = fopen(InstallDirMemory().c_str(), "wb"))
+    {
+        fprintf(f, "%s\n", g_inst.installDir.c_str());
+        fclose(f);
+    }
+}
+#endif
+
+#ifdef _WIN32
 // The last install folder (HKCU\Software\CrashRecomp InstallDir), else
 // %LOCALAPPDATA%\Programs\Crash of the Titans Definitive Edition.
 fs::path DefaultInstallDir()
@@ -334,6 +470,7 @@ void RememberInstallDir()
     RegSetValueExW(key, L"InstallDir", 0, REG_SZ, reinterpret_cast<const BYTE*>(dir.c_str()), DWORD((dir.size() + 1) * sizeof(wchar_t)));
     RegCloseKey(key);
 }
+#endif
 
 // Free bytes on the drive of `dir` (its nearest existing parent).
 uint64_t FreeBytes(fs::path dir)
@@ -341,8 +478,13 @@ uint64_t FreeBytes(fs::path dir)
     std::error_code error;
     while (!dir.empty() && !fs::exists(dir, error) && dir != dir.parent_path())
         dir = dir.parent_path();
+#ifdef _WIN32
     ULARGE_INTEGER free{};
     return GetDiskFreeSpaceExW(dir.c_str(), &free, nullptr, nullptr) ? free.QuadPart : 0;
+#else
+    struct statvfs info{};
+    return statvfs(dir.c_str(), &info) == 0 ? uint64_t(info.f_bavail) * info.f_frsize : 0;
+#endif
 }
 
 uint64_t FolderBytes(const fs::path& dir)
@@ -404,6 +546,17 @@ bool Writable(const fs::path& dir, std::string& why)
         return false;
     }
     fs::path probe = dir / L".crashrecomp_write_test";
+#ifndef _WIN32
+    int fd = open(probe.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0)
+    {
+        why = T({ "No permission to write here: choose a folder of your user.", "Sem permissão para gravar aqui: escolha uma pasta do seu usuário." });
+        return false;
+    }
+    close(fd);
+    unlink(probe.c_str());
+    return true;
+#else
     HANDLE h = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
     if (h == INVALID_HANDLE_VALUE)
     {
@@ -413,10 +566,28 @@ bool Writable(const fs::path& dir, std::string& why)
     }
     CloseHandle(h);
     return true;
+#endif
 }
 
 void ChooseInstallDir()
 {
+#ifndef _WIN32
+    fs::path chosen = plat::PickFolder(Pt() ? "Onde instalar (a pasta \"Crash of the Titans Definitive Edition\" é criada dentro dela)"
+                                            : "Where to install (a \"Crash of the Titans Definitive Edition\" folder is made inside it)");
+    if (chosen.empty())
+        return;
+    // A folder with that name (or an install already) is used as it is; else one is made inside.
+    std::error_code error;
+    bool install = fs::exists(chosen / PROJECT_FOLDER / "tools" / "setup.py", error) || chosen.filename() == fs::path(INSTALL_FOLDER_NAME);
+    g_inst.installDir = install ? chosen : chosen / INSTALL_FOLDER_NAME;
+    std::string why;
+    if (!Writable(g_inst.installDir, why))
+    {
+        g_message[0] = why;
+        g_message[1] = g_inst.installDir.string();
+        g_modal = Modal::Message;
+    }
+#else
     HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     IFileOpenDialog* dialog = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
@@ -458,8 +629,91 @@ void ChooseInstallDir()
     }
     if (SUCCEEDED(init))
         CoUninitialize();
+#endif
 }
 
+#ifndef _WIN32
+// A desktop entry (freedesktop.org): `link` starts `target` in its folder, with the project's icon.
+// Executable, so KDE (the Steam Deck's desktop) runs it from the desktop without asking.
+bool CreateShortcut(const fs::path& link, const fs::path& target, const std::string& description)
+{
+    auto quote = [](const std::string& text) {
+        std::string out = "\"";
+        for (char c : text)
+        {
+            if (c == '"' || c == '`' || c == '$' || c == '\\')
+                out += '\\';
+            out += c;
+        }
+        return out + "\"";
+    };
+    std::error_code error;
+    fs::create_directories(link.parent_path(), error);
+    FILE* f = fopen(link.c_str(), "wb");
+    if (f)
+    {
+        fprintf(f, "[Desktop Entry]\nType=Application\nName=Crash of the Titans - Definitive Edition\nComment=%s\nExec=%s\nPath=%s\n"
+                   "Icon=%s\nTerminal=false\nCategories=Game;\nStartupWMClass=CrashLauncher\n",
+                description.c_str(), quote(target.string()).c_str(), target.parent_path().c_str(),
+                (target.parent_path() / PROJECT_FOLDER / "crashrecomp.png").c_str());
+        fclose(f);
+        fs::permissions(link, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec | fs::perms::others_read |
+                                  fs::perms::others_exec, error);
+    }
+    Log("[setup] shortcut %s: %s", link.c_str(), f ? "ok" : "failed");
+    return f != nullptr;
+}
+
+// ~/Desktop, or what xdg-user-dirs says the desktop is (~/.config/user-dirs.dirs: XDG_DESKTOP_DIR).
+fs::path DesktopFolder()
+{
+    const char* home = getenv("HOME");
+    fs::path base = home ? fs::path(home) : fs::path("/tmp");
+    const char* config = getenv("XDG_CONFIG_HOME");
+    fs::path dirs = (config && *config ? fs::path(config) : base / ".config") / "user-dirs.dirs";
+    if (FILE* f = fopen(dirs.c_str(), "rb"))
+    {
+        char line[1024];
+        while (fgets(line, sizeof(line), f))
+        {
+            std::string text = line;
+            if (text.rfind("XDG_DESKTOP_DIR=\"", 0) != 0)
+                continue;
+            std::string value = text.substr(17, text.rfind('"') - 17);
+            if (value.rfind("$HOME", 0) == 0)
+                value = base.string() + value.substr(5);
+            fclose(f);
+            return fs::path(value);
+        }
+        fclose(f);
+    }
+    return base / "Desktop";
+}
+
+// The applications menu: $XDG_DATA_HOME/applications (~/.local/share/applications).
+fs::path ApplicationsFolder()
+{
+    const char* data = getenv("XDG_DATA_HOME");
+    const char* home = getenv("HOME");
+    return (data && *data ? fs::path(data) : fs::path(home ? home : "/tmp") / ".local" / "share") / "applications";
+}
+
+const char* SHORTCUT_NAME = "crashrecomp-crashottde.desktop";
+
+// The shortcuts chosen at the end (once, when leaving the last screen): to the launcher, as on Windows.
+void ApplyShortcuts()
+{
+    if (!g_inst.bundle || g_inst.shortcutsDone || g_inst.phase != Phase::Done)
+        return;
+    g_inst.shortcutsDone = true;
+    fs::path launcher = PlayDir() / "CrashLauncher";
+    std::string description = "CrashRecomp: Crash of the Titans (launcher)";
+    if (g_inst.desktopShortcut)
+        CreateShortcut(DesktopFolder() / SHORTCUT_NAME, launcher, description);
+    if (g_inst.startMenu)
+        CreateShortcut(ApplicationsFolder() / SHORTCUT_NAME, launcher, description);
+}
+#else
 // A .lnk at `link` to `target`, with its icon and its folder as the working folder.
 bool CreateShortcut(const fs::path& link, const fs::path& target, const std::wstring& description)
 {
@@ -503,6 +757,7 @@ void ApplyShortcuts()
     if (g_inst.startMenu)
         CreateShortcut(KnownFolder(FOLDERID_Programs) / L"CrashRecomp" / SHORTCUT_NAME, launcher, description);
 }
+#endif
 
 // The files of an older install that the new one doesn't have any more (a source file moved:
 // CMake would still compile the old copy). Only files the installer itself put there are listed
@@ -516,7 +771,7 @@ void RemoveStaleFiles(const std::set<std::string>& skip)
     for (const PayloadFile& f : g_payload.files)
         if (!skip.count(f.component))
             now.insert(f.path);
-    if (FILE* in = _wfopen(manifest.c_str(), L"rb"))
+    if (FILE* in = FileOpen(manifest, "rb"))
     {
         char line[2048];
         int removed = 0;
@@ -534,7 +789,7 @@ void RemoveStaleFiles(const std::set<std::string>& skip)
         if (removed)
             Log("[setup] %d file(s) of the previous version removed", removed);
     }
-    if (FILE* out = _wfopen(manifest.c_str(), L"wb"))
+    if (FILE* out = FileOpen(manifest, "wb"))
     {
         for (const std::wstring& path : now)
             fprintf(out, "%s\n", Narrow(path).c_str());
@@ -556,9 +811,13 @@ void StartGpuCheck()
         g_inst.dlss = false, g_inst.gpuKnown = true;
         return;
     }
+#ifdef _WIN32
     wchar_t temp[MAX_PATH];
     GetTempPathW(MAX_PATH, temp);
     g_inst.probeDir = fs::path(temp) / (L"CrashSetup_dlss_" + std::to_wstring(GetCurrentProcessId()));
+#else
+    g_inst.probeDir = fs::temp_directory_path() / ("CrashSetup_dlss_" + std::to_string(getpid()));
+#endif
     std::thread([] {
         ExtractProgress progress;
         std::string error = ExtractPayload(g_payload, g_inst.probeDir, { "base", "modding" }, progress);
@@ -588,6 +847,52 @@ void UpdateGpuCheck()
 
 // --- prerequisites and setup.py --------------------------------------------------------------
 
+#ifndef _WIN32
+void RefreshPath() {}
+
+// Python 3.11+ (setup.py needs tomllib): the release's own (toolchain/python), else python3 on PATH.
+std::wstring FindPython()
+{
+    if (Exists(BundledPython()))
+        return BundledPython().wstring();
+    std::string path = getenv("PATH") ? getenv("PATH") : "/usr/bin:/bin";
+    for (size_t at = 0; at <= path.size();)
+    {
+        size_t end = path.find(':', at);
+        fs::path candidate = fs::path(path.substr(at, end == std::string::npos ? std::string::npos : end - at)) / "python3";
+        if (access(candidate.c_str(), X_OK) == 0)
+            return candidate.wstring();
+        if (end == std::string::npos)
+            break;
+        at = end + 1;
+    }
+    return L"";
+}
+
+// setup.py's arguments, written as one command line (Windows' way): split again at spaces, "quoted" parts whole.
+std::vector<std::string> SplitArgs(const std::string& line)
+{
+    std::vector<std::string> args;
+    std::string current;
+    bool quoted = false, any = false;
+    for (char c : line)
+    {
+        if (c == '"')
+            quoted = !quoted, any = true;
+        else if (c == ' ' && !quoted)
+        {
+            if (any || !current.empty())
+                args.push_back(current);
+            current.clear(), any = false;
+        }
+        else
+            current += c;
+    }
+    if (any || !current.empty())
+        args.push_back(current);
+    return args;
+}
+#else
 // PATH as Windows has it now (machine + user), so tools installed while the installer is open are
 // found without restarting it.
 void RefreshPath()
@@ -648,6 +953,7 @@ std::wstring FindPython()
         return L"\"" + std::wstring(found) + L"\"";
     return L"";
 }
+#endif
 
 void AddLogLine(const std::string& line)
 {
@@ -721,6 +1027,77 @@ bool StartSetup(const std::wstring& args, bool check)
 {
     if (g_inst.reader.joinable())
         g_inst.reader.join();
+#ifndef _WIN32
+    int fds[2];
+    if (pipe2(fds, O_CLOEXEC) != 0)
+        return false;
+    std::vector<std::string> argv = { "-u", SetupScript().string() };
+    for (std::string& a : SplitArgs(Narrow(args)))
+        argv.push_back(a);
+    setenv("PYTHONUTF8", "1", 1);
+    setenv("PYTHONIOENCODING", "utf-8", 1);
+    setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
+    unsetenv("PYTHONHOME");  // the AppImage's AppRun may set them for its own Python
+    unsetenv("PYTHONPATH");
+    // The child gets the pipe's write end as stdout / stderr (dup2 clears O_CLOEXEC on the copies).
+    pid_t pid = Spawn(fs::path(Narrow(g_inst.python)), argv, Root(), fds[1], true);
+    close(fds[1]);
+    if (!pid)
+    {
+        close(fds[0]);
+        return false;
+    }
+    {
+        std::lock_guard lock(g_inst.mutex);
+        g_inst.process = pid;
+        g_inst.processDone = false;
+        g_inst.cancelled = false;
+        g_inst.error.clear();
+        g_inst.hint.clear();
+        if (check)
+            g_inst.prereqs.clear(), g_inst.packages.clear();
+        else
+        {
+            if (!g_inst.bundle)
+                g_inst.log.clear();
+            g_inst.step = 0, g_inst.progress = -1.0f;
+            g_inst.download.clear();
+            if (!g_inst.logFile)
+                g_inst.logFile = FileOpen(SetupLog(), "w");
+        }
+    }
+    int readFd = fds[0];
+    g_inst.reader = std::thread([readFd, pid] {
+        std::string pending;
+        char buffer[4096];
+        ssize_t got;
+        while ((got = read(readFd, buffer, sizeof(buffer))) > 0 || (got < 0 && errno == EINTR))
+        {
+            if (got <= 0)
+                continue;
+            pending.append(buffer, size_t(got));
+            size_t eol;
+            while ((eol = pending.find('\n')) != std::string::npos)
+            {
+                std::string line = pending.substr(0, eol);
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
+                pending.erase(0, eol + 1);
+                std::lock_guard lock(g_inst.mutex);
+                HandleLine(line);
+            }
+        }
+        close(readFd);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        std::lock_guard lock(g_inst.mutex);
+        if (!pending.empty())
+            HandleLine(pending);
+        g_inst.exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+        g_inst.processDone = true;
+    });
+    return true;
+#else
     SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, TRUE };
     HANDLE readPipe, writePipe;
     if (!CreatePipe(&readPipe, &writePipe, &sa, 0))
@@ -799,6 +1176,7 @@ bool StartSetup(const std::wstring& args, bool check)
         g_inst.processDone = true;
     });
     return true;
+#endif
 }
 
 void CheckPrerequisites()
@@ -857,6 +1235,11 @@ std::wstring PipCommand() { return g_inst.python + L" -m pip install -r \"" + Re
 // Studio: winget. Python packages (only another Python than the bundled one lacks them): pip.
 void InstallMissing()
 {
+#ifndef _WIN32
+    g_message[0] = T({ "Run in a terminal, then CHECK AGAIN:", "Rode num terminal e depois VERIFICAR DE NOVO:" });
+    g_message[1] = "python3 tools/toolchain.py fetch";
+    g_modal = Modal::Message;
+#else
     std::wstring commands;
     for (const Prereq& p : g_inst.prereqs)
     {
@@ -886,6 +1269,7 @@ void InstallMissing()
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
     }
+#endif
 }
 
 // Bundle: the files go to the install folder on a thread, then setup.py runs from there.
@@ -924,8 +1308,7 @@ void StartExtraction(const std::wstring& args)
     g_inst.phase = Phase::Running;
     g_inst.extractor = std::thread([] {
         std::set<std::string> skip = SkippedComponents();
-        LARGE_INTEGER start, end, frequency;
-        QueryPerformanceCounter(&start);
+        auto start = std::chrono::steady_clock::now();
         std::string error = ExtractPayload(g_payload, Root(), skip, g_inst.extract);
         if (error.empty())
         {
@@ -934,17 +1317,25 @@ void StartExtraction(const std::wstring& args)
             {
                 // An older install's DLSS files go too (a GPU swap): the game would offer DLSS otherwise.
                 std::error_code ec;
+#ifdef _WIN32
                 for (const wchar_t* name : { L"thirdparty\\dlss\\bin\\CrashDlss.dll", L"thirdparty\\dlss\\bin\\nvngx_dlss.dll", L"build\\CrashDlss.dll",
                                              L"build\\nvngx_dlss.dll" })
                     fs::remove(Root() / name, ec);
                 for (const wchar_t* name : { L"CrashDlss.dll", L"nvngx_dlss.dll" })
                     fs::remove(PlayDir() / name, ec);
+#else
+                for (const fs::path& dir : { Root() / "thirdparty" / "dlss" / "bin", Root() / "build", PlayDir() })
+                    for (const auto& entry : fs::directory_iterator(dir, ec))
+                    {
+                        std::string name = entry.path().filename().string();
+                        if (name == "libCrashDlss.so" || name.rfind("libnvidia-ngx-dlss.so", 0) == 0)
+                            fs::remove(entry.path(), ec);
+                    }
+#endif
             }
         }
-        QueryPerformanceCounter(&end);
-        QueryPerformanceFrequency(&frequency);
         Log("[setup] extraction to %s: %s (%.1f s)", Narrow(g_inst.installDir.wstring()).c_str(), error.empty() ? "ok" : error.c_str(),
-            double(end.QuadPart - start.QuadPart) / double(frequency.QuadPart));
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
         std::lock_guard lock(g_inst.mutex);
         g_inst.extractError = error;
         g_inst.extractFinished = true;
@@ -988,14 +1379,28 @@ void StartInstall(bool assetsOnly = false)
 void CancelInstall()
 {
     g_inst.extract.cancel = true;
+#ifdef _WIN32
     if (g_inst.job)
         TerminateJobObject(g_inst.job, 1);
+#else
+    std::lock_guard lock(g_inst.mutex);
+    if (g_inst.process && !g_inst.processDone)
+    {
+        g_inst.cancelled = true;
+        kill(-g_inst.process, SIGTERM);  // setup.py's group: cmake, ninja and the compilers too
+    }
+#endif
 }
 
 void OpenLauncher()
 {
     ApplyShortcuts();
     fs::path dir = g_inst.finishedDir.empty() ? PlayDir() : fs::u8path(g_inst.finishedDir);
+#ifndef _WIN32
+    if (Spawn(dir / "CrashLauncher", {}, dir))
+        g_quit = true;
+    return;
+#else
     fs::path exe = dir / "CrashLauncher.exe";
     std::wstring command = L"\"" + exe.wstring() + L"\"";
     STARTUPINFOW si{ sizeof(si) };
@@ -1006,9 +1411,28 @@ void OpenLauncher()
         CloseHandle(pi.hProcess);
         g_quit = true;
     }
+#endif
 }
 
 // What a restart of this exe (Relaunch: the art is read from the game folder at startup) keeps.
+#ifndef _WIN32
+std::vector<std::string> InstallerRelaunchArgs()
+{
+    std::vector<std::string> args;
+    if (g_inst.bundle)
+        args.insert(args.end(), { "--install-dir", g_inst.installDir.string() });
+    args.insert(args.end(), { "--option", g_inst.subtitles ? "subtitles" : "no-subtitles" });
+    if (g_inst.remaster)
+        args.insert(args.end(), { "--option", "remaster" });
+    if (g_inst.extractAssets)
+        args.insert(args.end(), { "--option", "assets" });
+    if (g_inst.copyGame)
+        args.insert(args.end(), { "--option", "copy" });
+    if (!g_inst.shots.empty())
+        args.insert(args.end(), { "--shots", g_inst.shots.string() });
+    return args;
+}
+#else
 std::wstring InstallerRelaunchArgs()
 {
     std::wstring args;
@@ -1022,6 +1446,7 @@ std::wstring InstallerRelaunchArgs()
         args += L" --shots \"" + g_inst.shots.wstring() + L"\"";
     return args;
 }
+#endif
 
 void ChooseInstallerGameFolder()
 {
@@ -1182,16 +1607,28 @@ std::vector<InstallRow> DoneRows()
 {
     std::vector<InstallRow> rows;
     rows.push_back({ { "INSTALLED IN", "INSTALADO EM" }, T({ "OPEN...", "ABRIR..." }),
+#ifdef _WIN32
                      { Narrow(PlayDir().wstring()), T({ "The launcher is CrashLauncher.exe there; your saves are in userdata.",
                                                         "O launcher é o CrashLauncher.exe de lá; seus saves ficam em userdata." }) },
+#else
+                     { Narrow(PlayDir().wstring()), T({ "The launcher is CrashLauncher there; your saves are in userdata.",
+                                                        "O launcher é o CrashLauncher de lá; seus saves ficam em userdata." }) },
+#endif
                      false, true, true, RowInstalledIn });
     rows.push_back({ { "SHORTCUTS", "ATALHOS" }, "", {}, true });
     rows.push_back({ { "DESKTOP SHORTCUT", "ATALHO NA ÁREA DE TRABALHO" }, g_inst.desktopShortcut ? T({ "YES", "SIM" }) : T({ "NO", "NÃO" }),
                      { T({ "Create a shortcut to the launcher on the desktop?", "Criar um atalho para o launcher na área de trabalho?" }),
                        g_inst.shortcutsDone ? T({ "Done.", "Feito." }) : T({ "It is made when you click PLAY or FINISH.", "Ele é criado ao clicar em JOGAR ou CONCLUIR." }) },
                      false, !g_inst.shortcutsDone, false, RowDesktop });
+#ifdef _WIN32
     rows.push_back({ { "START MENU", "MENU INICIAR" }, g_inst.startMenu ? T({ "YES", "SIM" }) : T({ "NO", "NÃO" }),
                      { T({ "An entry for the launcher in the Start menu (CrashRecomp folder)?", "Uma entrada do launcher no menu Iniciar (pasta CrashRecomp)?" }),
+#else
+    // In the applications menu, a right click on it offers "Add to Steam" (the Steam Deck's Game Mode).
+    rows.push_back({ { "APPLICATIONS MENU", "MENU DE APLICATIVOS" }, g_inst.startMenu ? T({ "YES", "SIM" }) : T({ "NO", "NÃO" }),
+                     { T({ "The launcher in the applications menu; right click it there for \"Add to Steam\".",
+                           "O launcher no menu de aplicativos; clique nele com o botão direito para \"Adicionar à Steam\"." }),
+#endif
                        g_inst.shortcutsDone ? T({ "Done.", "Feito." }) : T({ "It is made when you click PLAY or FINISH.", "Ela é criada ao clicar em JOGAR ou CONCLUIR." }) },
                      false, !g_inst.shortcutsDone, false, RowStartMenu });
     return rows;
@@ -1307,7 +1744,11 @@ void DrawInstallerLeft()
             case 3: g_quit = true; break;
             case 4: OpenFolder(PlayDir()); break;
             case 5: g_inst.phase = Phase::Setup; CheckPrerequisites(); break;
+#ifdef _WIN32
             case 6: ShellExecuteW(nullptr, L"open", SetupLog().c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
+#else
+            case 6: OpenWithDesktop(SetupLog()); break;
+#endif
             case 7: StartInstall(true); break;  // only the asset export, again
             case 8: ApplyShortcuts(); g_quit = true; break;
             }
@@ -1519,7 +1960,9 @@ void UpdateInstaller()
             return;
         }
         g_inst.python = BundledPython().wstring();
+#ifdef _WIN32
         g_inst.python = L"\"" + g_inst.python + L"\"";
+#endif
         AddLogLine(T({ "Files extracted; building the game...", "Arquivos extraídos; montando o jogo..." }));
         g_inst.step = 1;
         g_inst.setupPending = true;
@@ -1539,8 +1982,14 @@ void UpdateInstaller()
     std::lock_guard lock(g_inst.mutex);
     if (!g_inst.processDone || !g_inst.process)
         return;
+#ifdef _WIN32
     CloseHandle(g_inst.process);
     g_inst.process = nullptr;
+    bool stopped = g_inst.exitCode == 1 && g_inst.job;
+#else
+    g_inst.process = 0;
+    bool stopped = g_inst.cancelled;
+#endif
     if (g_inst.checking)
     {
         g_inst.checking = false;
@@ -1549,7 +1998,7 @@ void UpdateInstaller()
     }
     g_inst.phase = g_inst.exitCode == 0 ? Phase::Done : Phase::Failed;
     if (g_inst.phase == Phase::Failed && g_inst.error.empty())
-        g_inst.error = g_inst.exitCode == 1 && g_inst.job ? T({ "Stopped.", "Interrompido." }) : T({ "setup.py failed (see the log).", "o setup.py falhou (veja o log)." });
+        g_inst.error = stopped ? T({ "Stopped.", "Interrompido." }) : T({ "setup.py failed (see the log).", "o setup.py falhou (veja o log)." });
     if (g_inst.phase == Phase::Done && g_inst.bundle)
     {
         RememberInstallDir();
@@ -1558,7 +2007,7 @@ void UpdateInstaller()
     // The release now in the play folder (also when only the asset export failed): the launcher's
     // UPDATE compares it with GitHub's latest (updater.inc).
     if (g_inst.bundle && (g_inst.phase == Phase::Done || g_inst.gameReady) && !g_payload.tag.empty())
-        if (FILE* f = _wfopen((PlayDir() / VERSION_FILE).c_str(), L"wb"))
+        if (FILE* f = FileOpen(PlayDir() / VERSION_FILE, "wb"))
         {
             fprintf(f, "%s\n", g_payload.tag.c_str());
             fclose(f);
@@ -1680,6 +2129,15 @@ void PrepareInstaller()
 {
     g_payload = ReadPayload();
     g_inst.bundle = g_payload.present;
+#ifndef _WIN32
+    for (size_t i = 1; i + 1 < g_commandLine.size(); i++)
+    {
+        if (g_commandLine[i] == "--install-dir")
+            g_inst.installDir = fs::absolute(fs::path(g_commandLine[++i]));
+        else if (g_commandLine[i] == "--shots")
+            g_inst.shots = fs::absolute(fs::path(g_commandLine[++i]));
+    }
+#else
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     for (int i = 1; argv && i + 1 < argc; i++)
@@ -1690,6 +2148,7 @@ void PrepareInstaller()
             g_inst.shots = fs::absolute(fs::path(argv[++i]));
     }
     LocalFree(argv);
+#endif
     if (g_inst.bundle && g_inst.installDir.empty())
         g_inst.installDir = DefaultInstallDir();
 }

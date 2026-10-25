@@ -99,8 +99,8 @@ work left for Linux, not what was moved already.
 
 | Piece | Windows dependency | Plan | Left |
 |---|---|---|---|
-| Launcher (`CrashLauncher`, `launcher/*.cpp/.inc`, ~4.5k lines) | Dear ImGui on Win32 + D3D11, WIC, `dwmapi`, WinHTTP + bcrypt (the updater), `ShellExecute` | not built on Linux. The in-game settings screen covers the options; on the Deck the game starts directly. Port only if wanted: ImGui SDL3 + Vulkan backends, libcurl for the updater | L |
-| Installer (`CrashSetup`, `launcher/installer*.inc`, `tools/setup.py`, `tools/make_installer.py`) | LZMS payload inside a Windows EXE, Start menu / desktop shortcuts, `CrashDlss.dll` only on RTX | a tarball or AppImage with a `.desktop` file; on the Deck, "Add a non-Steam game". `setup.py`'s dump checks are plain Python and reusable | M |
+| Launcher (`CrashLauncher`, `launcher/*.cpp/.inc`, ~4.5k lines) | Dear ImGui on Win32 + D3D11, WIC, `dwmapi`, WinHTTP + bcrypt (the updater), `ShellExecute` | done: the same sources with `#ifdef _WIN32` around the OS parts. SDL3 window + events + pads, Dear ImGui's SDL3 + SDL_Renderer backends, `RunLauncher(argc, argv)` (WinMain / main call it), fork + exec (`Spawn`), `SDL_OpenURL`, the system font from fontconfig (`plat::SystemFontFile`), a small SHA-256, key capture through `platform/keys_sdl.h` (shared with the game). No UPDATE yet (`updater.inc` stubs) | S: the updater (download the next AppImage) |
+| Installer (`CrashSetup`, `launcher/installer*.inc`, `tools/setup.py`, `tools/make_installer.py`) | LZMS payload inside a Windows EXE, Start menu / desktop shortcuts, `CrashDlss.dll` only on RTX | done: `CrashSetup-<tag>-x86_64.AppImage` (`tools/make_appimage.py`) with the same screens; payload = the AppImage's `payload/` + `.crashrecomp_payload` index (`installer_payload.inc`), setup.py in its own process group (CANCEL = `kill(-pgid)`), `.desktop` shortcuts to the launcher (desktop + applications menu, "Add to Steam" there), install folder remembered in `~/.config/crashrecomp/install_dir`, dialogs by `plat::PickFolder` + `SDL_ShowMessageBox` | none |
 | `tools/buildenv.py`, `tools/toolchain.py` | write `.cmd` scripts run with `cmd /d /c`; the portable toolchain is llvm-mingw / CMake / Ninja / Python **Windows** zips; clang path `clang.exe` | done: Linux pins in `toolchain.py` (zig, CMake, Ninja, python-build-standalone; `toolchain/bin/zig-cc` etc. wrappers with `-target x86_64-linux-gnu.2.35`); `buildenv.build_env()` / `build_commands()` instead of `.cmd`; toolchains `bundled` (zig) and `system` (PATH clang) | none |
 | `tools/run_game.py` | builds through `cmd`, runs `build\CrashRecomp.exe`, `--dist` uses `dist\CrashRecomp.exe` | done: `build()` through `buildenv.build_commands`, `run.toml`'s `build/CrashRecomp.exe` read as `build/CrashRecomp`. `vila_sem_cena` and `menu` pass | none |
 | `tools/make_dist.py`, `make_release.py`, `check_game_files.py`, `perf/*` | `CrashRecomp.exe` and `.dll` lists (FFmpeg, DXC, FSR, DLSS, vulkan_layers), `perf/bench.py` uses Win32 APIs | `make_dist.py` done (exe without `.exe`, the `.so` files next to it, `CrashOTTDE` with `--installed`, a Linux LEIA.txt, `/proc` for the running check); `make_release.py`, `perf/*` not yet | S each |
@@ -188,6 +188,21 @@ Still to do for the Deck: run it on one (build time on 4 Zen 2 cores, Game Mode 
 Input); our own SDL3 with every backend loaded at run time (built once at release time, against the
 Steam Runtime 3 sysroot), shipped next to the exe.
 
+## SDL3 shipped with the game: `tools/linux_sdl3.py`
+
+Valve's libSDL3 (Steam Runtime 3, what setup.py builds against) links X11, Wayland, PulseAudio,
+libdecor... directly: outside Steam, a bare SteamOS may lack one and nothing starts. `linux_sdl3.py`
+(release machine, once) builds the official SDL 3.4.18 with every backend loaded by dlopen
+(`SDL_DEPS_SHARED`) against the Steam Runtime 3 SDK sysroot (1.2 GB, glibc 2.31, pinned snapshot;
+only its amd64 headers and libraries unpacked, absolute symlinks made relative), with the host's
+clang + lld. Result: `libSDL3.so.0` needing only libc, libm, libdl, libpthread (GLIBC_2.29), into
+`thirdparty/sdl3` with a `.portable` marker; CMake then copies it next to the exe and the launcher,
+make_appimage carries it. Traps: paths with spaces broke `CMAKE_C_FLAGS` and pkg-config, so the
+sysroot goes through a link in /tmp; the host's wayland-scanner (1.24) generates calls to
+`wl_proxy_marshal_flags`, which the sysroot's 1.18 headers lack, so the sysroot's own scanner runs
+through its own loader (`ld-linux-x86-64.so.2 --library-path`). Checked: the game with it opens the
+window, plays through PipeWire and sees a DualSense.
+
 ## The installer: `CrashSetup-<tag>-x86_64.AppImage`
 
 `python3 tools/make_appimage.py <tag>` (on Linux, after `toolchain.py fetch` and a `setup.py` run that
@@ -200,7 +215,9 @@ recompiled code. It is packed by appimagetool 1.9.1 (it carries mksquashfs; run 
 20251108, both pinned. GLib's option parser refused the paths with "Área" under some locales: the
 script passes them relative to the project, with `LC_ALL=C.UTF-8`.
 
-When run, AppRun starts `tools/appimage_install.py` with the bundled Python. It asks for the dump
+When run, AppRun starts `usr/bin/CrashSetup` (`installer.inc` built for Linux, with `usr/lib/libSDL3.so.0`):
+the Windows installer's screens. With `--text` or no display it starts `tools/appimage_install.py` with
+the bundled Python instead, as follows. It asks for the dump
 (checked like setup.py: the files and default.xex's SHA-256), the install folder (default
 `~/Games/Crash of the Titans Definitive Edition`) and the subtitles; copies the project into
 `<install>/CrashRecomp`; runs its `setup.py --copy-game --play-dir <install>`, the `@@step` /
@@ -211,7 +228,10 @@ no questions. The installed layout is Windows' (`CrashOTTDE`, the .so files, gam
 next to it; the project with languages/ and data/ in CrashRecomp/).
 
 Measured here (16 threads): the whole install, with the 3.1 GB copy of the dump and the build, in
-1 min 8 s, from `env -i PATH=/usr/bin:/bin`. Not tried yet: the dialogs by hand, and a Steam Deck.
+1 min 8 s (`--text`) and 1 min 20 s (the graphical installer: `--autostart --autofinish --shots`,
+10 screens saved, the same as Windows' in Portuguese), then the installed CrashLauncher's PLAY started
+CrashOTTDE to the menu. Inside the AppImage a restart (`Relaunch`) runs `$APPIMAGE` again, not the
+exe in the mount, which goes away with this process. Not tried yet: the dialogs by hand, a Steam Deck.
 
 ## x86-only code (for an ARM64 / Android build)
 

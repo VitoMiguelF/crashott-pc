@@ -19,8 +19,14 @@
 //
 // In an install of the single-file installer the menu has UPDATE: the next release's installer,
 // downloaded and run over this install (updater.inc).
+//
+// Linux (the Steam Deck first): the same screens on SDL3 (window, keyboard, mouse, pads) with
+// SDL_Renderer drawing Dear ImGui; processes by fork + exec, dialogs through zenity / kdialog
+// (plat::PickFolder) and SDL's message boxes, the system font from fontconfig. No UPDATE yet.
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include "../runtime/fs/vfs.h"
 #include "../runtime/gpu/png_writer.h"
@@ -36,6 +42,7 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#ifdef _WIN32
 #include <backends/imgui_impl_dx11.h>
 #include <backends/imgui_impl_win32.h>
 
@@ -43,6 +50,24 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <shellapi.h>
+#else
+#include <backends/imgui_impl_sdl3.h>
+#include <backends/imgui_impl_sdlrenderer3.h>
+
+#include "../runtime/platform/keys_sdl.h"
+#include "../runtime/platform/platform.h"
+#include "../runtime/platform/text.h"
+#include "../runtime/platform/text_canvas.h"
+
+#include <SDL3/SDL.h>
+
+#include <cerrno>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/statvfs.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -54,6 +79,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
 #include <bcrypt.h>
 #include <shlobj.h>
 #ifdef CRASH_INSTALLER
@@ -63,6 +89,7 @@
 #endif
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+#endif
 
 namespace fs = std::filesystem;
 namespace ma = settings::menu_art;
@@ -165,10 +192,17 @@ namespace
     bool g_dlss = false, g_fsr = false;  // the files are there and the GPU is NVIDIA / has FSR's extensions (CreateDevice)
     int g_menuFocus = -1;  // left menu item under the mouse
     std::vector<std::string> g_passArgs;  // folder arguments passed on to the game
+    std::vector<std::string> g_commandLine;  // argv (RunLauncher), for the installer's own options
     bool g_focusFirstRow = true;    // select the first row of the tab (opening it)
     bool g_scrollToSelected = false;  // scroll the rows to show g_selected (moved by the keys)
     bool g_mouseMode = false;  // the selection follows the mouse until a key or the pad moves it
+#ifdef _WIN32
     HWND g_hwnd;
+#else
+    SDL_Window* g_window;
+    SDL_Renderer* g_renderer;
+    void* g_hwnd = nullptr;  // the dialogs' owner on Windows; none here
+#endif
 
     bool Pt() { return opt::Portuguese(g_values); }
     const char* T(const Text& text) { return Pt() ? text.pt : text.en; }
@@ -195,6 +229,7 @@ namespace
         return text;
     }
 
+#ifdef _WIN32
     std::string Narrow(const std::wstring& text)
     {
         int n = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), int(text.size()), nullptr, 0, nullptr, nullptr);
@@ -210,6 +245,122 @@ namespace
         MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), out.data(), n);
         return out;
     }
+#else
+    std::string Narrow(const std::wstring& text) { return plat::NarrowUtf8(text); }
+    std::wstring Widen(const std::string& text) { return plat::WidenUtf8(text); }
+
+    // A process started from here (fork + exec). `group`: its own process group, so the installer's
+    // CANCEL stops everything it started (cmake, ninja, the compilers) with one kill. `output`: a
+    // pipe's write end for its stdout and stderr. 0 on failure.
+    pid_t Spawn(const fs::path& exe, const std::vector<std::string>& args, const fs::path& cwd, int output = -1, bool group = false,
+                bool search = false)
+    {
+        std::vector<std::string> strings{ exe.string() };
+        strings.insert(strings.end(), args.begin(), args.end());
+        std::vector<char*> argv;
+        for (std::string& a : strings)
+            argv.push_back(a.data());
+        argv.push_back(nullptr);
+        std::string dir = cwd.string();
+        pid_t pid = fork();
+        if (pid == 0)
+        {
+            // Only async-signal-safe calls between fork and exec.
+            if (group)
+                setpgid(0, 0);
+            if (output >= 0)
+            {
+                dup2(output, 1);
+                dup2(output, 2);
+            }
+            if (!dir.empty() && chdir(dir.c_str()) != 0)
+                _exit(127);
+            if (search)
+                execvp(argv[0], argv.data());
+            else
+                execv(argv[0], argv.data());
+            _exit(127);
+        }
+        return pid < 0 ? 0 : pid;
+    }
+
+    // Opens a folder, a file or a URL with the desktop's program (xdg-open).
+    void OpenWithDesktop(const fs::path& target)
+    {
+        std::string url = target.string().find("://") != std::string::npos ? target.string() : "file://" + target.string();
+        if (!SDL_OpenURL(url.c_str()))
+            Log("[launcher] could not open %s: %s", url.c_str(), SDL_GetError());
+    }
+
+    // SHA-256 (FIPS 180-4), for the dump check: the Windows build uses CNG.
+    struct Sha256
+    {
+        uint32_t h[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
+        uint8_t block[64];
+        size_t used = 0;
+        uint64_t total = 0;
+
+        static uint32_t Rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+
+        void Compress(const uint8_t* p)
+        {
+            static const uint32_t K[64] = {
+                0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be,
+                0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
+                0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85,
+                0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+                0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
+                0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2 };
+            uint32_t w[64];
+            for (int i = 0; i < 16; i++)
+                w[i] = uint32_t(p[i * 4]) << 24 | uint32_t(p[i * 4 + 1]) << 16 | uint32_t(p[i * 4 + 2]) << 8 | p[i * 4 + 3];
+            for (int i = 16; i < 64; i++)
+            {
+                uint32_t s0 = Rotr(w[i - 15], 7) ^ Rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+                uint32_t s1 = Rotr(w[i - 2], 17) ^ Rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+                w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+            }
+            uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+            for (int i = 0; i < 64; i++)
+            {
+                uint32_t t1 = hh + (Rotr(e, 6) ^ Rotr(e, 11) ^ Rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i];
+                uint32_t t2 = (Rotr(a, 2) ^ Rotr(a, 13) ^ Rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+                hh = g, g = f, f = e, e = d + t1, d = c, c = b, b = a, a = t1 + t2;
+            }
+            h[0] += a, h[1] += b, h[2] += c, h[3] += d, h[4] += e, h[5] += f, h[6] += g, h[7] += hh;
+        }
+
+        void Update(const uint8_t* data, size_t size)
+        {
+            total += size;
+            while (size)
+            {
+                size_t n = std::min(size, 64 - used);
+                memcpy(block + used, data, n);
+                used += n, data += n, size -= n;
+                if (used == 64)
+                    Compress(block), used = 0;
+            }
+        }
+
+        std::string Hex()
+        {
+            uint64_t bits = total * 8;
+            uint8_t pad = 0x80, zero = 0;
+            Update(&pad, 1);
+            while (used != 56)
+                Update(&zero, 1);
+            uint8_t length[8];
+            for (int i = 0; i < 8; i++)
+                length[i] = uint8_t(bits >> (56 - 8 * i));
+            Update(length, 8);
+            char text[65];
+            for (int i = 0; i < 8; i++)
+                snprintf(text + i * 8, 9, "%08x", h[i]);
+            return text;
+        }
+    };
+#endif
 
     bool Exists(const fs::path& path)
     {
@@ -217,13 +368,36 @@ namespace
         return fs::exists(path, error);
     }
 
+    // fopen of a path (UTF-16 on Windows).
+    FILE* FileOpen(const fs::path& path, const char* mode)
+    {
+#ifdef _WIN32
+        return _wfopen(path.c_str(), Widen(mode).c_str());
+#else
+        return fopen(path.c_str(), mode);
+#endif
+    }
+
     // The release tag of an install made by the single-file installer, next to CrashLauncher.exe
     // (installer.inc writes it, updater.inc reads it).
-    constexpr const wchar_t* VERSION_FILE = L".crashrecomp_version";
+    constexpr const char* VERSION_FILE = ".crashrecomp_version";
 
     // Lower-case hex SHA-256 of a file (Windows CNG), "" if it can't be read.
     std::string Sha256File(const fs::path& file)
     {
+#ifndef _WIN32
+        FILE* f = fopen(file.c_str(), "rb");
+        if (!f)
+            return {};
+        Sha256 sha;
+        std::vector<uint8_t> buffer(1 << 20);
+        size_t read;
+        while ((read = fread(buffer.data(), 1, buffer.size(), f)) > 0)
+            sha.Update(buffer.data(), read);
+        bool ok = !ferror(f);
+        fclose(f);
+        return ok ? sha.Hex() : std::string();
+#else
         std::string hex;
         BCRYPT_ALG_HANDLE algorithm = nullptr;
         BCRYPT_HASH_HANDLE hash = nullptr;
@@ -252,6 +426,7 @@ namespace
         if (f != INVALID_HANDLE_VALUE)
             CloseHandle(f);
         return hex;
+#endif
     }
 
     fs::path GameFolder()
@@ -373,15 +548,37 @@ namespace
     {
         std::error_code error;
         fs::create_directories(folder, error);
+#ifdef _WIN32
         ShellExecuteW(g_hwnd, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+        OpenWithDesktop(folder);
+#endif
     }
 
 #ifdef CRASH_INSTALLER
+#ifdef _WIN32
     std::wstring InstallerRelaunchArgs();  // installer.inc
+#else
+    std::vector<std::string> InstallerRelaunchArgs();  // installer.inc
+#endif
 #endif
 
     void Relaunch()
     {
+#ifndef _WIN32
+        std::vector<std::string> args = g_passArgs;
+#ifdef CRASH_INSTALLER
+        for (std::string& arg : InstallerRelaunchArgs())
+            args.push_back(arg);
+#endif
+        // Inside an AppImage the exe is in its mount, which goes away when this process ends: the
+        // AppImage file itself (its runtime sets APPIMAGE) starts again instead.
+        const char* appimage = getenv("APPIMAGE");
+        fs::path self = appimage && *appimage ? fs::path(appimage) : plat::ExecutablePath();
+        if (Spawn(self, args, fs::current_path()))
+            g_quit = true;
+        return;
+#else
         // The game's art is read at startup: start again to show it with the new game folder.
         wchar_t exe[MAX_PATH];
         GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -404,6 +601,7 @@ namespace
             CloseHandle(pi.hProcess);
             g_quit = true;
         }
+#endif
     }
 
     void Save()
@@ -509,6 +707,23 @@ namespace
         }
         if (!(g_values == g_saved))
             Save();
+#ifndef _WIN32
+        // CrashOTTDE in the installed layout (tools/make_dist.py --installed), else CrashRecomp.
+        fs::path game = paths::ExeDir() / "CrashOTTDE";
+        if (!Exists(game))
+            game = paths::ExeDir() / "CrashRecomp";
+        pid_t pid = Exists(game) ? Spawn(game, g_passArgs, paths::ExeDir()) : 0;
+        if (!pid)
+        {
+            g_message[0] = T({ "Could not start the game:", "Não foi possível abrir o jogo:" });
+            g_message[1] = game.string();
+            g_modal = Modal::Message;
+            return false;
+        }
+        Log("[launcher] started %s (pid %d)", game.string().c_str(), int(pid));
+        g_quit = true;
+        return true;
+#else
         // CrashOTTDE.exe in the single-file installer's layout (tools/make_dist.py --installed).
         fs::path exe = paths::ExeDir() / "CrashOTTDE.exe";
         if (!Exists(exe))
@@ -535,6 +750,7 @@ namespace
         CloseHandle(pi.hProcess);
         g_quit = true;
         return true;
+#endif
     }
 
     void RequestExit()
@@ -546,8 +762,50 @@ namespace
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Direct3D 11
+    // Direct3D 11 (Windows) / SDL_Renderer (Linux)
 
+#ifndef _WIN32
+    // The upscalers this machine can offer (CreateDevice on Windows): the GPU by Vulkan and the files
+    // next to the exe, by their Linux names (libCrashDlss.so + NVIDIA's libnvidia-ngx-dlss.so.*,
+    // libamd_fidelityfx_vk.so).
+    void DetectUpscalers()
+    {
+        GpuInfo gpu = DetectGpu();
+        bool ngx = false;
+        std::error_code error;
+        for (const auto& entry : fs::directory_iterator(paths::ExeDir(), error))
+            ngx |= entry.path().filename().string().rfind("libnvidia-ngx-dlss.so", 0) == 0;
+        bool dlssFiles = Exists(paths::ExeDir() / DLSS_MODULE) && ngx;
+        g_dlss = gpu.vendor == settings::VENDOR_NVIDIA && dlssFiles;
+        g_fsr = Exists(paths::ExeDir() / "libamd_fidelityfx_vk.so") && (!gpu.vulkan || gpu.fsrExtensions);
+        Log("[launcher] GPU %s (%s%s): DLSS %s, FSR %s", gpu.name.empty() ? "?" : gpu.name.c_str(), settings::GpuVendorName(gpu.vendor),
+            gpu.forced ? ", CRASH_GPU_VENDOR" : "", g_dlss ? "checking" : dlssFiles ? "no (not an NVIDIA GPU)" : "no (DLSS not installed)",
+            g_fsr ? "yes" : "no");
+        if (g_dlss)
+            StartDlssProbe(paths::ExeDir());
+    }
+
+    // Straight-alpha RGBA8 (R in the low byte) -> texture.
+    SDL_Texture* MakeTexture(const uint32_t* px, int w, int h)
+    {
+        if (!px || w <= 0 || h <= 0)
+            return nullptr;
+        SDL_Texture* texture = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, w, h);
+        if (texture)
+        {
+            SDL_UpdateTexture(texture, nullptr, px, w * 4);
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+        }
+        return texture;
+    }
+
+    void ReleaseTexture(SDL_Texture*& texture)
+    {
+        if (texture)
+            SDL_DestroyTexture(texture), texture = nullptr;
+    }
+#else
     ID3D11Device* g_device;
     ID3D11DeviceContext* g_context;
     IDXGISwapChain* g_swapChain;
@@ -626,6 +884,13 @@ namespace
         return view;
     }
 
+    void ReleaseTexture(ID3D11ShaderResourceView*& view)
+    {
+        if (view)
+            view->Release(), view = nullptr;
+    }
+#endif
+
     std::vector<uint32_t> Straight(const ma::Image& image)
     {
         std::vector<uint32_t> out(image.px.size());
@@ -643,7 +908,11 @@ namespace
 
     struct Texture
     {
+#ifdef _WIN32
         ID3D11ShaderResourceView* view = nullptr;
+#else
+        SDL_Texture* view = nullptr;
+#endif
         int w = 0, h = 0;
         ImTextureID Id() const { return ImTextureID(reinterpret_cast<uintptr_t>(view)); }
     };
@@ -741,10 +1010,15 @@ namespace
         ImGuiIO& io = ImGui::GetIO();
         ImFontAtlas* atlas = io.Fonts;
         atlas->Clear();
+#ifdef _WIN32
         wchar_t windows[MAX_PATH];
         GetWindowsDirectoryW(windows, MAX_PATH);
         std::string fontDir = Narrow(windows) + "\\Fonts\\";
         std::string bold = fontDir + "segoeuib.ttf", regular = fontDir + "segoeui.ttf";
+#else
+        // The desktop's sans-serif (fontconfig: Noto Sans / DejaVu Sans), as Segoe UI on Windows.
+        std::string bold = plat::SystemFontFile(plat::FontFace::Ui, true), regular = plat::SystemFontFile(plat::FontFace::Ui, false);
+#endif
         auto add = [&](const std::string& file, float px) {
             ImFontConfig config;
             config.OversampleH = 2;
@@ -782,8 +1056,8 @@ namespace
             for (int y = 0; y < rect->Height; y++)
                 memcpy(pixels + (size_t(rect->Y + y) * width + rect->X) * 4, glyph.px.data() + size_t(y) * rect->Width, rect->Width * 4);
         }
-        Log("[launcher] fonts: %s, atlas %dx%d, %zu game glyph images", g_haveFonts ? "the game's Titans fonts" : "Segoe UI only", width, height,
-            pending.size());
+        Log("[launcher] fonts: %s, atlas %dx%d, %zu game glyph images (system font %s)", g_haveFonts ? "the game's Titans fonts" : "the system font only",
+            width, height, pending.size(), regular.c_str());
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1458,6 +1732,67 @@ namespace
         ImGui::End();
     }
 
+#ifndef _WIN32
+    // Key capture for the CONTROLS rows: the next key or mouse button, as the game names them (the
+    // scancodes as gpu/window_sdl.cpp maps them).
+    bool CaptureEvent(const SDL_Event& event)
+    {
+        if (!g_capturing || g_captured || g_captureCancelled)
+            return false;
+        uint16_t key = 0;
+        switch (event.type)
+        {
+        case SDL_EVENT_KEY_DOWN:
+            if (event.key.scancode == SDL_SCANCODE_ESCAPE)
+            {
+                g_captureCancelled = true;
+                return true;
+            }
+            key = uint16_t(plat::VirtualKeyFromScancode(event.key.scancode));
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            switch (event.button.button)
+            {
+            case SDL_BUTTON_LEFT: key = VK_LBUTTON; break;
+            case SDL_BUTTON_RIGHT: key = VK_RBUTTON; break;
+            case SDL_BUTTON_MIDDLE: key = VK_MBUTTON; break;
+            case SDL_BUTTON_X1: key = VK_XBUTTON1; break;
+            case SDL_BUTTON_X2: key = VK_XBUTTON2; break;
+            }
+            break;
+        case SDL_EVENT_MOUSE_WHEEL:
+            key = event.wheel.y > 0 ? settings::KEY_WHEEL_UP : settings::KEY_WHEEL_DOWN;
+            break;
+        default: return false;
+        }
+        if (key && !settings::KeyName(key).empty())
+            g_captured = key;
+        return true;
+    }
+
+#ifdef CRASH_INSTALLER
+    void InstallerExit();  // installer.inc
+#endif
+
+    bool SaveScreenshot(const fs::path& file)
+    {
+        SDL_Surface* surface = SDL_RenderReadPixels(g_renderer, nullptr);
+        if (!surface)
+            return false;
+        SDL_Surface* rgba = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_ABGR8888);
+        SDL_DestroySurface(surface);
+        if (!rgba)
+            return false;
+        std::vector<uint8_t> px(size_t(rgba->w) * rgba->h * 4);
+        for (int y = 0; y < rgba->h; y++)
+            memcpy(&px[size_t(y) * rgba->w * 4], static_cast<uint8_t*>(rgba->pixels) + size_t(y) * rgba->pitch, size_t(rgba->w) * 4);
+        for (size_t i = 3; i < px.size(); i += 4)
+            px[i] = 255;
+        bool ok = gpu::WritePng(file, px.data(), uint32_t(rgba->w), uint32_t(rgba->h), uint32_t(rgba->w) * 4);
+        SDL_DestroySurface(rgba);
+        return ok;
+    }
+#else
     // Key capture for the CONTROLS rows: the next key or mouse button, as the game names them.
     bool CaptureMessage(UINT msg, WPARAM wParam, LPARAM lParam)
     {
@@ -1562,16 +1897,17 @@ namespace
         back->Release();
         return ok;
     }
+#endif
 
 #ifdef CRASH_INSTALLER
 #include "installer.inc"
 #endif
 }
 
-int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
+// The launcher (or the installer) with its arguments: WinMain on Windows, main elsewhere.
+static int RunLauncher(int argc, char** argv)
 {
-    int argc = __argc;
-    char** argv = __argv;
+    g_commandLine.assign(argv, argv + argc);
     if (argc == 4 && strcmp(argv[1], "--probe-dlss") == 0)  // the DLSS check's child process (gpu_probe.inc)
         return RunDlssProbe(fs::u8path(argv[2]), fs::u8path(argv[3]));
     fs::path screenshot;
@@ -1631,9 +1967,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     }
     if (std::none_of(pathArgs.begin(), pathArgs.end(), [](const char* a) { return strcmp(a, "--game") == 0; }))
     {
+#ifdef _WIN32
         wchar_t self[MAX_PATH];
         GetModuleFileNameW(nullptr, self, MAX_PATH);
         fs::path candidate = g_inst.bundle ? InstalledGameFolder() : fs::path(self).parent_path() / "dist" / "game";
+#else
+        fs::path candidate = g_inst.bundle ? InstalledGameFolder() : plat::ExecutablePath().parent_path() / "dist" / "game";
+#endif
         // No game yet (or not a compatible one): ask for it before the window opens, which is
         // drawn with that dump's art (installer.inc, AskForDump). --autostart (tests) never asks.
         if (!CheckDump(candidate).Ok() && !g_inst.autoStart)
@@ -1650,7 +1990,9 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
         }
     }
 #endif
+#ifdef _WIN32
     ImGui_ImplWin32_EnableDpiAwareness();
+#endif
     paths::Init(int(pathArgs.size()), pathArgs.data(), false);
     if (!paths::Game().empty())
         vfs::Init({ paths::Game(), paths::Mods(), paths::UserData() });
@@ -1668,6 +2010,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     if (screenshotView || screenshotTab >= 0)
         g_values.launcherAdvanced = g_saved.launcherAdvanced = screenshotView ? strcmp(screenshotView, "advanced") == 0 : true;
 
+#ifdef _WIN32
+    HINSTANCE instance = GetModuleHandleW(nullptr);
     WNDCLASSEXW wc{ sizeof(wc), CS_CLASSDC, WndProc, 0, 0, instance, LoadIconW(instance, MAKEINTRESOURCEW(1)), LoadCursorW(nullptr, MAKEINTRESOURCEW(32512) /* IDC_ARROW */),
                     nullptr, nullptr, L"CrashLauncher", nullptr };
     if (!wc.hIcon)
@@ -1700,6 +2044,43 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     }
     ShowWindow(g_hwnd, screenshot.empty() ? SW_SHOWDEFAULT : SW_SHOWNOACTIVATE);
     UpdateWindow(g_hwnd);
+#else
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
+    {
+        Log("[launcher] SDL_Init failed: %s", SDL_GetError());
+        plat::ShowMessageBox("CrashLauncher", SDL_GetError(), plat::MessageKind::Error);
+        return 1;
+    }
+    // 1280x720 times the display's scale, at most 90% of its usable area (the Steam Deck's 1280x800
+    // gives 1152x648; Gamescope makes it full screen anyway).
+    SDL_DisplayID display = SDL_GetPrimaryDisplay();
+    SDL_Rect usable{ 0, 0, int(VW), int(VH) };
+    SDL_GetDisplayUsableBounds(display, &usable);
+    float dpi = SDL_GetDisplayContentScale(display);
+    float scale = std::min({ dpi > 0.0f ? dpi : 1.0f, usable.w * 0.9f / VW, usable.h * 0.9f / VH });
+    if (!screenshot.empty())
+        scale = 1.0f;
+#ifdef CRASH_INSTALLER
+    const char* title = "Crash of the Titans: Definitive Edition - Setup";
+#else
+    const char* title = "Crash of the Titans: Definitive Edition";
+#endif
+    g_window = SDL_CreateWindow(title, int(VW * scale), int(VH * scale), SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+                                                                         (screenshot.empty() ? 0 : SDL_WINDOW_HIDDEN));
+    g_renderer = g_window ? SDL_CreateRenderer(g_window, nullptr) : nullptr;
+    if (!g_renderer)
+    {
+        Log("[launcher] no window: %s", SDL_GetError());
+        plat::ShowMessageBox("CrashLauncher", "Não foi possível abrir a janela (SDL).", plat::MessageKind::Error);
+        return 1;
+    }
+    SDL_SetWindowMinimumSize(g_window, 800, 480);
+    SDL_SetRenderVSync(g_renderer, 1);
+    Log("[launcher] window %dx%d (scale %.2f), renderer %s", int(VW * scale), int(VH * scale), scale, SDL_GetRendererName(g_renderer));
+#ifndef CRASH_INSTALLER
+    DetectUpscalers();
+#endif
+#endif
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -1713,8 +2094,13 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     style.WindowPadding = ImVec2(0, 0);
     style.ItemSpacing = ImVec2(0, 0);
     style.DisabledAlpha = 1.0f;
+#ifdef _WIN32
     ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_device, g_context);
+#else
+    ImGui_ImplSDL3_InitForSDLRenderer(g_window, g_renderer);
+    ImGui_ImplSDLRenderer3_Init(g_renderer);
+#endif
 
     // The game's art (read on a thread since startup) and the fonts made from it.
     g_artLoaded = !paths::Game().empty() && ma::Ready(8000);
@@ -1739,6 +2125,35 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     int frames = 0;
     while (!g_quit)
     {
+#ifndef _WIN32
+        SDL_Event event;
+        while (SDL_PollEvent(&event))
+        {
+            if (CaptureEvent(event))
+                continue;
+            ImGui_ImplSDL3_ProcessEvent(&event);
+            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
+            {
+#ifdef CRASH_INSTALLER
+                InstallerExit();
+#else
+                RequestExit();
+#endif
+            }
+        }
+        if (g_quit)
+            break;
+        if (SDL_GetWindowFlags(g_window) & SDL_WINDOW_MINIMIZED)
+        {
+            SDL_Delay(30);
+            continue;
+        }
+        ImGui_ImplSDLRenderer3_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        // The backdrop at the window's pixels (the display size is in points on a scaled screen).
+        int dw = 0, dh = 0;
+        SDL_GetWindowSizeInPixels(g_window, &dw, &dh);
+#else
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
@@ -1764,10 +2179,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         int dw = int(io.DisplaySize.x), dh = int(io.DisplaySize.y);
+#endif
         if (dw > 0 && dh > 0 && (dw != g_backdropW || dh != g_backdropH))
         {
             if (g_backdrop.view)
-                g_backdrop.view->Release(), g_backdrop.view = nullptr;
+                ReleaseTexture(g_backdrop.view);
             std::vector<uint32_t> px = ComposeBackdrop(dw, dh, std::min(dw / VW, dh / VH));
             ma::ClearCache();  // the scaled copies are only needed for this backdrop
             g_backdrop.view = MakeTexture(px.data(), dw, dh);
@@ -1784,10 +2200,17 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
             StartGame();
 #endif
         ImGui::Render();
+#ifdef _WIN32
         const float clear[4] = { 0.85f, 0.55f, 0.12f, 1.0f };
         g_context->OMSetRenderTargets(1, &g_rtv, nullptr);
         g_context->ClearRenderTargetView(g_rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+#else
+        SDL_SetRenderScale(g_renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+        SDL_SetRenderDrawColorFloat(g_renderer, 0.85f, 0.55f, 0.12f, 1.0f);
+        SDL_RenderClear(g_renderer);
+        ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_renderer);
+#endif
         bool waitForShot = false;
 #ifdef CRASH_INSTALLER
         // The screenshot waits for the prerequisite check, and with --autostart for the end of the install.
@@ -1807,7 +2230,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
             g_inst.pendingShot.clear();
         }
 #endif
+#ifdef _WIN32
         g_swapChain->Present(1, 0);
+#else
+        SDL_RenderPresent(g_renderer);
+#endif
     }
 #ifdef CRASH_INSTALLER
     ShutdownInstaller();
@@ -1819,12 +2246,33 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     else if (g_dlssProbe.thread.joinable())
         g_dlssProbe.thread.detach();  // still checking: the process ends anyway
 
+#ifdef _WIN32
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
+#else
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+    SDL_DestroyRenderer(g_renderer);
+    SDL_DestroyWindow(g_window);
+    SDL_Quit();
+#endif
 #ifdef CRASH_INSTALLER
     return g_inst.finalCode;
 #else
     return 0;
 #endif
 }
+
+#ifdef _WIN32
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+    return RunLauncher(__argc, __argv);
+}
+#else
+int main(int argc, char** argv)
+{
+    return RunLauncher(argc, argv);
+}
+#endif
