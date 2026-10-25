@@ -6,9 +6,21 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 
 **[Português do Brasil abaixo](#português-do-brasil)**
 
+> ### v1.06: Intel integrated GPUs fixed, and much faster on them
+>
+> - **No more black flicker on Intel integrated GPUs** ([issue #3](https://github.com/VitoMiguelF/crashott-pc/issues/3)):
+>   their driver read the draw constants past 128 MB of the upload ring as zeros, so about half of the
+>   frames went black or lost the scene. 455 of 901 frames before, 0 now.
+> - **Faster shaders**: the game's shaders with jumps and loops are translated to plain structured code
+>   instead of a state machine. On an Intel UHD: 34.8 -> 59.1 fps at 1280x800, 20.9 -> 36.4 fps at 1680x1050.
+>
+> Already on v1.05? Click **UPDATE** in the launcher.
+>
+> ![Intel UHD: black frames and the scene missing in v1.05, fixed in v1.06](docs/screenshots/intel_flicker.jpg)
+
 > ### v1.05: a single .exe, ultrawide, no shader stutter, and updates from the launcher
 >
-> - **A single `.exe`**: download only `CrashSetup-v1.05.exe` and run it. No zip to extract, nothing else to
+> - **A single `.exe`**: download only `CrashSetup-<version>.exe` and run it. No zip to extract, nothing else to
 >   install, offline; it asks where to install, makes the shortcuts and installs DLSS only on a GPU that
 >   runs it.
 > - **Ultrawide (21:9, 32:9) and 16:10 with Hor+**: the same vertical view, more of the world on both
@@ -112,7 +124,7 @@ ones with `winget`.
 
 ## Install
 
-1. Download **`CrashSetup-v1.05.exe`** (the latest, ~210 MB, one file) from the
+1. Download **`CrashSetup-v1.06.exe`** (the latest, ~210 MB, one file) from the
    [releases](https://github.com/VitoMiguelF/crashott-pc/releases). (Up to v1.04 it was a zip with
    `CrashSetup.exe` inside; a `git clone` of this repository: see [CONTRIBUTING.md](CONTRIBUTING.md).)
 2. Run it. It first asks for your **game folder** and checks it is the supported Xbox 360 dump. Choose **where to install** (default `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive
@@ -247,9 +259,22 @@ código PowerPC do jogo para x86-64 com o [XenonRecomp](https://github.com/hedge
 um runtime que faz o papel do Xbox 360 (gráficos, áudio, controles, arquivos, saves) e várias melhorias
 de PC.
 
+> ### v1.06: GPUs Intel integradas corrigidas, e bem mais rápidas
+>
+> - **Acabou a tela preta piscando nas GPUs Intel integradas** ([issue #3](https://github.com/VitoMiguelF/crashott-pc/issues/3)):
+>   o driver delas lia como zeros as constantes dos desenhos depois de 128 MB do anel de upload, então
+>   cerca de metade dos quadros ficava preta ou sem o cenário. Eram 455 de 901 quadros; agora, 0.
+> - **Shaders mais rápidos**: os shaders do jogo com saltos e laços são traduzidos para código estruturado
+>   comum em vez de uma máquina de estados. Numa Intel UHD: de 34,8 para 59,1 fps em 1280x800 e de 20,9 para
+>   36,4 fps em 1680x1050.
+>
+> Já está na v1.05? Clique em **ATUALIZAR** no launcher.
+>
+> ![Intel UHD: quadros pretos e o cenário sumindo na v1.05, corrigido na v1.06](docs/screenshots/intel_flicker.jpg)
+
 > ### v1.05: um .exe só, ultrawide, sem engasgo de shader e atualização pelo launcher
 >
-> - **Um `.exe` só**: baixe apenas o `CrashSetup-v1.05.exe` e abra. Sem zip para descompactar, nada mais para
+> - **Um `.exe` só**: baixe apenas o `CrashSetup-<versão>.exe` e abra. Sem zip para descompactar, nada mais para
 >   instalar, offline; ele pergunta onde instalar, cria os atalhos e só instala o DLSS numa placa que o roda.
 > - **Ultrawide (21:9, 32:9) e 16:10 com Hor+**: a mesma visão na vertical e mais do mundo dos dois
 >   lados, sem esticar nem cortar. O HUD e os menus ficam em 16:9 no meio (ou os cantos do HUD nas bordas
@@ -345,7 +370,7 @@ pelo `winget`.
 
 ## Instalação
 
-1. Baixe o **`CrashSetup-v1.05.exe`** (o mais recente, ~210 MB, um arquivo só) nas
+1. Baixe o **`CrashSetup-v1.06.exe`** (o mais recente, ~210 MB, um arquivo só) nas
    [releases](https://github.com/VitoMiguelF/crashott-pc/releases). (Até a v1.04 era um zip com o
    `CrashSetup.exe` dentro; para um `git clone` deste repositório, veja o [CONTRIBUTING.md](CONTRIBUTING.md).)
 2. Abra. Primeiro ele pede a **pasta do jogo** e confere se é o dump de Xbox 360 suportado. Escolha **onde instalar** (padrão `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive Edition`;
