@@ -65,7 +65,7 @@ namespace settings::options
                 Item::Hud16x9 } },
             { "graphics", { "GRAPHICS", "GRÁFICOS" },
               { Item::Upscaler, Item::UpscalerQuality, Item::Sharpness, Item::MotionBlur, Item::DepthOfField, Item::Anisotropy,
-                Item::ShadowSoftness } },
+                Item::ShadowSoftness, Item::ShaderCompilation } },
             { "controls", { "CONTROLS", "CONTROLES" }, ControlItems() },
             { "definitive", { "DEFINITIVE EDITION", "DEFINITIVE EDITION" },
               { Item::MojoColors, Item::HdRemaster, Item::HeaderLighting, Item::LightSsao, Item::LightGi, Item::LightGiIntensity,
@@ -110,6 +110,7 @@ namespace settings::options
         case Item::DepthOfField: return "graphics.depth_of_field";
         case Item::Anisotropy: return "graphics.anisotropic_filtering";
         case Item::ShadowSoftness: return "graphics.shadow_softness";
+        case Item::ShaderCompilation: return "graphics.shader_compilation";
         case Item::HdRemaster: return "graphics.hd_remaster";
         case Item::Language: return "game.language";
         case Item::MojoColors: return "game.mojo_colors";
@@ -171,6 +172,7 @@ namespace settings::options
         case Item::DepthOfField: return t({ "DEPTH OF FIELD", "PROFUNDIDADE DE CAMPO" });
         case Item::Anisotropy: return t({ "ANISOTROPIC FILTERING", "FILTRO ANISOTRÓPICO" });
         case Item::ShadowSoftness: return t({ "SHADOW SOFTNESS", "SUAVIDADE DAS SOMBRAS" });
+        case Item::ShaderCompilation: return t({ "SHADER COMPILATION", "COMPILAÇÃO DE SHADERS" });
         case Item::HdRemaster: return "HD AI REMASTER";
         case Item::Language: return t({ "LANGUAGE", "IDIOMA" });
         case Item::MojoColors: return t({ "MOJO COLORS", "CORES DO MOJO" });
@@ -281,6 +283,13 @@ namespace settings::options
             default: return values.upscaler == Upscaler::Fsr ? t({ "NATIVE (AA)", "NATIVO (AA)" }) : t({ "NATIVE (DLAA)", "NATIVO (DLAA)" });
             }
         case Item::Anisotropy: return values.anisotropy > 1 ? std::to_string(values.anisotropy) + "X" : OnOff(pt, false);
+        case Item::ShaderCompilation:
+            switch (values.shaderCompilation)
+            {
+            case ShaderCompilation::Sync: return t({ "SYNCHRONOUS", "SINCRONIZADA" });
+            case ShaderCompilation::Aggressive: return t({ "AGGRESSIVE", "AGRESSIVA" });
+            default: return t({ "ASYNCHRONOUS", "ASSÍNCRONA" });
+            }
         case Item::HdRemaster: return HdRemasterAvailable() ? OnOff(pt, values.hdRemaster) : t({ "UNAVAILABLE", "INDISPONÍVEL" });
         case Item::Language: return LanguageById(values.language).name;
         case Item::MojoColors: return values.ps2MojoColors ? "PS2" : "XBOX 360";
@@ -402,6 +411,19 @@ namespace settings::options
         case Item::ShadowSoftness:
             return { t({ "Radius of the filter on the shadows' edges.", "Raio do filtro da borda das sombras." }),
                      t({ "0% = hard edge, 100% = original.", "0% = borda dura, 100% = original." }) };
+        case Item::ShaderCompilation:
+            switch (values.shaderCompilation)
+            {
+            case ShaderCompilation::Sync:
+                return { t({ "Compiles each new effect when it first shows up", "Compila cada efeito novo quando ele aparece" }),
+                         t({ "(short hitches). Use it if ASYNCHRONOUS fails.", "(engasgos curtos). Use se a ASSÍNCRONA falhar." }) };
+            case ShaderCompilation::Aggressive:
+                return { t({ "In the background, and skips for a few frames", "Em segundo plano, e pula por alguns quadros" }),
+                         t({ "what can wait (effects may show up late).", "o que pode esperar (efeitos podem aparecer depois)." }) };
+            default:
+                return { t({ "Compiles new shaders and effects in the background:", "Compila shaders e efeitos novos em segundo plano:" }),
+                         t({ "no hitches. ", "sem engasgos. " }) + live };
+            }
         case Item::HdRemaster:
             if (!HdRemasterAvailable())
                 return { t({ "The remaster files are not on this PC", "Os arquivos do remaster não estão neste PC" }),
@@ -590,6 +612,10 @@ namespace settings::options
             }
             break;
         case Item::UpscalerQuality: values.upscalerQuality = Cycle(values.upscalerQuality, 5, direction); break;
+        case Item::ShaderCompilation:
+            // ASYNCHRONOUS <-> SYNCHRONOUS (AGGRESSIVE only from settings.toml).
+            values.shaderCompilation = values.shaderCompilation == ShaderCompilation::Sync ? ShaderCompilation::Async : ShaderCompilation::Sync;
+            break;
         case Item::Anisotropy:
         {
             constexpr int LEVELS[] = { 1, 2, 4, 8, 16 };

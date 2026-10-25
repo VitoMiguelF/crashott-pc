@@ -46,6 +46,7 @@
 #include "../settings/direct_boot.h"
 #include "../settings/prompt_icons.h"
 #include "../settings/quit_game.h"
+#include "../settings/options.h"
 #include "../settings/settings.h"
 #include "../settings/save_screens.h"
 #include "../settings/skip_cinematics.h"
@@ -335,14 +336,22 @@ namespace gpu::renderer
             SKIP_NO_TARGET,
             SKIP_PIPELINE,
             SKIP_CULL,
+            SKIP_COMPILING,
         };
-        const char* const SKIP_NAMES[] = { "edram mode", "viz query", "shader", "primitive", "no target", "pipeline", "culled" };
+        const char* const SKIP_NAMES[] = { "edram mode", "viz query", "shader", "primitive", "no target", "pipeline", "culled", "compiling" };
         uint32_t g_traceDraws = 0;
         uint64_t g_traceFrom = 0;
         uint64_t g_traceSwap = UINT64_MAX; // CRASH_GPU_TRACE_SWAP=N: every draw and resolve of the frame presented by swap N
 
         // CRASH_GPU_TRACE_SWAPS=N: that many frames from CRASH_GPU_TRACE_SWAP (default 1).
         const uint64_t g_traceSwapCount = getenv("CRASH_GPU_TRACE_SWAPS") ? strtoull(getenv("CRASH_GPU_TRACE_SWAPS"), nullptr, 10) : 1;
+
+        rhi::ShaderCompilation RhiShaderCompilation(settings::ShaderCompilation mode)
+        {
+            return mode == settings::ShaderCompilation::Sync         ? rhi::ShaderCompilation::Sync
+                   : mode == settings::ShaderCompilation::Aggressive ? rhi::ShaderCompilation::Aggressive
+                                                                     : rhi::ShaderCompilation::Async;
+        }
 
         bool TracingSwap()
         {
@@ -3275,10 +3284,17 @@ float4 main(float4 position : SV_Position) : SV_Target
             key.depthClip = !((clipControl >> 16) & 1);
             key.topology = topology;
             key.stripCut = indexData.hasCut;
-            rhi::Pipeline* pipeline = g_rhi->GetDrawPipeline(key);
+            // [video] shader_compilation = "aggressive": a draw may be skipped while its pipeline
+            // compiles only if nothing reads what it leaves behind after this frame: a draw into the
+            // 3D scene (drawn again every frame) that writes colour only. Never clears, depth or
+            // stencil writes (shadow volumes, depth read by later draws), nor the depth-alias clears.
+            bool depthOrStencilWrite = depthTarget && ((depthControl & 1) || ((depthControl >> 2) & 1));
+            bool deferrable = sceneDraw && renderTargetCount && !rectList && !aliasedColor && !depthOrStencilWrite;
+            bool deferred = false;
+            rhi::Pipeline* pipeline = g_rhi->GetDrawPipeline(key, deferrable, &deferred);
             if (!pipeline)
             {
-                Skip(SKIP_PIPELINE);
+                Skip(deferred ? SKIP_COMPILING : SKIP_PIPELINE);
                 return;
             }
             rhi::Pipeline* aliasPipeline = nullptr;
@@ -3682,6 +3698,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         info.debug = g_debugLayer;
         info.safeMode = safeMode;
         info.diagnostics = diagnostics;
+        info.shaderCompilation = RhiShaderCompilation(startup.shaderCompilation);
         upscaler::VulkanExtensions(info.instanceExtensions, info.deviceExtensions);
         g_rhi = rhi::CreateVulkan(info);
         if (!g_rhi)
@@ -3752,8 +3769,9 @@ float4 main(float4 position : SV_Position) : SV_Target
         displayMode.dmSize = sizeof(displayMode);
         if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &displayMode))
             Log("[gpu] primary display: %lux%lu at %lu Hz", displayMode.dmPelsWidth, displayMode.dmPelsHeight, displayMode.dmDisplayFrequency);
-        // Both variants of every known game shader into the SPIR-V cache, off the critical path.
-        warmup::StartBackground(g_shaderCacheDir);
+        // Both variants of every known game shader into the SPIR-V cache, off the critical path,
+        // and the pipeline parts of the variant in use (asynchronous shader compilation).
+        warmup::StartBackground(g_shaderCacheDir, g_rhi, g_renderScaled);
         g_active = true;
         settings::menu::SetAvailable(true);
         return true;
@@ -3851,6 +3869,26 @@ float4 main(float4 position : SV_Position) : SV_Target
         g_effects.depthOfField = float(options.depthOfField) / 100.0f;
         g_effects.shadowSoftness = float(options.shadowSoftness) / 100.0f;
         g_hudCentered = options.hud16x9;
+        // [graphics] shader_compilation applies at once; while the pipelines of earlier runs take
+        // long to compile again at start (a new driver), a notice says so.
+        {
+            static settings::ShaderCompilation s_compileMode = settings::AtStartup().shaderCompilation;
+            if (options.shaderCompilation != s_compileMode)
+            {
+                s_compileMode = options.shaderCompilation;
+                g_rhi->SetShaderCompilation(RhiShaderCompilation(s_compileMode));
+            }
+            static const ULONGLONG s_start = GetTickCount64();
+            static bool s_precompiling = true;
+            uint32_t done = 0, total = 0;
+            if (s_precompiling)
+                g_rhi->PrecompileProgress(done, total);
+            if (s_precompiling && done >= total)
+                s_precompiling = false;
+            else if (s_precompiling && GetTickCount64() - s_start > 3000 && g_stats.swaps % 15 == 0)
+                overlay::Notice((settings::options::Portuguese(options) ? "PREPARANDO SHADERS... " : "PREPARING SHADERS... ") +
+                                std::to_string(done * 100 / std::max(total, 1u)) + "%");
+        }
         // F8: the lighting remaster off / on (not saved), with a notice on screen.
         if (window::ConsumeLightingToggles() & 1)
         {
@@ -4109,8 +4147,29 @@ float4 main(float4 position : SV_Position) : SV_Target
                 s_sum += ms;
                 s_max = std::max(s_max, ms);
                 s_count++;
+                double toMs = 1000.0 / double(s_frequency.QuadPart);
+                double pipelineMs = double(timing.pipelineTicks) * toMs, shaderMs = double(timing.shaderTicks) * toMs;
+                // Hitches over 50 ms and what compiled in them (first use of a shader or pipeline).
                 if (ms > 50.0)
+                {
                     s_hitches++;
+                    static uint32_t s_loggedHitches;
+                    if (s_loggedHitches++ < 200)
+                        Log("[gpu] hitch: frame %llu took %.1f ms; compiled %u pipelines (%.1f ms), %u shaders (%.1f ms)", (unsigned long long)g_frame, ms,
+                            timing.pipelines, pipelineMs, timing.shaders, shaderMs);
+                }
+                // CRASH_COMPILE_LOG=1: every frame's time and compiles in compiles.csv (screenshot folder).
+                static FILE* s_frameLog = [] {
+                    FILE* file = getenv("CRASH_COMPILE_LOG") ? _wfopen((g_screenshotDir / "compiles.csv").c_str(), L"w") : nullptr;
+                    if (file)
+                        fprintf(file, "frame,ms,pipelines,pipeline_ms,shaders,shader_ms\n");
+                    return file;
+                }();
+                if (s_frameLog)
+                {
+                    fprintf(s_frameLog, "%llu,%.3f,%u,%.3f,%u,%.3f\n", (unsigned long long)g_frame, ms, timing.pipelines, pipelineMs, timing.shaders, shaderMs);
+                    fflush(s_frameLog);  // test runs end by a kill
+                }
                 if (s_count == 300)
                 {
                     Log("[gpu] present pacing: %u frames, avg %.2f ms, max %.2f ms, %u over 50 ms; waiting for the GPU %.2f ms/frame, submit %.2f ms/frame, longest Present %.2f ms, ring waits %.2f ms/frame; window %s",

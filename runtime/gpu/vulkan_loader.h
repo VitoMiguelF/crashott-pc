@@ -112,6 +112,19 @@
     X(vkCmdSetScissor) \
     X(vkCmdSetBlendConstants) \
     X(vkCmdSetStencilReference) \
+    X(vkCmdSetStencilCompareMask) \
+    X(vkCmdSetStencilWriteMask) \
+    X(vkCmdSetDepthBias) \
+    X(vkCmdSetDepthBias2EXT) \
+    X(vkCmdSetCullMode) \
+    X(vkCmdSetDepthTestEnable) \
+    X(vkCmdSetDepthWriteEnable) \
+    X(vkCmdSetDepthCompareOp) \
+    X(vkCmdSetStencilTestEnable) \
+    X(vkCmdSetStencilOp) \
+    X(vkCmdSetDepthBiasEnable) \
+    X(vkCmdSetPrimitiveTopology) \
+    X(vkCmdSetPrimitiveRestartEnable) \
     X(vkCmdDraw) \
     X(vkCmdDrawIndexed) \
     X(vkCmdClearAttachments) \

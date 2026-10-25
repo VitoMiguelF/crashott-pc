@@ -255,6 +255,10 @@ namespace gpu::rhi
         uint64_t submitTicks = 0;     // ... submitting
         uint64_t presentTicks = 0;    // longest present call
         uint64_t ringWaitTicks = 0;   // ... waiting for upload ring space
+        // Compiles on the recording thread (the hitches of first use): driver pipelines and
+        // HLSL -> SPIR-V shaders not in the cache, their count and QPC ticks.
+        uint32_t pipelines = 0, shaders = 0;
+        uint64_t pipelineTicks = 0, shaderTicks = 0;
     };
 
     // GPU safe mode ([video] gpu_safe_mode, CRASH_GPU_SAFE): conservative paths, one bit each, for
@@ -274,6 +278,17 @@ namespace gpu::rhi
     uint32_t ParseSafeMode(const std::string& text);
     std::string SafeModeNames(uint32_t mask);
 
+    // How draw pipelines are compiled ([video] shader_compilation, CRASH_SHADER_COMPILE).
+    // - Sync ("sync"): on the recording thread when a draw first needs one (the old behaviour).
+    // - Async ("async", the default): compile workers; with VK_EXT_graphics_pipeline_library a new
+    //   pipeline is fast-linked from per-shader libraries (well under a millisecond) and an optimized
+    //   one replaces it once a worker has linked it; the pipelines of earlier runs are compiled by
+    //   the workers at start. Without the extension, only the start-up compiles are in the background.
+    // - Aggressive ("aggressive"): async, and a draw that can wait (DrawPipelineKey: deferrable) is
+    //   skipped while its pipeline compiles.
+    enum class ShaderCompilation : uint8_t { Sync, Async, Aggressive };
+    ShaderCompilation ParseShaderCompilation(const std::string& text);  // unknown = Async
+
     struct DeviceInfo
     {
         void* window = nullptr;  // HWND
@@ -282,6 +297,7 @@ namespace gpu::rhi
         bool debug = false;                 // Vulkan validation layers (+ synchronization validation)
         uint32_t safeMode = 0;              // SafeMode bits
         bool diagnostics = false;           // [video] gpu_diagnostics: the device's features, limits and formats in the log
+        ShaderCompilation shaderCompilation = ShaderCompilation::Async;
         // Vulkan extensions a vendor SDK asks for (DLSS's NGX), enabled when the driver has them.
         std::vector<std::string> instanceExtensions, deviceExtensions;
     };
@@ -323,7 +339,17 @@ namespace gpu::rhi
 
         // Shaders: null (logged) if it doesn't compile.
         virtual Shader* CreateShader(Stage stage, const std::string& hlsl, const char* name, Layout layout) = 0;
-        virtual Pipeline* GetDrawPipeline(const DrawPipelineKey& key) = 0;  // cached; null on failure
+        // Cached; null on failure. `deferrable`: the draw may be skipped while its pipeline compiles
+        // (ShaderCompilation::Aggressive only); `deferred` is then set, and null returned.
+        virtual Pipeline* GetDrawPipeline(const DrawPipelineKey& key, bool deferrable = false, bool* deferred = nullptr) = 0;
+        // Pipelines of earlier runs still compiling in the background, of those queued at start.
+        virtual void PrecompileProgress(uint32_t& done, uint32_t& total) = 0;
+        // Changes the mode while running (the settings screen); the start-up compiles only run when
+        // the device is created in an asynchronous mode.
+        virtual void SetShaderCompilation(ShaderCompilation mode) = 0;
+        // A draw shader (Layout::Draw) likely to be used: with graphics pipeline libraries, its part
+        // is compiled by a worker ahead of use. Any thread (the shader warm-up's).
+        virtual void PrewarmShader(Stage stage, const std::string& hlsl) = 0;
         virtual Pipeline* CreatePassPipeline(const PassPipelineDesc& desc) = 0;
 
         virtual void Draw(const DrawCall& draw) = 0;

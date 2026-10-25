@@ -14,6 +14,7 @@
 //     a level;
 //   - CrashRecomp.exe --precompile-shaders: the same on every core, for the installer/launcher.
 
+#include "rhi.h"
 #include "shader_translator.h"
 
 #include <cstdint>
@@ -29,8 +30,9 @@ namespace gpu::warmup
     // The first time a shader is translated in this run (the renderer's thread).
     void Record(ShaderStage stage, uint64_t hash, const uint32_t* hostOrderUcode, uint32_t dwordCount);
 
-    // Compiles what is missing from the cache on a low-priority thread.
-    void StartBackground(const std::filesystem::path& shaderCache);
+    // Compiles what is missing from the cache on a low-priority thread. `device` (optional) gets
+    // the variant in use (`scaled`) of each one to prepare its pipeline part (rhi::Device::PrewarmShader).
+    void StartBackground(const std::filesystem::path& shaderCache, rhi::Device* device = nullptr, bool scaled = false);
 
     // --precompile-shaders: compiles what is missing on every core; the number of failures.
     int Precompile(const std::filesystem::path& shaderCache);

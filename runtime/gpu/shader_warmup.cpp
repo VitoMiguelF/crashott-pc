@@ -94,18 +94,25 @@ namespace gpu::warmup
         }
 
         // The renderer's translation (PrepareShader in xenos_renderer.cpp, without the user's
-        // shaderoverride files) for one variant, compiled into the cache unless it is there.
-        bool Compile(const Source& source, bool scaled, const std::filesystem::path& shaderCache)
+        // shaderoverride files) for one variant, compiled into the cache unless it is there; then
+        // `device`, if any, prepares its pipeline part.
+        bool Compile(const Source& source, bool scaled, const std::filesystem::path& shaderCache, rhi::Device* device)
         {
             TranslatedShader info = TranslateShader(source.stage, source.ucode.data(), uint32_t(source.ucode.size()), scaled);
             graphics::PatchShader(source.stage, source.hash, info.hlsl);
             std::string name = Name(source.stage, source.hash) + (scaled ? " (scaled)" : "");
             rhi::Stage stage = source.stage == ShaderStage::Pixel ? rhi::Stage::Pixel : rhi::Stage::Vertex;
-            return rhi::TestCompile(stage, info.hlsl, name.c_str(), rhi::Layout::Draw, shaderCache);
+            if (!rhi::TestCompile(stage, info.hlsl, name.c_str(), rhi::Layout::Draw, shaderCache))
+                return false;
+            if (device)
+                device->PrewarmShader(stage, info.hlsl);
+            return true;
         }
 
-        // Every source in both variants, on `threads` threads. Returns the failures.
-        int CompileAll(const std::vector<Source>& sources, const std::filesystem::path& shaderCache, uint32_t threads, int priority)
+        // Every source in both variants, on `threads` threads (the variant in use first, given to
+        // `device`). Returns the failures.
+        int CompileAll(const std::vector<Source>& sources, const std::filesystem::path& shaderCache, uint32_t threads, int priority,
+                       rhi::Device* device = nullptr, bool scaled = false)
         {
             std::atomic<size_t> next{ 0 };
             std::atomic<int> failures{ 0 };
@@ -113,8 +120,12 @@ namespace gpu::warmup
                 if (priority != THREAD_PRIORITY_NORMAL)
                     SetThreadPriority(GetCurrentThread(), priority);
                 for (size_t job; (job = next.fetch_add(1)) < sources.size() * 2;)
-                    if (!Compile(sources[job / 2], job % 2 == 1, shaderCache))
+                {
+                    bool inUse = job < sources.size();
+                    bool variant = inUse ? scaled : !scaled;
+                    if (!Compile(sources[job % sources.size()], variant, shaderCache, inUse ? device : nullptr))
                         failures++;
+                }
             };
             std::vector<std::thread> workers;
             for (uint32_t i = 1; i < threads; i++)
@@ -168,13 +179,13 @@ namespace gpu::warmup
         std::filesystem::rename(temporary, path, error);
     }
 
-    void StartBackground(const std::filesystem::path& shaderCache)
+    void StartBackground(const std::filesystem::path& shaderCache, rhi::Device* device, bool scaled)
     {
-        std::thread([shaderCache] {
+        std::thread([shaderCache, device, scaled] {
             SetThreadDescription(GetCurrentThread(), L"shader warm-up");
             auto start = std::chrono::steady_clock::now();
             std::vector<Source> sources = Sources(shaderCache);
-            int failures = CompileAll(sources, shaderCache, 1, THREAD_PRIORITY_LOWEST);
+            int failures = CompileAll(sources, shaderCache, 1, THREAD_PRIORITY_LOWEST, device, scaled);
             Log("[gpu] shader warm-up: %zu shaders x 2 variants checked in %.0f ms (%d failed)", sources.size(),
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), failures);
         }).detach();

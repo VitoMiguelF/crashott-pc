@@ -16,6 +16,10 @@ namespace gpu::rhi::vulkan
     constexpr uint32_t DRAW_SET_CONSTANTS = 1;
     constexpr uint32_t DRAW_SET_SAMPLERS = 2;
 
+    // The cache key of `hlsl` (<cache>\<hash>.spv): also the shader's identity in the pipeline
+    // records (rhi_vulkan.cpp, ProgramKey).
+    uint64_t SpirvHash(Stage stage, const std::string& hlsl, Layout layout);
+
     // Compiles (or reads from <cache>\<hash>.spv) `hlsl` for `stage` with the registers of `layout`.
     // False (logged, the HLSL written to shaderdump\) if it doesn't compile.
     bool CompileSpirv(Stage stage, const std::string& hlsl, const char* name, Layout layout, const std::filesystem::path& cache,

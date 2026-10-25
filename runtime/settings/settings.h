@@ -66,6 +66,10 @@ namespace settings
     enum class OverlayMode : uint8_t { Off, Fps, FrameTime, Full };
     // Screen-space ambient occlusion of the lighting remaster: off, half resolution, full resolution.
     enum class AoQuality : uint8_t { Off, Low, High };
+    // How the renderer compiles pipelines (gpu/rhi.h rhi::ShaderCompilation): in the background
+    // (async, the default), when a draw needs one (sync), or async and skipping the draws that can
+    // wait (aggressive, settings.toml only).
+    enum class ShaderCompilation : uint8_t { Async, Sync, Aggressive };
 
     struct Language
     {
@@ -139,6 +143,7 @@ namespace settings
         int depthOfField = 100;     // % of the game's depth of field blur radius
         int anisotropy = 16;        // anisotropic filtering: 1 (off), 2, 4, 8, 16
         int shadowSoftness = 100;   // % of the radius of the game's shadow filter (0..200)
+        ShaderCompilation shaderCompilation = ShaderCompilation::Async;  // applies at once
         bool hdTextures = true;     // use the HD texture packs of the mods (gpu/hd_textures.h), on the next launch
         bool textureDump = false;   // dump the game's textures to userdata\texture_dump (tools/hd_textures.py)
         bool hdRemaster = false;    // the AI-remastered mod in <data>\remaster_full or remaster_l1 (hd_remaster.cpp, paths.h), on the next launch
@@ -258,5 +263,6 @@ namespace settings
     float SceneScale();
     const char* OverlayModeName(OverlayMode mode);              // "off", "fps", "frametime", "full"
     const char* AoQualityName(AoQuality quality);               // "off", "low", "high"
+    const char* ShaderCompilationName(ShaderCompilation mode);  // "async", "sync", "aggressive"
     bool ParseOverlayMode(const std::string& text, OverlayMode& mode);  // also true/false, 1/0
 }

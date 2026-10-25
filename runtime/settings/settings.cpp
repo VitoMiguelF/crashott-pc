@@ -269,6 +269,17 @@ namespace settings
                 ok = ParsePercent(value, values.depthOfField);
             else if (name == "graphics.shadow_softness")
                 ok = ParsePercent(value, values.shadowSoftness, 200);
+            else if (name == "graphics.shader_compilation")
+            {
+                if (lower == "async" || lower == "auto")
+                    values.shaderCompilation = ShaderCompilation::Async;
+                else if (lower == "sync" || lower == "off")
+                    values.shaderCompilation = ShaderCompilation::Sync;
+                else if (lower == "aggressive")
+                    values.shaderCompilation = ShaderCompilation::Aggressive;
+                else
+                    ok = false;
+            }
             else if (name == "graphics.anisotropic_filtering")
             {
                 if (lower == "off")
@@ -418,6 +429,7 @@ namespace settings
                    "depth_of_field = " << v.depthOfField << "   # 0-100 %, 0 = sem profundidade de campo\n"
                    "anisotropic_filtering = " << v.anisotropy << "   # 1 (desligado) | 2 | 4 | 8 | 16\n"
                    "shadow_softness = " << v.shadowSoftness << "   # 0-200 %, raio do filtro das sombras (sombras por stencil: nao ha resolucao de sombra)\n"
+                   "shader_compilation = \"" << ShaderCompilationName(v.shaderCompilation) << "\"   # async (em segundo plano, sem engasgos) | sync (na hora do primeiro uso, como antes) | aggressive (async e pula por alguns quadros o que pode esperar) (vale na hora)\n"
                    "hd_textures = " << (v.hdTextures ? "true" : "false") << "   # texturas HD das pastas hd_textures dos mods (tools\\hd_textures.py) (ao reiniciar)\n"
                    "texture_dump = " << (v.textureDump ? "true" : "false") << "   # grava as texturas do jogo em userdata\\texture_dump para o tools\\hd_textures.py (ao reiniciar)\n"
                    "hd_remaster = " << (v.hdRemaster ? "true" : "false") << "   # HD AI Remaster: texturas e modelos remasterizados por IA (data\\remaster_full ao lado do exe, ou so a fase 1 em data\\remaster_l1; README \"HD AI Remaster\") (reinicia o jogo)\n\n"
@@ -601,6 +613,16 @@ namespace settings
         return true;
     }
 
+    const char* ShaderCompilationName(ShaderCompilation mode)
+    {
+        switch (mode)
+        {
+        case ShaderCompilation::Sync: return "sync";
+        case ShaderCompilation::Aggressive: return "aggressive";
+        default: return "async";
+        }
+    }
+
     const char* AntiAliasingName(AntiAliasing mode)
     {
         switch (mode)
@@ -723,10 +745,10 @@ namespace settings
             OverlayModeName(values.overlay), AntiAliasingName(values.antiAliasing), values.language.c_str(),
             values.ps2MojoColors ? "ps2" : "xbox360");
         Log("[settings] graphics: upscaler %s (%s), sharpness %d%%, motion blur %d%%, depth of field %d%%, anisotropic %dx, shadow softness %d%%, "
-            "hd textures %s, texture dump %s, hd ai remaster %s",
+            "shader compilation %s, hd textures %s, texture dump %s, hd ai remaster %s",
             UpscalerName(values.upscaler), UpscalerQualityName(values.upscalerQuality), values.sharpness, values.motionBlur, values.depthOfField,
-            values.anisotropy, values.shadowSoftness, values.hdTextures ? "on" : "off", values.textureDump ? "on" : "off",
-            values.hdRemaster ? "on" : "off");
+            values.anisotropy, values.shadowSoftness, ShaderCompilationName(values.shaderCompilation), values.hdTextures ? "on" : "off",
+            values.textureDump ? "on" : "off", values.hdRemaster ? "on" : "off");
         Log("[settings] lighting: ssao %s, gi %s (%d%%), contact shadows %s, soft shadows %s", AoQualityName(values.ssao), values.gi ? "on" : "off",
             values.giIntensity, values.contactShadows ? "on" : "off", values.softShadows ? "on" : "off");
     }

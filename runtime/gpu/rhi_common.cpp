@@ -193,4 +193,16 @@ namespace gpu::rhi
         }
         return names.empty() ? "off" : names;
     }
+
+    ShaderCompilation ParseShaderCompilation(const std::string& text)
+    {
+        std::string lower;
+        for (char c : text)
+            lower += char(tolower(uint8_t(c)));
+        if (lower == "sync" || lower == "off")
+            return ShaderCompilation::Sync;
+        if (lower == "aggressive")
+            return ShaderCompilation::Aggressive;
+        return ShaderCompilation::Async;
+    }
 }

@@ -20,7 +20,7 @@ namespace settings::options
     {
         Master, Music, Effects, Voice,
         Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay, Aspect, Hud16x9,
-        Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, HdRemaster,
+        Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, ShaderCompilation, HdRemaster,
         Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Storage,
         Subtitles, SubtitleSize, SubtitleBackground,
         FreeCamera, CameraSensitivity, CameraInvertY, CameraDistance,

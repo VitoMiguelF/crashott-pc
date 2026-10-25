@@ -350,6 +350,28 @@ input = [
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "save_slots", "hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[settings\] screen opened', 'audio\.master -> 90%', 'video\.antialiasing -> FXAA', '\[settings\] tab -> controls', '\[settings\] tab -> definitive', '\[settings\] saved', 'XamContentCreateEx\(.*\(opened\)'] }
 
+[profiles.compilacao_shaders_tela]
+description = "SETTINGS > GRÁFICOS > COMPILAÇÃO DE SHADERS: de ASSÍNCRONA para SINCRONIZADA pelo controle (vale na hora: o renderer troca o modo), salva e faz LOAD GAME até o HUB"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+# DOWN x3, A = SETTINGS (aba JOGO); RB x3 = GRÁFICOS; DOWN x7 = COMPILAÇÃO DE SHADERS (8ª linha); RIGHT = SINCRONIZADA;
+# B salva; DOWN, A = LOAD GAME. Capturas: a linha em ASSÍNCRONA, depois em SINCRONIZADA, e o HUB.
+input = [
+    ["@main_menu"],
+    [2, "DOWN"], [3, "DOWN"], [4, "DOWN"], [5, "A"],
+    [6.5, "RB"], [7, "RB"], [7.5, "RB"],
+    [8.2, "DOWN"], [8.6, "DOWN"], [9, "DOWN"], [9.4, "DOWN"], [9.8, "DOWN"], [10.2, "DOWN"], [10.6, "DOWN"],
+    [11.5, "SHOT"], [12, "RIGHT"], [13, "SHOT"], [14, "B"],
+    [15, "SHOT"], [16, "DOWN"], [17, "A"],
+    ["@save_slots"], [1.5, "A"],
+    ["@load_complete"], [1, "A"],
+    ["@hub"], [2, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "save_slots", "hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[vulkan\] shader compilation: async;', 'graphics\.shader_compilation -> SYNCHRONOUS', '\[vulkan\] shader compilation: sync$', '\[settings\] saved'] }
+
 [profiles.configuracoes_reinicio]
 description = "SETTINGS: troca o idioma para PT-BR, sai, aceita o reinício (A); o runner reabre o jogo, que pula as intros sozinho, e faz LOAD GAME"
 test = true

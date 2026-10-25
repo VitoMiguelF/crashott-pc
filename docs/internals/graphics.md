@@ -41,7 +41,8 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   (fullscreen helpers: b0, t0-t7 or a structured buffer, static samplers s0 point / s1 linear).
   Formats are DXGI enums (only `<dxgiformat.h>`), mapped by the backend.
 - The only backend is `rhi_vulkan.cpp` (Vulkan 1.3: dynamic rendering, synchronization2, a timeline
-  semaphore per submission; DXC -> SPIR-V, `<hash>.spv`, `userdata\shadercache\vulkan_pipelines.bin`).
+  semaphore per submission; DXC -> SPIR-V, `<hash>.spv`, `userdata\shadercache\vulkan_pipelines.bin`,
+  `pipeline_keys.bin`).
   Direct3D 12 (`rhi_d3d12.cpp`, FXC; in git history) was removed on 2026-10-23 after reaching parity; `rhi.h` keeps the
   shape so a native Linux WSI or Metal only needs a new Device. Without a Vulkan 1.3 device or a
   `dxcompiler.dll` that emits SPIR-V, `renderer::Init` logs why, shows a message box and exits.
@@ -59,6 +60,31 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   presented black every other frame), hence regular sets for passes; the SDK 1.4.363 validation layer
   crashes in `vkCmdPushDescriptorSetKHR` when the push set is not set 0; llvm-mingw needs the DXC
   interface GUIDs declared (`__CRT_UUID_DECL`).
+- **Pipeline compilation** (`[graphics] shader_compilation`, `rhi::ShaderCompilation`; `runtime/NOTES.md`
+  "Compilação de shaders assíncrona"). A draw's `DrawPipelineKey` maps to a `Program` (`ProgramKey`: the
+  shaders by `vulkan::SpirvHash` + the state that isn't dynamic: formats, blend, write mask, topology class,
+  depth clip). Cull mode, depth/stencil tests and ops, stencil masks, depth bias (D24-on-D32 through
+  `vkCmdSetDepthBias2EXT`), topology and primitive restart are Vulkan 1.3 dynamic state (`DrawDynamic`,
+  `SetDrawDynamic`): the village needs 50 programs instead of 86 pipelines.
+  - `async` (default): with `VK_EXT_graphics_pipeline_library` + fast linking (enabled whenever present),
+    a program is fast-linked from four parts (vertex input by topology class, pre-rasterization by VS/GS/
+    depth clip, fragment shader by PS, fragment output by formats/blend/mask; `LibraryKey`), each compiled
+    once; a worker then links it with link-time optimization and `Program::Current()` switches to that.
+    Workers (`hardware_concurrency / 4`, 1-4, below normal) also compile at start every pipeline in
+    `shadercache\pipeline_keys.bin` (80-byte `ProgramKey` records appended by `SavePipelineCache`; the last
+    8192) and, from the shader warm-up, the VS/PS parts of every known shader (`PrewarmShader`). A notice
+    "PREPARANDO SHADERS... n%" shows when that takes over 3 s (a new driver).
+  - `sync`: whole pipelines on the recording thread when first drawn (the old behaviour, with dynamic state).
+  - `aggressive` (settings.toml only): async, and a draw that can wait (scene MSAA target, colour only, no
+    depth/stencil write, not a rectangle-list clear nor a depth-alias clear) is skipped while its parts or
+    pipeline compile (`SKIP_COMPILING`).
+  - `Lazy` (idle / queued / building / built): whoever needs a part first builds it, the others wait; the
+    recording thread takes over a job still queued. The settings screen switches modes live.
+  - Diagnostics: `[gpu] hitch: frame N took X ms; compiled ...` for frames over 50 ms, `CRASH_COMPILE_LOG=1`
+    (`compiles.csv` per frame), the `vulkan pipelines (...)` stats line, `CRASH_SHADER_COMPILE=sync|async|
+    aggressive`, `CRASH_VULKAN_NO_EXT=gpl` (a driver without libraries), `CRASH_VULKAN_COLD=1` (an unused
+    specialization constant per run: the driver's own cache misses, for first-run measurements).
+  - The pipeline cache is written to a `.tmp` and renamed; `VK_INCOMPLETE` (workers adding) is accepted.
 - Upscalers (`upscaler.cpp`) run on the renderer's device: DLSS through NGX's Vulkan API inside
   `CrashDlss.dll` (`gpu/dlss_module/crash_dlss.h`: C interface, `CRASH_DLSS_API_VERSION`; loaded at run time,
   the exe has no NGX code), FSR 3.1.4 through `amd_fidelityfx_vk.dll` (FidelityFX SDK 1.1.4; SDK 2.x is DX12

@@ -10,8 +10,10 @@
 //   need barriers ends the rendering instance and begins it again, loading the attachments).
 // - Draws: set 0 = push descriptors of the sampled images, set 1 = 4 dynamic uniform buffers in the
 //   upload ring (b0-b3) + the ring as a storage buffer (vertex data), set 2 = sampler sets cached by
-//   their 32 descriptions (rhi_vulkan_shaders.cpp maps the HLSL registers). Viewport, scissor, blend constants and stencil reference are
-//   dynamic; the rest is in pipelines cached by DrawPipelineKey (and a VkPipelineCache on disk).
+//   their 32 descriptions (rhi_vulkan_shaders.cpp maps the HLSL registers). Viewport, scissor, blend constants, stencil reference,
+//   cull mode, depth/stencil tests and ops, depth bias, topology and primitive restart are dynamic; the rest is in compiled
+//   pipelines (Program, by ProgramKey) shared by the draws' DrawPipelineKeys, a VkPipelineCache on disk, and records of the
+//   pipelines seen (pipeline_keys.bin) that compile workers build again at start (see "Compiled draw pipelines").
 // - Passes: one regular descriptor set per pass from the command buffer's pool. With push descriptors
 //   (and their immutable samplers) NVIDIA's driver sampled zeros from image views created after the
 //   first frames: the menus' second front buffer presented black every other frame.
@@ -30,12 +32,18 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 using namespace gpu::vk;
@@ -232,6 +240,69 @@ namespace gpu::rhi
         public:
             VkShaderModule module = VK_NULL_HANDLE;
             Stage stage = Stage::Vertex;
+            uint64_t hash = 0;  // vulkan::SpirvHash: the .spv in the cache, and the identity in a ProgramKey
+        };
+
+        // Compiled draw pipelines --------------------------------------------------------------------
+        //
+        // What a draw pipeline is compiled from: the shaders (by SpirvHash) and the state that isn't
+        // dynamic. Many DrawPipelineKeys share one: cull mode, depth/stencil tests and ops, depth bias,
+        // the topology within its class and primitive restart are set per draw (DrawDynamic).
+        // Hashed and written to pipeline_keys.bin as bytes: no implicit padding.
+        struct ProgramKey
+        {
+            uint64_t vs = 0, gs = 0, ps = 0;  // ps 0: depth only
+            uint32_t colorFormats[4] = {};    // DXGI; 0 = no attachment in that slot
+            uint32_t depthFormat = 0;         // DXGI as created (D32S8 where D24S8 can't be sampled); 0 = none
+            uint32_t colorCount = 0;
+            uint32_t blend[4] = {};           // RB_BLENDCONTROL; opaque where the slot isn't written
+            uint32_t colorMask = 0;
+            uint8_t topologyClass = 0;        // 0 points, 1 lines, 2 triangles
+            uint8_t depthClip = 1;
+            uint8_t library = 0;              // library keys (LibraryKey): 1 + the part's bit index
+            uint8_t padding[9] = {};
+        };
+        static_assert(sizeof(ProgramKey) == 80);
+
+        // The dynamic state of a draw (from its DrawPipelineKey), recorded when it differs from the
+        // last draw's.
+        struct DrawDynamic
+        {
+            uint8_t cull = VK_CULL_MODE_NONE;
+            uint8_t topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            uint8_t restart = 0;
+            uint8_t depthTest = 0, depthWrite = 0, depthCompare = 0, stencilTest = 0, biasEnable = 0;
+            uint8_t biasUnorm = 0;  // the 24-bit depth's bias units on the D32 depth that stands in for it
+            uint8_t padding[3] = {};
+            uint32_t frontOps = 0, backOps = 0;  // compare | fail << 8 | pass << 16 | depth fail << 24
+            uint32_t compareMask = 0, writeMask = 0;
+            float biasConstant = 0.0f, biasSlope = 0.0f;
+        };
+        static_assert(sizeof(DrawDynamic) == 36);
+
+        // A pipeline (or pipeline library) built once, by the recording thread or a compile worker,
+        // whichever gets to it first; the others wait for it (VulkanDevice::Build).
+        struct Lazy
+        {
+            enum : uint8_t { IDLE, QUEUED, BUILDING, BUILT };
+            std::atomic<uint8_t> state{ IDLE };
+            VkPipeline handle = VK_NULL_HANDLE;  // valid once BUILT (null: it failed)
+            bool Built() const { return state.load(std::memory_order_acquire) == BUILT; }
+        };
+
+        struct Program
+        {
+            ProgramKey key;
+            // Monolithic, or linked from the libraries with link-time optimization.
+            Lazy full;
+            // Graphics pipeline libraries: fast-linked, drawn with until `full` is built.
+            Lazy fast;
+            VkPipeline Current() const
+            {
+                if (full.Built() && full.handle)
+                    return full.handle;
+                return fast.Built() ? fast.handle : VK_NULL_HANDLE;
+            }
         };
 
         class VulkanPipeline : public Pipeline
@@ -245,8 +316,12 @@ namespace gpu::rhi
             uint32_t textureCount = 0, constantBytes = 0, targetCount = 0;
             bool bufferInput = false;
             std::string name;
-            // Draws: the key it was made from, and the last variant for a larger rendering instance.
+            // Draws: the key it was made from, its compiled pipeline and dynamic state, and the last
+            // variant for a larger rendering instance.
             DrawPipelineKey key;
+            Program* program = nullptr;
+            bool failed = false;  // the program didn't compile (logged)
+            DrawDynamic dynamic;
             uint64_t variantSignature = 0;
             VulkanPipeline* variant = nullptr;
         };
@@ -276,7 +351,30 @@ namespace gpu::rhi
             void ClearDepthStencil(Texture* texture, float depth, uint8_t stencil, const Rect* rect) override;
 
             Shader* CreateShader(Stage stage, const std::string& hlsl, const char* name, Layout layout) override;
-            Pipeline* GetDrawPipeline(const DrawPipelineKey& key) override;
+            Pipeline* GetDrawPipeline(const DrawPipelineKey& key, bool deferrable, bool* deferred) override;
+            void PrecompileProgress(uint32_t& done, uint32_t& total) override
+            {
+                done = m_precompileDone.load();
+                total = m_precompileTotal.load();
+            }
+            void SetShaderCompilation(ShaderCompilation mode) override
+            {
+                if (mode == m_compileMode)
+                    return;
+                m_compileMode = mode;
+                m_gpl = m_gplAvailable && mode != ShaderCompilation::Sync;
+                if (mode != ShaderCompilation::Sync && !m_workerCount)
+                    StartCompileWorkers();
+                Log("[vulkan] shader compilation: %s", mode == ShaderCompilation::Sync ? "sync" : mode == ShaderCompilation::Aggressive ? "aggressive" : "async");
+            }
+            void PrewarmShader(Stage stage, const std::string& hlsl) override;
+            void PrecompileDone()
+            {
+                // Once: the warm-up keeps adding parts, so the queue can drain more than once.
+                if (++m_precompileDone == m_precompileTotal && !m_precompileLogged.exchange(true))
+                    Log("[vulkan] start-up compiles done: %u (pipelines of earlier runs and parts of known shaders) in %llu ms", m_precompileTotal.load(),
+                        (unsigned long long)(GetTickCount64() - m_precompileStart));
+            }
             Pipeline* CreatePassPipeline(const PassPipelineDesc& desc) override;
 
             void Draw(const DrawCall& draw) override;
@@ -352,7 +450,25 @@ namespace gpu::rhi
             bool RenderingMatches(VulkanTexture* const* colors, uint32_t colorCount, VulkanTexture* depth) const;
             VulkanPipeline* PipelineInsideRendering(VulkanPipeline* pipeline, VulkanTexture* const* colors, uint32_t colorCount, VulkanTexture* depth);
             void SetViewportScissor(const Viewport& viewport, const Rect& scissor);
+            void SetDrawDynamic(const DrawDynamic& dynamic);
             void SavePipelineCache();
+            // Draw pipelines (see "Compiled draw pipelines").
+            ProgramKey MakeProgramKey(const DrawPipelineKey& key) const;
+            DrawDynamic MakeDrawDynamic(const DrawPipelineKey& key) const;
+            Program* FindProgram(const ProgramKey& key, bool record);
+            Lazy* FindLibrary(const ProgramKey& key, uint32_t part);
+            VulkanShader* ShaderByHash(uint64_t hash);
+            VulkanShader* LoadCachedSpirv(uint64_t hash, Stage stage);
+            // `parts`: VK_GRAPHICS_PIPELINE_LIBRARY_*_BIT_EXT (all four, ALL_PARTS: a whole pipeline);
+            // or links `libraries` (the four parts) with or without link-time optimization.
+            VkPipeline CreateGraphics(const ProgramKey& key, uint32_t parts, const VkPipeline* libraries = nullptr, bool optimize = false);
+            bool Libraries(const ProgramKey& key, Lazy* libraries[4]);
+            VkPipeline Build(Lazy& lazy, const std::function<VkPipeline()>& build);
+            void Queue(Lazy& lazy, bool urgent, std::function<VkPipeline()> build);
+            bool PrepareProgram(Program& program, bool deferrable, bool& deferred);
+            void StartCompileWorkers();
+            void Enqueue(bool urgent, std::function<void()> job);
+            void StartPrecompile();
 
             // Device.
             std::string m_adapterName;
@@ -371,6 +487,7 @@ namespace gpu::rhi
             uint32_t m_queueFamily = 0;
             VkQueue m_queue = VK_NULL_HANDLE;
             bool m_depthClipExtension = false, m_depthBiasControl = false, m_maintenance5 = false, m_memoryBudget = false;
+            bool m_gplExtension = false;  // VK_EXT_graphics_pipeline_library + VK_KHR_pipeline_library listed
             std::vector<std::string> m_enabledDeviceExtensions;
             std::unordered_map<uint32_t, VkFormatFeatureFlags> m_formatFeatures;  // (format, usage) pairs checked by CreateTexture
             std::vector<std::string> m_extraInstanceExtensions, m_extraDeviceExtensions;  // DeviceInfo's
@@ -442,11 +559,38 @@ namespace gpu::rhi
             std::unordered_map<uint64_t, VkDescriptorSet> m_samplerSets;
             std::unordered_map<uint64_t, VkSampler> m_samplers;
             VkPipelineCache m_pipelineCache = VK_NULL_HANDLE;
-            uint32_t m_unsavedPipelines = 0;
+            std::atomic<uint32_t> m_unsavedPipelines{ 0 };
             ULONGLONG m_lastCacheSave = 0;
-            std::unordered_map<uint64_t, std::unique_ptr<VulkanPipeline>> m_drawPipelines;
+            std::unordered_map<uint64_t, std::unique_ptr<VulkanPipeline>> m_drawPipelines;  // by DrawPipelineKey (recording thread)
             std::vector<std::unique_ptr<VulkanPipeline>> m_passPipelines;
             std::vector<std::unique_ptr<VulkanShader>> m_shaders;
+
+            // Compiled draw pipelines. The compile workers add programs, libraries and shaders too:
+            // m_programMutex guards these maps and m_shaders (an object stays where it is once added).
+            ShaderCompilation m_compileMode = ShaderCompilation::Async;
+            bool m_gplAvailable = false;     // graphics pipeline libraries with fast linking enabled
+            std::atomic<bool> m_gpl{ false };  // ... and in use (the asynchronous modes)
+            std::mutex m_programMutex;
+            std::unordered_map<uint64_t, std::unique_ptr<Program>> m_programs;   // by ProgramKey
+            std::unordered_map<uint64_t, std::unique_ptr<Lazy>> m_libraries;     // by LibraryKey
+            std::unordered_map<uint64_t, VulkanShader*> m_shaderByHash;
+            std::unordered_set<uint64_t> m_recorded;   // ProgramKeys in pipeline_keys.bin
+            std::vector<ProgramKey> m_newRecords;      // to append to it
+            std::mutex m_lazyMutex;
+            std::condition_variable m_lazyBuilt;
+            // Compile workers: urgent jobs (pipelines being drawn with) before the start-up ones.
+            std::mutex m_jobMutex;
+            std::condition_variable m_jobReady;
+            std::deque<std::function<void()>> m_jobs[2];  // [0] urgent, [1] start-up
+            uint32_t m_workerCount = 0;
+            std::atomic<uint32_t> m_precompileDone{ 0 }, m_precompileTotal{ 0 };
+            ULONGLONG m_precompileStart = GetTickCount64();
+            std::atomic<bool> m_precompileLogged{ false };
+            struct
+            {
+                std::atomic<uint64_t> programs{ 0 }, libraries{ 0 }, fastLinks{ 0 }, optimized{ 0 }, failures{ 0 };
+                std::atomic<uint64_t> deferred{ 0 }, stalls{ 0 };
+            } m_compileStats;
             VkShaderModule m_fullscreenVs = VK_NULL_HANDLE;
             VulkanTexture* m_nullTexture = nullptr;
             VkQueryPool m_queryPool = VK_NULL_HANDLE;
@@ -477,6 +621,8 @@ namespace gpu::rhi
                 bool dynamicValid = false;
                 float blendFactor[4] = {};
                 uint32_t stencilRef = 0;
+                bool drawDynamicValid = false;
+                DrawDynamic drawDynamic;
                 bool effectsValid = false;
                 graphics::EffectConstants effects;
                 uint64_t effectsOffset = 0;
@@ -692,13 +838,15 @@ namespace gpu::rhi
                     m_depthBiasControl = has(VK_EXT_DEPTH_BIAS_CONTROL_EXTENSION_NAME);
                     m_maintenance5 = has(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
                     m_memoryBudget = has(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
-                    // CRASH_VULKAN_NO_EXT=depth_clip,depth_bias_control,maintenance5 (debug): the paths
-                    // of a GPU without them (another vendor's driver) on this one.
+                    m_gplExtension = has(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME) && has(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
+                    // CRASH_VULKAN_NO_EXT=depth_clip,depth_bias_control,maintenance5,gpl (debug): the
+                    // paths of a GPU without them (another vendor's driver) on this one.
                     if (const char* off = getenv("CRASH_VULKAN_NO_EXT"))
                     {
                         m_depthClipExtension = m_depthClipExtension && !strstr(off, "depth_clip");
                         m_depthBiasControl = m_depthBiasControl && !strstr(off, "depth_bias_control");
                         m_maintenance5 = m_maintenance5 && !strstr(off, "maintenance5");
+                        m_gplExtension = m_gplExtension && !strstr(off, "gpl");
                     }
                     uint32_t bits = families[family].timestampValidBits;
                     m_timestampMask = bits >= 64 ? ~0ull : (1ull << bits) - 1;
@@ -809,6 +957,33 @@ namespace gpu::rhi
                 maintenance5.maintenance5 = VK_TRUE;
                 *chain = &maintenance5;
                 chain = &maintenance5.pNext;
+            }
+            // Graphics pipeline libraries (asynchronous shader compilation): only with fast linking,
+            // the point of them here (a draw's pipeline linked from compiled parts in well under a ms).
+            // Enabled whenever the driver has them, used in the asynchronous modes (the setting
+            // applies at once).
+            VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT };
+            if (m_gplExtension)
+            {
+                VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT query{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT };
+                VkPhysicalDeviceFeatures2 queryFeatures{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &query };
+                vkGetPhysicalDeviceFeatures2(m_physical, &queryFeatures);
+                VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT gplProperties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT };
+                VkPhysicalDeviceProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gplProperties };
+                vkGetPhysicalDeviceProperties2(m_physical, &properties);
+                m_gplAvailable = query.graphicsPipelineLibrary && gplProperties.graphicsPipelineLibraryFastLinking;
+                if (m_gplAvailable)
+                {
+                    extensions.push_back(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
+                    extensions.push_back(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME);
+                    gpl.graphicsPipelineLibrary = VK_TRUE;
+                    *chain = &gpl;
+                    chain = &gpl.pNext;
+                }
+                else
+                {
+                    Log("[vulkan] graphics pipeline libraries %s: compiled whole", query.graphicsPipelineLibrary ? "without fast linking" : "unavailable");
+                }
             }
 
             // The vendor SDKs' extensions the driver has (VK_EXT_buffer_device_address is left out: the
@@ -1154,6 +1329,10 @@ namespace gpu::rhi
             m_hwnd = HWND(info.window);
             m_safe = info.safeMode;
             m_diagnostics = info.diagnostics;
+            m_compileMode = info.shaderCompilation;
+            // CRASH_SHADER_COMPILE=sync|async|aggressive overrides [video] shader_compilation.
+            if (const char* mode = getenv("CRASH_SHADER_COMPILE"))
+                m_compileMode = ParseShaderCompilation(mode);
             if (m_safe)
                 Log("[vulkan] GPU safe mode: %s", SafeModeNames(m_safe).c_str());
             m_shaderCache = info.shaderCache;
@@ -1172,6 +1351,9 @@ namespace gpu::rhi
                 VK_API_VERSION_MINOR(m_properties.apiVersion), VK_API_VERSION_PATCH(m_properties.apiVersion), m_properties.driverVersion,
                 m_d24s8 ? "D24S8" : "D32S8 (no sampled D24S8)", m_depthClipExtension ? ", depth clip control" : "",
                 m_depthBiasControl ? ", depth bias control" : "", m_debug ? ", validation layers" : "");
+            m_gpl = m_gplAvailable && m_compileMode != ShaderCompilation::Sync;
+            Log("[vulkan] shader compilation: %s; graphics pipeline libraries %s", m_compileMode == ShaderCompilation::Sync ? "sync" : m_compileMode == ShaderCompilation::Aggressive ? "aggressive" : "async",
+                m_gplAvailable ? "with fast linking (a new pipeline is linked from compiled parts, optimized in the background)" : "unavailable (whole pipelines)");
             LogDiagnostics();
 
             // Timeline semaphore and the first command buffer.
@@ -1224,6 +1406,11 @@ namespace gpu::rhi
                 cache.initialDataSize = 0;
                 cache.pInitialData = nullptr;
                 vkCreatePipelineCache(m_device, &cache, nullptr, &m_pipelineCache);
+            }
+            if (m_compileMode != ShaderCompilation::Sync)
+            {
+                StartCompileWorkers();
+                StartPrecompile();
             }
 
             // A 1x1 transparent black texture for missing textures (D3D12's null SRV reads 0).
@@ -1885,7 +2072,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                 key.depthBias = 0;
                 key.slopeBias = 0.0f;
             }
-            auto* variant = static_cast<VulkanPipeline*>(GetDrawPipeline(key));
+            auto* variant = static_cast<VulkanPipeline*>(GetDrawPipeline(key, false, nullptr));
             if (!variant)
                 return nullptr;
             pipeline->variant = variant;
@@ -2102,16 +2289,73 @@ float4 main(float4 position : SV_Position) : SV_Target
 
         Shader* VulkanDevice::CreateShader(Stage stage, const std::string& hlsl, const char* name, Layout layout)
         {
+            // The same source again, or a shader the compile workers loaded for a recorded pipeline.
+            uint64_t hash = vulkan::SpirvHash(stage, hlsl, layout);
+            if (VulkanShader* known = ShaderByHash(hash))
+                return known;
             std::vector<uint32_t> spirv;
-            if (!vulkan::CompileSpirv(stage, hlsl, name, layout, m_shaderCache, spirv, &m_stats.shaderCompiles, &m_stats.shaderFailures))
+            uint64_t compiles = m_stats.shaderCompiles;
+            LARGE_INTEGER start, end;
+            QueryPerformanceCounter(&start);
+            bool compiled = vulkan::CompileSpirv(stage, hlsl, name, layout, m_shaderCache, spirv, &m_stats.shaderCompiles, &m_stats.shaderFailures);
+            QueryPerformanceCounter(&end);
+            if (m_stats.shaderCompiles != compiles)
+            {
+                m_timing.shaders++;
+                m_timing.shaderTicks += uint64_t(end.QuadPart - start.QuadPart);
+            }
+            if (!compiled)
                 return nullptr;
             auto shader = std::make_unique<VulkanShader>();
             shader->stage = stage;
+            shader->hash = hash;
             VkShaderModuleCreateInfo create{ VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
             create.codeSize = spirv.size() * 4;
             create.pCode = spirv.data();
             if (!Check(vkCreateShaderModule(m_device, &create, nullptr, &shader->module), "vkCreateShaderModule"))
                 return nullptr;
+            std::lock_guard<std::mutex> lock(m_programMutex);
+            auto [it, added] = m_shaderByHash.emplace(hash, shader.get());
+            if (!added)
+            {
+                vkDestroyShaderModule(m_device, shader->module, nullptr);  // a worker loaded it meanwhile
+                return it->second;
+            }
+            m_shaders.push_back(std::move(shader));
+            return m_shaders.back().get();
+        }
+
+        VulkanShader* VulkanDevice::ShaderByHash(uint64_t hash)
+        {
+            std::lock_guard<std::mutex> lock(m_programMutex);
+            auto it = m_shaderByHash.find(hash);
+            return it != m_shaderByHash.end() ? it->second : nullptr;
+        }
+
+        // A recorded pipeline's shader (compile workers): its SPIR-V from the cache; null if it isn't
+        // there (a translator or graphics option change made other sources since).
+        VulkanShader* VulkanDevice::LoadCachedSpirv(uint64_t hash, Stage stage)
+        {
+            if (VulkanShader* known = ShaderByHash(hash))
+                return known;
+            std::vector<uint8_t> spirv;
+            if (m_shaderCache.empty() || !ReadCachedShader(m_shaderCache, hash, "spv", spirv) || spirv.empty() || spirv.size() % 4)
+                return nullptr;
+            auto shader = std::make_unique<VulkanShader>();
+            shader->stage = stage;
+            shader->hash = hash;
+            VkShaderModuleCreateInfo create{ VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+            create.codeSize = spirv.size();
+            create.pCode = reinterpret_cast<const uint32_t*>(spirv.data());
+            if (!Check(vkCreateShaderModule(m_device, &create, nullptr, &shader->module), "vkCreateShaderModule"))
+                return nullptr;
+            std::lock_guard<std::mutex> lock(m_programMutex);
+            auto [it, added] = m_shaderByHash.emplace(hash, shader.get());
+            if (!added)
+            {
+                vkDestroyShaderModule(m_device, shader->module, nullptr);
+                return it->second;
+            }
             m_shaders.push_back(std::move(shader));
             return m_shaders.back().get();
         }
@@ -2163,108 +2407,319 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
         }
 
-        Pipeline* VulkanDevice::GetDrawPipeline(const DrawPipelineKey& key)
+        constexpr uint32_t PART_VERTEX_INPUT = VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT;
+        constexpr uint32_t PART_PRE_RASTERIZATION = VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT;
+        constexpr uint32_t PART_FRAGMENT_SHADER = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT;
+        constexpr uint32_t PART_FRAGMENT_OUTPUT = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT;
+        constexpr uint32_t ALL_PARTS = PART_VERTEX_INPUT | PART_PRE_RASTERIZATION | PART_FRAGMENT_SHADER | PART_FRAGMENT_OUTPUT;
+
+        // The fields of a ProgramKey that one part (a pipeline library) is made from.
+        ProgramKey LibraryKey(const ProgramKey& key, uint32_t part)
+        {
+            ProgramKey library;
+            switch (part)
+            {
+            case PART_VERTEX_INPUT:
+                library.topologyClass = key.topologyClass;
+                library.library = 1;
+                break;
+            case PART_PRE_RASTERIZATION:
+                library.vs = key.vs;
+                library.gs = key.gs;
+                library.depthClip = key.depthClip;
+                library.library = 2;
+                break;
+            case PART_FRAGMENT_SHADER:
+                library.ps = key.ps;
+                library.library = 3;
+                break;
+            default:
+                memcpy(library.colorFormats, key.colorFormats, sizeof(key.colorFormats));
+                library.depthFormat = key.depthFormat;
+                library.colorCount = key.colorCount;
+                memcpy(library.blend, key.blend, sizeof(key.blend));
+                library.colorMask = key.colorMask;
+                library.library = 4;
+                break;
+            }
+            return library;
+        }
+
+        ProgramKey VulkanDevice::MakeProgramKey(const DrawPipelineKey& key) const
+        {
+            ProgramKey program;
+            program.vs = static_cast<VulkanShader*>(key.vs)->hash;
+            program.gs = key.gs ? static_cast<VulkanShader*>(key.gs)->hash : 0;
+            program.ps = key.ps ? static_cast<VulkanShader*>(key.ps)->hash : 0;
+            program.colorCount = std::min(key.colorCount, 4u);
+            for (uint32_t i = 0; i < program.colorCount; i++)
+            {
+                uint32_t mask = (key.colorMask >> (4 * i)) & 0xF;
+                // A slot the draw doesn't write has no attachment (Draw binds a null view there), unless
+                // the draw runs inside a rendering instance with more attachments (keepFormats).
+                bool attached = key.keepFormats ? key.colorFormats[i] != 0 : mask != 0;
+                program.colorFormats[i] = attached ? key.colorFormats[i] : 0;
+                program.blend[i] = mask ? key.blend[i] : 0x00010001;  // unwritten: opaque, so pipelines are shared
+                program.colorMask |= mask << (4 * i);
+            }
+            if (key.depthFormat)
+            {
+                DXGI_FORMAT depthFormat = DXGI_FORMAT(key.depthFormat);
+                if (depthFormat == DXGI_FORMAT_D24_UNORM_S8_UINT && !m_d24s8)
+                    depthFormat = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
+                program.depthFormat = uint32_t(depthFormat);
+            }
+            program.topologyClass = key.topology == Topology::PointList ? 0 : (key.topology == Topology::LineList || key.topology == Topology::LineStrip) ? 1 : 2;
+            program.depthClip = key.depthClip;
+            return program;
+        }
+
+        DrawDynamic VulkanDevice::MakeDrawDynamic(const DrawPipelineKey& key) const
+        {
+            DrawDynamic dynamic;
+            dynamic.cull = uint8_t(key.cull == Cull::Front ? VK_CULL_MODE_FRONT_BIT : key.cull == Cull::Back ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+            dynamic.topology = uint8_t(PrimitiveTopology(key.topology));
+            dynamic.restart = key.stripCut && (key.topology == Topology::TriangleStrip || key.topology == Topology::LineStrip);
+            if (key.depthFormat)
+            {
+                uint32_t depthControl = key.depthControl;
+                dynamic.depthTest = (depthControl >> 1) & 1;
+                dynamic.depthWrite = (depthControl >> 2) & 1;
+                dynamic.depthCompare = (depthControl >> 4) & 7;
+                dynamic.stencilTest = depthControl & 1;
+                // compare | fail << 8 | pass << 16 | depth fail << 24 (VkCompareOp and VkStencilOp have the Xenos numbering).
+                auto ops = [](uint32_t compare, uint32_t fail, uint32_t pass, uint32_t depthFail) { return compare | fail << 8 | pass << 16 | depthFail << 24; };
+                dynamic.frontOps = ops((depthControl >> 8) & 7, (depthControl >> 11) & 7, (depthControl >> 14) & 7, (depthControl >> 17) & 7);
+                dynamic.backOps = (depthControl >> 7) & 1 ? ops((depthControl >> 20) & 7, (depthControl >> 23) & 7, (depthControl >> 26) & 7, (depthControl >> 29) & 7)
+                                                          : dynamic.frontOps;
+                dynamic.compareMask = (key.stencilMasks >> 8) & 0xFF;
+                dynamic.writeMask = (key.stencilMasks >> 16) & 0xFF;
+                dynamic.biasEnable = key.depthBias != 0 || key.slopeBias != 0.0f;
+                dynamic.biasConstant = float(key.depthBias);
+                dynamic.biasSlope = key.slopeBias;
+                dynamic.biasUnorm = dynamic.biasEnable && key.depthFormat == DXGI_FORMAT_D24_UNORM_S8_UINT && !m_d24s8 && m_depthBiasControl;
+            }
+            return dynamic;
+        }
+
+        void VulkanDevice::SetDrawDynamic(const DrawDynamic& dynamic)
+        {
+            DrawState& state = m_drawState;
+            const DrawDynamic& last = state.drawDynamic;
+            bool all = !state.drawDynamicValid;
+            if (!all && memcmp(&last, &dynamic, sizeof(dynamic)) == 0)
+                return;
+            if (all || last.cull != dynamic.cull)
+                vkCmdSetCullMode(m_cmd, dynamic.cull);
+            if (all || last.topology != dynamic.topology)
+                vkCmdSetPrimitiveTopology(m_cmd, VkPrimitiveTopology(dynamic.topology));
+            if (all || last.restart != dynamic.restart)
+                vkCmdSetPrimitiveRestartEnable(m_cmd, dynamic.restart);
+            if (all || last.depthTest != dynamic.depthTest)
+                vkCmdSetDepthTestEnable(m_cmd, dynamic.depthTest);
+            if (all || last.depthWrite != dynamic.depthWrite)
+                vkCmdSetDepthWriteEnable(m_cmd, dynamic.depthWrite);
+            if (all || last.depthCompare != dynamic.depthCompare)
+                vkCmdSetDepthCompareOp(m_cmd, VkCompareOp(dynamic.depthCompare));
+            if (all || last.stencilTest != dynamic.stencilTest)
+                vkCmdSetStencilTestEnable(m_cmd, dynamic.stencilTest);
+            auto stencilOps = [&](VkStencilFaceFlags face, uint32_t ops) {
+                vkCmdSetStencilOp(m_cmd, face, VkStencilOp((ops >> 8) & 0xFF), VkStencilOp((ops >> 16) & 0xFF), VkStencilOp(ops >> 24), VkCompareOp(ops & 0xFF));
+            };
+            if (all || last.frontOps != dynamic.frontOps)
+                stencilOps(VK_STENCIL_FACE_FRONT_BIT, dynamic.frontOps);
+            if (all || last.backOps != dynamic.backOps)
+                stencilOps(VK_STENCIL_FACE_BACK_BIT, dynamic.backOps);
+            if (all || last.compareMask != dynamic.compareMask)
+                vkCmdSetStencilCompareMask(m_cmd, VK_STENCIL_FACE_FRONT_AND_BACK, dynamic.compareMask);
+            if (all || last.writeMask != dynamic.writeMask)
+                vkCmdSetStencilWriteMask(m_cmd, VK_STENCIL_FACE_FRONT_AND_BACK, dynamic.writeMask);
+            if (all || last.biasEnable != dynamic.biasEnable)
+                vkCmdSetDepthBiasEnable(m_cmd, dynamic.biasEnable);
+            if (all || last.biasConstant != dynamic.biasConstant || last.biasSlope != dynamic.biasSlope || last.biasUnorm != dynamic.biasUnorm)
+            {
+                if (dynamic.biasUnorm)
+                {
+                    // The 24-bit depth's bias units on the D32 depth buffer that stands in for it.
+                    VkDepthBiasRepresentationInfoEXT representation{ VK_STRUCTURE_TYPE_DEPTH_BIAS_REPRESENTATION_INFO_EXT };
+                    representation.depthBiasRepresentation = VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
+                    VkDepthBiasInfoEXT bias{ VK_STRUCTURE_TYPE_DEPTH_BIAS_INFO_EXT, &representation };
+                    bias.depthBiasConstantFactor = dynamic.biasConstant;
+                    bias.depthBiasSlopeFactor = dynamic.biasSlope;
+                    vkCmdSetDepthBias2EXT(m_cmd, &bias);
+                }
+                else
+                {
+                    vkCmdSetDepthBias(m_cmd, dynamic.biasConstant, 0.0f, dynamic.biasSlope);
+                }
+            }
+            state.drawDynamic = dynamic;
+            state.drawDynamicValid = true;
+        }
+
+        Program* VulkanDevice::FindProgram(const ProgramKey& key, bool record)
         {
             uint64_t hash = HashBytes(&key, sizeof(key));
-            auto it = m_drawPipelines.find(hash);
-            if (it != m_drawPipelines.end())
-                return it->second->pipeline ? it->second.get() : nullptr;
+            std::lock_guard<std::mutex> lock(m_programMutex);
+            std::unique_ptr<Program>& slot = m_programs[hash];
+            if (!slot)
+            {
+                slot = std::make_unique<Program>();
+                slot->key = key;
+                if (record && !m_shaderCache.empty() && m_recorded.insert(hash).second)
+                    m_newRecords.push_back(key);
+            }
+            return slot.get();
+        }
+
+        Lazy* VulkanDevice::FindLibrary(const ProgramKey& key, uint32_t part)
+        {
+            ProgramKey library = LibraryKey(key, part);
+            uint64_t hash = HashBytes(&library, sizeof(library));
+            std::lock_guard<std::mutex> lock(m_programMutex);
+            std::unique_ptr<Lazy>& slot = m_libraries[hash];
+            if (!slot)
+                slot = std::make_unique<Lazy>();
+            return slot.get();
+        }
+
+        bool VulkanDevice::Libraries(const ProgramKey& key, Lazy* libraries[4])
+        {
+            const uint32_t parts[4] = { PART_VERTEX_INPUT, PART_PRE_RASTERIZATION, PART_FRAGMENT_SHADER, PART_FRAGMENT_OUTPUT };
+            bool built = true;
+            for (uint32_t i = 0; i < 4; i++)
+            {
+                libraries[i] = FindLibrary(key, parts[i]);
+                built = built && libraries[i]->Built();
+            }
+            return built;
+        }
+
+        VkPipeline VulkanDevice::Build(Lazy& lazy, const std::function<VkPipeline()>& build)
+        {
+            uint8_t state = lazy.state.load(std::memory_order_acquire);
+            for (;;)
+            {
+                if (state == Lazy::BUILT)
+                    return lazy.handle;
+                if (state == Lazy::BUILDING)
+                {
+                    std::unique_lock<std::mutex> lock(m_lazyMutex);
+                    m_lazyBuilt.wait(lock, [&] { return lazy.Built(); });
+                    return lazy.handle;
+                }
+                // Idle, or queued for a worker that hasn't started it: built here.
+                if (lazy.state.compare_exchange_weak(state, Lazy::BUILDING, std::memory_order_acq_rel))
+                {
+                    VkPipeline handle = build();
+                    {
+                        std::lock_guard<std::mutex> lock(m_lazyMutex);
+                        lazy.handle = handle;
+                        lazy.state.store(Lazy::BUILT, std::memory_order_release);
+                    }
+                    m_lazyBuilt.notify_all();
+                    return handle;
+                }
+            }
+        }
+
+        void VulkanDevice::Queue(Lazy& lazy, bool urgent, std::function<VkPipeline()> build)
+        {
+            uint8_t idle = Lazy::IDLE;
+            if (!lazy.state.compare_exchange_strong(idle, Lazy::QUEUED, std::memory_order_acq_rel))
+                return;
+            // Built already if another thread needed it first (Build then just returns it).
+            Enqueue(urgent, [this, &lazy, build = std::move(build)] { Build(lazy, build); });
+        }
+
+        VkPipeline VulkanDevice::CreateGraphics(const ProgramKey& key, uint32_t parts, const VkPipeline* libraries, bool optimize)
+        {
+            VkGraphicsPipelineCreateInfo create{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+            create.layout = m_drawLayout;
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            if (libraries)
+            {
+                // Linked from the four parts: fast, or optimized across them (on a compile worker).
+                VkPipelineLibraryCreateInfoKHR link{ VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR };
+                link.libraryCount = 4;
+                link.pLibraries = libraries;
+                create.pNext = &link;
+                create.flags = optimize ? VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT : 0;
+                VkResult result = vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &create, nullptr, &pipeline);
+                if (result != VK_SUCCESS)
+                {
+                    Log("[vulkan] linking a pipeline failed (%s) for vs %016llx ps %016llx", ResultName(result), (unsigned long long)key.vs, (unsigned long long)key.ps);
+                    m_compileStats.failures++;
+                    return VK_NULL_HANDLE;
+                }
+                (optimize ? m_compileStats.optimized : m_compileStats.fastLinks)++;
+                m_unsavedPipelines++;
+                return pipeline;
+            }
+            bool vertexInputPart = parts & PART_VERTEX_INPUT, preRasterization = parts & PART_PRE_RASTERIZATION;
+            bool fragmentShader = parts & PART_FRAGMENT_SHADER, fragmentOutput = parts & PART_FRAGMENT_OUTPUT;
 
             VkPipelineShaderStageCreateInfo stages[3]{};
             uint32_t stageCount = 0;
-            auto addStage = [&](Shader* shader, VkShaderStageFlagBits stage) {
+            auto addStage = [&](uint64_t hash, VkShaderStageFlagBits stage) {
+                VulkanShader* shader = ShaderByHash(hash);
+                if (!shader)
+                    return false;
                 stages[stageCount] = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
                 stages[stageCount].stage = stage;
-                stages[stageCount].module = static_cast<VulkanShader*>(shader)->module;
+                stages[stageCount].module = shader->module;
                 stages[stageCount].pName = "main";
                 stageCount++;
+                return true;
             };
-            addStage(key.vs, VK_SHADER_STAGE_VERTEX_BIT);
-            if (key.gs)
-                addStage(key.gs, VK_SHADER_STAGE_GEOMETRY_BIT);
-            if (key.ps)
-                addStage(key.ps, VK_SHADER_STAGE_FRAGMENT_BIT);
+            if (preRasterization && (!addStage(key.vs, VK_SHADER_STAGE_VERTEX_BIT) || (key.gs && !addStage(key.gs, VK_SHADER_STAGE_GEOMETRY_BIT))))
+                return VK_NULL_HANDLE;
+            if (fragmentShader && key.ps && !addStage(key.ps, VK_SHADER_STAGE_FRAGMENT_BIT))
+                return VK_NULL_HANDLE;
+            // CRASH_VULKAN_COLD=1 (measurements): an unused specialization constant with a value of
+            // this run, so the driver's own shader cache misses as on a first run.
+            static const uint32_t s_nonce = getenv("CRASH_VULKAN_COLD") ? uint32_t(GetTickCount64() * 2654435761ull) | 1u : 0u;
+            static const VkSpecializationMapEntry s_nonceEntry{ 4000, 0, 4 };
+            static const VkSpecializationInfo s_nonceInfo{ 1, &s_nonceEntry, 4, &s_nonce };
+            for (uint32_t i = 0; i < stageCount && s_nonce; i++)
+                stages[i].pSpecializationInfo = &s_nonceInfo;
 
+            // Vertex input: none (the shaders fetch from the upload ring); the topology's class (the
+            // topology itself is dynamic).
             VkPipelineVertexInputStateCreateInfo vertexInput{ VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
             VkPipelineInputAssemblyStateCreateInfo inputAssembly{ VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
-            inputAssembly.topology = PrimitiveTopology(key.topology);
-            inputAssembly.primitiveRestartEnable = key.stripCut && (key.topology == Topology::TriangleStrip || key.topology == Topology::LineStrip);
+            inputAssembly.topology = key.topologyClass == 0 ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : key.topologyClass == 1 ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
             VkPipelineViewportStateCreateInfo viewport{ VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
             viewport.viewportCount = 1;
             viewport.scissorCount = 1;
 
             VkPipelineRasterizationStateCreateInfo raster{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
             raster.polygonMode = VK_POLYGON_MODE_FILL;
-            raster.cullMode = key.cull == Cull::Front ? VK_CULL_MODE_FRONT_BIT : key.cull == Cull::Back ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
             raster.frontFace = VK_FRONT_FACE_CLOCKWISE;  // as D3D12's FrontCounterClockwise = FALSE (viewport flipped)
             raster.lineWidth = 1.0f;
-            raster.depthBiasEnable = key.depthFormat && (key.depthBias != 0 || key.slopeBias != 0.0f);
-            raster.depthBiasConstantFactor = float(key.depthBias);
-            raster.depthBiasSlopeFactor = key.slopeBias;
             VkPipelineRasterizationDepthClipStateCreateInfoEXT depthClip{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_DEPTH_CLIP_STATE_CREATE_INFO_EXT };
-            VkDepthBiasRepresentationInfoEXT biasRepresentation{ VK_STRUCTURE_TYPE_DEPTH_BIAS_REPRESENTATION_INFO_EXT };
-            const void** rasterChain = &raster.pNext;
             if (!key.depthClip)
             {
                 if (m_depthClipExtension)
                 {
                     depthClip.depthClipEnable = VK_FALSE;
-                    *rasterChain = &depthClip;
-                    rasterChain = &depthClip.pNext;
+                    raster.pNext = &depthClip;
                 }
                 else if (m_depthClamp)
                 {
                     raster.depthClampEnable = VK_TRUE;
                 }
             }
-            bool d24 = key.depthFormat == DXGI_FORMAT_D24_UNORM_S8_UINT;
-            if (raster.depthBiasEnable && d24 && !m_d24s8 && m_depthBiasControl)
-            {
-                // The 24-bit depth's bias units on the D32 depth buffer that stands in for it.
-                biasRepresentation.depthBiasRepresentation = VK_DEPTH_BIAS_REPRESENTATION_LEAST_REPRESENTABLE_VALUE_FORCE_UNORM_EXT;
-                *rasterChain = &biasRepresentation;
-                rasterChain = &biasRepresentation.pNext;
-            }
 
             VkPipelineMultisampleStateCreateInfo multisample{ VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
             multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-            VkPipelineDepthStencilStateCreateInfo depthStencil{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
-            uint32_t depthControl = key.depthControl;
-            if (key.depthFormat)
-            {
-                depthStencil.depthTestEnable = (depthControl >> 1) & 1;
-                depthStencil.depthWriteEnable = (depthControl >> 2) & 1;
-                depthStencil.depthCompareOp = VkCompareOp((depthControl >> 4) & 7);
-                depthStencil.stencilTestEnable = depthControl & 1;
-                VkStencilOpState front{};
-                front.compareOp = VkCompareOp((depthControl >> 8) & 7);
-                front.failOp = VkStencilOp((depthControl >> 11) & 7);
-                front.passOp = VkStencilOp((depthControl >> 14) & 7);
-                front.depthFailOp = VkStencilOp((depthControl >> 17) & 7);
-                front.compareMask = (key.stencilMasks >> 8) & 0xFF;
-                front.writeMask = (key.stencilMasks >> 16) & 0xFF;
-                VkStencilOpState back = front;
-                if ((depthControl >> 7) & 1)
-                {
-                    back.compareOp = VkCompareOp((depthControl >> 20) & 7);
-                    back.failOp = VkStencilOp((depthControl >> 23) & 7);
-                    back.passOp = VkStencilOp((depthControl >> 26) & 7);
-                    back.depthFailOp = VkStencilOp((depthControl >> 29) & 7);
-                }
-                depthStencil.front = front;
-                depthStencil.back = back;
-            }
+            VkPipelineDepthStencilStateCreateInfo depthStencil{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };  // dynamic
 
             VkPipelineColorBlendAttachmentState blends[4]{};
             VkFormat colorFormats[4]{};
             for (uint32_t i = 0; i < key.colorCount; i++)
             {
-                uint32_t mask = (key.colorMask >> (4 * i)) & 0xF;
-                // A slot the draw doesn't write has no attachment (Draw binds a null view there), unless
-                // the draw runs inside a rendering instance with more attachments (keepFormats).
-                bool attached = key.keepFormats ? key.colorFormats[i] != 0 : mask != 0;
-                colorFormats[i] = attached ? VkFormatOf(DXGI_FORMAT(key.colorFormats[i])) : VK_FORMAT_UNDEFINED;
+                colorFormats[i] = key.colorFormats[i] ? VkFormatOf(DXGI_FORMAT(key.colorFormats[i])) : VK_FORMAT_UNDEFINED;
                 VkPipelineColorBlendAttachmentState& blend = blends[i];
                 uint32_t control = key.blend[i];
                 uint32_t colorSrc = control & 0x1F, colorOp = (control >> 5) & 7, colorDst = (control >> 8) & 0x1F;
@@ -2276,55 +2731,274 @@ float4 main(float4 position : SV_Position) : SV_Target
                 blend.srcAlphaBlendFactor = BlendFactor(alphaSrc, true);
                 blend.dstAlphaBlendFactor = BlendFactor(alphaDst, true);
                 blend.alphaBlendOp = BlendOp(alphaOp);
-                blend.colorWriteMask = mask;
+                blend.colorWriteMask = (key.colorMask >> (4 * i)) & 0xF;
             }
             VkPipelineColorBlendStateCreateInfo colorBlend{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
             colorBlend.attachmentCount = key.colorCount;
             colorBlend.pAttachments = blends;
 
-            VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_BLEND_CONSTANTS,
-                                          VK_DYNAMIC_STATE_STENCIL_REFERENCE };
+            static const VkDynamicState DYNAMICS[] = {
+                VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_STENCIL_REFERENCE,
+                VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK, VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_DEPTH_BIAS,
+                VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE, VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+                VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE,
+                VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE,
+            };
             VkPipelineDynamicStateCreateInfo dynamic{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-            dynamic.dynamicStateCount = 4;
-            dynamic.pDynamicStates = dynamics;
+            dynamic.dynamicStateCount = uint32_t(std::size(DYNAMICS));
+            dynamic.pDynamicStates = DYNAMICS;
 
+            // Formats: the fragment output's (the other parts only take the view mask, 0).
             VkPipelineRenderingCreateInfo rendering{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
-            rendering.colorAttachmentCount = key.colorCount;
-            rendering.pColorAttachmentFormats = colorFormats;
-            if (key.depthFormat)
+            if (fragmentOutput)
             {
-                DXGI_FORMAT depthFormat = DXGI_FORMAT(key.depthFormat);
-                if (depthFormat == DXGI_FORMAT_D24_UNORM_S8_UINT && !m_d24s8)
-                    depthFormat = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
-                rendering.depthAttachmentFormat = rendering.stencilAttachmentFormat = VkFormatOf(depthFormat);
+                rendering.colorAttachmentCount = key.colorCount;
+                rendering.pColorAttachmentFormats = colorFormats;
+                if (key.depthFormat)
+                    rendering.depthAttachmentFormat = rendering.stencilAttachmentFormat = VkFormatOf(DXGI_FORMAT(key.depthFormat));
             }
 
-            VkGraphicsPipelineCreateInfo create{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering };
+            VkGraphicsPipelineLibraryCreateInfoEXT library{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, &rendering };
+            library.flags = parts;
+            bool whole = parts == ALL_PARTS;
+            create.pNext = whole ? static_cast<const void*>(&rendering) : &library;
+            create.flags = whole ? 0 : VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT;
             create.stageCount = stageCount;
-            create.pStages = stages;
-            create.pVertexInputState = &vertexInput;
-            create.pInputAssemblyState = &inputAssembly;
-            create.pViewportState = &viewport;
-            create.pRasterizationState = &raster;
-            create.pMultisampleState = &multisample;
-            create.pDepthStencilState = &depthStencil;
-            create.pColorBlendState = &colorBlend;
+            create.pStages = stageCount ? stages : nullptr;
+            create.pVertexInputState = vertexInputPart ? &vertexInput : nullptr;
+            create.pInputAssemblyState = vertexInputPart ? &inputAssembly : nullptr;
+            create.pViewportState = preRasterization ? &viewport : nullptr;
+            create.pRasterizationState = preRasterization ? &raster : nullptr;
+            create.pMultisampleState = fragmentShader || fragmentOutput ? &multisample : nullptr;
+            create.pDepthStencilState = fragmentShader ? &depthStencil : nullptr;
+            create.pColorBlendState = fragmentOutput ? &colorBlend : nullptr;
             create.pDynamicState = &dynamic;
-            create.layout = m_drawLayout;
-            auto pipeline = std::make_unique<VulkanPipeline>();
-            pipeline->key = key;
-            VkResult result = vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &create, nullptr, &pipeline->pipeline);
+            if (!preRasterization && !fragmentShader)
+                create.layout = VK_NULL_HANDLE;  // the interface parts have no shaders
+            VkResult result = vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &create, nullptr, &pipeline);
             if (result != VK_SUCCESS)
             {
-                Log("[vulkan] vkCreateGraphicsPipelines failed (%s) for vs %016llx ps %016llx", ResultName(result), (unsigned long long)key.vsHash,
-                    (unsigned long long)key.psHash);
-                pipeline->pipeline = VK_NULL_HANDLE;
+                Log("[vulkan] vkCreateGraphicsPipelines failed (%s) for vs %016llx ps %016llx (parts 0x%X)", ResultName(result), (unsigned long long)key.vs,
+                    (unsigned long long)key.ps, parts);
+                m_compileStats.failures++;
+                return VK_NULL_HANDLE;
             }
-            m_stats.pipelines++;
+            (whole ? m_compileStats.programs : m_compileStats.libraries)++;
             m_unsavedPipelines++;
-            Pipeline* out = pipeline->pipeline ? pipeline.get() : nullptr;
-            m_drawPipelines[hash] = std::move(pipeline);
-            return out;
+            return pipeline;
+        }
+
+        // Makes `program` drawable: false if it failed, or (`deferred`) if the draw is skipped while
+        // a worker compiles it.
+        bool VulkanDevice::PrepareProgram(Program& program, bool deferrable, bool& deferred)
+        {
+            const ProgramKey& key = program.key;
+            bool mayWait = deferrable && m_compileMode == ShaderCompilation::Aggressive;
+            if (!m_gpl)
+            {
+                if (mayWait && !program.full.Built())
+                {
+                    Queue(program.full, true, [this, &program] { return CreateGraphics(program.key, ALL_PARTS); });
+                    deferred = true;
+                    return false;
+                }
+                return Build(program.full, [&] { return CreateGraphics(key, ALL_PARTS); }) != VK_NULL_HANDLE;
+            }
+            if (program.Current())
+                return true;
+            const uint32_t parts[4] = { PART_VERTEX_INPUT, PART_PRE_RASTERIZATION, PART_FRAGMENT_SHADER, PART_FRAGMENT_OUTPUT };
+            Lazy* libraries[4];
+            if (!Libraries(key, libraries) && mayWait)
+            {
+                for (uint32_t i = 0; i < 4; i++)
+                    if (!libraries[i]->Built())
+                        Queue(*libraries[i], true, [this, key, part = parts[i]] { return CreateGraphics(key, part); });
+                deferred = true;
+                return false;
+            }
+            // The parts (each compiled once, shared by every pipeline that has it), then a fast link.
+            std::array<VkPipeline, 4> handles{};
+            for (uint32_t i = 0; i < 4; i++)
+            {
+                handles[i] = Build(*libraries[i], [&] { return CreateGraphics(key, parts[i]); });
+                if (!handles[i])
+                    return false;
+            }
+            if (!Build(program.fast, [&] { return CreateGraphics(key, 0, handles.data(), false); }))
+                return false;
+            // The optimized pipeline replaces the fast-linked one once a worker has made it.
+            Queue(program.full, true, [this, &program, handles] { return CreateGraphics(program.key, 0, handles.data(), true); });
+            return true;
+        }
+
+        Pipeline* VulkanDevice::GetDrawPipeline(const DrawPipelineKey& key, bool deferrable, bool* deferred)
+        {
+            if (deferred)
+                *deferred = false;
+            uint64_t hash = HashBytes(&key, sizeof(key));
+            auto it = m_drawPipelines.find(hash);
+            VulkanPipeline* pipeline;
+            if (it != m_drawPipelines.end())
+            {
+                pipeline = it->second.get();
+            }
+            else
+            {
+                auto created = std::make_unique<VulkanPipeline>();
+                created->key = key;
+                created->program = FindProgram(MakeProgramKey(key), true);
+                created->dynamic = MakeDrawDynamic(key);
+                pipeline = created.get();
+                m_drawPipelines[hash] = std::move(created);
+            }
+            Program& program = *pipeline->program;
+            if (program.Current())
+                return pipeline;
+            if (pipeline->failed)
+                return nullptr;
+            LARGE_INTEGER start, end;
+            QueryPerformanceCounter(&start);
+            bool waits = false;
+            bool ready = PrepareProgram(program, deferrable, waits);
+            QueryPerformanceCounter(&end);
+            if (waits)
+            {
+                m_compileStats.deferred++;
+                if (deferred)
+                    *deferred = true;
+                return nullptr;
+            }
+            // Time the recording thread spent compiling (or waiting for a worker that was).
+            m_timing.pipelines++;
+            m_timing.pipelineTicks += uint64_t(end.QuadPart - start.QuadPart);
+            m_compileStats.stalls++;
+            m_stats.pipelines++;
+            pipeline->failed = !ready;
+            return ready ? pipeline : nullptr;
+        }
+
+        // Compile workers: low priority threads (the game's own run above normal), urgent jobs first.
+        void VulkanDevice::StartCompileWorkers()
+        {
+            uint32_t cores = std::max(1u, std::thread::hardware_concurrency());
+            m_workerCount = std::clamp(cores / 4, 1u, 4u);
+            for (uint32_t i = 0; i < m_workerCount; i++)
+            {
+                std::thread([this] {
+                    SetThreadDescription(GetCurrentThread(), L"pipeline compile");
+                    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+                    for (;;)
+                    {
+                        std::function<void()> job;
+                        {
+                            std::unique_lock<std::mutex> lock(m_jobMutex);
+                            m_jobReady.wait(lock, [&] { return !m_jobs[0].empty() || !m_jobs[1].empty(); });
+                            std::deque<std::function<void()>>& queue = m_jobs[0].empty() ? m_jobs[1] : m_jobs[0];
+                            job = std::move(queue.front());
+                            queue.pop_front();
+                        }
+                        job();
+                    }
+                }).detach();
+            }
+        }
+
+        void VulkanDevice::Enqueue(bool urgent, std::function<void()> job)
+        {
+            {
+                std::lock_guard<std::mutex> lock(m_jobMutex);
+                m_jobs[urgent ? 0 : 1].push_back(std::move(job));
+            }
+            m_jobReady.notify_one();
+        }
+
+        void VulkanDevice::PrewarmShader(Stage stage, const std::string& hlsl)
+        {
+            if (!m_gpl || stage == Stage::Geometry)
+                return;
+            uint64_t hash = vulkan::SpirvHash(stage, hlsl, Layout::Draw);
+            m_precompileTotal++;
+            Enqueue(false, [this, stage, hash] {
+                // The part every draw of it has: the vertex shader alone with depth clip, or the pixel shader.
+                ProgramKey key;
+                (stage == Stage::Pixel ? key.ps : key.vs) = hash;
+                uint32_t part = stage == Stage::Pixel ? PART_FRAGMENT_SHADER : PART_PRE_RASTERIZATION;
+                if (LoadCachedSpirv(hash, stage))
+                    Build(*FindLibrary(key, part), [&] { return CreateGraphics(key, part); });
+                PrecompileDone();
+            });
+        }
+
+        // pipeline_keys.bin: a header and the ProgramKeys of every pipeline drawn with (appended by
+        // SavePipelineCache). At start the workers compile them again (from the driver's cache, ~1 ms
+        // each; after a driver update, for real), so a level doesn't compile what an earlier run did.
+        constexpr uint32_t RECORDS_MAGIC = 0x4B505243;  // "CRPK"
+        constexpr uint32_t RECORDS_VERSION = 1;
+        constexpr size_t MAX_PRECOMPILE = 8192;  // the most recent records
+
+        void VulkanDevice::StartPrecompile()
+        {
+            if (m_shaderCache.empty())
+                return;
+            std::filesystem::path path = m_shaderCache / "pipeline_keys.bin";
+            std::ifstream file(path, std::ios::binary);
+            if (!file)
+                return;
+            uint32_t header[2] = {};
+            file.read(reinterpret_cast<char*>(header), sizeof(header));
+            if (!file || header[0] != RECORDS_MAGIC || header[1] != RECORDS_VERSION)
+            {
+                file.close();
+                std::error_code error;
+                std::filesystem::remove(path, error);
+                Log("[vulkan] %s: another format, started again", path.filename().string().c_str());
+                return;
+            }
+            std::vector<ProgramKey> records;
+            ProgramKey key;
+            while (file.read(reinterpret_cast<char*>(&key), sizeof(key)))
+                records.push_back(key);
+            if (records.size() > MAX_PRECOMPILE)
+                records.erase(records.begin(), records.end() - MAX_PRECOMPILE);
+            std::vector<Program*> programs;
+            m_precompileStart = GetTickCount64();
+            {
+                std::lock_guard<std::mutex> lock(m_programMutex);
+                for (const ProgramKey& record : records)
+                    m_recorded.insert(HashBytes(&record, sizeof(record)));
+            }
+            for (const ProgramKey& record : records)
+                programs.push_back(FindProgram(record, false));
+            m_precompileTotal += uint32_t(programs.size());
+            Log("[vulkan] %zu pipelines of earlier runs queued for %u compile workers", programs.size(), m_workerCount);
+            for (Program* program : programs)
+            {
+                Enqueue(false, [this, program] {
+                    const ProgramKey& key = program->key;
+                    bool shaders = LoadCachedSpirv(key.vs, Stage::Vertex) && (!key.gs || LoadCachedSpirv(key.gs, Stage::Geometry)) &&
+                                   (!key.ps || LoadCachedSpirv(key.ps, Stage::Pixel));
+                    if (shaders && m_gpl)
+                    {
+                        const uint32_t parts[4] = { PART_VERTEX_INPUT, PART_PRE_RASTERIZATION, PART_FRAGMENT_SHADER, PART_FRAGMENT_OUTPUT };
+                        Lazy* libraries[4];
+                        Libraries(key, libraries);
+                        std::array<VkPipeline, 4> handles{};
+                        bool built = true;
+                        for (uint32_t i = 0; i < 4 && built; i++)
+                        {
+                            handles[i] = Build(*libraries[i], [&] { return CreateGraphics(key, parts[i]); });
+                            built = handles[i] != VK_NULL_HANDLE;
+                        }
+                        if (built)
+                            Build(program->full, [&] { return CreateGraphics(key, 0, handles.data(), true); });
+                    }
+                    else if (shaders)
+                    {
+                        Build(program->full, [&] { return CreateGraphics(key, ALL_PARTS); });
+                    }
+                    PrecompileDone();
+                });
+            }
         }
 
         VkSampler VulkanDevice::Sampler(const SamplerDesc& desc)
@@ -2482,7 +3156,13 @@ float4 main(uint id : SV_VertexID) : SV_Position
             create.pColorBlendState = &colorBlend;
             create.pDynamicState = &dynamic;
             create.layout = pipeline->layout;
-            if (!Check(vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &create, nullptr, &pipeline->pipeline), desc.name.c_str()))
+            LARGE_INTEGER start, end;
+            QueryPerformanceCounter(&start);
+            bool created = Check(vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &create, nullptr, &pipeline->pipeline), desc.name.c_str());
+            QueryPerformanceCounter(&end);
+            m_timing.pipelines++;
+            m_timing.pipelineTicks += uint64_t(end.QuadPart - start.QuadPart);
+            if (!created)
                 return nullptr;
             m_stats.pipelines++;
             m_passPipelines.push_back(std::move(pipeline));
@@ -2615,12 +3295,17 @@ float4 main(uint id : SV_VertexID) : SV_Position
                 state.samplerSet = samplerSet;
             }
 
-            if (state.pipeline != pipeline->pipeline)
+            // The optimized pipeline once a worker has linked it, the fast-linked one until then.
+            VkPipeline handle = pipeline->program->Current();
+            if (!handle)
+                return;
+            if (state.pipeline != handle)
             {
-                vkCmdBindPipeline(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->pipeline);
-                state.pipeline = pipeline->pipeline;
+                vkCmdBindPipeline(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, handle);
+                state.pipeline = handle;
             }
             SetViewportScissor(draw.viewport, draw.scissor);
+            SetDrawDynamic(pipeline->dynamic);
             if (!state.dynamicValid || memcmp(state.blendFactor, draw.blendFactor, sizeof(draw.blendFactor)) != 0)
             {
                 vkCmdSetBlendConstants(m_cmd, draw.blendFactor);
@@ -2884,13 +3569,44 @@ float4 main(uint id : SV_VertexID) : SV_Position
             m_unsavedPipelines = 0;
             if (m_shaderCache.empty() || !m_pipelineCache)
                 return;
+            // The keys of the pipelines first drawn with since the last save (StartPrecompile).
+            std::vector<ProgramKey> records;
+            {
+                std::lock_guard<std::mutex> lock(m_programMutex);
+                records.swap(m_newRecords);
+            }
+            if (!records.empty())
+            {
+                std::filesystem::path path = m_shaderCache / "pipeline_keys.bin";
+                std::error_code error;
+                bool fresh = std::filesystem::file_size(path, error) < 8 || error;
+                std::ofstream file(path, std::ios::binary | (fresh ? std::ios::trunc : std::ios::app));
+                if (fresh)
+                {
+                    const uint32_t header[2] = { RECORDS_MAGIC, RECORDS_VERSION };
+                    file.write(reinterpret_cast<const char*>(header), sizeof(header));
+                }
+                file.write(reinterpret_cast<const char*>(records.data()), std::streamsize(records.size() * sizeof(ProgramKey)));
+            }
             size_t size = 0;
             if (vkGetPipelineCacheData(m_device, m_pipelineCache, &size, nullptr) != VK_SUCCESS || !size)
                 return;
+            // The workers may add to the cache between both calls: VK_INCOMPLETE still gives whole entries.
             std::vector<char> data(size);
-            if (vkGetPipelineCacheData(m_device, m_pipelineCache, &size, data.data()) != VK_SUCCESS)
+            VkResult result = vkGetPipelineCacheData(m_device, m_pipelineCache, &size, data.data());
+            if (result != VK_SUCCESS && result != VK_INCOMPLETE)
                 return;
-            std::ofstream(m_shaderCache / "vulkan_pipelines.bin", std::ios::binary).write(data.data(), std::streamsize(size));
+            // Written next to it and renamed: a game closed in the middle doesn't leave half a cache.
+            std::filesystem::path path = m_shaderCache / "vulkan_pipelines.bin";
+            std::filesystem::path temporary = m_shaderCache / "vulkan_pipelines.bin.tmp";
+            {
+                std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+                file.write(data.data(), std::streamsize(size));
+                if (!file)
+                    return;
+            }
+            std::error_code error;
+            std::filesystem::rename(temporary, path, error);
         }
 
         bool VulkanDevice::ReadBack(Texture* texture, std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height)
@@ -2995,6 +3711,12 @@ float4 main(uint id : SV_VertexID) : SV_Position
                 (unsigned long long)m_stats.submits, (unsigned long long)m_stats.renderings, (unsigned long long)m_stats.barriers,
                 (unsigned long long)m_stats.pipelines, (unsigned long long)m_stats.shaderCompiles, (unsigned long long)m_stats.shaderFailures,
                 m_blocks.size(), (unsigned long long)m_dedicatedAllocations, m_samplers.size(), m_samplerSets.size());
+            Log("[gpu] vulkan pipelines (%s%s): %llu whole, %llu libraries, %llu fast links, %llu optimized, %llu failed; %llu draws waited for a compile, "
+                "%llu skipped while compiling; %u/%u start-up compiles",
+                m_compileMode == ShaderCompilation::Sync ? "sync" : m_compileMode == ShaderCompilation::Aggressive ? "aggressive" : "async",
+                m_gpl ? ", libraries" : "", (unsigned long long)m_compileStats.programs, (unsigned long long)m_compileStats.libraries,
+                (unsigned long long)m_compileStats.fastLinks, (unsigned long long)m_compileStats.optimized, (unsigned long long)m_compileStats.failures,
+                (unsigned long long)m_compileStats.stalls, (unsigned long long)m_compileStats.deferred, m_precompileDone.load(), m_precompileTotal.load());
             const uint64_t* r = m_stats.renderingReasons;
             Log("[gpu] vulkan: rendering instances begun because none was open %llu, color count %llu, color targets %llu, depth %llu, barriers %llu",
                 (unsigned long long)r[0], (unsigned long long)r[1], (unsigned long long)r[2], (unsigned long long)r[3], (unsigned long long)r[4]);

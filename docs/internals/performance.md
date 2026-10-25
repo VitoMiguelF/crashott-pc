@@ -46,6 +46,12 @@ Full write-up: `runtime/NOTES.md` "Desempenho de CPU" (two rounds); GUIA "Desemp
   fps overall.
 - Recompiler flags that are safe vs. that break the game: see
   [recompiler-and-runtime.md](recompiler-and-runtime.md).
+- Compile hitches (2026-10-25, `runtime/NOTES.md` "Compilação de shaders assíncrona"): pipelines built on the
+  recording thread at first use cost ~34 ms each with a cold driver cache (village: ~2.9 s, worst frame
+  1.6 s; again after every driver update). Now Vulkan 1.3 dynamic state + `VK_EXT_graphics_pipeline_library`
+  (fast link now, optimized link on a worker) + start-up recompiles of `pipeline_keys.bin`: 0 hitches after
+  `gameplay_ready` in the village and level 3, cold or warm. Throughput unchanged (`desempenho_vila_direto`:
+  async 543 / 558 fps, sync 548 fps).
 
 ## Benchmarking
 

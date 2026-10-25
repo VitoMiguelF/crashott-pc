@@ -45,6 +45,9 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
   tiles, the game's Direct3D command building runs as native code and its shaders are compiled at install
   and warmed up in the background. In the heaviest scene (the first level's village, unlimited FPS) this
   went from ~170 to ~500 fps on a Ryzen 7 5700X + RTX 5080.
+- **No shader stutter**: new effects are compiled in the background (Vulkan graphics pipeline libraries)
+  and the pipelines of earlier sessions are rebuilt at start, so a first visit or a driver update doesn't
+  freeze the game (GRAPHICS > SHADER COMPILATION; SYNCHRONOUS brings back the old behaviour).
 - **PC controls**: keyboard and mouse with rebindable keys, mouse camera, mouse in every menu, Xbox and
   **PlayStation (DualSense)** controllers, button icons that follow the last device used, and **local
   co-op** with two controllers (choose who is player 1 and player 2 in SETTINGS > CONTROLS).
@@ -274,6 +277,10 @@ de PC.
   Xbox 360, a montagem de comandos Direct3D do jogo roda como código nativo e os shaders são compilados na
   instalação e aquecidos em segundo plano. Na cena mais pesada (a vila da primeira fase, FPS livre) isso
   foi de ~170 para ~500 fps num Ryzen 7 5700X + RTX 5080.
+- **Sem engasgo de shader**: efeitos novos são compilados em segundo plano (graphics pipeline libraries do
+  Vulkan) e os pipelines das sessões anteriores são refeitos ao abrir, então a primeira visita a uma fase ou
+  uma atualização do driver não travam o jogo (GRÁFICOS > COMPILAÇÃO DE SHADERS; SINCRONIZADA volta ao jeito
+  antigo).
 - **Controles de PC**: teclado e mouse com teclas configuráveis, câmera pelo mouse, mouse em todos os
   menus, controles Xbox e **PlayStation (DualSense)**, ícones dos botões que seguem o último dispositivo e
   **co-op local** com dois controles (escolha quem é o jogador 1 e o 2 em SETTINGS > CONTROLES).

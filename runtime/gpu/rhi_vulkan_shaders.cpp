@@ -125,12 +125,17 @@ namespace gpu::rhi::vulkan
         constexpr const char* CACHE_VERSION = "spirv-2";
     }
 
-    bool CompileSpirv(Stage stage, const std::string& hlsl, const char* name, Layout layout, const std::filesystem::path& cache,
-                      std::vector<uint32_t>& spirv, uint64_t* compiles, uint64_t* failures)
+    uint64_t SpirvHash(Stage stage, const std::string& hlsl, Layout layout)
     {
         char keyText[64];
         snprintf(keyText, sizeof(keyText), "%s/%d/%d", CACHE_VERSION, int(stage), int(layout));
-        uint64_t hash = HashBytes(hlsl.data(), hlsl.size(), HashBytes(keyText, strlen(keyText)));
+        return HashBytes(hlsl.data(), hlsl.size(), HashBytes(keyText, strlen(keyText)));
+    }
+
+    bool CompileSpirv(Stage stage, const std::string& hlsl, const char* name, Layout layout, const std::filesystem::path& cache,
+                      std::vector<uint32_t>& spirv, uint64_t* compiles, uint64_t* failures)
+    {
+        uint64_t hash = SpirvHash(stage, hlsl, layout);
         std::vector<uint8_t> cached;
         if (ReadCachedShader(cache, hash, "spv", cached) && cached.size() % 4 == 0)
         {
