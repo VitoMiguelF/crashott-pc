@@ -392,6 +392,8 @@ namespace gpu::rhi
             void UpdateFullscreen(bool, bool) override {}  // the borderless window is the fullscreen
             void LeaveFullscreen() override {}
             bool ReadBack(Texture* texture, std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) override;
+            void Probe(Texture* texture, const std::string& tag) override;
+            void CollectProbes(uint64_t completed);
 
             void WriteTimestamp(uint32_t index) override;
             void ResolveTimestamps(uint32_t, uint32_t) override {}  // read straight from the query pool
@@ -637,6 +639,19 @@ namespace gpu::rhi
             };
             std::deque<Garbage> m_garbage;
 
+            // Probe: slots of 64 texels in a readback buffer, read in order once their submission is done.
+            static constexpr uint32_t PROBE_SLOTS = 4096, PROBE_TEXELS = 64;
+            struct ProbeRecord
+            {
+                uint64_t value;
+                uint32_t slot;
+                bool bgra;
+                std::string tag;
+            };
+            Buffer* m_probeBuffer = nullptr;
+            uint32_t m_probeNext = 0;
+            std::deque<ProbeRecord> m_probes;
+
             Timing m_timing;
             struct
             {
@@ -865,6 +880,13 @@ namespace gpu::rhi
             m_d24s8 = (d24.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) &&
                       (d24.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) && !getenv("CRASH_VULKAN_D32") && !(m_safe & SAFE_DEPTH);
             m_uploadSize = std::min<uint64_t>(UPLOAD_RING_SIZE, m_properties.limits.maxStorageBufferRange & ~uint64_t(0xFFFF));
+            // The ring is also read as dynamic uniform buffers (the draws' constants, at offsets into
+            // the whole ring). The spec limits only each read to maxUniformBufferRange, not the offset,
+            // but the Intel UHD driver (128 MB) reads zeros past it: with 256 MB, every draw of the
+            // frames whose constants were in the upper half came out empty (black for ~12 frames out
+            // of ~26, issue #3). A limit that small can't be a window (NVIDIA: 64 KB) is left alone.
+            if (uint64_t window = m_properties.limits.maxUniformBufferRange & ~uint64_t(0xFFFF); window >= (32ull << 20))
+                m_uploadSize = std::min(m_uploadSize, window);
             // CRASH_VULKAN_RING_MB=<n> (debug): a smaller upload ring, to test the ring under pressure
             // (a slow GPU keeps more frames' uploads alive).
             if (const char* ring = getenv("CRASH_VULKAN_RING_MB"))
@@ -1546,6 +1568,8 @@ float4 main(float4 position : SV_Position) : SV_Target
         {
             uint64_t completed = CompletedValue();
             m_uploadRing.Retire(completed);
+            if (!m_probes.empty())
+                CollectProbes(completed);
             while (!m_pendingContexts.empty() && m_pendingContexts.front().value <= completed)
             {
                 m_freeContexts.push_back(m_pendingContexts.front());
@@ -3651,6 +3675,73 @@ float4 main(uint id : SV_VertexID) : SV_Position
                     std::swap(rgba[i], rgba[i + 2]);
             }
             return true;
+        }
+
+        void VulkanDevice::Probe(Texture* texture, const std::string& tag)
+        {
+            auto* source = static_cast<VulkanTexture*>(texture);
+            if (!source || source->depth || (source->format != VK_FORMAT_R8G8B8A8_UNORM && source->format != VK_FORMAT_B8G8R8A8_UNORM &&
+                                             source->format != VK_FORMAT_B8G8R8A8_SRGB && source->format != VK_FORMAT_R8G8B8A8_SRGB))
+                return;
+            if (!m_probeBuffer && !(m_probeBuffer = CreateBuffer(uint64_t(PROBE_SLOTS) * PROBE_TEXELS * 4, true)))
+                return;
+            if (m_probes.size() >= PROBE_SLOTS)
+                return;
+            uint32_t slot = m_probeNext++ % PROBE_SLOTS;
+            Access before = source->access;
+            m_passId++;
+            Transition(source, Access::TransferSrc);
+            FlushBarriers();
+            EndRendering();
+            VkBufferImageCopy regions[PROBE_TEXELS]{};
+            for (uint32_t i = 0; i < PROBE_TEXELS; i++)
+            {
+                regions[i].bufferOffset = (uint64_t(slot) * PROBE_TEXELS + i) * 4;
+                regions[i].imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+                regions[i].imageOffset = { int32_t((2 * (i % 8) + 1) * source->desc.width / 16), int32_t((2 * (i / 8) + 1) * source->desc.height / 16), 0 };
+                regions[i].imageExtent = { 1, 1, 1 };
+            }
+            vkCmdCopyImageToBuffer(m_cmd, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, static_cast<VulkanBuffer*>(m_probeBuffer)->buffer,
+                                   PROBE_TEXELS, regions);
+            VkBufferMemoryBarrier2 hostRead{ VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2 };
+            hostRead.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+            hostRead.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            hostRead.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+            hostRead.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+            hostRead.srcQueueFamilyIndex = hostRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            hostRead.buffer = static_cast<VulkanBuffer*>(m_probeBuffer)->buffer;
+            hostRead.size = VK_WHOLE_SIZE;
+            VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            dependency.bufferMemoryBarrierCount = 1;
+            dependency.pBufferMemoryBarriers = &hostRead;
+            vkCmdPipelineBarrier2(m_cmd, &dependency);
+            if (before != Access::Undefined)
+                Transition(source, before);
+            bool bgra = source->format == VK_FORMAT_B8G8R8A8_UNORM || source->format == VK_FORMAT_B8G8R8A8_SRGB;
+            m_probes.push_back({ m_timelineValue + 1, slot, bgra, tag });
+        }
+
+        void VulkanDevice::CollectProbes(uint64_t completed)
+        {
+            while (!m_probes.empty() && m_probes.front().value <= completed)
+            {
+                const ProbeRecord& probe = m_probes.front();
+                const uint8_t* texels = m_probeBuffer->cpu + uint64_t(probe.slot) * PROBE_TEXELS * 4;
+                double sum[3] = {};
+                uint32_t black = 0;
+                for (uint32_t i = 0; i < PROBE_TEXELS; i++)
+                {
+                    const uint8_t* t = texels + i * 4;
+                    for (int c = 0; c < 3; c++)
+                        sum[c] += t[c];
+                    if (std::max({ t[0], t[1], t[2] }) < 8)
+                        black++;
+                }
+                int r = probe.bgra ? 2 : 0, b = probe.bgra ? 0 : 2;
+                Log("[probe] %s: mean %.0f %.0f %.0f, black %u/%u", probe.tag.c_str(), sum[r] / PROBE_TEXELS, sum[1] / PROBE_TEXELS,
+                    sum[b] / PROBE_TEXELS, black, PROBE_TEXELS);
+                m_probes.pop_front();
+            }
         }
 
         // Timestamps -------------------------------------------------------------------------------

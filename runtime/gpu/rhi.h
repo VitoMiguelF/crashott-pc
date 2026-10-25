@@ -367,6 +367,9 @@ namespace gpu::rhi
         virtual void LeaveFullscreen() = 0;
         // Reads `texture` (RGBA8 or BGRA8) back as RGBA8 rows; waits for the GPU.
         virtual bool ReadBack(Texture* texture, std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) = 0;
+        // Debug (CRASH_GPU_PROBE): an 8x8 grid of texels of `texture` (RGBA8 or BGRA8) copied at
+        // this point of the command stream, logged with `tag` once the GPU is past it (no wait).
+        virtual void Probe(Texture*, const std::string&) {}
 
         // GPU timestamps (the lighting remaster's timing): write, resolve after the work, read once
         // the frame that resolved them is done.

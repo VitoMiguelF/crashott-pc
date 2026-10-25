@@ -358,6 +358,21 @@ namespace gpu::renderer
             return g_stats.swaps + 1 >= g_traceSwap && g_stats.swaps + 1 < g_traceSwap + g_traceSwapCount;
         }
 
+        // CRASH_GPU_PROBE=<first>-<last> (debug): the color resolves and presents of those swaps are
+        // sampled on the GPU and logged when it gets there ([probe] lines), without waiting for it.
+        bool ProbingSwap(uint64_t swap)
+        {
+            static const std::pair<uint64_t, uint64_t> s_range = [] {
+                const char* text = getenv("CRASH_GPU_PROBE");
+                if (!text)
+                    return std::pair<uint64_t, uint64_t>(1, 0);
+                char* end;
+                uint64_t first = strtoull(text, &end, 10);
+                return std::pair<uint64_t, uint64_t>(first, *end == '-' ? strtoull(end + 1, nullptr, 10) : first);
+            }();
+            return swap >= s_range.first && swap <= s_range.second;
+        }
+
         void Skip(SkipReason reason)
         {
             g_stats.drawsSkipped++;
@@ -2417,6 +2432,14 @@ float4 main(float4 position : SV_Position) : SV_Target
                         g_rhi->DrawPass(pass);
                     target->lastWriteFrame = g_frame;
                 }
+                if (!isDepth && ProbingSwap(g_stats.swaps + 1))
+                {
+                    char tag[96];
+                    snprintf(tag, sizeof(tag), "swap %llu resolve EDRAM %u -> 0x%08X", (unsigned long long)g_stats.swaps + 1,
+                             Reg(xenos::ColorInfoRegister(sourceSelect)) & 0xFFF, destBase);
+                    g_rhi->Probe(source->texture, std::string(tag) + " source");
+                    g_rhi->Probe(surface->texture, std::string(tag) + " destination");
+                }
 
                 // CRASH_GPU_DUMP_RESOLVE=<physical address, hex>: in the traced frames (CRASH_GPU_TRACE_SWAP),
                 // the destination after each resolve into that address, and its source, as PNGs.
@@ -4058,7 +4081,16 @@ float4 main(float4 position : SV_Position) : SV_Target
             const float black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
             g_rhi->ClearColor(backBuffer, black, nullptr);
         }
+        bool probing = ProbingSwap(g_stats.swaps);
+        if (probing && sourceSurface)
+        {
+            char tag[96];
+            snprintf(tag, sizeof(tag), "swap %llu present source 0x%08X", (unsigned long long)g_stats.swaps, frontBuffer);
+            g_rhi->Probe(present.textures[0].texture, tag);
+        }
         g_rhi->DrawPass(present);
+        if (probing)
+            g_rhi->Probe(backBuffer, "swap " + std::to_string(g_stats.swaps) + " back buffer");
         if (TracingSwap() && getenv("CRASH_GPU_DUMP_PRESENT"))
         {
             std::vector<uint8_t> pixels;

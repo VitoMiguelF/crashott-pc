@@ -2079,6 +2079,16 @@ Relato: notebook i5-13420H com Intel UHD integrada (8 GB compartilhados), sem mo
 
 **Pendente:** teste na máquina do reporter (build com modo seguro e diagnóstico). Sem Intel nem lavapipe/SwiftShader aqui (baixar o Mesa precisa de OK).
 
+**Causa achada numa Intel de verdade (2026-10-25, v1.05).** Notebook com Intel UHD (RaptorLake-S, driver 101.5542) e RTX 4070 Laptop; `CRASH_VULKAN_DEVICE=Intel` escolhe a integrada. Na vila (`vila_sem_cena`) a imagem alternava regularmente: ~12 quadros pretos, ~13 normais (ciclo de ~26 quadros, ~0,9 s), com quadros meio preenchidos nas viradas, igual ao relato. A NVIDIA, mesmo com `CRASH_VULKAN_GPU_LOAD=1800`, não pisca. Nada no log (sem device lost, subótima, espera do anel); o modo seguro inteiro, `CRASH_SHADER_COMPILE=sync`, `CRASH_VULKAN_NO_EXT=gpl` / `depth_clip,maintenance5` e `CRASH_VULKAN_D32` não mudam nada. Capturas (F12/`SHOT`) e dumps escondiam o bug às vezes, porque o `WaitIdle` delas muda o ritmo: com uma captura por quadro, nenhum preto.
+
+Ferramenta nova, `CRASH_GPU_PROBE=<swap>-<swap>` (`rhi::Device::Probe`): em cada resolve de cor (origem e destino), no present (a textura lida) e na imagem da swap chain depois dele, copia uma grade 8x8 de texels na própria fila e loga `[probe] ... black n/64` quando a GPU passa dali, sem esperar. Ela mostrou que, nos quadros pretos, o alvo da cena (EDRAM 1440) já está preto na primeira resolve e o HUD também some: nenhum draw do quadro escreve nada.
+
+O ciclo era o anel de upload dando a volta. As constantes dos draws são lidas como uniform buffers dinâmicos com offset dentro do anel inteiro (256 MB). A especificação limita só o tamanho de cada leitura a `maxUniformBufferRange`, não o offset, mas o driver da Intel (que informa 128 MB) lê zeros além disso: os quadros com as constantes na metade de cima do anel desenhavam tudo degenerado. Com `CRASH_VULKAN_RING_MB=128`: 0 de 901 quadros pretos (sonda, swaps 300–1200), contra 455 de 901 com 256. Correção: o anel fica dentro de `maxUniformBufferRange` quando ele tem 32 MB ou mais (Intel: 127 MB; a NVIDIA informa 64 KB e mantém 256 MB). Pico de uso na vila: 38 MB.
+
+**Conferido** (Intel, sem sonda): `vila_sem_cena` padrão, 1080p/60/V-Sync e 1600x900/30 sem V-Sync, 0 capturas pretas de 15–24 e, numa captura externa da janela pelo desktop (~20/s, sem tocar no jogo), nenhum preto na gameplay (só na abertura e no carregamento). Na NVIDIA, 0 de 901 com a sonda. Antes e depois: `build\intel_flicker\intel_uhd_antes_depois.jpg`.
+
+**Desempenho na Intel UHD** (vila, sem limite de FPS, janela 1728x1080): interno 1280x800, ~33 fps (30 ms por quadro, 22 ms deles esperando a GPU); 1920x1080, ~19 fps. Com limite: 30 fps a 1280x800 (1% low 9–14), 23 fps a 1600x900/30, 18 fps a 1080p/60. Motion blur e DOF a 0 não mudam nada (33,0 fps). É a GPU, não o thread de comandos (~1,6 ms por quadro); falta medir por passada.
+
 ## Ultrawide e 16:10 (issue #2, 2026-10-25, branch `ultrawide`) (`gpu/widescreen.*`, `camera/hor_plus.cpp`, `gpu/xenos_renderer.cpp`, `gpu/shader_translator.cpp`, `settings/*`, `kernel/pc_input.cpp`, `gpu/window.cpp`)
 
 Pedido: VitoMiguelF/crashott-pc#2 ("Support for ultrawide (3440x1440)"). Objetivo: 21:9, 32:9 e 16:10 de verdade (Hor+), sem esticar nem pôr faixas no jogo.
