@@ -16,7 +16,6 @@
 // in English or, with Portuguese (BR) chosen as the language, in Portuguese. It is drawn on the
 // CPU at the window's resolution and redrawn only when something changes.
 
-#include <windows.h>
 
 #include <cstdint>
 #include <filesystem>

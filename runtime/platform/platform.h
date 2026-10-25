@@ -50,7 +50,7 @@ namespace plat
     // ---- Threads ----------------------------------------------------------------------------
     using ThreadHandle = void*;
     using ThreadEntry = uint32_t (*)(void* param);
-    enum class ThreadPriority { Lowest, Normal, AboveNormal, Highest };
+    enum class ThreadPriority { Lowest, BelowNormal, Normal, AboveNormal, Highest };
 
     // `stackSize` is the reservation (recompiled code nests one host frame per guest call, so
     // guest threads ask for 64 MB). A suspended thread starts with ResumeThread.
@@ -93,6 +93,7 @@ namespace plat
         void* base{};
         size_t size{};   // pages from `base` in the same state
         PageState state{};
+        bool readable{}; // committed and not no-access / guard (POSIX: committed)
     };
     MemoryRegion QueryMemory(const void* address);
 
@@ -116,7 +117,10 @@ namespace plat
         void RequestSingleStep();                   // trap after the faulting instruction runs
     };
     using FaultHandler = bool (*)(FaultInfo& fault);
+    // Handlers run newest first; the first that returns true resumes the thread.
     void AddFaultHandler(FaultHandler handler);
+    // Runs after every AddFaultHandler handler declined (crash reports): one, set once.
+    void SetUnhandledFaultHandler(FaultHandler handler);
 
     // ---- Dynamic libraries ------------------------------------------------------------------
     // A full path, or a bare file name ("vulkan-1.dll", "libvulkan.so.1") looked up the OS way
@@ -127,6 +131,8 @@ namespace plat
     void CloseLibrary(void* library);
     // The last OS error of this thread as text (GetLastError / errno / dlerror).
     std::string LastErrorText();
+    // "a.b.c" from a library's version resource; "" if it has none (always on POSIX).
+    std::string LibraryFileVersion(const std::filesystem::path& path);
 
     // ---- Process ----------------------------------------------------------------------------
     std::filesystem::path ExecutablePath();
@@ -149,6 +155,11 @@ namespace plat
     void ShowMessageBox(const char* title, const char* text, MessageKind kind = MessageKind::Error, void* owner = nullptr);
     // The OS folder picker. Empty if cancelled or there is none (POSIX: zenity / kdialog).
     std::filesystem::path PickFolder(const char* title, void* owner = nullptr);
+
+    // ---- Display -----------------------------------------------------------------------------
+    // The primary display's desktop mode in physical pixels (not DPI scaled). False if unknown.
+    // Windows: EnumDisplaySettings; elsewhere SDL3 (platform_sdl.cpp).
+    bool DesktopDisplayMode(int& width, int& height, int& refreshHz);
 
     // ---- Small libc differences ---------------------------------------------------------------
     int CompareNoCase(const char* a, const char* b); // _stricmp / strcasecmp (ASCII)

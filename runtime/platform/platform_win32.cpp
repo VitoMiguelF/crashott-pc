@@ -8,6 +8,7 @@
 #include <timeapi.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <array>
 #include <mutex>
 #include <utility>
@@ -114,6 +115,7 @@ namespace plat
             switch (priority)
             {
             case ThreadPriority::Lowest: return THREAD_PRIORITY_LOWEST;
+            case ThreadPriority::BelowNormal: return THREAD_PRIORITY_BELOW_NORMAL;
             case ThreadPriority::AboveNormal: return THREAD_PRIORITY_ABOVE_NORMAL;
             case ThreadPriority::Highest: return THREAD_PRIORITY_HIGHEST;
             default: return THREAD_PRIORITY_NORMAL;
@@ -296,6 +298,7 @@ namespace plat
         region.base = mbi.BaseAddress;
         region.size = mbi.RegionSize;
         region.state = mbi.State == MEM_COMMIT ? PageState::Committed : mbi.State == MEM_RESERVE ? PageState::Reserved : PageState::Free;
+        region.readable = mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
         return region;
     }
 
@@ -325,7 +328,7 @@ namespace plat
         // One vectored handler per registration, each added first, so the order is the one the
         // runtime had with AddVectoredExceptionHandler(1, ...) (newest first).
         constexpr size_t MAX_HANDLERS = 16;
-        FaultHandler g_handlers[MAX_HANDLERS];
+        FaultHandler g_handlers[MAX_HANDLERS + 1];  // + the unhandled-fault handler, added last
 
         template <size_t N>
         LONG CALLBACK Vectored(PEXCEPTION_POINTERS info)
@@ -356,7 +359,7 @@ namespace plat
         {
             return { Vectored<N>... };
         }
-        constexpr auto g_thunks = MakeThunks(std::make_index_sequence<MAX_HANDLERS>{});
+        constexpr auto g_thunks = MakeThunks(std::make_index_sequence<MAX_HANDLERS + 1>{});
 
         std::mutex g_handlersMutex;
         size_t g_handlerCount;
@@ -370,6 +373,15 @@ namespace plat
         size_t index = g_handlerCount++;
         g_handlers[index] = handler;
         AddVectoredExceptionHandler(1, g_thunks[index]);
+    }
+
+    void SetUnhandledFaultHandler(FaultHandler handler)
+    {
+        std::lock_guard lock(g_handlersMutex);
+        if (g_handlers[MAX_HANDLERS])
+            return;
+        g_handlers[MAX_HANDLERS] = handler;
+        AddVectoredExceptionHandler(0, g_thunks[MAX_HANDLERS]);
     }
 
     // ---- Dynamic libraries ------------------------------------------------------------------
@@ -395,6 +407,33 @@ namespace plat
     {
         DWORD error = GetLastError();
         return "error " + std::to_string(error);
+    }
+
+    std::string LibraryFileVersion(const std::filesystem::path& path)
+    {
+        DWORD handle = 0;
+        DWORD size = GetFileVersionInfoSizeW(path.c_str(), &handle);
+        if (!size)
+            return "";
+        std::vector<uint8_t> data(size);
+        VS_FIXEDFILEINFO* info = nullptr;
+        UINT length = 0;
+        if (!GetFileVersionInfoW(path.c_str(), 0, size, data.data()) || !VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &length) || !info)
+            return "";
+        char text[64];
+        snprintf(text, sizeof(text), "%u.%u.%u", HIWORD(info->dwFileVersionMS), LOWORD(info->dwFileVersionMS), HIWORD(info->dwFileVersionLS));
+        return text;
+    }
+
+    // ---- Display -----------------------------------------------------------------------------
+    bool DesktopDisplayMode(int& width, int& height, int& refreshHz)
+    {
+        DEVMODEW mode{};
+        mode.dmSize = sizeof(mode);
+        if (!EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode) || !mode.dmPelsWidth || !mode.dmPelsHeight)
+            return false;
+        width = int(mode.dmPelsWidth), height = int(mode.dmPelsHeight), refreshHz = int(mode.dmDisplayFrequency);
+        return true;
     }
 
     // ---- Process ----------------------------------------------------------------------------

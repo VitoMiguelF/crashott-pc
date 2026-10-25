@@ -4,7 +4,7 @@
 #include "../diagnostics.h"
 #include "../fs/rcf_overlay.h"
 
-#include <windows.h>
+#include "../platform/text.h"
 
 #include <algorithm>
 #include <cctype>
@@ -79,12 +79,7 @@ namespace settings
 
         std::u16string Utf16(const std::string& utf8)
         {
-            if (utf8.empty())
-                return {};
-            int length = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), nullptr, 0);
-            std::u16string out(size_t(length), u'\0');
-            MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), reinterpret_cast<wchar_t*>(out.data()), length);
-            return out;
+            return plat::Utf16FromUtf8(utf8);
         }
 
         // language.toml: key = "value" lines; packages = [...] may span lines.

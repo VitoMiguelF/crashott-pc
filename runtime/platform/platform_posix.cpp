@@ -129,7 +129,7 @@ namespace plat
         void ApplyPriority(pid_t tid, ThreadPriority priority)
         {
             int nice = priority == ThreadPriority::Highest ? -10 : priority == ThreadPriority::AboveNormal ? -5
-                     : priority == ThreadPriority::Lowest ? 10 : 0;
+                     : priority == ThreadPriority::BelowNormal ? 5 : priority == ThreadPriority::Lowest ? 10 : 0;
             setpriority(PRIO_PROCESS, id_t(tid), nice);
         }
     }
@@ -447,6 +447,7 @@ namespace plat
         region.base = r->base + page * PAGE;
         region.size = (last - page) * PAGE;
         region.state = committed ? PageState::Committed : PageState::Reserved;
+        region.readable = committed;
         return region;
     }
 
@@ -498,6 +499,7 @@ namespace plat
         std::array<std::atomic<FaultHandler>, MAX_HANDLERS> g_handlers;
         std::atomic<size_t> g_handlerCount;
         struct sigaction g_previousSegv, g_previousBus, g_previousTrap;
+        std::atomic<FaultHandler> g_unhandled{ nullptr };
 
         void Chain(int signal, siginfo_t* info, void* context, const struct sigaction& previous)
         {
@@ -541,6 +543,8 @@ namespace plat
                 if (g_handlers[i].load()(fault))
                     return;
             }
+            if (FaultHandler last = g_unhandled.load(); last && last(fault))
+                return;
             Chain(signal, info, context, signal == SIGSEGV ? g_previousSegv : signal == SIGBUS ? g_previousBus : g_previousTrap);
         }
 
@@ -559,17 +563,29 @@ namespace plat
         }
     }
 
+    namespace
+    {
+        std::once_flag g_signalsInstalled;
+        std::mutex g_handlersMutex;
+    }
+
     void AddFaultHandler(FaultHandler handler)
     {
-        static std::once_flag s_installed;
-        static std::mutex s_mutex;
-        std::lock_guard lock(s_mutex);
+        std::lock_guard lock(g_handlersMutex);
         size_t index = g_handlerCount.load();
         if (index == MAX_HANDLERS)
             return;
         g_handlers[index] = handler;
         g_handlerCount = index + 1;
-        std::call_once(s_installed, InstallSignalHandlers);
+        std::call_once(g_signalsInstalled, InstallSignalHandlers);
+    }
+
+    void SetUnhandledFaultHandler(FaultHandler handler)
+    {
+        std::lock_guard lock(g_handlersMutex);
+        FaultHandler none = nullptr;
+        g_unhandled.compare_exchange_strong(none, handler);
+        std::call_once(g_signalsInstalled, InstallSignalHandlers);
     }
 
     // ---- Dynamic libraries ------------------------------------------------------------------
@@ -618,6 +634,11 @@ namespace plat
             return text;
         }
         return strerror(errno);
+    }
+
+    std::string LibraryFileVersion(const std::filesystem::path&)
+    {
+        return "";
     }
 
     // ---- Process ----------------------------------------------------------------------------

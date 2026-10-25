@@ -40,7 +40,7 @@ namespace input::menu_mouse
         // Text boxes of every frontend page: (x, y) of the bottom-left corner -> (w, h), 640x480 y up.
         std::multimap<std::pair<int, int>, std::pair<int, int>> g_boxes;
         Menu g_live;
-        ULONGLONG g_liveTime = 0;
+        uint64_t g_liveTime = 0;
 
         uint32_t LE32(const std::vector<uint8_t>& d, size_t at)
         {
@@ -288,9 +288,9 @@ PPC_FUNC(sub_820B2E98)
     static const bool trace = getenv("CRASH_MOUSE_TRACE") != nullptr;
     if (trace)
     {
-        static std::map<uint32_t, ULONGLONG> s_seen;
+        static std::map<uint32_t, uint64_t> s_seen;
         static std::map<uint32_t, int> s_index;
-        ULONGLONG now = plat::TickCountMs();
+        uint64_t now = plat::TickCountMs();
         auto& last = s_seen[menu];
         if (now - last > 2000)
         {

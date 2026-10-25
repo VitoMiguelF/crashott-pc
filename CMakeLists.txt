@@ -15,6 +15,8 @@ endif()
 #   libunwind, winpthreads), so the exe needs no DLL of the toolchain.
 # - clang-cl with Visual Studio / the Windows SDK (MSVC ABI; [build] toolchain = "msvc" in
 #   config/local.toml).
+# Elsewhere (Linux / Steam Deck, work in progress: docs/internals/linux_port.md) plain clang with
+# SDL3 for the window, input and audio.
 if (MINGW)
     set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")   # what clang-cl's /O2 means
     set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
@@ -22,9 +24,13 @@ if (MINGW)
     add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)  # mingw-w64 defaults to older Windows APIs
     set(CRASH_ARCH_FLAGS -mavx)
     set(CRASH_XAUDIO2_LIB xaudio2_9)
-else()
+elseif (WIN32)
     set(CRASH_ARCH_FLAGS /arch:AVX)
     set(CRASH_XAUDIO2_LIB xaudio2)
+else()
+    # x86-64 only for now (the Steam Deck's Zen 2 has AVX2): the recompiled code's vector ops are
+    # SSE/AVX through SIMDe, and an ARM64 build needs SIMDe's NEON mapping instead.
+    set(CRASH_ARCH_FLAGS -mavx)
 endif()
 
 set(XENON_RECOMP_DIR ${CMAKE_SOURCE_DIR}/tools/XenonRecomp)
@@ -89,8 +95,14 @@ else()
     list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "_win32\\.cpp$")
 endif()
 add_executable(CrashRecomp ${CRASH_RUNTIME_SOURCES})
-target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
-    hid setupapi windowscodecs)
+if (WIN32)
+    target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
+        hid setupapi windowscodecs)
+else()
+    find_package(SDL3 REQUIRED CONFIG)
+    find_package(Threads REQUIRED)
+    target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage SDL3::SDL3 Threads::Threads ${CMAKE_DL_LIBS})
+endif()
 target_compile_options(CrashRecomp PRIVATE ${CRASH_COMPILE_OPTIONS})
 # Symbol map (build\CrashRecomp.map) and line tables in a PDB (build\CrashRecomp.pdb): name the
 # sampled addresses of tools/perf/profile.py down to the source line (-gline-tables-only doesn't
@@ -101,8 +113,10 @@ if (MINGW)
     target_compile_options(CrashRecomp PRIVATE -gcodeview)
     target_link_options(CrashRecomp PRIVATE -Wl,--pdb= -Wl,--Xlink=/map:$<TARGET_FILE_DIR:CrashRecomp>/CrashRecomp.map
         -Wl,--gc-sections -Wl,--icf=all)
-else()
+elseif (WIN32)
     target_link_options(CrashRecomp PRIVATE /MAP /DEBUG /OPT:REF /OPT:ICF)  # /DEBUG alone turns REF/ICF off
+else()
+    target_link_options(CrashRecomp PRIVATE -Wl,-Map=$<TARGET_FILE_DIR:CrashRecomp>/CrashRecomp.map -Wl,--gc-sections)
 endif()
 target_compile_definitions(CrashRecomp PRIVATE
     NOMINMAX
@@ -114,9 +128,15 @@ set(CRASH_FFMPEG_DIR ${CMAKE_SOURCE_DIR}/thirdparty/ffmpeg)
 if (EXISTS ${CRASH_FFMPEG_DIR}/include/libavcodec/avcodec.h)
     target_include_directories(CrashRecomp PRIVATE ${CRASH_FFMPEG_DIR}/include)
     target_compile_definitions(CrashRecomp PRIVATE CRASH_HAVE_FFMPEG=1)
-    file(GLOB CRASH_FFMPEG_DLLS ${CRASH_FFMPEG_DIR}/bin/*.dll)
-    add_custom_command(TARGET CrashRecomp POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_FFMPEG_DLLS} $<TARGET_FILE_DIR:CrashRecomp>)
+    if (WIN32)
+        file(GLOB CRASH_FFMPEG_DLLS ${CRASH_FFMPEG_DIR}/bin/*.dll)
+    else()
+        file(GLOB CRASH_FFMPEG_DLLS ${CRASH_FFMPEG_DIR}/lib/*.so.*)  # else the system's libavcodec.so.62
+    endif()
+    if (CRASH_FFMPEG_DLLS)
+        add_custom_command(TARGET CrashRecomp POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_FFMPEG_DLLS} $<TARGET_FILE_DIR:CrashRecomp>)
+    endif()
 else()
     message(STATUS "thirdparty/ffmpeg not found: XMA audio will decode to silence")
 endif()
@@ -129,8 +149,11 @@ endif()
 #   the installer leaves both DLLs out.
 # - AMD FSR 3.1 (FidelityFX API, Vulkan backend, thirdparty/fsr: include/ffx_api headers and the
 #   signed bin/amd_fidelityfx_vk.dll, loaded at run time and copied next to CrashRecomp.exe).
+# Both are Windows-only so far (the NGX Linux library and a FidelityFX .so are not wired up).
 set(CRASH_DLSS_DIR ${CMAKE_SOURCE_DIR}/thirdparty/dlss)
-if (EXISTS ${CRASH_DLSS_DIR}/include/nvsdk_ngx.h AND EXISTS ${CRASH_DLSS_DIR}/lib/nvsdk_ngx_s.lib)
+if (NOT WIN32)
+    message(STATUS "DLSS and FSR 3.1 are Windows-only for now")
+elseif (EXISTS ${CRASH_DLSS_DIR}/include/nvsdk_ngx.h AND EXISTS ${CRASH_DLSS_DIR}/lib/nvsdk_ngx_s.lib)
     add_library(CrashDlss SHARED
         ${CMAKE_SOURCE_DIR}/runtime/gpu/dlss_module/crash_dlss.cpp
         ${CMAKE_SOURCE_DIR}/runtime/gpu/dlss_module/ngx_msvc_compat.cpp)
@@ -149,17 +172,17 @@ elseif (EXISTS ${CRASH_DLSS_DIR}/bin/CrashDlss.dll)
 else()
     message(STATUS "thirdparty/dlss not found (nor a prebuilt bin/CrashDlss.dll): DLSS disabled")
 endif()
-if (EXISTS ${CRASH_DLSS_DIR}/bin/nvngx_dlss.dll)
+if (WIN32 AND EXISTS ${CRASH_DLSS_DIR}/bin/nvngx_dlss.dll)
     add_custom_command(TARGET CrashRecomp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_DLSS_DIR}/bin/nvngx_dlss.dll $<TARGET_FILE_DIR:CrashRecomp>)
 endif()
 set(CRASH_FSR_DIR ${CMAKE_SOURCE_DIR}/thirdparty/fsr)
-if (EXISTS ${CRASH_FSR_DIR}/include/ffx_api/vk/ffx_api_vk.h AND EXISTS ${CRASH_FSR_DIR}/bin/amd_fidelityfx_vk.dll)
+if (WIN32 AND EXISTS ${CRASH_FSR_DIR}/include/ffx_api/vk/ffx_api_vk.h AND EXISTS ${CRASH_FSR_DIR}/bin/amd_fidelityfx_vk.dll)
     target_include_directories(CrashRecomp PRIVATE ${CRASH_FSR_DIR}/include)
     target_compile_definitions(CrashRecomp PRIVATE CRASH_HAVE_FSR=1)
     add_custom_command(TARGET CrashRecomp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_FSR_DIR}/bin/amd_fidelityfx_vk.dll $<TARGET_FILE_DIR:CrashRecomp>)
-else()
+elseif (WIN32)
     message(STATUS "thirdparty/fsr not found: FSR disabled")
 endif()
 
@@ -169,59 +192,72 @@ endif()
 # loaded at run time and copied next to CrashRecomp.exe from thirdparty/dxc/bin or the Vulkan SDK).
 target_include_directories(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include ${CMAKE_SOURCE_DIR}/thirdparty/dxc/include)
 set(CRASH_DXC_DLL "")
-if (EXISTS ${CMAKE_SOURCE_DIR}/thirdparty/dxc/bin/dxcompiler.dll)
-    set(CRASH_DXC_DLL ${CMAKE_SOURCE_DIR}/thirdparty/dxc/bin/dxcompiler.dll)
-elseif (DEFINED ENV{VULKAN_SDK} AND EXISTS "$ENV{VULKAN_SDK}/Bin/dxcompiler.dll")
-    file(TO_CMAKE_PATH "$ENV{VULKAN_SDK}/Bin/dxcompiler.dll" CRASH_DXC_DLL)
+if (WIN32)
+    set(CRASH_DXC_NAME dxcompiler.dll)
+    set(CRASH_DXC_SDK_DIR Bin)
+else()
+    set(CRASH_DXC_NAME libdxcompiler.so)  # the Linux release's lib/libdxcompiler.so
+    set(CRASH_DXC_SDK_DIR lib)
+endif()
+if (EXISTS ${CMAKE_SOURCE_DIR}/thirdparty/dxc/bin/${CRASH_DXC_NAME})
+    set(CRASH_DXC_DLL ${CMAKE_SOURCE_DIR}/thirdparty/dxc/bin/${CRASH_DXC_NAME})
+elseif (DEFINED ENV{VULKAN_SDK} AND EXISTS "$ENV{VULKAN_SDK}/${CRASH_DXC_SDK_DIR}/${CRASH_DXC_NAME}")
+    file(TO_CMAKE_PATH "$ENV{VULKAN_SDK}/${CRASH_DXC_SDK_DIR}/${CRASH_DXC_NAME}" CRASH_DXC_DLL)
 endif()
 if (CRASH_DXC_DLL)
     add_custom_command(TARGET CrashRecomp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_DXC_DLL} $<TARGET_FILE_DIR:CrashRecomp>)
 else()
-    message(STATUS "dxcompiler.dll not found (thirdparty/dxc/bin or the Vulkan SDK): the Vulkan renderer can only use cached shaders")
+    message(STATUS "${CRASH_DXC_NAME} not found (thirdparty/dxc/bin or the Vulkan SDK): the Vulkan renderer can only use cached shaders")
 endif()
 
-# Launcher (launcher/): edits settings.toml with the game's own look before starting the game.
-# Dear ImGui (thirdparty/imgui, MIT) on Direct3D 11, plus the runtime's own settings, paths, VFS
-# and the code that reads the fonts and the frontend art from the user's default.rcf.
-set(CRASH_IMGUI_DIR ${CMAKE_SOURCE_DIR}/thirdparty/imgui)
-enable_language(RC)  # launcher.rc: the icon (launcher/crashrecomp.ico, tools/make_icon.py)
-add_executable(CrashLauncher WIN32
-    ${CMAKE_SOURCE_DIR}/launcher/launcher.cpp
-    ${CMAKE_SOURCE_DIR}/launcher/launcher.rc
-    ${CMAKE_SOURCE_DIR}/launcher/launcher_stubs.cpp
-    ${CRASH_IMGUI_DIR}/imgui.cpp
-    ${CRASH_IMGUI_DIR}/imgui_draw.cpp
-    ${CRASH_IMGUI_DIR}/imgui_tables.cpp
-    ${CRASH_IMGUI_DIR}/imgui_widgets.cpp
-    ${CRASH_IMGUI_DIR}/backends/imgui_impl_win32.cpp
-    ${CRASH_IMGUI_DIR}/backends/imgui_impl_dx11.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/paths.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/platform/platform_win32.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/platform/file_win32.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/fs/vfs.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/gpu/png_writer.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/settings/settings.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/settings/controls.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/settings/menu_art.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/settings/language_font.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/settings/language_pack.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/settings/options.cpp
-    ${CMAKE_SOURCE_DIR}/runtime/settings/hd_remaster.cpp)
-target_include_directories(CrashLauncher PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
-target_compile_definitions(CrashLauncher PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
-target_compile_options(CrashLauncher PRIVATE -Wno-deprecated-declarations)
-target_link_libraries(CrashLauncher PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi uuid bcrypt winhttp winmm)
+# The launcher and the installer are Win32 + Direct3D 11 (Windows only; on Linux the game starts
+# directly and its own settings screen does the rest, docs/internals/linux_port.md).
+if (WIN32)
+    # Launcher (launcher/): edits settings.toml with the game's own look before starting the game.
+    # Dear ImGui (thirdparty/imgui, MIT) on Direct3D 11, plus the runtime's own settings, paths, VFS
+    # and the code that reads the fonts and the frontend art from the user's default.rcf.
+    set(CRASH_IMGUI_DIR ${CMAKE_SOURCE_DIR}/thirdparty/imgui)
+    enable_language(RC)  # launcher.rc: the icon (launcher/crashrecomp.ico, tools/make_icon.py)
+    add_executable(CrashLauncher WIN32
+        ${CMAKE_SOURCE_DIR}/launcher/launcher.cpp
+        ${CMAKE_SOURCE_DIR}/launcher/launcher.rc
+        ${CMAKE_SOURCE_DIR}/launcher/launcher_stubs.cpp
+        ${CRASH_IMGUI_DIR}/imgui.cpp
+        ${CRASH_IMGUI_DIR}/imgui_draw.cpp
+        ${CRASH_IMGUI_DIR}/imgui_tables.cpp
+        ${CRASH_IMGUI_DIR}/imgui_widgets.cpp
+        ${CRASH_IMGUI_DIR}/backends/imgui_impl_win32.cpp
+        ${CRASH_IMGUI_DIR}/backends/imgui_impl_dx11.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/paths.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/platform/platform_win32.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/platform/file_win32.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/platform/image_win32.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/fs/vfs.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/gpu/png_writer.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/settings.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/controls.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/menu_art.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/language_font.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/language_pack.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/options.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/settings/hd_remaster.cpp)
+    target_include_directories(CrashLauncher PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
+    target_compile_definitions(CrashLauncher PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(CrashLauncher PRIVATE -Wno-deprecated-declarations)
+    target_link_libraries(CrashLauncher PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi uuid bcrypt winhttp winmm version)
 
-# Installer (launcher/installer.inc): the launcher's look in front of tools/setup.py. The same
-# sources with CRASH_INSTALLER; the release bundle ships it prebuilt as CrashSetup.exe (our code
-# only: it reads the game's art from the dump the user picks, like the launcher).
-get_target_property(CRASH_LAUNCHER_SOURCES CrashLauncher SOURCES)
-add_executable(CrashSetup WIN32 ${CRASH_LAUNCHER_SOURCES})
-target_include_directories(CrashSetup PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
-target_compile_definitions(CrashSetup PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS CRASH_INSTALLER)
-target_compile_options(CrashSetup PRIVATE -Wno-deprecated-declarations -Wno-unused-function)
-target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32 uuid bcrypt winmm)
+    # Installer (launcher/installer.inc): the launcher's look in front of tools/setup.py. The same
+    # sources with CRASH_INSTALLER; the release bundle ships it prebuilt as CrashSetup.exe (our code
+    # only: it reads the game's art from the dump the user picks, like the launcher).
+    get_target_property(CRASH_LAUNCHER_SOURCES CrashLauncher SOURCES)
+    add_executable(CrashSetup WIN32 ${CRASH_LAUNCHER_SOURCES})
+    target_include_directories(CrashSetup PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
+    target_compile_definitions(CrashSetup PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS CRASH_INSTALLER)
+    target_compile_options(CrashSetup PRIVATE -Wno-deprecated-declarations -Wno-unused-function)
+    target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32 uuid bcrypt winmm version)
+    set(CRASH_DIST_LAUNCHER CrashLauncher)
+endif()
 
 # The player's folder (dist\): CrashRecomp.exe + DLLs, languages\, data\ (optional, derived from the
 # user's game), and mods\ / userdata\ / game\ kept as they are. `cmake --build build --target dist`
@@ -230,7 +266,7 @@ find_package(Python3 COMPONENTS Interpreter)
 if (Python3_FOUND)
     add_custom_target(dist
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_dist.py --exe $<TARGET_FILE:CrashRecomp>
-        DEPENDS CrashRecomp CrashLauncher
+        DEPENDS CrashRecomp ${CRASH_DIST_LAUNCHER}
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         USES_TERMINAL)
 endif()

@@ -6,7 +6,7 @@
 
 #include "xenos.h"
 
-#include <dxgiformat.h>
+#include "dxgi_format.h"
 
 #include <cstdint>
 

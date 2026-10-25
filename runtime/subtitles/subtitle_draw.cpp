@@ -1,4 +1,4 @@
-// Rasterizes the current subtitle (subtitles.h) with GDI at the output resolution and draws it over
+// Rasterizes the current subtitle (subtitles.h) with the OS (platform/text_canvas.h) at the output resolution and draws it over
 // the game image, bottom centre: white text (system UI font, so every accent is there), a black
 // outline and an optional translucent box (game.subtitle_background).
 
@@ -9,7 +9,7 @@
 #include "../gpu/overlay.h"
 #include "../settings/settings.h"
 
-#include <windows.h>
+#include "../platform/text_canvas.h"
 
 #include <algorithm>
 #include <cmath>
@@ -34,53 +34,26 @@ namespace subtitles
             int padX = fontPx / 2 + outline, padY = fontPx / 5 + outline;
             int maxWidth = int(std::min(double(outputWidth), outputHeight * 16.0 / 9.0) * 0.82);  // lines of the 16:9 area on wide screens
 
-            HDC dc = CreateCompatibleDC(nullptr);
-            HFONT font = CreateFontW(-fontPx, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-            HGDIOBJ oldFont = SelectObject(dc, font);
-            RECT measure{ 0, 0, maxWidth, 0 };
-            const UINT format = DT_CENTER | DT_WORDBREAK | DT_NOPREFIX;
-            DrawTextW(dc, text.c_str(), int(text.size()), &measure, format | DT_CALCRECT);
-            int textW = std::min<int>(measure.right - measure.left, maxWidth), textH = measure.bottom - measure.top;
+            plat::TextCanvas canvas;
+            int textW = 0, textH = 0;
+            if (canvas.SetFont(plat::FontFace::Ui, fontPx, true))
+                canvas.MeasureWrapped(text, maxWidth, textW, textH);
             image.width = textW + padX * 2;
             image.height = textH + padY * 2;
-
-            BITMAPINFO info{};
-            info.bmiHeader.biSize = sizeof(info.bmiHeader);
-            info.bmiHeader.biWidth = image.width;
-            info.bmiHeader.biHeight = -image.height;
-            info.bmiHeader.biPlanes = 1;
-            info.bmiHeader.biBitCount = 32;
-            info.bmiHeader.biCompression = BI_RGB;
-            void* bits = nullptr;
-            HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
-            if (!bitmap || !bits)
+            if (!textW || !canvas.Resize(image.width, image.height))
             {
-                SelectObject(dc, oldFont);
-                DeleteObject(font);
-                DeleteDC(dc);
                 image.width = image.height = 0;
                 return image;
             }
-            HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
-            memset(bits, 0, size_t(image.width) * image.height * 4);
-            SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, RGB(255, 255, 255));
-            RECT box{ padX, padY, padX + textW, padY + textH };
-            DrawTextW(dc, text.c_str(), int(text.size()), &box, format);
-            GdiFlush();
+            canvas.DrawWrapped(text, padX, padY, textW, textH);
+            canvas.Flush();
 
             // Coverage of the text (grey antialiasing: R = G = B).
             const int w = image.width, h = image.height;
-            const uint32_t* source = static_cast<const uint32_t*>(bits);
+            const uint32_t* source = canvas.Pixels();
             std::vector<float> cover(size_t(w) * h);
             for (size_t i = 0; i < cover.size(); i++)
                 cover[i] = float((source[i] >> 8) & 0xFF) / 255.0f;
-            SelectObject(dc, oldBitmap);
-            DeleteObject(bitmap);
-            SelectObject(dc, oldFont);
-            DeleteObject(font);
-            DeleteDC(dc);
 
             // Outline: the coverage dilated by a square (separable max, rows then columns), so a change
             // of text costs a few ms even at 4K.

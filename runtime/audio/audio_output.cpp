@@ -1,11 +1,9 @@
 #include "audio_output.h"
+#include "audio_device.h"
 #include "wav_writer.h"
 #include "xma.h"
 #include "../diagnostics.h"
 #include "../settings/settings.h"
-
-#include <windows.h>
-#include <xaudio2.h>
 
 #include <algorithm>
 #include <atomic>
@@ -21,37 +19,14 @@ namespace
     using Clock = std::chrono::steady_clock;
     constexpr auto FRAME_PERIOD = std::chrono::nanoseconds(1'000'000'000ll * audio::FRAME_SAMPLES / audio::SAMPLE_RATE);
 
-    // Device queue: frames handed to XAudio2 and not played yet. The clock aims for TARGET_QUEUED
-    // (~43 ms of latency); the ring holds the buffers XAudio2 is still reading.
-    constexpr uint32_t RING_FRAMES = 32;
+    // Device queue: frames handed to the device (audio_device.h) and not played yet. The clock
+    // aims for TARGET_QUEUED (~43 ms of latency).
     constexpr int TARGET_QUEUED = 8;
     constexpr auto DEVICE_STALL = std::chrono::seconds(1);
 
-    struct VoiceCallback : IXAudio2VoiceCallback
-    {
-        void STDMETHODCALLTYPE OnBufferEnd(void*) override;
-        void STDMETHODCALLTYPE OnVoiceProcessingPassStart(UINT32) override {}
-        void STDMETHODCALLTYPE OnVoiceProcessingPassEnd() override {}
-        void STDMETHODCALLTYPE OnStreamEnd() override {}
-        void STDMETHODCALLTYPE OnBufferStart(void*) override {}
-        void STDMETHODCALLTYPE OnLoopEnd(void*) override {}
-        void STDMETHODCALLTYPE OnVoiceError(void*, HRESULT error) override
-        {
-            Log("[audio] XAudio2 voice error 0x%08lX", error);
-        }
-    };
-
-    IXAudio2* g_xaudio;
-    IXAudio2MasteringVoice* g_master;
-    IXAudio2SourceVoice* g_voice;
-    VoiceCallback g_callback;
     std::atomic<bool> g_deviceActive;
-    std::atomic<int> g_queued;
-    std::atomic<int64_t> g_lastBufferEnd; // Clock ticks
 
     std::mutex g_submitMutex;
-    float g_ring[RING_FRAMES][audio::FRAME_SAMPLES * 2];
-    uint32_t g_ringNext;
     std::unique_ptr<WavWriter> g_dump;
 
     Clock::time_point g_nextFrame;
@@ -59,12 +34,6 @@ namespace
     std::atomic<uint64_t> g_callbacks;
     std::atomic<uint64_t> g_framesSubmitted, g_framesDropped, g_peakFrames;
     float g_peak;
-
-    void VoiceCallback::OnBufferEnd(void*)
-    {
-        g_queued--;
-        g_lastBufferEnd = Clock::now().time_since_epoch().count();
-    }
 
     template <typename Duration>
     int64_t Ticks(Duration duration)
@@ -80,51 +49,6 @@ namespace
         float value;
         memcpy(&value, &bits, 4);
         return value;
-    }
-
-    bool OpenDevice()
-    {
-        HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        if (FAILED(hr) && hr != RPC_E_CHANGED_MODE)
-            Log("[audio] CoInitializeEx failed (0x%08lX)", hr);
-
-        if (FAILED(hr = XAudio2Create(&g_xaudio, 0, XAUDIO2_DEFAULT_PROCESSOR)))
-        {
-            Log("[audio] XAudio2Create failed (0x%08lX): no sound", hr);
-            return false;
-        }
-        if (FAILED(hr = g_xaudio->CreateMasteringVoice(&g_master)))
-        {
-            Log("[audio] no audio device (CreateMasteringVoice 0x%08lX): no sound", hr);
-            g_xaudio->Release();
-            g_xaudio = nullptr;
-            return false;
-        }
-
-        WAVEFORMATEX format{};
-        format.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
-        format.nChannels = 2;
-        format.nSamplesPerSec = audio::SAMPLE_RATE;
-        format.wBitsPerSample = 32;
-        format.nBlockAlign = format.nChannels * format.wBitsPerSample / 8;
-        format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
-        if (FAILED(hr = g_xaudio->CreateSourceVoice(&g_voice, &format, 0, XAUDIO2_DEFAULT_FREQ_RATIO, &g_callback)))
-        {
-            Log("[audio] CreateSourceVoice failed (0x%08lX): no sound", hr);
-            g_master->DestroyVoice();
-            g_xaudio->Release();
-            g_master = nullptr;
-            g_xaudio = nullptr;
-            return false;
-        }
-        g_voice->Start();
-
-        XAUDIO2_VOICE_DETAILS details{};
-        g_master->GetVoiceDetails(&details);
-        Log("[audio] XAudio2 output: device %u ch at %u Hz, stream stereo float at %u Hz",
-            details.InputChannels, details.InputSampleRate, audio::SAMPLE_RATE);
-        g_lastBufferEnd = Clock::now().time_since_epoch().count();
-        return true;
     }
 }
 
@@ -147,7 +71,7 @@ namespace audio
         if (noAudio && *noAudio && strcmp(noAudio, "0") != 0)
             Log("[audio] CRASH_NOAUDIO: no host audio device, real-time clock");
         else
-            g_deviceActive = OpenDevice();
+            g_deviceActive = audio::device::Open(SAMPLE_RATE);
 
         g_nextFrame = Clock::now();
     }
@@ -159,10 +83,10 @@ namespace audio
 
         if (g_deviceActive)
         {
-            int queued = g_queued;
+            int queued = device::Queued();
             int64_t ticks = now.time_since_epoch().count();
             bool submitting = ticks - g_lastSubmit < Ticks(std::chrono::milliseconds(100));
-            if (queued > 0 && ticks - g_lastBufferEnd > Ticks(DEVICE_STALL))
+            if (queued > 0 && ticks - device::LastPlayed() > Ticks(DEVICE_STALL))
             {
                 Log("[audio] the device stopped consuming frames; continuing without sound");
                 g_deviceActive = false;
@@ -215,24 +139,8 @@ namespace audio
 
         if (!g_deviceActive)
             return;
-        if (g_queued >= int(RING_FRAMES) - 1)
-        {
+        if (!device::Queue(stereo, FRAME_SAMPLES))
             g_framesDropped++;
-            return;
-        }
-        float* buffer = g_ring[g_ringNext];
-        g_ringNext = (g_ringNext + 1) % RING_FRAMES;
-        memcpy(buffer, stereo, sizeof(stereo));
-
-        XAUDIO2_BUFFER xbuffer{};
-        xbuffer.AudioBytes = sizeof(stereo);
-        xbuffer.pAudioData = reinterpret_cast<const BYTE*>(buffer);
-        g_queued++;
-        if (FAILED(g_voice->SubmitSourceBuffer(&xbuffer)))
-        {
-            g_queued--;
-            g_framesDropped++;
-        }
     }
 
     uint64_t SubmittedFrames()
@@ -246,9 +154,7 @@ namespace audio
         g_dump.reset();  // final header
         if (!g_deviceActive.exchange(false))
             return;
-        g_voice->Stop(0);
-        g_voice->FlushSourceBuffers();
-        g_xaudio->StopEngine();
+        device::Stop();
         Log("[audio] output stopped");
     }
 
@@ -268,6 +174,6 @@ namespace audio
         Log("[audio] %llu render driver callback(s)", (unsigned long long)g_callbacks.load());
         Log("[audio] %llu frame(s) submitted (%llu with sound, peak %.3f), %llu dropped, device %s, %d queued",
             (unsigned long long)g_framesSubmitted.load(), (unsigned long long)g_peakFrames.load(), g_peak,
-            (unsigned long long)g_framesDropped.load(), g_deviceActive ? "active" : "off", g_queued.load());
+            (unsigned long long)g_framesDropped.load(), g_deviceActive ? "active" : "off", g_deviceActive ? device::Queued() : 0);
     }
 }

@@ -4,12 +4,12 @@
 #include "symbols.h"
 #include "kernel/imports.h"
 #include "kernel/memory.h"
+#include "diagnostics_host.h"
 #include "platform/platform.h"
+#include "platform/text.h"
 
 #include <ppc_config.h>
 #include <ppc_context.h>
-
-#include <windows.h>
 
 #include <algorithm>
 #include <atomic>
@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -30,8 +31,8 @@ namespace
     struct GuestThreadInfo
     {
         PPCContext* ctx;
-        HANDLE handle;
-        DWORD id;
+        void* handle;  // diag::OpenCurrentThread
+        uint32_t id;
     };
     std::mutex g_threadsMutex;
     std::vector<GuestThreadInfo> g_guestThreads;
@@ -75,46 +76,10 @@ namespace
             observer(line);
     }
 
-    const char* ExceptionName(DWORD code)
-    {
-        switch (code)
-        {
-        case EXCEPTION_ACCESS_VIOLATION: return "access violation";
-        case EXCEPTION_ILLEGAL_INSTRUCTION: return "illegal instruction";
-        case EXCEPTION_INT_DIVIDE_BY_ZERO: return "integer divide by zero";
-        case EXCEPTION_STACK_OVERFLOW: return "stack overflow";
-        case EXCEPTION_PRIV_INSTRUCTION: return "privileged instruction";
-        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: return "array bounds exceeded";
-        case EXCEPTION_BREAKPOINT: return "breakpoint";
-        case STATUS_HEAP_CORRUPTION: return "heap corruption";
-        case STATUS_STACK_BUFFER_OVERRUN: return "stack buffer overrun (/GS or fastfail)";
-        default: return nullptr;
-        }
-    }
+}
 
-    // "guest function Class::vfNN (sub_XXXXXXXX)" for addresses in the executable (name from
-    // <data>/symbols/functions.csv, see symbols.h), "<module>+0xOFFSET" otherwise.
-    void DescribeHostAddress(uintptr_t address, char* buffer, size_t size)
-    {
-        HMODULE module{};
-        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCSTR>(address), &module);
-
-        if (module == GetModuleHandleA(nullptr))
-        {
-            char function[512];
-            snprintf(buffer, size, "nearest guest function %s", DescribeGuestCode(FindGuestFunction(address), function, sizeof(function)));
-            return;
-        }
-
-        char path[MAX_PATH] = "unknown module";
-        if (module)
-            GetModuleFileNameA(module, path, sizeof(path));
-
-        const char* name = strrchr(path, '\\');
-        snprintf(buffer, size, "%s+0x%zX (outside the recompiled code)", name ? name + 1 : path, address - reinterpret_cast<uintptr_t>(module));
-    }
-
+namespace diag
+{
     void LogGuestRegisters(const PPCContext* ctx)
     {
         Log("guest lr=0x%08X r1=0x%08X r3=0x%08X r4=0x%08X r5=0x%08X ctr=0x%08X r13=0x%08X",
@@ -152,6 +117,10 @@ namespace
         }
     }
 
+}
+
+namespace
+{
     // CRASH_DUMP=<guest address>,<bytes>: hex dump printed with the report (debugging aid).
     void DumpRequestedMemory()
     {
@@ -173,7 +142,10 @@ namespace
         }
         }
     }
+}
 
+namespace diag
+{
     void ReportGuestState(const char* reason)
     {
         Log("========== %s ==========", reason);
@@ -185,99 +157,35 @@ namespace
         for (auto* reporter : g_reporters)
             reporter();
     }
+}
 
-    LONG CALLBACK UnhandledCrashFilter(PEXCEPTION_POINTERS info);
-
-    LONG CALLBACK CrashHandler(PEXCEPTION_POINTERS info)
+namespace
+{
+    uint32_t WatchdogThread(void* param)
     {
-        auto* record = info->ExceptionRecord;
-        const char* name = ExceptionName(record->ExceptionCode);
-        if (!name)
-            return EXCEPTION_CONTINUE_SEARCH;
-
-        // Host code that is not the game's (the GPU driver, NGX/DLSS, FidelityFX) may fault on
-        // purpose inside its own __try (e.g. probing reads of 0xFFFFFFFFFFFFFFFF). A vectored
-        // handler sees those first, so only faults on guest memory are reported here; the rest
-        // go on to the normal SEH search, and UnhandledCrashFilter reports them if nothing
-        // handles them (recompiled code has no SEH frames, so its crashes still get there).
-        if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2 &&
-            !g_memory.IsInGuestRange(reinterpret_cast<void*>(record->ExceptionInformation[1])))
-        {
-            static std::atomic<int> logged{ 0 };
-            if (logged++ < 8)
-            {
-                char location[MAX_PATH + 64];
-                DescribeHostAddress(info->ContextRecord->Rip, location, sizeof(location));
-                Log("[diag] first-chance access violation at %s (host address %p): left to the code's own exception handling",
-                    location, reinterpret_cast<void*>(record->ExceptionInformation[1]));
-            }
-            return EXCEPTION_CONTINUE_SEARCH;
-        }
-        return UnhandledCrashFilter(info);
-    }
-
-    LONG CALLBACK UnhandledCrashFilter(PEXCEPTION_POINTERS info)
-    {
-        auto* record = info->ExceptionRecord;
-        const char* name = ExceptionName(record->ExceptionCode);
-        if (!name)
-            return EXCEPTION_CONTINUE_SEARCH;
-
-        // Faults the demand-commit handler (registered first) did not resolve end up here.
-        uintptr_t rip = info->ContextRecord->Rip;
-        char location[MAX_PATH + 64];
-        DescribeHostAddress(rip, location, sizeof(location));
-
-        Log("[crash] %s (0x%08lX) at host rip %p, %s", name, record->ExceptionCode, reinterpret_cast<void*>(rip), location);
-
-        if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2)
-        {
-            auto* host = reinterpret_cast<void*>(record->ExceptionInformation[1]);
-            const char* op = record->ExceptionInformation[0] == 1 ? "write" : record->ExceptionInformation[0] == 8 ? "execute" : "read";
-            if (g_memory.IsInGuestRange(host))
-            {
-                uint32_t guest = g_memory.MapVirtual(host);
-                Log("[crash] %s of guest address 0x%08X%s", op, guest,
-                    guest >= KERNEL_HEAP_BEGIN && guest < KERNEL_HEAP_END ? " (runtime heap guard: probably a guest stack overflow)" : "");
-            }
-            else
-                Log("[crash] %s of host address %p (outside guest memory)", op, host);
-        }
-
-        ReportGuestState("crash");
-        fflush(stdout);
-        TerminateProcess(GetCurrentProcess(), 3);
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-
-    DWORD WINAPI WatchdogThread(LPVOID param)
-    {
-        DWORD seconds = DWORD(reinterpret_cast<uintptr_t>(param));
+        uint32_t seconds = uint32_t(reinterpret_cast<uintptr_t>(param));
         plat::SleepMs(seconds * 1000);
-        Log("[watchdog] still running after %lu s, stopping", seconds);
+        Log("[watchdog] still running after %u s, stopping", seconds);
         {
             std::unique_lock lock(g_threadsMutex, std::try_to_lock);
             for (auto& thread : g_guestThreads)
             {
-                if (SuspendThread(thread.handle) == DWORD(-1))
-                    continue;
-
-                CONTEXT context{};
-                context.ContextFlags = CONTEXT_CONTROL;
-                if (GetThreadContext(thread.handle, &context))
+                uintptr_t rip;
+                if (diag::SampleThread(thread.handle, rip))
                 {
-                    char location[MAX_PATH + 64];
-                    DescribeHostAddress(context.Rip, location, sizeof(location));
-                    Log("[watchdog] guest thread %lu (r13=0x%08X) at host rip %p, %s", thread.id, thread.ctx->r13.u32,
-                        reinterpret_cast<void*>(context.Rip), location);
-                    LogGuestRegisters(thread.ctx);
+                    char location[1024];
+                    diag::DescribeHostAddress(rip, location, sizeof(location));
+                    Log("[watchdog] guest thread %u (r13=0x%08X) at host rip %p, %s", thread.id, thread.ctx->r13.u32,
+                        reinterpret_cast<void*>(rip), location);
                 }
+                else
+                    Log("[watchdog] guest thread %u (r13=0x%08X)", thread.id, thread.ctx->r13.u32);
+                diag::LogGuestRegisters(thread.ctx);
             }
         }
-        ReportGuestState("timeout");
+        diag::ReportGuestState("timeout");
         fflush(stdout);
-        TerminateProcess(GetCurrentProcess(), 2);
-        return 0;
+        diag::Terminate(2);
     }
 }
 
@@ -291,7 +199,11 @@ void SetLogFile(const wchar_t* path)
     std::lock_guard lock(g_logMutex);
     if (g_logFile)
         fclose(g_logFile);
+#ifdef _WIN32
     g_logFile = _wfopen(path, L"w");
+#else
+    g_logFile = fopen(plat::NarrowUtf8(path).c_str(), "w");
+#endif
 }
 
 void Log(const char* format, ...)
@@ -308,10 +220,9 @@ void Fatal(const char* format, ...)
     va_start(args, format);
     VLog("[fatal] ", format, args);
     va_end(args);
-    ReportGuestState("fatal");
+    diag::ReportGuestState("fatal");
     fflush(stdout);
-    TerminateProcess(GetCurrentProcess(), 1);
-    __builtin_unreachable();
+    diag::Terminate(1);
 }
 
 void InstallCrashHandler()
@@ -322,33 +233,31 @@ void InstallCrashHandler()
     std::sort(g_hostToGuest.begin(), g_hostToGuest.end());
 
     // Function names for the reports (tools/rtti_scan.py output; optional).
-    char symbols[MAX_PATH]{};
-    if (!GetEnvironmentVariableA("CRASH_SYMBOLS", symbols, sizeof(symbols)))
-        snprintf(symbols, sizeof(symbols), "%s", (paths::Data() / "symbols" / "functions.csv").string().c_str());
-    if (strcmp(symbols, "0") != 0)
+    const char* forced = getenv("CRASH_SYMBOLS");
+    std::string symbols = forced ? forced : (paths::Data() / "symbols" / "functions.csv").string();
+    if (symbols != "0")
     {
-        if (size_t count = LoadGuestSymbols(symbols))
-            Log("[symbols] %zu function names from %s", count, symbols);
+        if (size_t count = LoadGuestSymbols(symbols.c_str()))
+            Log("[symbols] %zu function names from %s", count, symbols.c_str());
         else
-            Log("[symbols] %s not found: run `python tools/rtti_scan.py` for class::method names in reports", symbols);
+            Log("[symbols] %s not found: run `python tools/rtti_scan.py` for class::method names in reports", symbols.c_str());
     }
 
     // Registered last so the demand-commit handler (first in the list) runs before it.
-    AddVectoredExceptionHandler(0, CrashHandler);
-    SetUnhandledExceptionFilter(UnhandledCrashFilter);
+    diag::InstallHostCrashHandlers();
 }
 
 void StartWatchdog()
 {
-    char value[32]{};
-    if (!GetEnvironmentVariableA("CRASH_TIMEOUT", value, sizeof(value)))
+    const char* value = getenv("CRASH_TIMEOUT");
+    if (!value)
         return;
 
     uintptr_t seconds = strtoul(value, nullptr, 10);
     if (seconds == 0)
         return;
 
-    CreateThread(nullptr, 0, WatchdogThread, reinterpret_cast<LPVOID>(seconds), 0, nullptr);
+    plat::CreateThread(WatchdogThread, reinterpret_cast<void*>(seconds), 0, false, nullptr);
 }
 
 void AddDiagnosticReporter(void (*reporter)())
@@ -360,11 +269,10 @@ void SetDiagnosticContext(PPCContext* ctx)
 {
     t_diagnosticContext = ctx;
 
-    HANDLE handle{};
-    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &handle, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    void* handle = diag::OpenCurrentThread();
 
     std::lock_guard lock(g_threadsMutex);
-    g_guestThreads.push_back({ ctx, handle, GetCurrentThreadId() });
+    g_guestThreads.push_back({ ctx, handle, plat::CurrentThreadId() });
 }
 
 void ClearDiagnosticContext()
@@ -372,12 +280,12 @@ void ClearDiagnosticContext()
     t_diagnosticContext = nullptr;
 
     std::lock_guard lock(g_threadsMutex);
-    DWORD id = GetCurrentThreadId();
+    uint32_t id = plat::CurrentThreadId();
     for (auto it = g_guestThreads.begin(); it != g_guestThreads.end(); ++it)
     {
         if (it->id == id)
         {
-            CloseHandle(it->handle);
+            diag::CloseThread(it->handle);
             g_guestThreads.erase(it);
             break;
         }
@@ -389,7 +297,7 @@ void UpdateDiagnosticContext(PPCContext* ctx)
     t_diagnosticContext = ctx;
 
     std::lock_guard lock(g_threadsMutex);
-    DWORD id = GetCurrentThreadId();
+    uint32_t id = plat::CurrentThreadId();
     for (auto& info : g_guestThreads)
     {
         if (info.id == id)

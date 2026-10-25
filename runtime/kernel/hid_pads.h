@@ -10,8 +10,7 @@
 // each open pad on its own thread. Which game controller (player) each pad drives is decided in
 // pad_slots.h.
 
-#include <windows.h>
-#include <xinput.h>
+#include "xinput_types.h"
 
 #include <cstdint>
 #include <string>

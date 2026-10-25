@@ -54,9 +54,9 @@ namespace settings::menu
         // Opening and closing: the game plays its screen transition to the (emptied) PS2 options
         // screen first; the settings then fade in rising a little. Closing presses B for the game
         // (the options screen's ExitBack) while the settings fade out.
-        constexpr ULONGLONG OPEN_DELAY_MS = 120, FADE_IN_MS = 220, FADE_OUT_MS = 110, BACK_PRESS_MS = 200;
+        constexpr uint64_t OPEN_DELAY_MS = 120, FADE_IN_MS = 220, FADE_OUT_MS = 110, BACK_PRESS_MS = 200;
         constexpr float RISE = 18.0f;  // virtual pixels
-        constexpr ULONGLONG RESTART_DELAY_MS = 250;  // "restarting..." on screen before the restart
+        constexpr uint64_t RESTART_DELAY_MS = 250;  // "restarting..." on screen before the restart
 
         // The game's frontend colours, measured in its screens. On the frontend's cloth
         // (Old Runs\build\ptbr\08_menu_episodio.png, menu_settings.png): items orange with a dark
@@ -97,8 +97,8 @@ namespace settings::menu
         const Palette* g_palette = &CLOTH;
         const Palette* g_previewPalette = nullptr;  // --settings-preview
 
-        constexpr ULONGLONG REPEAT_DELAY_MS = 380;
-        constexpr ULONGLONG REPEAT_MS = 90;
+        constexpr uint64_t REPEAT_DELAY_MS = 380;
+        constexpr uint64_t REPEAT_MS = 90;
 
         // The items, the tabs and their rows, names, values and help: options.h (the launcher's too).
         using options::ActionOf;
@@ -124,7 +124,7 @@ namespace settings::menu
         std::atomic<bool> g_requested{ false };
         std::atomic<bool> g_open{ false };
         std::atomic<bool> g_releasing{ false };
-        std::atomic<ULONGLONG> g_backUntil{ 0 };  // B for the game until then (closing)
+        std::atomic<uint64_t> g_backUntil{ 0 };  // B for the game until then (closing)
         std::atomic<bool> g_fromMainMenu{ true };  // where RequestOpen came from (the restart warning)
 
         // During a game the screen opens with the pause menu's OPTIONS, over the game's in-game
@@ -142,17 +142,17 @@ namespace settings::menu
         bool g_capturing = false;   // CONTROLS: waiting for the key of the selected binding (pc_input.h)
         uint16_t g_previousButtons = 0;
         uint16_t g_heldButton = 0;
-        ULONGLONG g_heldSince = 0, g_lastRepeat = 0;
+        uint64_t g_heldSince = 0, g_lastRepeat = 0;
         bool g_dirty = true;
         menu_art::Canvas g_canvas;
         std::vector<uint32_t> g_pixels;
         uint64_t g_version = 0;
-        ULONGLONG g_openedAt = 0, g_closedAt = 0;
+        uint64_t g_openedAt = 0, g_closedAt = 0;
         bool g_closing = false;  // fading out
         // Leaving with options that need a restart: "restart now?" (A restart, B later), then
         // "restarting..." for a moment before Restart.
         bool g_confirm = false;
-        ULONGLONG g_restartAt = 0;
+        uint64_t g_restartAt = 0;
         std::vector<uint32_t> g_faded;  // g_pixels at the fade's opacity
         uint64_t g_fadedVersion = 0;
         int g_drawnW = 0, g_drawnH = 0;
@@ -790,7 +790,7 @@ namespace settings::menu
         // Buttons that went down this frame, plus auto-repeat of a held direction.
         uint16_t Pressed(uint16_t buttons)
         {
-            ULONGLONG now = plat::TickCountMs();
+            uint64_t now = plat::TickCountMs();
             uint16_t pressed = buttons & ~g_previousButtons;
             constexpr uint16_t DIRECTIONS = XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT;
             if (pressed & DIRECTIONS)
@@ -1171,7 +1171,7 @@ namespace settings::menu
             return;
         Render(int(width), int(height));
         // Fade (and rise) in after the game's transition; fade out when closing.
-        ULONGLONG now = plat::TickCountMs();
+        uint64_t now = plat::TickCountMs();
         float t = g_closing ? 1.0f - float(now - g_closedAt) / FADE_OUT_MS
                             : (float(now - g_openedAt) - OPEN_DELAY_MS) / FADE_IN_MS;
         t = std::clamp(t, 0.0f, 1.0f);

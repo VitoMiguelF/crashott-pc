@@ -9,6 +9,7 @@
 
 #include "pad_slots.h"
 #include "hid_pads.h"
+#include "xinput_backend.h"
 #include "kernel.h"
 #include "pc_input.h"
 #include "../settings/settings.h"
@@ -27,41 +28,14 @@ namespace input::slots
     namespace
     {
         constexpr int USERS = 4;
-        constexpr ULONGLONG UPDATE_MS = 3;            // reads closer than this share one update
-        constexpr ULONGLONG PROBE_MS = 1000;          // an empty XInput slot is probed this often
+        constexpr uint64_t UPDATE_MS = 3;            // reads closer than this share one update
+        constexpr uint64_t PROBE_MS = 1000;          // an empty XInput slot is probed this often
         // A PlayStation pad's press and an XInput pad's press of as many buttons count as the same
         // press (a virtual pad of DS4Windows/DSX) when the XInput one comes at most this much
         // before / after it.
-        constexpr ULONGLONG MATCH_BEFORE_MS = 40, MATCH_AFTER_MS = 150;
+        constexpr uint64_t MATCH_BEFORE_MS = 40, MATCH_AFTER_MS = 150;
 
         using Choices = std::array<std::string, 2>;
-
-        using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
-        using XInputSetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_VIBRATION*);
-
-        struct XInputApi
-        {
-            XInputGetStateFn getState{};
-            XInputSetStateFn setState{};
-
-            XInputApi()
-            {
-                HMODULE module = LoadLibraryW(L"xinput1_4.dll");
-                if (!module)
-                    module = LoadLibraryW(L"xinput9_1_0.dll");
-                if (module)
-                {
-                    getState = reinterpret_cast<XInputGetStateFn>(GetProcAddress(module, "XInputGetState"));
-                    setState = reinterpret_cast<XInputSetStateFn>(GetProcAddress(module, "XInputSetState"));
-                }
-            }
-        };
-
-        XInputApi& Api()
-        {
-            static XInputApi api;
-            return api;
-        }
 
         // Merges `from` into `into`: buttons OR'd, the trigger or stick pushed further wins (sticks as
         // pairs, so a centred pad does not cut the other one's diagonal).
@@ -79,7 +53,7 @@ namespace input::slots
         // What one update sees: the XInput slots and the PlayStation pads.
         struct Snapshot
         {
-            ULONGLONG now = 0;
+            uint64_t now = 0;
             bool connected[USERS] = {};
             XINPUT_GAMEPAD xinput[USERS] = {};
             std::vector<std::pair<hid::PadInfo, XINPUT_GAMEPAD>> pads;
@@ -87,8 +61,8 @@ namespace input::slots
 
         struct Press
         {
-            ULONGLONG time;
-            WORD buttons;
+            uint64_t time;
+            uint16_t buttons;
         };
 
         // A PlayStation pad: on its own (Separate), the same pad as an XInput one (Mirror), or not
@@ -102,7 +76,7 @@ namespace input::slots
             Mode mode = Mode::Unknown;
             uint32_t recheck = 0;  // XInput slots that appeared after it was found separate: is it one of them?
             XINPUT_GAMEPAD state{};
-            WORD lastButtons = 0;
+            uint16_t lastButtons = 0;
             std::vector<Press> pending;  // its presses not compared yet
             int matches[USERS] = {};
             int misses = 0;
@@ -129,8 +103,8 @@ namespace input::slots
                 {
                     if (s.connected[k])
                         connectedMask |= 1u << k;
-                    WORD buttons = s.connected[k] ? s.xinput[k].wButtons : 0;
-                    if (WORD down = buttons & ~xLast_[k])
+                    uint16_t buttons = s.connected[k] ? s.xinput[k].wButtons : 0;
+                    if (uint16_t down = buttons & ~xLast_[k])
                         xPresses_[k].push_back({ s.now, down });
                     std::erase_if(xPresses_[k], [&](const Press& p) { return p.time + MATCH_BEFORE_MS + MATCH_AFTER_MS + 100 < s.now; });
                     xLast_[k] = buttons;
@@ -190,7 +164,7 @@ namespace input::slots
                         h->lastButtons = state.wButtons;  // held while plugged in: not a press
                     }
                     h->state = state;
-                    WORD down = state.wButtons & ~h->lastButtons;
+                    uint16_t down = state.wButtons & ~h->lastButtons;
                     h->lastButtons = state.wButtons;
                     if (h->mode == Mode::Unknown && !connectedMask)
                     {
@@ -334,7 +308,7 @@ namespace input::slots
         private:
             Choices choices_{ "auto", "auto" };
             bool xConnected_[USERS] = {};
-            WORD xLast_[USERS] = {};
+            uint16_t xLast_[USERS] = {};
             XINPUT_GAMEPAD xState_[USERS] = {};
             std::vector<Press> xPresses_[USERS];
             std::vector<Hid> hids_;
@@ -489,8 +463,8 @@ namespace input::slots
 
         std::mutex g_mutex;
         Table g_table;
-        ULONGLONG g_lastUpdate = 0;
-        ULONGLONG g_nextProbe[USERS] = {};
+        uint64_t g_lastUpdate = 0;
+        uint64_t g_nextProbe[USERS] = {};
         bool g_connected[USERS] = {};
         std::string g_described;
         std::atomic<uint32_t> g_playerOne{ 0 };
@@ -499,7 +473,7 @@ namespace input::slots
         void NoteXInputActivity(int slot, const XINPUT_GAMEPAD& pad)
         {
             static XINPUT_GAMEPAD s_last[USERS];
-            auto moved = [](SHORT a, SHORT b) { return std::abs(int(a) - int(b)) > 8000 && (std::abs(int(a)) > 12000 || std::abs(int(b)) > 12000); };
+            auto moved = [](int16_t a, int16_t b) { return std::abs(int(a) - int(b)) > 8000 && (std::abs(int(a)) > 12000 || std::abs(int(b)) > 12000); };
             XINPUT_GAMEPAD& last = s_last[slot];
             bool active = pad.wButtons != last.wButtons || std::abs(int(pad.bLeftTrigger) - int(last.bLeftTrigger)) > 60 ||
                           std::abs(int(pad.bRightTrigger) - int(last.bRightTrigger)) > 60 || moved(pad.sThumbLX, last.sThumbLX) ||
@@ -530,7 +504,7 @@ namespace input::slots
         void Refresh()
         {
             std::lock_guard lock(g_mutex);
-            ULONGLONG now = plat::TickCountMs();
+            uint64_t now = plat::TickCountMs();
             if (g_lastUpdate && now - g_lastUpdate < UPDATE_MS)
                 return;
             g_lastUpdate = now;
@@ -541,7 +515,7 @@ namespace input::slots
                 if (!g_connected[k] && now < g_nextProbe[k])
                     continue;
                 XINPUT_STATE state{};
-                g_connected[k] = Api().getState && Api().getState(k, &state) == ERROR_SUCCESS;
+                g_connected[k] = xinput::GetState(uint32_t(k), state);
                 if (!g_connected[k])
                 {
                     g_nextProbe[k] = now + PROBE_MS;
@@ -568,11 +542,11 @@ namespace input::slots
         std::lock_guard lock(g_mutex);
         bool connected = g_table.Read(user, pad);
         // The first presses on the other players' controllers go to the log (co-op reports).
-        static WORD s_last[USERS];
+        static uint16_t s_last[USERS];
         static int s_logged = 0;
         if (user < USERS && connected && user != g_table.playerOne && s_logged < 40)
         {
-            if (WORD down = pad.wButtons & ~s_last[user])
+            if (uint16_t down = pad.wButtons & ~s_last[user])
             {
                 s_logged++;
                 Log("[input] controle %u do jogo (%s): botões 0x%04X", user, g_table.NameOn(user).c_str(), down);
@@ -593,9 +567,8 @@ namespace input::slots
                 slot = d->slot, id = d->hid;
         }
         // An XInput pad takes it (DS4Windows/DSX pass a virtual pad's rumble on); otherwise the PlayStation pad.
-        XINPUT_VIBRATION vibration{ left, right };
-        if (slot >= 0 && Api().setState)
-            Api().setState(slot, &vibration);
+        if (slot >= 0)
+            xinput::SetState(uint32_t(slot), left, right);
         else if (id)
             hid::SetPadVibration(id, left, right);
     }
@@ -619,7 +592,7 @@ namespace input::slots
             printf("%-64s %s\n", what, ok ? "ok" : "FALHOU");
             failures += !ok;
         };
-        auto pad = [](WORD buttons) {
+        auto pad = [](uint16_t buttons) {
             XINPUT_GAMEPAD p{};
             p.wButtons = buttons;
             return p;
@@ -634,9 +607,9 @@ namespace input::slots
         };
         const Choices autoChoices{ "auto", "auto" };
         const hid::PadInfo ds{ 7, "DualSense (USB)" };
-        constexpr WORD A = XINPUT_GAMEPAD_A, B = XINPUT_GAMEPAD_B;
+        constexpr uint16_t A = XINPUT_GAMEPAD_A, B = XINPUT_GAMEPAD_B;
         // One update every 16 ms; `x` = the XInput slot 0 pad (nullptr: none), `ps` = the DualSense (nullptr: none).
-        auto step = [&](Table& t, ULONGLONG& now, const XINPUT_GAMEPAD* x, const XINPUT_GAMEPAD* ps, const Choices& c, const XINPUT_GAMEPAD* x1 = nullptr) {
+        auto step = [&](Table& t, uint64_t& now, const XINPUT_GAMEPAD* x, const XINPUT_GAMEPAD* ps, const Choices& c, const XINPUT_GAMEPAD* x1 = nullptr) {
             Snapshot s;
             s.now = now += 16;
             if (x)
@@ -652,7 +625,7 @@ namespace input::slots
         {
             // An Xbox pad and a DualSense: two players.
             Table t;
-            ULONGLONG now = 0;
+            uint64_t now = 0;
             step(t, now, &idle, &idle, autoChoices);
             check("Xbox + DualSense: DualSense parado ainda nao joga", player(t, "playstation1") == -9);
             step(t, now, &idle, &pressA, autoChoices);
@@ -666,9 +639,9 @@ namespace input::slots
         {
             // DS4Windows without HidHide: the same DualSense twice.
             Table t;
-            ULONGLONG now = 0;
+            uint64_t now = 0;
             step(t, now, &idle, &idle, autoChoices);
-            for (WORD button : { A, B })
+            for (uint16_t button : { A, B })
             {
                 XINPUT_GAMEPAD down = pad(button);
                 step(t, now, &idle, &down, autoChoices);
@@ -686,12 +659,12 @@ namespace input::slots
         {
             // A DualSense alone, then DS4Windows starts: still one player 1.
             Table t;
-            ULONGLONG now = 0;
+            uint64_t now = 0;
             step(t, now, nullptr, &idle, autoChoices);
             check("DualSense sozinho: P1 na hora", player(t, "playstation1") == 0);
             step(t, now, &idle, &idle, autoChoices);
             check("DS4Windows abre depois: o virtual fica com o P2 enquanto confere", player(t, "xbox1") == 1);
-            for (WORD button : { A, B })
+            for (uint16_t button : { A, B })
             {
                 XINPUT_GAMEPAD down = pad(button);
                 step(t, now, &down, &down, autoChoices);
@@ -703,7 +676,7 @@ namespace input::slots
         {
             // A DualSense alone, then an Xbox pad: the DualSense stays player 1.
             Table t;
-            ULONGLONG now = 0;
+            uint64_t now = 0;
             step(t, now, nullptr, &idle, autoChoices);
             step(t, now, &idle, &idle, autoChoices);
             step(t, now, &idle, &pressB, autoChoices);
@@ -719,7 +692,7 @@ namespace input::slots
         {
             // Settings: player 1 = the second Xbox pad; a single pad is always player 1.
             Table t;
-            ULONGLONG now = 0;
+            uint64_t now = 0;
             const Choices second{ "xbox2", "auto" }, p2first{ "auto", "xbox1" };
             step(t, now, &idle, nullptr, p2first);
             check("so um controle, mesmo escolhido para P2: ele e o P1", player(t, "xbox1") == 0);

@@ -1,6 +1,6 @@
 #include "controls.h"
 
-#include <windows.h>
+#include "../platform/keys.h"
 
 #include <algorithm>
 #include <cctype>

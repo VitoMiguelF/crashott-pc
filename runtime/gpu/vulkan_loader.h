@@ -4,7 +4,7 @@
 // loader (vulkan-1.dll; libvulkan.so.1 on Linux later): no import library, so the exe still starts
 // where Vulkan is missing and the renderer falls back to Direct3D 12.
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(CRASH_NO_WIN32_HEADERS)
 #define VK_USE_PLATFORM_WIN32_KHR 1
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -19,6 +19,12 @@
     X(vkEnumerateInstanceExtensionProperties) \
     X(vkEnumerateInstanceLayerProperties) \
     X(vkEnumerateInstanceVersion)
+
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+#define CRASH_VK_WIN32_FUNCTIONS(X) X(vkCreateWin32SurfaceKHR)
+#else
+#define CRASH_VK_WIN32_FUNCTIONS(X)
+#endif
 
 #define CRASH_VK_INSTANCE_FUNCTIONS(X) \
     X(vkDestroyInstance) \
@@ -38,7 +44,7 @@
     X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR) \
     X(vkGetPhysicalDeviceSurfaceFormatsKHR) \
     X(vkGetPhysicalDeviceSurfacePresentModesKHR) \
-    X(vkCreateWin32SurfaceKHR) \
+    CRASH_VK_WIN32_FUNCTIONS(X) \
     X(vkCreateDebugUtilsMessengerEXT) \
     X(vkDestroyDebugUtilsMessengerEXT) \
     X(vkSetDebugUtilsObjectNameEXT)

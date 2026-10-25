@@ -17,8 +17,8 @@
 //
 // The camera mod and anything else that wants the mouse itself: TakeMouseLook / MouseLookDelta.
 
-#include <windows.h>
-#include <xinput.h>
+#include "xinput_types.h"
+#include "../platform/keys.h"
 
 #include <cstdint>
 #include <string>
@@ -41,6 +41,10 @@ namespace input::pc
     void OnRawMouse(int dx, int dy);
     // The window gained / lost the keyboard focus (lost: every key is released).
     void OnFocus(bool focused);
+    // A key (VK_*) held now, and any keyboard key (VK_BACK and up) held now, as the window saw
+    // them (all released while the window has no focus). For GetAsyncKeyState-style polling.
+    bool KeyHeld(uint32_t key);
+    bool AnyKeyboardKeyHeld();
     // What the window should do with the cursor now: show it, or hide it and keep it inside the
     // window (gameplay with the mouse camera). Re-evaluated by the window ~10 times a second.
     enum class CursorMode : uint8_t { Visible, Hidden, Captured };

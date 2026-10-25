@@ -25,8 +25,6 @@
 // logs the event "console_<n>"; each command run logs "console_cmd" (detail: the command).
 // tools/run_game.py: dev_console = [["@gameplay_ready+1", "!toggle"], [..., "god on"], ...].
 
-#include <windows.h>
-
 #include <cstdint>
 #include <string>
 
@@ -44,9 +42,9 @@ namespace dev::console
 
     // ---- window thread (gpu/window.cpp) ----
     // WM_KEYDOWN / WM_SYSKEYDOWN, WM_CHAR, WM_MOUSEWHEEL: true when the console took it (it must
-    // not reach the game).
-    bool OnKeyDown(WPARAM key, LPARAM lParam);
-    bool OnChar(wchar_t c, LPARAM lParam, bool dead = false);  // dead: WM_DEADCHAR
+    // not reach the game). `key` / `lParam` are the messages' WPARAM / LPARAM.
+    bool OnKeyDown(uintptr_t key, intptr_t lParam);
+    bool OnChar(wchar_t c, intptr_t lParam, bool dead = false);  // dead: WM_DEADCHAR
     bool OnWheel(int notches);
 
     // ---- game thread: once a frame, after the script update (dev_tools.cpp) ----

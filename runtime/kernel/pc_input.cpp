@@ -33,13 +33,13 @@ namespace input::pc
         std::atomic<int> g_rawX{ 0 }, g_rawY{ 0 };          // for the right stick
         std::atomic<int> g_lookX{ 0 }, g_lookY{ 0 };        // for MouseLookDelta
         std::atomic<bool> g_lookTaken{ false };
-        std::atomic<ULONGLONG> g_lastMouseMove{ 0 };
+        std::atomic<uint64_t> g_lastMouseMove{ 0 };
         // The cursor (client pixels) and the window's client size; mouse events for the menus.
         std::atomic<int> g_cursorX{ -1 }, g_cursorY{ -1 }, g_clientW{ 0 }, g_clientH{ 0 };
         std::atomic<uint32_t> g_cursorMoves{ 0 }, g_leftClicks{ 0 }, g_rightClicks{ 0 };
         std::atomic<bool> g_leftHeld{ false };
         std::atomic<bool> g_menuClick{ false };       // a left click the game's menus have not used (TakeMenuClick)
-        std::atomic<ULONGLONG> g_menuClickTime{ 0 };
+        std::atomic<uint64_t> g_menuClickTime{ 0 };
         std::atomic<int> g_pressAccept{ 0 };          // game reads left with A down (PressMenuAccept)
         std::atomic<int> g_menuWheel{ 0 }, g_settingsWheel{ 0 };  // notches not yet used (+ = up)
         std::atomic<uint32_t> g_settingsRight{ 0 };                // right clicks on the settings screen
@@ -76,7 +76,7 @@ namespace input::pc
 
         // Frontend: the node shown and when (game thread), for InMenus.
         std::atomic<uint32_t> g_frontendNode{ 0xFFFFFFFF };
-        std::atomic<ULONGLONG> g_frontendTime{ 0 };
+        std::atomic<uint64_t> g_frontendTime{ 0 };
         // Frontend.bfig nodes that are gameplay, not menus: the "game running" node (target of
         // ExitGameRunning) and the cinematics that go back to it (owners of ExitPlayerSkips,
         // ExitSequencerDone, ExitArenaCinematic, ExitWhenDone1). Found by FindGameplayNodes.
@@ -195,9 +195,9 @@ namespace input::pc
         // menu, which it opened), Backspace / Delete
         // = X (the frontend's "X BACK" in the name entry, "X ERASE"), Tab = Y ("Y BACK", "Y NO",
         // "Y DONE"), P = START ("DONE START"), Q / E = LB / RB ("CONTINUE STORY RB").
-        WORD MenuButtons(const std::vector<uint16_t>& scriptKeys)
+        uint16_t MenuButtons(const std::vector<uint16_t>& scriptKeys)
         {
-            WORD buttons = 0;
+            uint16_t buttons = 0;
             auto key = [&](uint16_t k) { return Down(k, scriptKeys); };
             // Typing a name: the letters and Enter are text (SetTextEntry), not menu keys.
             bool letters = !g_textEntry;
@@ -215,9 +215,9 @@ namespace input::pc
             return buttons;
         }
 
-        SHORT Axis(float value)
+        int16_t Axis(float value)
         {
-            return SHORT(std::lround(std::clamp(value, -1.0f, 1.0f) * 32767.0f));
+            return int16_t(std::lround(std::clamp(value, -1.0f, 1.0f) * 32767.0f));
         }
 
         // The left stick going round (RotateStick / SpinAttack): one step per game read.
@@ -241,6 +241,21 @@ namespace input::pc
             if (g_wheelDown.load() > 0)
                 g_wheelDown--;
         }
+    }
+
+    bool KeyHeld(uint32_t key)
+    {
+        return key < 256 && (g_keys[key].load() & HELD) != 0;
+    }
+
+    bool AnyKeyboardKeyHeld()
+    {
+        for (uint32_t key = VK_BACK; key < 256; key++)
+        {
+            if (g_keys[key].load() & HELD)
+                return true;
+        }
+        return false;
     }
 
     // ---- window thread ----
@@ -369,7 +384,7 @@ namespace input::pc
     {
         // The Frontend tree's conditions run every frame while one of its screens is up; in
         // gameplay they stop (or sit on the in-game node, which is not a menu).
-        ULONGLONG last = g_frontendTime.load();
+        uint64_t last = g_frontendTime.load();
         if (!last || plat::TickCountMs() - last > 250)
             return false;
         uint32_t node = g_frontendNode.load();
@@ -565,9 +580,9 @@ namespace input::pc
         // accepts it, the wheel steps through the items): the right button goes back (B), a left
         // click on a screen without a menu (PRESS START, "Load successful") is A, and the A a click
         // on an item asked for (PressMenuAccept). Game reads only (`poll`); presses last a few reads.
-        WORD MouseMenuButtons(bool poll)
+        uint16_t MouseMenuButtons(bool poll)
         {
-            static WORD s_out = 0;
+            static uint16_t s_out = 0;
             if (!poll)
                 return s_out;
             static uint32_t s_right = g_rightClicks.load();
@@ -615,7 +630,7 @@ namespace input::pc
 
     uint16_t MenuKeys(const std::vector<uint16_t>& scriptKeys)
     {
-        WORD buttons = MenuButtons(scriptKeys);
+        uint16_t buttons = MenuButtons(scriptKeys);
         // The runtime's settings screen: the right button goes back (the wheel and the left button
         // are read by the screen itself).
         static uint32_t s_right = g_settingsRight.load();
@@ -645,7 +660,7 @@ namespace input::pc
         }
         else
         {
-            WORD buttons = 0;
+            uint16_t buttons = 0;
             if (action(Action::Jump)) buttons |= XINPUT_GAMEPAD_A;
             if (action(Action::LightAttack)) buttons |= XINPUT_GAMEPAD_X;
             if (action(Action::HeavyAttack)) buttons |= XINPUT_GAMEPAD_Y;

@@ -20,7 +20,9 @@
 #include "../settings/settings.h"
 #include "../platform/platform.h"
 
-#include <windows.h>
+#include "../platform/keys.h"
+#include "../platform/text.h"
+#include "../platform/text_canvas.h"
 
 #include <algorithm>
 #include <atomic>
@@ -43,8 +45,8 @@ namespace dev::console
     {
         constexpr size_t MAX_LINES = 400;
         constexpr size_t MAX_HISTORY = 200;
-        constexpr ULONGLONG RELEASE_MS = 250;  // the game still sees a neutral pad after closing
-        constexpr UINT TOGGLE_SCAN = 0x29;     // the key left of 1 (` on US, ' on ABNT2)
+        constexpr uint64_t RELEASE_MS = 250;  // the game still sees a neutral pad after closing
+        constexpr uint32_t TOGGLE_SCAN = 0x29;     // the key left of 1 (` on US, ' on ABNT2)
 
         struct Line
         {
@@ -76,7 +78,7 @@ namespace dev::console
         constexpr uint32_t NODE_MAIN_MENU = 70, NODE_HUB = 575;
         constexpr int32_t EXIT_SKIP_TO_LEVEL = 51;  // the developers' SkipToLevel (-> 630 InGame)
         std::atomic<bool> g_open{ false };
-        std::atomic<ULONGLONG> g_closedAt{ 0 };
+        std::atomic<uint64_t> g_closedAt{ 0 };
         bool g_argument = false;
 
         // ---- text helpers ----
@@ -108,20 +110,12 @@ namespace dev::console
 
         std::wstring Wide(const std::string& utf8)
         {
-            int length = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), int(utf8.size()), nullptr, 0);
-            std::wstring wide(size_t(std::max(length, 0)), L'\0');
-            if (length > 0)
-                MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), int(utf8.size()), wide.data(), length);
-            return wide;
+            return plat::WidenUtf8(utf8);
         }
 
         std::string Utf8(const std::wstring& wide)
         {
-            int length = WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), int(wide.size()), nullptr, 0, nullptr, nullptr);
-            std::string text(size_t(std::max(length, 0)), '\0');
-            if (length > 0)
-                WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), int(wide.size()), text.data(), length, nullptr, nullptr);
-            return text;
+            return plat::NarrowUtf8(wide);
         }
 
         // Byte offsets of the UTF-8 character before / after `at`.
@@ -690,39 +684,30 @@ namespace dev::console
             Log("[console] script: %zu entries from %s", g_script.size(), path);
         }
 
-        // Posts a key to the game window, as a keyboard would (TranslateMessage in the window's
-        // loop makes its WM_CHAR from the keyboard layout, as for a real key).
-        void PostKey(HWND window, UINT key, UINT scan, bool extended)
-        {
-            LPARAM down = 1 | (LPARAM(scan) << 16) | (extended ? (1 << 24) : 0);
-            PostMessageW(window, WM_KEYDOWN, key, down);
-            PostMessageW(window, WM_KEYUP, key, down | (1 << 30) | (LPARAM(1) << 31));
-        }
-
         void RunScriptEntry(const std::string& text)
         {
-            HWND window = HWND(gpu::window::Handle());
-            if (!window)
+            using gpu::window::PostKey;
+            if (!gpu::window::Handle())
                 return;
             if (text == "!toggle")
-                PostKey(window, MapVirtualKeyW(TOGGLE_SCAN, MAPVK_VSC_TO_VK), TOGGLE_SCAN, false);
+                PostKey(0, TOGGLE_SCAN, false);
             else if (text == "!esc")
-                PostKey(window, VK_ESCAPE, 0x01, false);
+                PostKey(VK_ESCAPE, 0x01, false);
             else if (text == "!tab")
-                PostKey(window, VK_TAB, 0x0F, false);
+                PostKey(VK_TAB, 0x0F, false);
             else if (text == "!up")
-                PostKey(window, VK_UP, 0x48, true);
+                PostKey(VK_UP, 0x48, true);
             else if (text == "!down")
-                PostKey(window, VK_DOWN, 0x50, true);
+                PostKey(VK_DOWN, 0x50, true);
             else if (text == "!enter")
-                PostKey(window, VK_RETURN, 0x1C, false);
+                PostKey(VK_RETURN, 0x1C, false);
             else
             {
                 bool enter = text.rfind("!type:", 0) != 0;
                 for (wchar_t c : Wide(enter ? text : text.substr(6)))
-                    PostMessageW(window, WM_CHAR, c, 1);
+                    gpu::window::PostChar(c);
                 if (enter)
-                    PostKey(window, VK_RETURN, 0x1C, false);
+                    PostKey(VK_RETURN, 0x1C, false);
             }
         }
     }
@@ -747,10 +732,10 @@ namespace dev::console
         return g_open || plat::TickCountMs() - g_closedAt.load() < RELEASE_MS;
     }
 
-    bool OnKeyDown(WPARAM key, LPARAM lParam)
+    bool OnKeyDown(uintptr_t key, intptr_t lParam)
     {
         bool repeat = (lParam & (1 << 30)) != 0;
-        UINT scan = UINT(lParam >> 16) & 0xFF;
+        uint32_t scan = uint32_t(lParam >> 16) & 0xFF;
         bool toggleKey = scan == TOGGLE_SCAN && !(lParam & (1 << 24));
         if (!g_open)
         {
@@ -767,7 +752,7 @@ namespace dev::console
         std::lock_guard lock(g_mutex);
         if (key != VK_TAB)
             g_cycling = false;
-        bool ctrl = GetKeyState(VK_CONTROL) < 0;
+        bool ctrl = gpu::window::ControlHeld();
         if (!repeat && (key == VK_ESCAPE || key == VK_F10 || (toggleKey && g_input.empty())))
         {
             g_swallowChar = toggleKey;
@@ -811,21 +796,13 @@ namespace dev::console
                 g_input.clear();
                 g_caret = 0;
             }
-            else if (ctrl && key == 'V' && OpenClipboard(nullptr))
+            else if (ctrl && key == 'V')
             {
-                if (HANDLE data = GetClipboardData(CF_UNICODETEXT))
-                {
-                    if (const wchar_t* text = static_cast<const wchar_t*>(GlobalLock(data)))
-                    {
-                        std::string pasted = Utf8(text);
-                        GlobalUnlock(data);
-                        std::replace(pasted.begin(), pasted.end(), '\n', ' ');
-                        pasted.erase(std::remove(pasted.begin(), pasted.end(), '\r'), pasted.end());
-                        g_input.insert(g_caret, pasted);
-                        g_caret += pasted.size();
-                    }
-                }
-                CloseClipboard();
+                std::string pasted = gpu::window::ClipboardText();
+                std::replace(pasted.begin(), pasted.end(), '\n', ' ');
+                pasted.erase(std::remove(pasted.begin(), pasted.end(), '\r'), pasted.end());
+                g_input.insert(g_caret, pasted);
+                g_caret += pasted.size();
             }
             break;
         }
@@ -833,11 +810,11 @@ namespace dev::console
         return true;
     }
 
-    bool OnChar(wchar_t c, LPARAM lParam, bool dead)
+    bool OnChar(wchar_t c, intptr_t lParam, bool dead)
     {
         if (!g_open && !g_swallowChar)
             return false;
-        UINT scan = UINT(lParam >> 16) & 0xFF;
+        uint32_t scan = uint32_t(lParam >> 16) & 0xFF;
         if (g_swallowChar)
         {
             g_swallowChar = false;
@@ -846,11 +823,7 @@ namespace dev::console
                 // On layouts where that key is a dead key (` on US-International) the layout keeps
                 // it pending and would put it in front of the next letter: flush it.
                 if (dead)
-                {
-                    BYTE keys[256] = {};
-                    wchar_t flushed[4];
-                    ToUnicode(VK_SPACE, MapVirtualKeyW(VK_SPACE, MAPVK_VK_TO_VSC), keys, flushed, 4, 0);
-                }
+                    gpu::window::FlushDeadKey();
                 return true;
             }
         }
@@ -969,9 +942,7 @@ namespace dev::console
 
         struct Canvas
         {
-            HDC dc = nullptr;
-            HBITMAP bitmap = nullptr;
-            HFONT font = nullptr;
+            plat::TextCanvas text;
             uint32_t* bits = nullptr;
             int w = 0, h = 0, fontHeight = 0, charW = 0, lineH = 0;
             std::vector<uint32_t> pixels;
@@ -983,37 +954,15 @@ namespace dev::console
         bool Resize(int w, int h)
         {
             Canvas& c = g_canvas;
-            int fontHeight = std::clamp(int(GetSystemMetrics(SM_CYSCREEN) > 0 ? h / 26 : 18), 13, 36);
-            if (c.w == w && c.h == h && c.fontHeight == fontHeight && c.dc)
+            int fontHeight = std::clamp(h / 26, 13, 36);
+            if (c.w == w && c.h == h && c.fontHeight == fontHeight && c.bits)
                 return true;
-            if (c.bitmap)
-                DeleteObject(c.bitmap);
-            if (c.font)
-                DeleteObject(c.font);
-            if (!c.dc)
-                c.dc = CreateCompatibleDC(nullptr);
-            BITMAPINFO info{};
-            info.bmiHeader.biSize = sizeof(info.bmiHeader);
-            info.bmiHeader.biWidth = w;
-            info.bmiHeader.biHeight = -h;  // top-down
-            info.bmiHeader.biPlanes = 1;
-            info.bmiHeader.biBitCount = 32;
-            info.bmiHeader.biCompression = BI_RGB;
-            void* bits = nullptr;
-            c.bitmap = CreateDIBSection(c.dc, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
-            c.font = CreateFontW(-fontHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                 ANTIALIASED_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
-            if (!c.bitmap || !c.font || !bits)
+            if (!c.text.SetFont(plat::FontFace::Monospace, fontHeight) || !c.text.Resize(w, h))
                 return false;
-            SelectObject(c.dc, c.bitmap);
-            SelectObject(c.dc, c.font);
-            SetBkMode(c.dc, TRANSPARENT);
-            SetTextColor(c.dc, RGB(255, 255, 255));
-            TEXTMETRICW metrics{};
-            GetTextMetricsW(c.dc, &metrics);
-            c.charW = std::max<int>(metrics.tmAveCharWidth, 1);
-            c.lineH = metrics.tmHeight + 2;
-            c.bits = static_cast<uint32_t*>(bits);
+            int lineHeight;
+            c.text.Metrics(c.charW, lineHeight);
+            c.lineH = lineHeight + 2;
+            c.bits = c.text.Pixels();
             c.w = w;
             c.h = h;
             c.fontHeight = fontHeight;
@@ -1025,8 +974,7 @@ namespace dev::console
         void Text(int x, int y, const std::string& text, Tone tone)
         {
             Canvas& c = g_canvas;
-            std::wstring wide = Wide(text);
-            TextOutW(c.dc, x, y, wide.c_str(), int(wide.size()));
+            c.text.Draw(x, y, Wide(text));
             for (int row = std::max(y, 0); row < std::min(y + c.lineH, c.h); row++)
                 c.rowTone[size_t(row)] = uint8_t(int(tone) + 1);
         }
@@ -1050,7 +998,7 @@ namespace dev::console
         void Render(const std::vector<Line>& lines, const std::string& input, size_t caret, int scroll, bool caretOn)
         {
             Canvas& c = g_canvas;
-            memset(c.bits, 0, size_t(c.w) * c.h * 4);
+            c.text.Clear();
             std::fill(c.rowTone.begin(), c.rowTone.end(), uint8_t(0));
             int pad = c.charW;
             int columns = std::max((c.w - 2 * pad) / c.charW, 8);
@@ -1070,8 +1018,10 @@ namespace dev::console
             if (caretOn)
             {
                 int x = pad + int(prompt.size() + caretChars - first) * c.charW;
-                RECT bar{ x, inputY + 1, x + std::max(2, c.charW / 4), inputY + c.lineH - 2 };
-                FillRect(c.dc, &bar, HBRUSH(GetStockObject(WHITE_BRUSH)));
+                c.text.Flush();
+                for (int row = std::max(inputY + 1, 0); row < std::min(inputY + c.lineH - 2, c.h); row++)
+                    for (int col = std::max(x, 0); col < std::min(x + std::max(2, c.charW / 4), c.w); col++)
+                        c.bits[size_t(row) * c.w + col] = 0x00FFFFFFu;
             }
             // Output, newest at the bottom, `scroll` lines up.
             int y = inputY - c.lineH - 4;
@@ -1092,7 +1042,7 @@ namespace dev::console
             }
             if (scroll > 0)
                 Text(c.w - pad - 12 * c.charW, inputY, "[+" + std::to_string(scroll) + " linhas]", Tone::Dim);
-            GdiFlush();
+            c.text.Flush();
 
             // Coverage (white text on black) -> straight-alpha RGBA over the panel's background.
             const Colour background{ 14, 16, 24 };

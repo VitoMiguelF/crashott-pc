@@ -13,8 +13,7 @@
 // the device that pressed it becomes player 1. The keyboard and the mouse always drive player 1,
 // and a single pad is player 1 with them.
 
-#include <windows.h>
-#include <xinput.h>
+#include "xinput_types.h"
 
 #include <cstdint>
 #include <string>

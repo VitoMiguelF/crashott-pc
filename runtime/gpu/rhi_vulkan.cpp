@@ -29,8 +29,8 @@
 #include "vulkan_loader.h"
 #include "../diagnostics.h"
 #include "../platform/platform.h"
+#include "window.h"
 
-#include <windows.h>
 
 #include <algorithm>
 #include <array>
@@ -483,7 +483,6 @@ namespace gpu::rhi
             // Device.
             std::string m_adapterName;
             std::filesystem::path m_shaderCache;
-            HWND m_hwnd = nullptr;
             bool m_debug = false;
             uint32_t m_safe = 0;  // SafeMode bits (rhi.h)
             bool m_diagnostics = false;
@@ -570,7 +569,7 @@ namespace gpu::rhi
             std::unordered_map<uint64_t, VkSampler> m_samplers;
             VkPipelineCache m_pipelineCache = VK_NULL_HANDLE;
             std::atomic<uint32_t> m_unsavedPipelines{ 0 };
-            ULONGLONG m_lastCacheSave = 0;
+            uint64_t m_lastCacheSave = 0;
             std::unordered_map<uint64_t, std::unique_ptr<VulkanPipeline>> m_drawPipelines;  // by DrawPipelineKey (recording thread)
             std::vector<std::unique_ptr<VulkanPipeline>> m_passPipelines;
             std::vector<std::unique_ptr<VulkanShader>> m_shaders;
@@ -594,7 +593,7 @@ namespace gpu::rhi
             std::deque<std::function<void()>> m_jobs[2];  // [0] urgent, [1] start-up
             uint32_t m_workerCount = 0;
             std::atomic<uint32_t> m_precompileDone{ 0 }, m_precompileTotal{ 0 };
-            ULONGLONG m_precompileStart = plat::TickCountMs();
+            uint64_t m_precompileStart = plat::TickCountMs();
             std::atomic<bool> m_precompileLogged{ false };
             struct
             {
@@ -756,7 +755,7 @@ namespace gpu::rhi
                     available.resize(start + layerExtensions);
                 }
             }
-            std::vector<const char*> extensions = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
+            std::vector<const char*> extensions = window::VulkanSurfaceExtensions();
             std::vector<const char*> layers;
             // Validation: core checks + synchronization validation (hazards between passes, copies,
             // clears and the swap chain); CRASH_GPU_DEBUG=nosync leaves synchronization out (faster).
@@ -823,10 +822,12 @@ namespace gpu::rhi
             }
             if (m_debug && !m_messenger)
                 Log("[vulkan] no debug messenger (VK_EXT_debug_utils missing): the validation messages go to the layer's own output");
-            VkWin32SurfaceCreateInfoKHR surface{ VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR };
-            surface.hinstance = GetModuleHandleW(nullptr);
-            surface.hwnd = m_hwnd;
-            return Check(vkCreateWin32SurfaceKHR(m_instance, &surface, nullptr, &m_surface), "vkCreateWin32SurfaceKHR");
+            if (!window::CreateVulkanSurface(m_instance, &m_surface))
+            {
+                Log("[vulkan] could not create the window's surface");
+                return false;
+            }
+            return true;
         }
 
         bool VulkanDevice::ChoosePhysicalDevice()
@@ -1384,7 +1385,6 @@ namespace gpu::rhi
 
         bool VulkanDevice::Init(const DeviceInfo& info)
         {
-            m_hwnd = HWND(info.window);
             m_safe = info.safeMode;
             m_diagnostics = info.diagnostics;
             m_compileMode = info.shaderCompilation;
@@ -2971,8 +2971,8 @@ float4 main(float4 position : SV_Position) : SV_Target
             for (uint32_t i = 0; i < m_workerCount; i++)
             {
                 std::thread([this] {
-                    SetThreadDescription(GetCurrentThread(), L"pipeline compile");
-                    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+                    plat::SetCurrentThreadName("pipeline compile");
+                    plat::SetCurrentThreadPriority(plat::ThreadPriority::BelowNormal);
                     for (;;)
                     {
                         std::function<void()> job;

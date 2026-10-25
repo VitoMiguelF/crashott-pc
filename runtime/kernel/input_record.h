@@ -11,8 +11,7 @@
 // end of each load (a burst of default.rcf reads followed by quiet) with a SYNC entry anchored
 // on the last chunk read, and the replay re-aligns its timeline there.
 
-#include <windows.h>
-#include <xinput.h>
+#include "xinput_types.h"
 
 namespace input::record
 {

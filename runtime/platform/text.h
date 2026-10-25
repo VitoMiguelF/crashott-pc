@@ -55,6 +55,29 @@ namespace plat
         return out;
     }
 
+    // UTF-8 -> UTF-16 whatever wchar_t is (the guest's strings are UTF-16).
+    inline std::u16string Utf16FromUtf8(std::string_view text)
+    {
+        std::wstring wide = WidenUtf8(text);
+        std::u16string out;
+        out.reserve(wide.size());
+        for (wchar_t c : wide)
+        {
+            uint32_t cp = uint32_t(c);
+            if (sizeof(wchar_t) > 2 && cp >= 0x10000)
+            {
+                cp -= 0x10000;
+                out += char16_t(0xD800 + (cp >> 10));
+                out += char16_t(0xDC00 + (cp & 0x3FF));
+            }
+            else
+            {
+                out += char16_t(cp);
+            }
+        }
+        return out;
+    }
+
     inline std::string NarrowUtf8(std::wstring_view text)
     {
         std::string out;

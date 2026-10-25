@@ -4,8 +4,6 @@
 // (gpu/xenos_renderer.cpp, Swap) after the game image and before the settings screen, the
 // screenshots and the performance overlay, so screenshots include it.
 
-#include <windows.h>
-
 #include <cstdint>
 
 namespace subtitles

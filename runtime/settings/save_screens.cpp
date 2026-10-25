@@ -174,14 +174,14 @@ namespace settings::save_screens
         };
         std::mutex g_mutex;
         Visual g_visual;
-        ULONGLONG g_visualTime = 0;  // last game frame that set it
+        uint64_t g_visualTime = 0;  // last game frame that set it
         std::vector<HitZone> g_zones;
 
         // ---- game thread -------------------------------------------------------------------------
         std::atomic<uint32_t> g_node{ 0xFFFFFFFF };
         std::atomic<uint16_t> g_held{ 0 }, g_pressed{ 0 };  // controller 0 as the game reads it (FilterGameInput)
         std::atomic<bool> g_keyboardOn{ false }, g_confirmOn{ false }, g_releasing{ false };
-        std::atomic<ULONGLONG> g_keyboardTime{ 0 };
+        std::atomic<uint64_t> g_keyboardTime{ 0 };
         bool g_checked = false, g_ok = false;
         uint32_t g_nameAction = 0;
         uint32_t g_wheelAction = 0;
@@ -194,7 +194,7 @@ namespace settings::save_screens
         int g_key = 0;
         bool g_done = false;        // DONE given: nothing more until the screen leaves
         uint16_t g_heldDir = 0;
-        ULONGLONG g_heldSince = 0, g_lastRepeat = 0;
+        uint64_t g_heldSince = 0, g_lastRepeat = 0;
         uint32_t g_mouseMoves = 0, g_mouseClicks = 0;
         std::atomic<uint32_t> g_drive{ 0 };
         int g_choice = 0;
@@ -202,13 +202,13 @@ namespace settings::save_screens
         bool g_refreshPending = false, g_restorePending = false, g_leftSlots = false;
         int g_restoreIndex = 0;
         bool g_portuguese = false, g_mouseMenus = true;
-        ULONGLONG g_optionsTime = 0;
+        uint64_t g_optionsTime = 0;
 
         // The options these screens follow (the language of their texts, mouse in menus), read
         // twice a second.
         void ReadOptions()
         {
-            ULONGLONG now = plat::TickCountMs();
+            uint64_t now = plat::TickCountMs();
             if (g_optionsTime && now - g_optionsTime < 500)
                 return;
             g_optionsTime = now;
@@ -254,9 +254,9 @@ namespace settings::save_screens
         uint16_t TakePressed()
         {
             constexpr uint16_t DIRECTIONS = XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT;
-            constexpr ULONGLONG REPEAT_DELAY_MS = 380, REPEAT_MS = 100;
+            constexpr uint64_t REPEAT_DELAY_MS = 380, REPEAT_MS = 100;
             uint16_t pressed = g_pressed.exchange(0), held = g_held.load();
-            ULONGLONG now = plat::TickCountMs();
+            uint64_t now = plat::TickCountMs();
             if (pressed & DIRECTIONS)
             {
                 g_heldDir = pressed & DIRECTIONS;
@@ -832,7 +832,7 @@ namespace settings::save_screens
 
     void FilterGameInput(XINPUT_GAMEPAD& pad, bool poll)
     {
-        constexpr SHORT STICK = 16000;
+        constexpr int16_t STICK = 16000;
         uint16_t buttons = pad.wButtons;
         if (pad.sThumbLY > STICK) buttons |= XINPUT_GAMEPAD_DPAD_UP;
         if (pad.sThumbLY < -STICK) buttons |= XINPUT_GAMEPAD_DPAD_DOWN;
@@ -853,7 +853,7 @@ namespace settings::save_screens
         }
         if (g_keyboardOn)
         {
-            WORD back = pad.wButtons & XINPUT_GAMEPAD_B;  // the game's BACK (to the main menu)
+            uint16_t back = pad.wButtons & XINPUT_GAMEPAD_B;  // the game's BACK (to the main menu)
             pad = {};
             pad.wButtons = back;
             return;
@@ -911,7 +911,7 @@ namespace settings::save_screens
         uint32_t g_drawnStyle = 0;
         int g_drawnW = 0, g_drawnH = 0;
         uint64_t g_version = 0, g_fadedVersion = 0;
-        ULONGLONG g_shownAt = 0;
+        uint64_t g_shownAt = 0;
         Mode g_shownMode = Mode::None;
         std::vector<HitZone> g_newZones;
 
@@ -1154,7 +1154,7 @@ namespace settings::save_screens
                 g_visual = {};
             vis = g_visual;
         }
-        ULONGLONG now = plat::TickCountMs();
+        uint64_t now = plat::TickCountMs();
         if (vis.mode != g_shownMode)
         {
             // Fade in when the keyboard or the question appears (the prompt follows the selection).

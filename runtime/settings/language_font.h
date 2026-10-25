@@ -38,6 +38,6 @@ namespace settings::language_font
     int ComposeFont(const uint8_t* data, size_t size, const std::vector<Recipe>& recipes, std::vector<uint8_t>& out,
                     std::string& log);
 
-    // Decodes a PNG (any kind WIC reads) to straight-alpha RGBA8; false on failure.
+    // Decodes a PNG to straight-alpha RGBA8 (plat::DecodePng); false on failure.
     bool DecodePng(const uint8_t* data, size_t size, int& width, int& height, std::vector<uint8_t>& rgba);
 }

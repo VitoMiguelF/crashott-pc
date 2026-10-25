@@ -116,9 +116,9 @@ namespace
     std::vector<Step> g_steps;
     size_t g_next = 0;
     std::atomic<uint32_t> g_node{ UINT32_MAX };
-    ULONGLONG g_nodeSince = 0;     // when g_node was first seen
-    ULONGLONG g_readyFrom = 0;     // the next step's delay counts from here (node change or last press)
-    ULONGLONG g_pressUntil = 0;
+    uint64_t g_nodeSince = 0;     // when g_node was first seen
+    uint64_t g_readyFrom = 0;     // the next step's delay counts from here (node change or last press)
+    uint64_t g_pressUntil = 0;
     uint16_t g_pressButton = 0;
     bool g_lastPressed = false;
 
@@ -154,7 +154,7 @@ namespace settings
         if (!Enabled())
             return 0;
         std::lock_guard lock(g_mutex);
-        ULONGLONG now = plat::TickCountMs();
+        uint64_t now = plat::TickCountMs();
         if (now < g_pressUntil)
             return g_pressButton;
         if (g_next >= g_steps.size())
@@ -180,14 +180,14 @@ namespace settings
         if (step.repeat)
         {
             // The next press REPEAT_MS after this one is released (a screen only takes a new press).
-            g_readyFrom = now + HELD_MS + REPEAT_MS - std::min<ULONGLONG>(step.delayMs, HELD_MS + REPEAT_MS);
+            g_readyFrom = now + HELD_MS + REPEAT_MS - std::min<uint64_t>(step.delayMs, HELD_MS + REPEAT_MS);
         }
         else if (step.retry)
         {
             // Stays on this step: the next step's node showing up moves on (above).
             Log("[settings] menu autopilot: node %u, button 0x%04X (step %zu of %zu, input clock %.1f s)", node, step.button, g_next + 1,
                 g_steps.size(), double(input::ClockMs()) / 1000.0);
-            g_readyFrom = now + HELD_MS + RETRY_MS - std::min<ULONGLONG>(step.delayMs, HELD_MS + RETRY_MS);
+            g_readyFrom = now + HELD_MS + RETRY_MS - std::min<uint64_t>(step.delayMs, HELD_MS + RETRY_MS);
             if (g_next + 1 == g_steps.size() && !g_lastPressed)
             {
                 g_lastPressed = true;

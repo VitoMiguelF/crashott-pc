@@ -54,8 +54,8 @@
 #include "../dev/dev_console.h"
 #include "../subtitles/subtitle_draw.h"
 #include "../platform/platform.h"
+#include "../platform/text.h"
 
-#include <windows.h>
 
 #include <algorithm>
 #include <array>
@@ -399,7 +399,7 @@ namespace gpu::renderer
         }
 
         bool g_debugLayer = false;
-        HWND g_hwnd;
+        void* g_window;
         uint32_t g_backBufferWidth = WINDOW_WIDTH, g_backBufferHeight = WINDOW_HEIGHT;
 
         // Pipelines and shaders.
@@ -3503,7 +3503,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             if (!wanted && !s_maybeFullscreen)
                 return;
             s_maybeFullscreen = wanted;
-            g_rhi->UpdateFullscreen(wanted, GetForegroundWindow() == g_hwnd);
+            g_rhi->UpdateFullscreen(wanted, window::IsFocused());
         }
 
         void SaveScreenshot(rhi::Texture* backBuffer, const std::filesystem::path& path)
@@ -3718,7 +3718,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             std::error_code ignored;
             if (std::filesystem::exists(layers / "VkLayer_khronos_validation.json", ignored))
             {
-                SetEnvironmentVariableW(L"VK_ADD_LAYER_PATH", layers.wstring().c_str());
+                plat::SetEnvironment("VK_ADD_LAYER_PATH", plat::NarrowUtf8(layers.wstring()).c_str());
                 g_debugLayer = true;
                 Log("[gpu] diagnostics: validation layer from %s", layers.string().c_str());
             }
@@ -3732,14 +3732,14 @@ float4 main(float4 position : SV_Position) : SV_Target
         window::SetMode(settings::Get().window);
         // A window of the picture's aspect, 720 lines (or the monitor's width, if narrower).
         uint32_t windowWidth = uint32_t(std::lround(float(WINDOW_HEIGHT) * widescreen::Aspect() / 2.0f)) * 2u;
-        g_hwnd = HWND(window::Create(windowWidth, WINDOW_HEIGHT, L"Crash of the Titans (CrashRecomp)"));
-        if (!g_hwnd)
+        g_window = window::Create(windowWidth, WINDOW_HEIGHT, L"Crash of the Titans (CrashRecomp)");
+        if (!g_window)
         {
             Log("[gpu] could not create the window");
             return false;
         }
         rhi::DeviceInfo info;
-        info.window = g_hwnd;
+        info.window = g_window;
         info.width = windowWidth;
         info.height = WINDOW_HEIGHT;
         info.shaderCache = g_shaderCacheDir;
@@ -3753,12 +3753,12 @@ float4 main(float4 position : SV_Position) : SV_Target
         {
             // The log says which part failed (driver, GPU features, dxcompiler.dll).
             Log("[gpu] no Vulkan device: the game cannot be shown");
-            MessageBoxW(g_hwnd,
-                        L"O jogo precisa de uma placa de vídeo com Vulkan 1.3 (driver atualizado) e do dxcompiler.dll ao lado do "
-                        L"executável do jogo.\n\n"
-                        L"The game needs a Vulkan 1.3 GPU (an up-to-date driver) and dxcompiler.dll next to the game's exe.",
-                        L"Crash of the Titans (CrashRecomp)", MB_OK | MB_ICONERROR);
-            ExitProcess(3);
+            plat::ShowMessageBox("Crash of the Titans (CrashRecomp)",
+                                 "O jogo precisa de uma placa de vídeo com Vulkan 1.3 (driver atualizado) e do dxcompiler.dll ao lado do "
+                                 "executável do jogo.\n\n"
+                                 "The game needs a Vulkan 1.3 GPU (an up-to-date driver) and dxcompiler.dll next to the game's exe.",
+                                 plat::MessageKind::Error, g_window);
+            plat::ExitProcess(3);
         }
         g_rhi->BackBufferSize(g_backBufferWidth, g_backBufferHeight);
 
@@ -3813,10 +3813,9 @@ float4 main(float4 position : SV_Position) : SV_Target
 
         Log("[gpu] Vulkan renderer on %s%s; shader cache %s", g_rhi->AdapterName().c_str(), g_debugLayer ? " (validation layers)" : "",
             g_shaderCacheDir.string().c_str());
-        DEVMODEA displayMode{};
-        displayMode.dmSize = sizeof(displayMode);
-        if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &displayMode))
-            Log("[gpu] primary display: %lux%lu at %lu Hz", displayMode.dmPelsWidth, displayMode.dmPelsHeight, displayMode.dmDisplayFrequency);
+        int displayWidth, displayHeight, displayHz;
+        if (plat::DesktopDisplayMode(displayWidth, displayHeight, displayHz))
+            Log("[gpu] primary display: %dx%d at %d Hz", displayWidth, displayHeight, displayHz);
         // Both variants of every known game shader into the SPIR-V cache, off the critical path,
         // and the pipeline parts of the variant in use (asynchronous shader compilation).
         warmup::StartBackground(g_shaderCacheDir, g_rhi, g_renderScaled);
@@ -3927,7 +3926,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                 s_compileMode = options.shaderCompilation;
                 g_rhi->SetShaderCompilation(RhiShaderCompilation(s_compileMode));
             }
-            static const ULONGLONG s_start = plat::TickCountMs();
+            static const uint64_t s_start = plat::TickCountMs();
             static bool s_precompiling = true;
             uint32_t done = 0, total = 0;
             if (s_precompiling)
@@ -4233,7 +4232,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                         s_count, s_sum / s_count, s_max, s_hitches, double(s_timing.frameWaitTicks) * 1000.0 / double(s_frequency) / s_count,
                         double(s_timing.submitTicks) * 1000.0 / double(s_frequency) / s_count, double(s_timing.presentTicks) * 1000.0 / double(s_frequency),
                         double(s_timing.ringWaitTicks) * 1000.0 / double(s_frequency) / s_count,
-                        GetForegroundWindow() == g_hwnd ? "focused" : "not focused");
+                        window::IsFocused() ? "focused" : "not focused");
                     s_timing = {};
                     std::string profile;
                     for (int i = 0; i < 10; i++)

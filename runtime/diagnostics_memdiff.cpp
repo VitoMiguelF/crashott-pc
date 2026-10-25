@@ -14,8 +14,6 @@
 #include "kernel/memory.h"
 #include "platform/platform.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -46,11 +44,11 @@ namespace
         uint64_t address = begin;
         while (address < end)
         {
-            MEMORY_BASIC_INFORMATION info{};
-            if (!VirtualQuery(g_memory.base + address, &info, sizeof(info)))
+            plat::MemoryRegion info = plat::QueryMemory(g_memory.base + address);
+            if (!info.size)
                 break;
-            uint64_t regionEnd = std::min<uint64_t>(end, uint64_t(static_cast<uint8_t*>(info.BaseAddress) - g_memory.base) + info.RegionSize);
-            if (info.State == MEM_COMMIT && !(info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+            uint64_t regionEnd = std::min<uint64_t>(end, uint64_t(static_cast<uint8_t*>(info.base) - g_memory.base) + info.size);
+            if (info.readable)
             {
                 Region region{ uint32_t(address), {} };
                 region.bytes.assign(g_memory.base + address, g_memory.base + regionEnd);
@@ -91,7 +89,7 @@ namespace
                 {
                     if (memcmp(a + i, b + i, 4) == 0)
                         continue;
-                    uint32_t address = _byteswap_ulong(uint32_t(now.guest + i));
+                    uint32_t address = __builtin_bswap32(uint32_t(now.guest + i));
                     if (out)
                     {
                         fwrite(&address, 4, 1, out);
@@ -138,118 +136,4 @@ void MemDiffTick()
     while (g_next < g_times.size() && input::ClockMs() >= g_times[g_next])
         g_next++;
     Snapshot();
-}
-
-// CRASH_WATCH="0xA18BF5B0,..." (up to 4 guest addresses) from CRASH_WATCH_TIME seconds of the input
-// clock (default 0): hardware write breakpoints (DR0-DR3) on every thread; each write logs the new
-// value (as u32 and float), the guest function that wrote it and the guest functions found on the
-// host stack (the callers), the first 12 times per address.
-#include <tlhelp32.h>
-#include <thread>
-
-namespace
-{
-    uint32_t g_watch[4];
-    uint32_t g_watchCount = 0;
-    std::atomic<uint32_t> g_watchHits[4];
-
-    LONG CALLBACK WatchHandler(EXCEPTION_POINTERS* info)
-    {
-        if (info->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP)
-            return EXCEPTION_CONTINUE_SEARCH;
-        CONTEXT* c = info->ContextRecord;
-        DWORD64 which = c->Dr6 & 0xF;
-        if (!which)
-            return EXCEPTION_CONTINUE_SEARCH;
-        c->Dr6 = 0;
-        for (uint32_t i = 0; i < g_watchCount; i++)
-        {
-            if (!(which & (1ull << i)) || g_watchHits[i].fetch_add(1) >= 12)
-                continue;
-            uint32_t value = _byteswap_ulong(*reinterpret_cast<uint32_t*>(g_memory.base + g_watch[i]));
-            float f;
-            memcpy(&f, &value, 4);
-            char callers[512] = {};
-            size_t used = 0;
-            uint32_t last = FindGuestFunction(uintptr_t(c->Rip));
-            const uint64_t* stack = reinterpret_cast<const uint64_t*>(c->Rsp);
-            for (int s = 0, found = 0; s < 512 && found < 8; s++)
-            {
-                uint32_t guest = FindGuestFunction(uintptr_t(stack[s]));
-                if (guest && guest != last)
-                {
-                    used += snprintf(callers + used, sizeof(callers) - used, " %08X", guest);
-                    last = guest;
-                    found++;
-                }
-            }
-            Log("[watch] write to 0x%08X: 0x%08X (%g) by sub_%08X; stack:%s", g_watch[i], value, f, FindGuestFunction(uintptr_t(c->Rip)), callers);
-        }
-        return EXCEPTION_CONTINUE_EXECUTION;
-    }
-
-    void ArmAllThreads()
-    {
-        DWORD self = GetCurrentThreadId(), process = GetCurrentProcessId();
-        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-        if (snapshot == INVALID_HANDLE_VALUE)
-            return;
-        THREADENTRY32 entry{ sizeof(entry) };
-        for (BOOL ok = Thread32First(snapshot, &entry); ok; ok = Thread32Next(snapshot, &entry))
-        {
-            if (entry.th32OwnerProcessID != process || entry.th32ThreadID == self)
-                continue;
-            HANDLE thread = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, entry.th32ThreadID);
-            if (!thread)
-                continue;
-            SuspendThread(thread);
-            CONTEXT c{};
-            c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
-            if (GetThreadContext(thread, &c))
-            {
-                DWORD64* dr[4] = { &c.Dr0, &c.Dr1, &c.Dr2, &c.Dr3 };
-                c.Dr7 = 0;
-                for (uint32_t i = 0; i < g_watchCount; i++)
-                {
-                    *dr[i] = DWORD64(g_memory.base + g_watch[i]);
-                    c.Dr7 |= (1ull << (i * 2)) | (1ull << (16 + i * 4)) | (3ull << (18 + i * 4));  // local, write, 4 bytes
-                }
-                SetThreadContext(thread, &c);
-            }
-            ResumeThread(thread);
-            CloseHandle(thread);
-        }
-        CloseHandle(snapshot);
-    }
-
-    struct WatchStarter
-    {
-        WatchStarter()
-        {
-            const char* list = getenv("CRASH_WATCH");
-            if (!list)
-                return;
-            for (const char* p = list; *p && g_watchCount < 4;)
-            {
-                char* end;
-                uint32_t address = uint32_t(strtoul(p, &end, 16));
-                if (end == p)
-                    break;
-                g_watch[g_watchCount++] = address & ~3u;
-                p = *end ? end + 1 : end;
-            }
-            double start = getenv("CRASH_WATCH_TIME") ? atof(getenv("CRASH_WATCH_TIME")) : 0.0;
-            AddVectoredExceptionHandler(1, WatchHandler);
-            std::thread([start] {
-                while (input::ClockMs() < int64_t(start * 1000.0))
-                    plat::SleepMs(100);
-                Log("[watch] %u address(es) armed at %.1f s", g_watchCount, double(input::ClockMs()) / 1000.0);
-                while (true)
-                {
-                    ArmAllThreads();
-                    plat::SleepMs(1000);
-                }
-            }).detach();
-        }
-    } g_watchStarter;
 }

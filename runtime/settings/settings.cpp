@@ -1,7 +1,7 @@
 #include "settings.h"
 #include "../diagnostics.h"
 
-#include <windows.h>
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <cctype>
@@ -520,11 +520,8 @@ namespace settings
             if (!forced || sscanf(forced, "%dx%d", &cachedWidth, &cachedHeight) != 2 || cachedWidth <= 0 || cachedHeight <= 0)
             {
                 // The primary monitor's mode in physical pixels (not DPI scaled).
-                DEVMODEW mode{};
-                mode.dmSize = sizeof(mode);
-                if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmPelsWidth && mode.dmPelsHeight)
-                    cachedWidth = int(mode.dmPelsWidth), cachedHeight = int(mode.dmPelsHeight);
-                else
+                int refresh = 0;
+                if (!plat::DesktopDisplayMode(cachedWidth, cachedHeight, refresh))
                     cachedWidth = 1920, cachedHeight = 1080;
             }
         }

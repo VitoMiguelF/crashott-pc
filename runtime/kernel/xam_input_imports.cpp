@@ -36,7 +36,7 @@ namespace
     constexpr uint32_t ERROR_DEVICE_NOT_CONNECTED_ = 0x48F;
 
     // Button names used by CRASH_INPUT_SCRIPT and by the recording (run.toml `input`).
-    constexpr std::pair<const char*, WORD> BUTTON_NAMES[] = {
+    constexpr std::pair<const char*, uint16_t> BUTTON_NAMES[] = {
         { "A", XINPUT_GAMEPAD_A }, { "B", XINPUT_GAMEPAD_B }, { "X", XINPUT_GAMEPAD_X }, { "Y", XINPUT_GAMEPAD_Y },
         { "START", XINPUT_GAMEPAD_START }, { "BACK", XINPUT_GAMEPAD_BACK }, { "UP", XINPUT_GAMEPAD_DPAD_UP },
         { "DOWN", XINPUT_GAMEPAD_DPAD_DOWN }, { "LEFT", XINPUT_GAMEPAD_DPAD_LEFT }, { "RIGHT", XINPUT_GAMEPAD_DPAD_RIGHT },
@@ -48,14 +48,14 @@ namespace
         { "LS_LEFT", 1 }, { "LS_RIGHT", 2 }, { "LS_UP", 4 }, { "LS_DOWN", 8 },
         { "RS_LEFT", 16 }, { "RS_RIGHT", 32 }, { "RS_UP", 64 }, { "RS_DOWN", 128 },
     };
-    constexpr ULONGLONG DEFAULT_HOLD_MS = 200;
+    constexpr uint64_t DEFAULT_HOLD_MS = 200;
 
     // Clock zero: the first read of controller 0 (GetTickCount64 ms), 0 = not yet.
-    std::atomic<ULONGLONG> g_clockStart{ 0 };
+    std::atomic<uint64_t> g_clockStart{ 0 };
 
-    ULONGLONG ClockNow()
+    uint64_t ClockNow()
     {
-        ULONGLONG start = g_clockStart.load();
+        uint64_t start = g_clockStart.load();
         if (!start)
         {
             g_clockStart.compare_exchange_strong(start, plat::TickCountMs());
@@ -77,8 +77,8 @@ namespace
     struct ScriptedPress
     {
         boot::Anchored at;
-        WORD buttons;
-        ULONGLONG hold;
+        uint16_t buttons;
+        uint64_t hold;
         uint32_t sticks = 0;  // STICK_NAMES bits
         uint16_t key = 0;     // KEY_<name>: a keyboard key or mouse button (settings/controls.h names)
         int device = -1;      // DEVICE_XBOX / _PLAYSTATION / _KEYBOARD: that device was used last (icon tests)
@@ -91,9 +91,9 @@ namespace
         uint32_t user = 0;    // P2_ etc.: the virtual controller it presses
     };
 
-    SHORT StickValue(float value)
+    int16_t StickValue(float value)
     {
-        return SHORT(std::clamp(value, -1.0f, 1.0f) * 32767.0f);
+        return int16_t(std::clamp(value, -1.0f, 1.0f) * 32767.0f);
     }
 
     std::vector<ScriptedPress> ParseInputScript()
@@ -118,7 +118,7 @@ namespace
                 length -= 3;
             }
             size_t first = presses.size();
-            ULONGLONG hold = DEFAULT_HOLD_MS;
+            uint64_t hold = DEFAULT_HOLD_MS;
             if (*next == ':')
             {
                 hold = strtoull(next + 1, &end, 10);
@@ -208,25 +208,25 @@ namespace
     }
 
     // Whether `press` is held at `now` (input clock ms); an anchored one only after its event.
-    bool Held(const ScriptedPress& press, ULONGLONG now)
+    bool Held(const ScriptedPress& press, uint64_t now)
     {
         int64_t start = boot::Resolve(press.at);
-        return start >= 0 && now >= ULONGLONG(start) && now < ULONGLONG(start) + press.hold;
+        return start >= 0 && now >= uint64_t(start) && now < uint64_t(start) + press.hold;
     }
 
-    bool Due(const ScriptedPress& press, ULONGLONG now)
+    bool Due(const ScriptedPress& press, uint64_t now)
     {
         int64_t start = boot::Resolve(press.at);
-        return start >= 0 && now >= ULONGLONG(start);
+        return start >= 0 && now >= uint64_t(start);
     }
 
     // The keys CRASH_INPUT_SCRIPT holds now (KEY_* entries).
-    std::vector<uint16_t> ScriptedKeys(ULONGLONG now)
+    std::vector<uint16_t> ScriptedKeys(uint64_t now)
     {
         std::vector<uint16_t> keys;
         for (const ScriptedPress& press : Script())
         {
-            if (press.user || (press.at.event.empty() ? now < ULONGLONG(press.at.offsetMs) : boot::Resolve(press.at) < 0))
+            if (press.user || (press.at.event.empty() ? now < uint64_t(press.at.offsetMs) : boot::Resolve(press.at) < 0))
                 continue;  // another controller's, or not yet (the cheap test first: most entries are ahead)
             if (press.key && Held(press, now))
             {
@@ -265,11 +265,11 @@ namespace
         return user && (users >> user & 1);
     }
 
-    void ScriptedState(XINPUT_STATE& state, ULONGLONG now, uint32_t user = 0)
+    void ScriptedState(XINPUT_STATE& state, uint64_t now, uint32_t user = 0)
     {
         for (const ScriptedPress& press : Script())
         {
-            if (press.user != user || (press.at.event.empty() ? now < ULONGLONG(press.at.offsetMs) : boot::Resolve(press.at) < 0))
+            if (press.user != user || (press.at.event.empty() ? now < uint64_t(press.at.offsetMs) : boot::Resolve(press.at) < 0))
                 continue;
             if (Held(press, now))
             {
@@ -286,8 +286,8 @@ namespace
                 {
                 case 'L': state.Gamepad.sThumbLX = StickValue(press.x), state.Gamepad.sThumbLY = StickValue(press.y); break;
                 case 'R': state.Gamepad.sThumbRX = StickValue(press.x), state.Gamepad.sThumbRY = StickValue(press.y); break;
-                case 'l': state.Gamepad.bLeftTrigger = BYTE(std::clamp(press.x, 0.0f, 1.0f) * 255.0f); break;
-                case 'r': state.Gamepad.bRightTrigger = BYTE(std::clamp(press.x, 0.0f, 1.0f) * 255.0f); break;
+                case 'l': state.Gamepad.bLeftTrigger = uint8_t(std::clamp(press.x, 0.0f, 1.0f) * 255.0f); break;
+                case 'r': state.Gamepad.bRightTrigger = uint8_t(std::clamp(press.x, 0.0f, 1.0f) * 255.0f); break;
                 }
             }
         }
@@ -300,9 +300,9 @@ namespace
     std::atomic<uint64_t> g_frame{ 0 };
     std::atomic<uint64_t> g_levelBytes{ 0 }, g_otherBytes{ 0 };
 
-    void NotePresses(WORD buttons, WORD& previous, bool scripted, ULONGLONG now)
+    void NotePresses(uint16_t buttons, uint16_t& previous, bool scripted, uint64_t now)
     {
-        WORD down = buttons & ~previous;
+        uint16_t down = buttons & ~previous;
         previous = buttons;
         if (!down)
             return;
@@ -339,16 +339,16 @@ namespace
         if (user == playerOne)
         {
             // Player 1's controller always exists (the keyboard stands in for it).
-            ULONGLONG now = ClockNow();
+            uint64_t now = ClockNow();
             input::pc::Apply(state, poll, ScriptedKeys(now));
-            static WORD s_lastPlayer, s_lastScript;
+            static uint16_t s_lastPlayer, s_lastScript;
             NotePresses(state.Gamepad.wButtons, s_lastPlayer, false, now);
             XINPUT_STATE scripted{};
             ScriptedState(scripted, now);
             ScriptedState(state, now);
             // The replay (CRASH_REPLAY) on top; the recording takes the sum, before the settings
             // screen hides it from the game.
-            WORD before = state.Gamepad.wButtons;
+            uint16_t before = state.Gamepad.wButtons;
             if (poll)
             {
                 MemDiffTick();             // CRASH_MEMDIFF_TIMES (debugging)
@@ -371,7 +371,7 @@ namespace
             state.Gamepad.wButtons |= settings::menu::GameButtons();  // B when it closes
         }
         // The packet number changes with the state, per controller.
-        static DWORD s_packet[4];
+        static uint32_t s_packet[4];
         static XINPUT_GAMEPAD s_lastPad[4];
         if (memcmp(&state.Gamepad, &s_lastPad[user], sizeof(XINPUT_GAMEPAD)) != 0)
         {
@@ -387,7 +387,7 @@ namespace input
 {
     int64_t ClockMs()
     {
-        ULONGLONG start = g_clockStart.load();
+        uint64_t start = g_clockStart.load();
         return start ? int64_t(plat::TickCountMs() - start) : -1;
     }
 
@@ -420,7 +420,7 @@ namespace input
         state.Gamepad.wButtons |= input::pc::MenuKeys(ScriptedKeys(ClockNow()));
         ScriptedState(state, ClockNow());
         input::record::Apply(state);
-        constexpr SHORT STICK = 16000;
+        constexpr int16_t STICK = 16000;
         if (state.Gamepad.sThumbLY > STICK) state.Gamepad.wButtons |= XINPUT_GAMEPAD_DPAD_UP;
         if (state.Gamepad.sThumbLY < -STICK) state.Gamepad.wButtons |= XINPUT_GAMEPAD_DPAD_DOWN;
         if (state.Gamepad.sThumbLX < -STICK) state.Gamepad.wButtons |= XINPUT_GAMEPAD_DPAD_LEFT;

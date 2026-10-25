@@ -2,7 +2,7 @@
 #include "../diagnostics.h"
 #include "../settings/gpu_vendor.h"
 
-#include <windows.h>
+#include "../platform/text.h"
 
 #define VK_NO_PROTOTYPES 1
 #include <vulkan/vulkan.h>
@@ -44,26 +44,13 @@ namespace gpu::upscaler
 
         std::filesystem::path ExeDirectory()
         {
-            wchar_t path[MAX_PATH];
-            DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
-            return std::filesystem::path(std::wstring(path, length)).parent_path();
+            return plat::ExecutablePath().parent_path();
         }
 
         // "a.b.c" from a DLL's version resource, or "" if it has none.
         std::string FileVersion(const std::filesystem::path& file)
         {
-            DWORD handle = 0;
-            DWORD size = GetFileVersionInfoSizeW(file.c_str(), &handle);
-            if (!size)
-                return "";
-            std::vector<uint8_t> data(size);
-            VS_FIXEDFILEINFO* info = nullptr;
-            UINT length = 0;
-            if (!GetFileVersionInfoW(file.c_str(), 0, size, data.data()) || !VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &length) || !info)
-                return "";
-            char text[64];
-            snprintf(text, sizeof(text), "%u.%u.%u", HIWORD(info->dwFileVersionMS), LOWORD(info->dwFileVersionMS), HIWORD(info->dwFileVersionLS));
-            return text;
+            return plat::LibraryFileVersion(file);
         }
 
         float Halton(uint32_t index, uint32_t base)
@@ -133,7 +120,7 @@ namespace gpu::upscaler
         }
 
         // DLSS: CrashDlss.dll (dlss_module/crash_dlss.h) ------------------------------------------
-        HMODULE g_dlssModule = nullptr;
+        void* g_dlssModule = nullptr;
         struct
         {
             CrashDlss_RequiredExtensionsFn RequiredExtensions;
@@ -161,23 +148,23 @@ namespace gpu::upscaler
             std::error_code error;
             if (!std::filesystem::exists(dll, error))
                 return false;
-            HMODULE module = LoadLibraryW(dll.c_str());
+            void* module = plat::OpenLibrary(dll);
             if (!module)
             {
-                Log("[gpu] DLSS: CrashDlss.dll could not be loaded (error %lu)", GetLastError());
+                Log("[gpu] DLSS: CrashDlss.dll could not be loaded (%s)", plat::LastErrorText().c_str());
                 return false;
             }
-            auto version = reinterpret_cast<CrashDlss_ApiVersionFn>(GetProcAddress(module, "CrashDlss_ApiVersion"));
-            g_dlssApi.RequiredExtensions = reinterpret_cast<CrashDlss_RequiredExtensionsFn>(GetProcAddress(module, "CrashDlss_RequiredExtensions"));
-            g_dlssApi.Init = reinterpret_cast<CrashDlss_InitFn>(GetProcAddress(module, "CrashDlss_Init"));
-            g_dlssApi.Evaluate = reinterpret_cast<CrashDlss_EvaluateFn>(GetProcAddress(module, "CrashDlss_Evaluate"));
-            g_dlssApi.ReleaseFeature = reinterpret_cast<CrashDlss_ReleaseFeatureFn>(GetProcAddress(module, "CrashDlss_ReleaseFeature"));
-            g_dlssApi.Shutdown = reinterpret_cast<CrashDlss_ShutdownFn>(GetProcAddress(module, "CrashDlss_Shutdown"));
+            auto version = reinterpret_cast<CrashDlss_ApiVersionFn>(plat::FindSymbol(module, "CrashDlss_ApiVersion"));
+            g_dlssApi.RequiredExtensions = reinterpret_cast<CrashDlss_RequiredExtensionsFn>(plat::FindSymbol(module, "CrashDlss_RequiredExtensions"));
+            g_dlssApi.Init = reinterpret_cast<CrashDlss_InitFn>(plat::FindSymbol(module, "CrashDlss_Init"));
+            g_dlssApi.Evaluate = reinterpret_cast<CrashDlss_EvaluateFn>(plat::FindSymbol(module, "CrashDlss_Evaluate"));
+            g_dlssApi.ReleaseFeature = reinterpret_cast<CrashDlss_ReleaseFeatureFn>(plat::FindSymbol(module, "CrashDlss_ReleaseFeature"));
+            g_dlssApi.Shutdown = reinterpret_cast<CrashDlss_ShutdownFn>(plat::FindSymbol(module, "CrashDlss_Shutdown"));
             if (!version || version() != CRASH_DLSS_API_VERSION || !g_dlssApi.RequiredExtensions || !g_dlssApi.Init || !g_dlssApi.Evaluate ||
                 !g_dlssApi.ReleaseFeature || !g_dlssApi.Shutdown)
             {
                 Log("[gpu] DLSS: CrashDlss.dll is from another version (API %u, this exe wants %u)", version ? version() : 0u, CRASH_DLSS_API_VERSION);
-                FreeLibrary(module);
+                plat::CloseLibrary(module);
                 g_dlssApi = {};
                 return false;
             }
@@ -266,7 +253,7 @@ namespace gpu::upscaler
         const char* const FSR_DEVICE_EXTENSIONS[] = { VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME, VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME,
                                                       VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
                                                       VK_KHR_SHADER_SUBGROUP_EXTENDED_TYPES_EXTENSION_NAME };
-        HMODULE g_ffxModule = nullptr;
+        void* g_ffxModule = nullptr;
         // The FidelityFX API entry points of amd_fidelityfx_vk.dll.
         struct
         {
@@ -284,9 +271,8 @@ namespace gpu::upscaler
 
         void FfxMessage(uint32_t type, const wchar_t* message)
         {
-            char text[512];
-            WideCharToMultiByte(CP_UTF8, 0, message ? message : L"", -1, text, sizeof(text), nullptr, nullptr);
-            Log("[fsr] %s: %s", type == FFX_API_MESSAGE_TYPE_ERROR ? "error" : "warning", text);
+            std::string text = plat::NarrowUtf8(message ? message : L"");
+            Log("[fsr] %s: %s", type == FFX_API_MESSAGE_TYPE_ERROR ? "error" : "warning", text.c_str());
         }
 
         void ProbeFsr()
@@ -303,17 +289,17 @@ namespace gpu::upscaler
                 return;
             }
             std::filesystem::path dll = ExeDirectory() / "amd_fidelityfx_vk.dll";
-            g_ffxModule = LoadLibraryW(dll.c_str());
+            g_ffxModule = plat::OpenLibrary(dll);
             if (!g_ffxModule)
             {
                 Log("[gpu] FSR: amd_fidelityfx_vk.dll not found next to the exe");
                 return;
             }
-            g_ffx.CreateContext = reinterpret_cast<PfnFfxCreateContext>(GetProcAddress(g_ffxModule, "ffxCreateContext"));
-            g_ffx.DestroyContext = reinterpret_cast<PfnFfxDestroyContext>(GetProcAddress(g_ffxModule, "ffxDestroyContext"));
-            g_ffx.Configure = reinterpret_cast<PfnFfxConfigure>(GetProcAddress(g_ffxModule, "ffxConfigure"));
-            g_ffx.Query = reinterpret_cast<PfnFfxQuery>(GetProcAddress(g_ffxModule, "ffxQuery"));
-            g_ffx.Dispatch = reinterpret_cast<PfnFfxDispatch>(GetProcAddress(g_ffxModule, "ffxDispatch"));
+            g_ffx.CreateContext = reinterpret_cast<PfnFfxCreateContext>(plat::FindSymbol(g_ffxModule, "ffxCreateContext"));
+            g_ffx.DestroyContext = reinterpret_cast<PfnFfxDestroyContext>(plat::FindSymbol(g_ffxModule, "ffxDestroyContext"));
+            g_ffx.Configure = reinterpret_cast<PfnFfxConfigure>(plat::FindSymbol(g_ffxModule, "ffxConfigure"));
+            g_ffx.Query = reinterpret_cast<PfnFfxQuery>(plat::FindSymbol(g_ffxModule, "ffxQuery"));
+            g_ffx.Dispatch = reinterpret_cast<PfnFfxDispatch>(plat::FindSymbol(g_ffxModule, "ffxDispatch"));
             if (!g_ffx.CreateContext || !g_ffx.Query || !g_ffx.Dispatch || !g_ffx.DestroyContext)
             {
                 Log("[gpu] FSR: amd_fidelityfx_vk.dll lacks the FidelityFX API entry points");

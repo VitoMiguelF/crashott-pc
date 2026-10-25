@@ -90,7 +90,7 @@ namespace
     constexpr int64_t MENU_SETTLE_TICKS = 60;
     // START on the title screen: held this long, every this often (a press during the screen's
     // fade-in is ignored).
-    constexpr ULONGLONG START_HELD_MS = 150, START_PERIOD_MS = 400;
+    constexpr uint64_t START_HELD_MS = 150, START_PERIOD_MS = 400;
     // 638 GameRunning for this many game ticks (30 per second, whatever the frame rate) = the player
     // has control: it also shows for a moment before a level's opening cutscene (0.5 s in L1_E3).
     constexpr int64_t GAMEPLAY_TICKS = 45;

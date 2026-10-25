@@ -33,6 +33,7 @@
 #include "../kernel/pc_input.h"
 #include "../subtitles/subtitles.h"
 #include "../platform/platform.h"
+#include "../gpu/window.h"
 
 #include <algorithm>
 #include <atomic>
@@ -60,29 +61,29 @@ namespace
     constexpr uint32_t NODE_LEVEL_INTRO = 633, NODE_CINEMATICS = 655, NODE_CINEMATICS_END = 1051;
 
     // A cutscene is playing while its update ran in state 3 this recently.
-    constexpr ULONGLONG PLAYING_GRACE_MS = 400;
+    constexpr uint64_t PLAYING_GRACE_MS = 400;
     // Hold this long to skip.
-    constexpr ULONGLONG HOLD_MS = 800;
+    constexpr uint64_t HOLD_MS = 800;
     // The prompt: fade in, shown this long after the start or the last input, fade out.
-    constexpr ULONGLONG FADE_IN_MS = 250, SHOWN_MS = 4000, FADE_OUT_MS = 500;
+    constexpr uint64_t FADE_IN_MS = 250, SHOWN_MS = 4000, FADE_OUT_MS = 500;
     // START presses (game reads) that skip a video.
     constexpr int VIDEO_SKIP_READS = 4;
-    constexpr WORD SKIP_BUTTONS = XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_START;
+    constexpr uint16_t SKIP_BUTTONS = XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_START;
 
     enum class Kind : int { None, Cutscene, Video };
 
     std::atomic<uint32_t> g_action{ 0 };         // the playing CMasterCinematicAction
-    std::atomic<ULONGLONG> g_actionSeen{ 0 };    // GetTickCount64 of its last update in state 3
+    std::atomic<uint64_t> g_actionSeen{ 0 };    // GetTickCount64 of its last update in state 3
     std::atomic<uint32_t> g_skipAction{ 0 };     // the hold asked to end this one (its next update does)
     std::atomic<int> g_movie{ -1 };              // the video playing, -1 none
-    std::atomic<ULONGLONG> g_movieStart{ 0 };
+    std::atomic<uint64_t> g_movieStart{ 0 };
     std::atomic<uint32_t> g_movieCount{ 0 };    // videos started so far (each one gets its prompt)
     std::atomic<uint32_t> g_frontendNode{ UINT32_MAX }, g_movieNode{ UINT32_MAX };  // the screen shown, and when the video started
 
     // Shared with the render thread.
     std::atomic<int> g_kind{ int(Kind::None) };  // what the prompt is for
-    std::atomic<ULONGLONG> g_kindSince{ 0 };     // GetTickCount64 it started
-    std::atomic<ULONGLONG> g_lastInput{ 0 };     // the player touched something (the prompt comes back)
+    std::atomic<uint64_t> g_kindSince{ 0 };     // GetTickCount64 it started
+    std::atomic<uint64_t> g_lastInput{ 0 };     // the player touched something (the prompt comes back)
     std::atomic<float> g_progress{ 0.0f };       // the hold, 0..1
     std::atomic<bool> g_enabled{ true };         // game.skip_cutscenes
     // The prompt's rectangle in the window, 0..1 (render thread -> the mouse on the game thread).
@@ -112,7 +113,7 @@ namespace
     uint32_t g_autoAction = 0;
     int g_autoUpdates = 0;
 
-    Kind CurrentKind(ULONGLONG now)
+    Kind CurrentKind(uint64_t now)
     {
         if (g_action.load() && now - g_actionSeen.load() < PLAYING_GRACE_MS)
             return Kind::Cutscene;
@@ -127,11 +128,9 @@ namespace
     // Enter (not a game button during a cutscene) and the mouse on the prompt, from the window.
     bool KeyboardOrMouseHeld()
     {
-        HWND foreground = GetForegroundWindow();
-        DWORD process = 0;
-        if (!foreground || (GetWindowThreadProcessId(foreground, &process), process != GetCurrentProcessId()))
+        if (!gpu::window::IsFocused())
             return false;
-        if (GetAsyncKeyState(VK_RETURN) & 0x8000)
+        if (input::pc::KeyHeld(VK_RETURN))
             return true;
         float u, v;
         if (input::pc::LeftHeld() && input::pc::CursorInClient(u, v))
@@ -143,16 +142,9 @@ namespace
     // START / A / B; Enter is read here).
     bool AnyKeyDown()
     {
-        HWND foreground = GetForegroundWindow();
-        DWORD process = 0;
-        if (!foreground || (GetWindowThreadProcessId(foreground, &process), process != GetCurrentProcessId()))
+        if (!gpu::window::IsFocused())
             return false;
-        for (int key = 8; key < 256; key++)
-        {
-            if (GetAsyncKeyState(key) & 0x8000)
-                return true;
-        }
-        return false;
+        return input::pc::AnyKeyboardKeyHeld();
     }
 }
 
@@ -186,8 +178,8 @@ namespace cutscenes
 
     void FilterGameInput(XINPUT_GAMEPAD& pad, bool poll)
     {
-        static WORD heldMask = 0;        // skip buttons hidden until released (after a skip)
-        static ULONGLONG holdStart = 0;
+        static uint16_t heldMask = 0;        // skip buttons hidden until released (after a skip)
+        static uint64_t holdStart = 0;
         static uint64_t shown = 0;  // what the prompt is for: the kind and which video / cutscene
         static int videoStartReads = 0;
         static XINPUT_GAMEPAD previous{};
@@ -206,7 +198,7 @@ namespace cutscenes
             settingsReads = 15;
             g_enabled = settings::Get().skipCutscenes;
         }
-        ULONGLONG now = plat::TickCountMs();
+        uint64_t now = plat::TickCountMs();
         Kind kind = g_enabled.load() ? CurrentKind(now) : Kind::None;
 
         // Input of any kind brings the prompt back.
@@ -232,7 +224,7 @@ namespace cutscenes
                 boot::Event("skip_prompt", kind == Kind::Video ? "video" : "cutscene");
         }
 
-        const WORD raw = pad.wButtons;  // before anything is hidden
+        const uint16_t raw = pad.wButtons;  // before anything is hidden
         bool held = (raw & SKIP_BUTTONS) != 0 || KeyboardOrMouseHeld();
         if (kind != Kind::None)
         {
@@ -285,7 +277,7 @@ namespace cutscenes
         // CRASH_SKIP_TRACE=1: every game read while a prompt is up or the buttons are hidden, and the
         // 3 s after.
         static const bool trace = getenv("CRASH_SKIP_TRACE") && strcmp(getenv("CRASH_SKIP_TRACE"), "0") != 0;
-        static ULONGLONG traceUntil = 0;
+        static uint64_t traceUntil = 0;
         if (trace && (kind != Kind::None || heldMask || held))
             traceUntil = now + 3000;
         if (trace && now < traceUntil)
@@ -513,7 +505,7 @@ namespace cutscenes
         static Look drawnLook;
         static uint64_t fadedVersion = 0;
         Kind kind = Kind(g_kind.load());
-        ULONGLONG now = plat::TickCountMs();
+        uint64_t now = plat::TickCountMs();
         if (kind == Kind::None || !g_enabled.load() || !width || !height || !menu_art::Ready(0))
         {
             g_hitX1 = 0.0f;
@@ -521,7 +513,7 @@ namespace cutscenes
         }
         float progress = g_progress.load();
         // Shown from the start (fading in) for SHOWN_MS after the start or the last input, then faded out.
-        ULONGLONG since = g_kindSince.load(), last = std::max(since, g_lastInput.load());
+        uint64_t since = g_kindSince.load(), last = std::max(since, g_lastInput.load());
         float alpha = std::clamp(float(now - since) / FADE_IN_MS, 0.0f, 1.0f);
         if (progress <= 0.0f && now - last > SHOWN_MS)
             alpha *= std::clamp(1.0f - float(now - last - SHOWN_MS) / FADE_OUT_MS, 0.0f, 1.0f);

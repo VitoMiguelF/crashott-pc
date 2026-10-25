@@ -1,10 +1,12 @@
 #include "window.h"
+#include "vulkan_loader.h"
 #include "../diagnostics.h"
 #include "../dev/dev_console.h"
 #include "../kernel/hid_pads.h"
 #include "../kernel/input.h"
 #include "../kernel/pc_input.h"
 #include "../settings/settings.h"
+#include "../platform/text.h"
 
 #include <windows.h>
 
@@ -42,45 +44,9 @@ namespace gpu::window
         input::pc::CursorMode g_cursorMode = input::pc::CursorMode::Visible;
         constexpr DWORD WINDOWED_STYLE = WS_OVERLAPPEDWINDOW;
 
-        // The window title says who started this instance: "<title> | <run folder or profile> |
-        // session <id> | <tag> | PID n". The run folder comes from tools/run_game.py
-        // (CRASH_SCREENSHOT_DIR = the run's folder, CRASH_PROFILE), the session from the Claude Code
-        // session that launched it (CLAUDE_CODE_HOST_SESSION_ID, inherited), CRASH_WINDOW_TAG is free text.
         std::wstring InstanceTitle(const wchar_t* title)
         {
-            std::string extra;
-            auto add = [&](const std::string& part) {
-                if (!part.empty())
-                    extra += " | " + part;
-            };
-            std::string run;
-            if (const char* dir = getenv("CRASH_SCREENSHOT_DIR"))
-            {
-                run = dir;
-                while (!run.empty() && (run.back() == '\\' || run.back() == '/'))
-                    run.pop_back();
-                run = run.substr(run.find_last_of("\\/") + 1);
-            }
-            const char* profile = getenv("CRASH_PROFILE");
-            if (!run.empty())
-                add("run " + run);
-            else if (profile && *profile)
-                add(std::string("profile ") + profile);
-            if (const char* session = getenv("CLAUDE_CODE_HOST_SESSION_ID"); session && *session)
-            {
-                std::string id = session;
-                if (id.rfind("local_", 0) == 0)
-                    id = id.substr(6);
-                add("session " + id.substr(0, 8));
-            }
-            if (const char* tag = getenv("CRASH_WINDOW_TAG"))
-                add(tag);
-            add("PID " + std::to_string(GetCurrentProcessId()));
-            std::wstring result = title;
-            int length = MultiByteToWideChar(CP_UTF8, 0, extra.c_str(), int(extra.size()), nullptr, 0);
-            std::wstring wide(size_t(length), L'\0');
-            MultiByteToWideChar(CP_UTF8, 0, extra.c_str(), int(extra.size()), wide.data(), length);
-            return result + wide;
+            return title + plat::WidenUtf8(InstanceTitleSuffix());
         }
 
         void ApplyMode(HWND hwnd, settings::WindowMode mode)
@@ -298,6 +264,76 @@ namespace gpu::window
     }
 
     void* Handle() { return g_window.load(); }
+
+    bool ControlHeld()
+    {
+        return GetKeyState(VK_CONTROL) < 0;
+    }
+
+    std::string ClipboardText()
+    {
+        std::string text;
+        if (!OpenClipboard(nullptr))
+            return text;
+        if (HANDLE data = GetClipboardData(CF_UNICODETEXT))
+        {
+            if (const wchar_t* wide = static_cast<const wchar_t*>(GlobalLock(data)))
+            {
+                text = plat::NarrowUtf8(wide);
+                GlobalUnlock(data);
+            }
+        }
+        CloseClipboard();
+        return text;
+    }
+
+    void FlushDeadKey()
+    {
+        BYTE keys[256] = {};
+        wchar_t flushed[4];
+        ToUnicode(VK_SPACE, MapVirtualKeyW(VK_SPACE, MAPVK_VK_TO_VSC), keys, flushed, 4, 0);
+    }
+
+    // As a keyboard would: TranslateMessage in the window's loop makes the WM_CHAR from the
+    // keyboard layout, as for a real key.
+    void PostKey(uint32_t vk, uint32_t scan, bool extended)
+    {
+        HWND window = g_window.load();
+        if (!window)
+            return;
+        if (!vk)
+            vk = MapVirtualKeyW(scan, MAPVK_VSC_TO_VK);
+        LPARAM down = 1 | (LPARAM(scan) << 16) | (extended ? (1 << 24) : 0);
+        PostMessageW(window, WM_KEYDOWN, vk, down);
+        PostMessageW(window, WM_KEYUP, vk, down | (1 << 30) | (LPARAM(1) << 31));
+    }
+
+    void PostChar(wchar_t c)
+    {
+        if (HWND window = g_window.load())
+            PostMessageW(window, WM_CHAR, c, 1);
+    }
+
+    bool IsFocused()
+    {
+        HWND hwnd = HWND(g_window.load());
+        return hwnd && GetForegroundWindow() == hwnd;
+    }
+
+    std::vector<const char*> VulkanSurfaceExtensions()
+    {
+        return { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
+    }
+
+    bool CreateVulkanSurface(void* instance, void* surface)
+    {
+        if (!vk::vkCreateWin32SurfaceKHR)
+            return false;
+        VkWin32SurfaceCreateInfoKHR info{ VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR };
+        info.hinstance = GetModuleHandleW(nullptr);
+        info.hwnd = HWND(g_window.load());
+        return vk::vkCreateWin32SurfaceKHR(VkInstance(instance), &info, nullptr, static_cast<VkSurfaceKHR*>(surface)) == VK_SUCCESS;
+    }
 
     void* Create(uint32_t clientWidth, uint32_t clientHeight, const wchar_t* title)
     {

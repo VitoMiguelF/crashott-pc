@@ -4,7 +4,8 @@
 
 // Host side of the XAudio render driver (kernel/audio_imports.cpp): the title hands over frames of
 // 256 samples x 6 channels (planar, big-endian floats: FL, FR, C, LFE, SL, SR) at 48 kHz. They are
-// downmixed to stereo and played through XAudio2, and optionally written to a WAV file.
+// downmixed to stereo and played through the host device (audio_device.h: XAudio2 / SDL3), and
+// optionally written to a WAV file.
 //
 // Environment: CRASH_NOAUDIO=1 skips the host device (frames are still mixed and dumped, and the
 // title is clocked in real time); CRASH_AUDIO_DUMP=<file.wav> writes the stereo mix (16-bit, 48 kHz,

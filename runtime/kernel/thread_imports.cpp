@@ -15,7 +15,9 @@
 #include "../platform/platform.h"
 
 #include <bit>
-#include <x86intrin.h> // __rdtsc: x86-only, like the recompiled mftb (linux_port.md)
+#if defined(__x86_64__) || defined(_M_X64)
+#include <x86intrin.h> // __rdtsc, as the recompiled mftb reads it (ARM64: ppc_context.h's cntvct_el0)
+#endif
 #include <mutex>
 #include <thread>
 

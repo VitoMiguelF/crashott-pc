@@ -19,8 +19,7 @@
 //
 // Drawn by the presenter over the game (gpu/xenos_renderer.cpp), like the settings screen.
 
-#include <windows.h>
-#include <xinput.h>
+#include "../kernel/xinput_types.h"
 
 #include <cstdint>
 

@@ -38,6 +38,7 @@
 #include "input_record.h"
 #include "../diagnostics.h"
 #include "../fs/vfs.h"
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <atomic>
@@ -73,7 +74,7 @@ namespace
     constexpr uint64_t SNAPSHOT_LIMIT = 64ull << 20;
 
     // run.toml names (the same as xam_input_imports.cpp, plus the stick clicks).
-    constexpr std::pair<const char*, WORD> BUTTONS[] = {
+    constexpr std::pair<const char*, uint16_t> BUTTONS[] = {
         { "A", XINPUT_GAMEPAD_A }, { "B", XINPUT_GAMEPAD_B }, { "X", XINPUT_GAMEPAD_X }, { "Y", XINPUT_GAMEPAD_Y },
         { "START", XINPUT_GAMEPAD_START }, { "BACK", XINPUT_GAMEPAD_BACK }, { "UP", XINPUT_GAMEPAD_DPAD_UP },
         { "DOWN", XINPUT_GAMEPAD_DPAD_DOWN }, { "LEFT", XINPUT_GAMEPAD_DPAD_LEFT }, { "RIGHT", XINPUT_GAMEPAD_DPAD_RIGHT },
@@ -128,14 +129,14 @@ namespace
         return text;
     }
 
-    int StickHundredths(SHORT value)
+    int StickHundredths(int16_t value)
     {
         int q = int(std::lround(double(value) / 327.67));
         q = std::clamp(q, -100, 100);
         return std::abs(q) < ANALOG_REST ? 0 : q;
     }
 
-    int TriggerHundredths(BYTE value)
+    int TriggerHundredths(uint8_t value)
     {
         int q = int(std::lround(double(value) / 2.55));
         return q < ANALOG_REST ? 0 : std::min(q, 100);
@@ -160,9 +161,7 @@ namespace
     {
         if (const char* dir = getenv("CRASH_RECORD_DIR"); dir && *dir)
             return fs::path(dir);
-        wchar_t exe[MAX_PATH]{};
-        GetModuleFileNameW(nullptr, exe, MAX_PATH);
-        fs::path folder = fs::path(exe).parent_path();
+        fs::path folder = plat::ExecutablePath().parent_path();
         // build\CrashRecomp.exe in the project: next to config\run.toml.
         if (fs::exists(folder.parent_path() / "config" / "run.toml"))
             return folder.parent_path() / "config" / "recorded";
@@ -185,7 +184,7 @@ namespace
         int64_t shift = 0;
         bool active = false;
         int64_t lastTick = 0;
-        WORD buttons = 0;
+        uint16_t buttons = 0;
         int64_t release[BUTTON_COUNT]{};
         int lx = 0, ly = 0, rx = 0, ry = 0, lt = 0, rt = 0;
         int64_t holdSince = -1;
@@ -349,7 +348,7 @@ namespace
                     Log("[input] replay finished at t=%s s (tick %lld, timeline %+.2f s, %d sync(s)); closing the game",
                         Seconds(e.tick).c_str(), (long long)tick, shift / TICKS_PER_SECOND, syncs);
                     fflush(stdout);
-                    ExitProcess(0);
+                    plat::ExitProcess(0);
                 case Kind::Sync:
                 {
                     bool loaded;
@@ -448,13 +447,13 @@ namespace
             pad.wButtons |= buttons;
             // The replay wins over a physical stick/trigger at rest.
             if (lx || ly)
-                pad.sThumbLX = SHORT(std::lround(lx * 327.67)), pad.sThumbLY = SHORT(std::lround(ly * 327.67));
+                pad.sThumbLX = int16_t(std::lround(lx * 327.67)), pad.sThumbLY = int16_t(std::lround(ly * 327.67));
             if (rx || ry)
-                pad.sThumbRX = SHORT(std::lround(rx * 327.67)), pad.sThumbRY = SHORT(std::lround(ry * 327.67));
+                pad.sThumbRX = int16_t(std::lround(rx * 327.67)), pad.sThumbRY = int16_t(std::lround(ry * 327.67));
             if (lt)
-                pad.bLeftTrigger = BYTE(std::max<long>(pad.bLeftTrigger, std::lround(lt * 2.55)));
+                pad.bLeftTrigger = uint8_t(std::max<long>(pad.bLeftTrigger, std::lround(lt * 2.55)));
             if (rt)
-                pad.bRightTrigger = BYTE(std::max<long>(pad.bRightTrigger, std::lround(rt * 2.55)));
+                pad.bRightTrigger = uint8_t(std::max<long>(pad.bRightTrigger, std::lround(rt * 2.55)));
         }
 
         static void ShotRequested();
@@ -480,7 +479,7 @@ namespace
         std::mutex mutex;
         // Everything since boot; a profile takes what it needs.
         std::vector<Entry> entries;
-        WORD lastButtons = 0;
+        uint16_t lastButtons = 0;
         int64_t down[BUTTON_COUNT]{};
         int lastL[2]{}, lastR[2]{}, lastLT = 0, lastRT = 0;
         int64_t tick = 0;
@@ -550,10 +549,10 @@ namespace
         void Sample(const XINPUT_GAMEPAD& pad, int64_t k)
         {
             tick = k;
-            WORD changed = pad.wButtons ^ lastButtons;
+            uint16_t changed = pad.wButtons ^ lastButtons;
             for (size_t i = 0; i < BUTTON_COUNT && changed; i++)
             {
-                WORD bit = BUTTONS[i].second;
+                uint16_t bit = BUTTONS[i].second;
                 if (!(changed & bit))
                     continue;
                 if (pad.wButtons & bit)
@@ -771,7 +770,8 @@ namespace
                 std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
                 out.write(text.data(), std::streamsize(text.size()));
             }
-            MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+            std::error_code ignored;
+            fs::rename(temporary, path, ignored);  // replaces an older recording of that name
         }
     };
 

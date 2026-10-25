@@ -20,4 +20,5 @@ second `PPC_FUNC` for the same address will not link. Extend the existing one.
 | [performance.md](performance.md) | Where the CPU time goes, the D3D ring, optimizations done, benchmark tooling |
 | [native-gpu-plan.md](native-gpu-plan.md) | The native GPU path: the Pure3D xn / Xbox D3D layers, what is done (one-pass scene, native D3D flush, shader warm-up), the road to 100% native and the task board |
 | [dev-tools.md](dev-tools.md) | In-game Lua, cheats/invincibility/teleport, the developer console, skins, the Lua decompiler |
+| [linux_port.md](linux_port.md) | The Linux / Steam Deck port: Windows dependencies, the platform layer (`runtime/platform`, SDL3 backends), build status, x86-only code |
 | [mods-and-assets.md](mods-and-assets.md) | `.rcf` overlay and the 2 GB limit, HD AI Remaster constraints, model export facts |

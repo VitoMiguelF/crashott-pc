@@ -25,7 +25,7 @@
 
 #include "graphics_options.h"
 
-#include <dxgiformat.h>
+#include "dxgi_format.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -291,7 +291,7 @@ namespace gpu::rhi
 
     struct DeviceInfo
     {
-        void* window = nullptr;  // HWND
+        void* window = nullptr;  // the native window (gpu/window.h makes the surface)
         uint32_t width = 1280, height = 720;
         std::filesystem::path shaderCache;  // userdata\shadercache (empty: no disk cache)
         bool debug = false;                 // Vulkan validation layers (+ synchronization validation)

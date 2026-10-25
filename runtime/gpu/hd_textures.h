@@ -19,7 +19,7 @@
 // index.csv (key, size, formats, fetch swizzle), which tools/hd_textures.py matches to the
 // exported textures.
 
-#include <dxgiformat.h>
+#include "dxgi_format.h"
 
 #include <cstdint>
 #include <string>

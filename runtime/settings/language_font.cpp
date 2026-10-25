@@ -1,18 +1,13 @@
 #include "language_font.h"
 
-#include <windows.h>
-#include <wincodec.h>
-#include <wrl/client.h>
+#include "../platform/image.h"
+#include "../platform/text.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <map>
-
-#pragma comment(lib, "windowscodecs.lib")
-
-using Microsoft::WRL::ComPtr;
 
 namespace settings::language_font
 {
@@ -86,33 +81,7 @@ namespace settings::language_font
 
         bool DecodePng(const uint8_t* data, size_t size, Image& image)
         {
-            HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-            bool ok = false;
-            {
-                ComPtr<IWICImagingFactory> factory;
-                ComPtr<IWICStream> stream;
-                ComPtr<IWICBitmapDecoder> decoder;
-                ComPtr<IWICBitmapFrameDecode> frame;
-                ComPtr<IWICFormatConverter> converter;
-                UINT w = 0, h = 0;
-                ok = SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
-                     SUCCEEDED(factory->CreateStream(&stream)) &&
-                     SUCCEEDED(stream->InitializeFromMemory(const_cast<BYTE*>(data), DWORD(size))) &&
-                     SUCCEEDED(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder)) &&
-                     SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
-                     SUCCEEDED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0,
-                                                     WICBitmapPaletteTypeCustom)) &&
-                     SUCCEEDED(converter->GetSize(&w, &h)) && w && h && w <= 4096 && h <= 4096;
-                if (ok)
-                {
-                    image.w = int(w), image.h = int(h);
-                    image.rgba.resize(size_t(w) * h * 4);
-                    ok = SUCCEEDED(converter->CopyPixels(nullptr, w * 4, UINT(image.rgba.size()), image.rgba.data()));
-                }
-            }
-            if (com == S_OK || com == S_FALSE)
-                CoUninitialize();
-            return ok;
+            return plat::DecodePng(data, size, image.w, image.h, image.rgba) && image.w <= 4096 && image.h <= 4096;
         }
 
         // Raw contents of the first `type` chunk of a PNG, or empty.
@@ -607,9 +576,7 @@ namespace settings::language_font
                 !Compose(CleanCrop(*basePage, CellRect(*base, *basePage)), CleanCrop(*accentPage, CellRect(*accent, *accentPage)),
                          CleanCrop(*accentBasePage, CellRect(*accentBase, *accentBasePage)), c.cell))
             {
-                char text[8] = {};
-                WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(&recipe.target), 1, text, sizeof(text) - 1, nullptr, nullptr);
-                skipped += text;
+                skipped += plat::NarrowUtf8(std::wstring(1, wchar_t(recipe.target)));
                 continue;
             }
             composed.push_back(std::move(c));
@@ -622,9 +589,7 @@ namespace settings::language_font
         }
 
         auto utf8 = [](char16_t c) {
-            char text[8] = {};
-            WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(&c), 1, text, sizeof(text) - 1, nullptr, nullptr);
-            return std::string(text);
+            return plat::NarrowUtf8(std::wstring(1, wchar_t(c)));
         };
         auto palette = [&](uint32_t texture, std::vector<uint8_t>& plte, std::vector<uint8_t>& trns) {
             const uint8_t* png;

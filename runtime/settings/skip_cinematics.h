@@ -19,8 +19,7 @@
 // on by itself); a video gets a START press, the game's own skip. The subtitles of the scene are
 // cleared at once (subtitles::EndCutscenes).
 
-#include <windows.h>
-#include <xinput.h>
+#include "../kernel/xinput_types.h"
 
 #include <cstdint>
 
