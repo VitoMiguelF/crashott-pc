@@ -53,6 +53,44 @@ namespace gpu::upscaler
             return plat::LibraryFileVersion(file);
         }
 
+        // The upscalers' files next to the exe: CrashDlss.dll + NVIDIA's nvngx_dlss.dll + AMD's
+        // amd_fidelityfx_vk.dll on Windows; libCrashDlss.so + libnvidia-ngx-dlss.so.<version> +
+        // libamd_fidelityfx_vk.so on Linux.
+#ifdef _WIN32
+        constexpr const char* DLSS_MODULE = "CrashDlss.dll";
+        constexpr const char* FFX_MODULE = "amd_fidelityfx_vk.dll";
+
+        std::filesystem::path NgxDlssFile()
+        {
+            return ExeDirectory() / "nvngx_dlss.dll";
+        }
+
+        std::string NgxDlssVersion()
+        {
+            return FileVersion(NgxDlssFile());
+        }
+#else
+        constexpr const char* DLSS_MODULE = "libCrashDlss.so";
+        constexpr const char* FFX_MODULE = "libamd_fidelityfx_vk.so";
+
+        // NGX finds it by its name in the folder CrashDlss_Init gets (the exe's); the version is in the name.
+        std::filesystem::path NgxDlssFile()
+        {
+            std::error_code error;
+            for (const auto& entry : std::filesystem::directory_iterator(ExeDirectory(), error))
+                if (entry.path().filename().string().rfind("libnvidia-ngx-dlss.so.", 0) == 0)
+                    return entry.path();
+            return ExeDirectory() / "libnvidia-ngx-dlss.so";
+        }
+
+        std::string NgxDlssVersion()
+        {
+            std::string name = NgxDlssFile().filename().string();
+            size_t at = name.find(".so.");
+            return at == std::string::npos ? std::string() : name.substr(at + 4);
+        }
+#endif
+
         float Halton(uint32_t index, uint32_t base)
         {
             float f = 1.0f, result = 0.0f;
@@ -144,14 +182,14 @@ namespace gpu::upscaler
             if (tried)
                 return g_dlssModule != nullptr;
             tried = true;
-            std::filesystem::path dll = ExeDirectory() / "CrashDlss.dll";
+            std::filesystem::path dll = ExeDirectory() / DLSS_MODULE;
             std::error_code error;
             if (!std::filesystem::exists(dll, error))
                 return false;
             void* module = plat::OpenLibrary(dll);
             if (!module)
             {
-                Log("[gpu] DLSS: CrashDlss.dll could not be loaded (%s)", plat::LastErrorText().c_str());
+                Log("[gpu] DLSS: %s could not be loaded (%s)", DLSS_MODULE, plat::LastErrorText().c_str());
                 return false;
             }
             auto version = reinterpret_cast<CrashDlss_ApiVersionFn>(plat::FindSymbol(module, "CrashDlss_ApiVersion"));
@@ -163,7 +201,8 @@ namespace gpu::upscaler
             if (!version || version() != CRASH_DLSS_API_VERSION || !g_dlssApi.RequiredExtensions || !g_dlssApi.Init || !g_dlssApi.Evaluate ||
                 !g_dlssApi.ReleaseFeature || !g_dlssApi.Shutdown)
             {
-                Log("[gpu] DLSS: CrashDlss.dll is from another version (API %u, this exe wants %u)", version ? version() : 0u, CRASH_DLSS_API_VERSION);
+                Log("[gpu] DLSS: %s is from another version (API %u, this exe wants %u)", DLSS_MODULE, version ? version() : 0u,
+                    CRASH_DLSS_API_VERSION);
                 plat::CloseLibrary(module);
                 g_dlssApi = {};
                 return false;
@@ -198,16 +237,16 @@ namespace gpu::upscaler
                     settings::ForcedGpuVendor() ? ", CRASH_GPU_VENDOR" : "");
                 return;
             }
-            std::filesystem::path dll = ExeDirectory() / "nvngx_dlss.dll";
+            std::filesystem::path dll = NgxDlssFile();
             std::error_code error;
             if (!std::filesystem::exists(dll, error))
             {
-                Log("[gpu] DLSS: nvngx_dlss.dll not found next to the exe");
+                Log("[gpu] DLSS: %s not found next to the exe", dll.filename().string().c_str());
                 return;
             }
             if (!LoadDlssModule())
             {
-                Log("[gpu] DLSS: CrashDlss.dll not found next to the exe");
+                Log("[gpu] DLSS: %s not found next to the exe", DLSS_MODULE);
                 return;
             }
             std::filesystem::create_directories(dataDir, error);
@@ -217,8 +256,8 @@ namespace gpu::upscaler
             if (!g_dlssApi.Init(&device))
                 return;
             g_dlssAvailable = true;
-            std::string version = FileVersion(dll);
-            Log("[gpu] DLSS available (nvngx_dlss.dll %s)", version.empty() ? "?" : version.c_str());
+            std::string version = NgxDlssVersion();
+            Log("[gpu] DLSS available (%s %s)", dll.filename().string().c_str(), version.empty() ? "?" : version.c_str());
         }
 
         CrashDlssImage DlssImage(const NativeTexture& texture)
@@ -288,11 +327,11 @@ namespace gpu::upscaler
                 Log("[gpu] FSR: not available on this GPU (the driver lacks %s)", missing.c_str());
                 return;
             }
-            std::filesystem::path dll = ExeDirectory() / "amd_fidelityfx_vk.dll";
+            std::filesystem::path dll = ExeDirectory() / FFX_MODULE;
             g_ffxModule = plat::OpenLibrary(dll);
             if (!g_ffxModule)
             {
-                Log("[gpu] FSR: amd_fidelityfx_vk.dll not found next to the exe");
+                Log("[gpu] FSR: %s not found next to the exe", FFX_MODULE);
                 return;
             }
             g_ffx.CreateContext = reinterpret_cast<PfnFfxCreateContext>(plat::FindSymbol(g_ffxModule, "ffxCreateContext"));
@@ -539,7 +578,7 @@ namespace gpu::upscaler
             Log("[gpu] upscaler %s is not available here: the scene is drawn without temporal upscaling", settings::UpscalerName(wanted));
         g_name = "off";
         if (g_active == settings::Upscaler::Dlss)
-            g_name = "DLSS " + FileVersion(ExeDirectory() / "nvngx_dlss.dll");
+            g_name = "DLSS " + NgxDlssVersion();
 #if CRASH_HAVE_FSR
         else if (g_active == settings::Upscaler::Fsr)
             g_name = "FSR " + g_fsrVersionName;

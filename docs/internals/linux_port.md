@@ -82,7 +82,7 @@ work left for Linux, not what was moved already.
 | Timer resolution, waits | `timeBeginPeriod`, waitable timers (vblank), `SleepEx` | `nanosleep`. `CreateTimerWait` returns null on POSIX and the callers fall back to sleeping | done | none |
 | Kernel / XAM HLE | `file_imports`, `memory_imports`, `thread_imports`, `rtl_imports` (time fields), `xam` content and saves called Win32 directly | all through `plat::` / `std::chrono` (`RtlTimeToTimeFields` via chrono, NT epoch 1601) | done | none |
 | DLL loading | `LoadLibraryW` / `GetProcAddress` | `plat::OpenLibrary` (dlopen next to the exe first): `libvulkan.so.1` (Android `libvulkan.so`), `libavcodec.so.62` etc., `libdxcompiler.so` | done | FFmpeg: `.so` files next to the exe (`thirdparty/ffmpeg/lib`), else the system's: CMake then builds against the system headers (`find_path`) so `LIBAVCODEC_VERSION_MAJOR` matches (FFmpeg 9 = `libavcodec.so.63` on Arch). DXC: `libdxcompiler.so` of the system (`directx-shader-compiler`), required: without it the renderer refuses to start. S: packaging |
-| DLSS | `CrashDlss.dll` (NGX static lib) + `nvngx_dlss.dll` | none yet: NGX ships a Linux library, so build `CrashDlss` as a .so against it | Windows only | M |
+| DLSS | `CrashDlss.dll` (NGX static lib) + `nvngx_dlss.dll` | done: `libCrashDlss.so` (the same `crash_dlss.cpp` + NGX's Linux `libnvsdk_ngx.a`, built once by `tools/linux_dlss.py` against the Steam Runtime 3 sysroot, linking the system's libstdc++) + NVIDIA's `libnvidia-ngx-dlss.so.310.9.16`, next to the exe; the driver's `libnvidia-ngx.so.1` does the rest. The game, the launcher's probe and the installer's GPU check (component "dlss") use them | none |
 | FSR 3.1 | `amd_fidelityfx_vk.dll` | none: no official Linux binary; build the FidelityFX SDK's Vulkan backend from source | Windows only | M |
 | Upscaler version info | `GetFileVersionInfoW` | `plat::LibraryFileVersion` (empty on POSIX) | done | none |
 | Text drawing (console, subtitles) | GDI: `CreateFontW` (Segoe UI / Consolas), `DrawTextW` word wrap, `TextOutW`, DIB sections | `text_canvas_posix.cpp`: FreeType renders, fontconfig picks `sans-serif` (semibold) and `monospace` (Noto Sans / DejaVu here); greedy word wrap at spaces and line breaks, centred, like `DT_WORDBREAK \| DT_CENTER`; glyphs cached per font and size. Built without freetype2/fontconfig (`CRASH_HAVE_FREETYPE` unset, e.g. the zig cross-build) it stays a stub | verified (subtitles) | S: test the developer console |
@@ -187,6 +187,24 @@ accepts it.
 Still to do for the Deck: run it on one (build time on 4 Zen 2 cores, Game Mode / Gamescope, Steam
 Input); our own SDL3 with every backend loaded at run time (built once at release time, against the
 Steam Runtime 3 sysroot), shipped next to the exe.
+
+## DLSS on Linux: `tools/linux_dlss.py`
+
+`libCrashDlss.so` is `crash_dlss.cpp` (exports with default visibility, the probe's Vulkan through
+dlopen) linked with NGX's `lib/Linux_x86_64/libnvsdk_ngx.a` of the same SDK 310.9.16. That library
+is GCC code needing libstdc++, while the game links zig's libc++ statically: the module links the
+system's libstdc++.so.6 and only its C interface is crossed. Traps found on the first runs:
+- a libstdc++ exception thrown inside the module (std::filesystem::path of a wide "Área..." under the
+  "C" locale) unwound into the game's libunwind/libc++abi and crashed: nothing in the module may throw
+  (paths are converted to UTF-8 by hand, folders made with mkdir);
+- NGX can't load its feature library from a real path that isn't ASCII ("feature not found",
+  0xBAD00004), whatever the thread locale, and it resolves symbolic links: when the exe's folder
+  isn't ASCII, `libnvidia-ngx-dlss.so.*` is copied (when changed) to `~/.cache/crashrecomp-ngx` (or
+  `$XDG_RUNTIME_DIR` / `/tmp`, the first ASCII one) and that folder is NGX's. The data folder may have
+  any name.
+Checked on an RTX 5080 (driver 615.78): `vila_sem_cena` with DLSS Quality (854x480 -> 1280x720), 21,393
+frames upscaled, 0 failed, ~490 fps; the launcher's probe says available and offers DLSS; the AppImage
+installer's GPU check installs the two files.
 
 ## SDL3 shipped with the game: `tools/linux_sdl3.py`
 

@@ -51,10 +51,13 @@ LINUX_THIRDPARTY = [
     ("base", "thirdparty/dxc/bin", ROOT / "thirdparty" / "dxc" / "bin"),
     ("base", "thirdparty/freetype", ROOT / "thirdparty" / "freetype"),
     ("base", "thirdparty/sdl3", ROOT / "thirdparty" / "sdl3"),
+    # tools/linux_dlss.py's libCrashDlss.so + NVIDIA's libnvidia-ngx-dlss.so.*: installed only where the
+    # installer's probe says DLSS runs (an NVIDIA RTX GPU with NVIDIA's driver), as on Windows.
+    ("dlss", "thirdparty/dlss/bin", ROOT / "thirdparty" / "dlss" / "bin"),
 ]
 # The Windows-only parts of the payload a Linux install has no use for.
 # (launcher/ stays: setup.py builds CrashLauncher from it.)
-SKIP_PREFIXES = ("thirdparty/dlss/", "thirdparty/fsr/", "thirdparty/imgui/backends/imgui_impl_win32",
+SKIP_PREFIXES = ("thirdparty/fsr/", "thirdparty/imgui/backends/imgui_impl_win32",
                  "thirdparty/imgui/backends/imgui_impl_dx")
 
 APPRUN = """#!/bin/sh

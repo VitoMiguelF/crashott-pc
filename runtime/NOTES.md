@@ -2297,3 +2297,14 @@ O primeiro AppImage usava janelas do sistema (zenity/kdialog) e criava atalho pa
 - O código Windows não compila aqui com o clang do zig por padrão, mas `zig c++ -target x86_64-windows-gnu -c` com os headers mingw dele confere o launcher e o instalador do Windows (as duas variantes compilam).
 
 **Conferido.** O launcher Linux desenha a tela do Windows (print com a arte e as fontes do jogo). O AppImage com `--autostart --autofinish --shots` instala tudo em 1 min 20 s (16 threads), com as 10 telas em português iguais às do Windows; o atalho do menu aponta para o `CrashLauncher`, e o JOGAR do launcher instalado abre o `CrashOTTDE` no menu. Falta: as janelas à mão, um Steam Deck, DLSS e FSR no Linux.
+
+## Linux: DLSS (2026-10-25) (`gpu/dlss_module/crash_dlss.cpp`, `gpu/upscaler.cpp`, `tools/linux_dlss.py`, `launcher/gpu_probe.inc`, `CMakeLists.txt`, `tools/make_appimage.py`)
+
+O mesmo `crash_dlss.cpp` vira `libCrashDlss.so` com a biblioteca estática Linux da NGX (`libnvsdk_ngx.a`, SDK 310.9.16), compilado uma vez na máquina de release (`tools/linux_dlss.py`, sysroot do Steam Runtime 3), e vai junto com a `libnvidia-ngx-dlss.so.310.9.16` da NVIDIA. O núcleo NGX é o do driver (`libnvidia-ngx.so.1`). O `upscaler.cpp` usa os nomes de cada SO, e a versão do DLSS sai do nome do arquivo (uma `.so` não tem o recurso de versão das DLLs).
+
+**Armadilhas** (as duas primeiras derrubaram ou desligaram o DLSS na pasta "Área de trabalho"):
+- A `libnvsdk_ngx.a` é código GCC e precisa da `libstdc++`; o jogo usa a `libc++` estática do zig. Pode, porque só a interface C atravessa. Mas uma exceção lançada dentro do módulo (o `std::filesystem::path` de um caminho largo com "Á" na locale "C") desempilhou até a `libunwind`/`libc++abi` do jogo e derrubou o processo (achado no gdb com `catch signal SIGSEGV` e `condition $_siginfo...si_addr == $pc`). Agora nada no módulo lança: o caminho vira UTF-8 à mão e as pastas são criadas com `mkdir`.
+- A NGX não carrega a biblioteca do DLSS de um caminho real com acento (0xBAD00004, "feature not found"), qualquer que seja a locale da thread, e ela resolve links simbólicos. Quando a pasta do exe não é ASCII, a `libnvidia-ngx-dlss.so.*` é copiada (se mudou) para `~/.cache/crashrecomp-ngx` (ou `$XDG_RUNTIME_DIR` ou `/tmp`, o primeiro que for ASCII), e é essa pasta que a NGX recebe. Uma instalação em `~/Games/...` não passa por isso.
+- `CRASH_SETTINGS` separa os itens por `;`, não por vírgula.
+
+**Conferido** (RTX 5080, driver 615.78): `vila_sem_cena` com DLSS Qualidade (854x480 -> 1280x720), 21.393 quadros escalados, 0 falhas, ~490 fps, imagem certa. A sonda do launcher diz "DLSS available", e a aba GRÁFICOS oferece DLSS / FSR. O instalador AppImage roda a sonda e instala os dois arquivos (componente "dlss"). Fica de fora onde não há NVIDIA RTX, como no Windows.

@@ -207,10 +207,19 @@ endif()
 #   the installer leaves both DLLs out.
 # - AMD FSR 3.1 (FidelityFX API, Vulkan backend, thirdparty/fsr: include/ffx_api headers and the
 #   signed bin/amd_fidelityfx_vk.dll, loaded at run time and copied next to CrashRecomp.exe).
-# Both are Windows-only so far (the NGX Linux library and a FidelityFX .so are not wired up).
+# On Linux both come prebuilt (made once on the release machine: tools/linux_dlss.py builds
+# libCrashDlss.so against NGX's Linux library and fetches NVIDIA's libnvidia-ngx-dlss.so.*) and are
+# copied next to the exe when thirdparty/dlss/bin has them.
 set(CRASH_DLSS_DIR ${CMAKE_SOURCE_DIR}/thirdparty/dlss)
 if (NOT WIN32)
-    message(STATUS "DLSS and FSR 3.1 are Windows-only for now")
+    file(GLOB CRASH_DLSS_LINUX ${CRASH_DLSS_DIR}/bin/libCrashDlss.so ${CRASH_DLSS_DIR}/bin/libnvidia-ngx-dlss.so.*)
+    list(LENGTH CRASH_DLSS_LINUX CRASH_DLSS_LINUX_COUNT)
+    if (CRASH_DLSS_LINUX_COUNT EQUAL 2)
+        add_custom_command(TARGET CrashRecomp POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_DLSS_LINUX} $<TARGET_FILE_DIR:CrashRecomp>)
+    else()
+        message(STATUS "thirdparty/dlss/bin has no libCrashDlss.so + libnvidia-ngx-dlss.so.* (tools/linux_dlss.py): DLSS disabled")
+    endif()
 elseif (EXISTS ${CRASH_DLSS_DIR}/include/nvsdk_ngx.h AND EXISTS ${CRASH_DLSS_DIR}/lib/nvsdk_ngx_s.lib)
     add_library(CrashDlss SHARED
         ${CMAKE_SOURCE_DIR}/runtime/gpu/dlss_module/crash_dlss.cpp

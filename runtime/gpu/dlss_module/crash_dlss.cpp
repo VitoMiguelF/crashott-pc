@@ -1,20 +1,137 @@
 // CrashDlss.dll (crash_dlss.h): DLSS through NGX's Vulkan API, for the renderer (upscaler.cpp) and
-// for the launcher's and the installer's "can this PC run DLSS?" (CrashDlss_Probe).
+// for the launcher's and the installer's "can this PC run DLSS?" (CrashDlss_Probe). On Linux it is
+// libCrashDlss.so, with NGX's Linux library (libnvsdk_ngx.a) and NVIDIA's libnvidia-ngx-dlss.so.*.
 #include "crash_dlss.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_vk.h>
 #include <nvsdk_ngx_helpers_vk.h>
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
 #define CRASH_DLSS_EXPORT extern "C" __declspec(dllexport)
+#else
+#define CRASH_DLSS_EXPORT extern "C" __attribute__((visibility("default")))
+// The Vulkan loader for the probe, as on Windows.
+using HMODULE = void*;
+#define LoadLibraryW(name) dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL)
+#define GetProcAddress(library, name) dlsym(library, name)
+#define FreeLibrary(library) dlclose(library)
+// NGX's data folder (a wide path, as the API takes it), and its parents. Nothing here may throw: this
+// library's libstdc++ exceptions can't cross into the game's libc++ (std::filesystem::path throws on
+// "Área" under the "C" locale, and the unwinders don't mix), so the UTF-32 -> UTF-8 conversion is by hand.
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+inline std::string Utf8(const wchar_t* path)
+{
+    std::string utf8;
+    for (const wchar_t* p = path; *p; p++)
+    {
+        uint32_t c = uint32_t(*p);
+        if (c < 0x80)
+            utf8 += char(c);
+        else if (c < 0x800)
+            utf8 += char(0xC0 | (c >> 6)), utf8 += char(0x80 | (c & 0x3F));
+        else if (c < 0x10000)
+            utf8 += char(0xE0 | (c >> 12)), utf8 += char(0x80 | ((c >> 6) & 0x3F)), utf8 += char(0x80 | (c & 0x3F));
+        else
+            utf8 += char(0xF0 | (c >> 18)), utf8 += char(0x80 | ((c >> 12) & 0x3F)), utf8 += char(0x80 | ((c >> 6) & 0x3F)),
+                utf8 += char(0x80 | (c & 0x3F));
+    }
+    return utf8;
+}
+
+inline void CreateDirectoryW(const wchar_t* path, void*)
+{
+    std::string utf8 = Utf8(path);
+    for (size_t at = 1; at <= utf8.size(); at++)
+        if (at == utf8.size() || utf8[at] == '/')
+            mkdir(utf8.substr(0, at).c_str(), 0755);
+}
+
+// NGX finds its feature library (libnvidia-ngx-dlss.so.*) by its real path, and fails on one that
+// isn't ASCII ("Área de trabalho": "feature not found", 0xBAD00004; a symbolic link doesn't help, it
+// is resolved). Then NVIDIA's files are copied (when changed) to the first ASCII folder of
+// $XDG_CACHE_HOME/crashrecomp-ngx, ~/.cache/crashrecomp-ngx, $XDG_RUNTIME_DIR/crashrecomp-ngx and
+// /tmp/crashrecomp-ngx-<uid>, and that folder is NGX's. The data folder may have any name.
+inline bool Ascii(const std::string& text)
+{
+    return std::all_of(text.begin(), text.end(), [](char c) { return uint8_t(c) < 0x80; });
+}
+
+inline bool CopyFile(const std::string& from, const std::string& to)
+{
+    struct stat a{}, b{};
+    if (stat(from.c_str(), &a) != 0)
+        return false;
+    if (stat(to.c_str(), &b) == 0 && a.st_size == b.st_size)
+        return true;
+    FILE* in = fopen(from.c_str(), "rb");
+    FILE* out = in ? fopen((to + ".part").c_str(), "wb") : nullptr;
+    bool ok = in && out;
+    char buffer[1 << 16];
+    size_t read;
+    while (ok && (read = fread(buffer, 1, sizeof(buffer), in)) > 0)
+        ok = fwrite(buffer, 1, read, out) == read;
+    if (in)
+        fclose(in);
+    if (out)
+        ok = fclose(out) == 0 && ok;
+    return ok && rename((to + ".part").c_str(), to.c_str()) == 0;
+}
+
+inline std::wstring AsciiFeatureDir(const wchar_t* featureDir)
+{
+    std::string from = Utf8(featureDir);
+    if (Ascii(from))
+        return featureDir;
+    std::vector<std::string> bases;
+    if (const char* cache = getenv("XDG_CACHE_HOME"); cache && *cache)
+        bases.push_back(std::string(cache) + "/crashrecomp-ngx");
+    if (const char* home = getenv("HOME"); home && *home)
+        bases.push_back(std::string(home) + "/.cache/crashrecomp-ngx");
+    if (const char* runtime = getenv("XDG_RUNTIME_DIR"); runtime && *runtime)
+        bases.push_back(std::string(runtime) + "/crashrecomp-ngx");
+    bases.push_back("/tmp/crashrecomp-ngx-" + std::to_string(getuid()));
+    for (const std::string& base : bases)
+    {
+        if (!Ascii(base))
+            continue;
+        std::wstring wide(base.begin(), base.end());
+        CreateDirectoryW(wide.c_str(), nullptr);
+        bool copied = false, ok = true;
+        if (DIR* dir = opendir(from.c_str()))
+        {
+            while (dirent* entry = readdir(dir))
+            {
+                std::string name = entry->d_name;
+                if (name.rfind("libnvidia-ngx-", 0) == 0)
+                {
+                    ok = ok && CopyFile(from + "/" + name, base + "/" + name);
+                    copied = true;
+                }
+            }
+            closedir(dir);
+        }
+        if (copied && ok)
+            return wide;
+    }
+    return featureDir;
+}
+#endif
 
 namespace
 {
@@ -53,7 +170,12 @@ namespace
     // `why` gets the reason when it isn't. Leaves NGX initialized (g_initialized / g_parameters).
     bool StartNgx(const CrashDlssDevice& device, std::string& why)
     {
+#ifndef _WIN32
+        std::wstring featureDir = AsciiFeatureDir(device.featureDir ? device.featureDir : L".");
+        const wchar_t* paths[] = { featureDir.c_str() };
+#else
         const wchar_t* paths[] = { device.featureDir ? device.featureDir : L"." };
+#endif
         NVSDK_NGX_FeatureCommonInfo info{};
         info.PathListInfo.Path = paths;
         info.PathListInfo.Length = 1;
@@ -257,7 +379,7 @@ CRASH_DLSS_EXPORT int32_t CrashDlss_Probe(const wchar_t* featureDir, const wchar
     HMODULE vulkan = LoadLibraryW(L"vulkan-1.dll");
     if (!vulkan)
     {
-        Copy(reason, reasonSize, "no Vulkan driver (vulkan-1.dll)");
+        Copy(reason, reasonSize, "no Vulkan driver (the Vulkan loader)");
         return 0;
     }
     auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(vulkan, "vkGetInstanceProcAddr"));
@@ -267,7 +389,7 @@ CRASH_DLSS_EXPORT int32_t CrashDlss_Probe(const wchar_t* featureDir, const wchar
     if (!createInstance || !enumerateInstanceExtensions)
     {
         FreeLibrary(vulkan);
-        Copy(reason, reasonSize, "vulkan-1.dll has no vkCreateInstance");
+        Copy(reason, reasonSize, "the Vulkan loader has no vkCreateInstance");
         return 0;
     }
     unsigned int ngxInstanceCount = 0, ngxDeviceCount = 0;
