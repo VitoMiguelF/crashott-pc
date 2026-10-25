@@ -30,6 +30,17 @@ namespace
         if (!std::filesystem::exists(avutilPath) || !std::filesystem::exists(avcodecPath))
             return false;
         avutil = plat::OpenLibrary(avutilPath);
+#ifndef _WIN32
+        // libavcodec needs libswresample (which needs libavutil), and the bundled builds have no rpath:
+        // an exe's RUNPATH (what zig's linker writes) doesn't reach a dlopen'ed library's dependencies,
+        // so load it by its path in between (its soname then satisfies libavcodec's NEEDED).
+        std::error_code error;
+        for (const auto& entry : std::filesystem::directory_iterator(directory, error))
+        {
+            if (avutil && entry.path().filename().string().rfind("libswresample.so.", 0) == 0)
+                plat::OpenLibrary(entry.path());
+        }
+#endif
         avcodec = avutil ? plat::OpenLibrary(avcodecPath) : nullptr;
         if (!avcodec)
         {

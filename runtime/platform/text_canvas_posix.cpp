@@ -2,10 +2,15 @@
 
 // FreeType renders, fontconfig picks the font: "sans-serif" (semibold when asked) for Segoe UI and
 // "monospace" for Consolas, so the distribution's own fonts are used (Noto Sans / DejaVu Sans cover
-// every accent of the subtitles). Built without them (CRASH_HAVE_FREETYPE unset, as in the zig
-// cross-build), every call fails and the console / subtitles are not drawn.
+// every accent of the subtitles). Both are loaded at run time (libfreetype.so.6, libfontconfig.so.1),
+// like Vulkan and FFmpeg: a Steam Deck has the libraries (its desktop uses them) but no headers, so
+// the build needs only FreeType's headers (thirdparty/freetype, setup.py) and fontconfig's few calls
+// are declared here. Without the headers (CRASH_HAVE_FREETYPE unset) or the libraries, every call
+// fails and the console / subtitles are not drawn.
 #if CRASH_HAVE_FREETYPE
-#include <fontconfig/fontconfig.h>
+#include "platform.h"
+#include "../diagnostics.h"
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
@@ -23,6 +28,63 @@ namespace plat
 {
     namespace
     {
+        // fontconfig's ABI (fontconfig.h): opaque patterns, and the few constants used here.
+        struct FcPattern;
+        using FcChar8 = unsigned char;
+        using FcBool = int;
+        constexpr int FcMatchPattern = 0, FcResultMatch = 0, FC_WEIGHT_REGULAR = 80, FC_WEIGHT_SEMIBOLD = 180;
+
+        struct Api
+        {
+            FT_Error (*FT_Init_FreeType)(FT_Library*);
+            FT_Error (*FT_New_Face)(FT_Library, const char*, FT_Long, FT_Face*);
+            FT_Error (*FT_Set_Pixel_Sizes)(FT_Face, FT_UInt, FT_UInt);
+            FT_UInt (*FT_Get_Char_Index)(FT_Face, FT_ULong);
+            FT_Error (*FT_Load_Glyph)(FT_Face, FT_UInt, FT_Int32);
+            FcBool (*FcInit)();
+            FcPattern* (*FcPatternCreate)();
+            FcBool (*FcPatternAddString)(FcPattern*, const char*, const FcChar8*);
+            FcBool (*FcPatternAddInteger)(FcPattern*, const char*, int);
+            FcBool (*FcPatternAddBool)(FcPattern*, const char*, FcBool);
+            FcBool (*FcConfigSubstitute)(void*, FcPattern*, int);
+            void (*FcDefaultSubstitute)(FcPattern*);
+            FcPattern* (*FcFontMatch)(void*, FcPattern*, int*);
+            int (*FcPatternGetString)(const FcPattern*, const char*, int, FcChar8**);
+            void (*FcPatternDestroy)(FcPattern*);
+        };
+
+        template <typename T>
+        bool Resolve(void* library, const char* name, T& function)
+        {
+            function = reinterpret_cast<T>(library ? FindSymbol(library, name) : nullptr);
+            return function != nullptr;
+        }
+
+        // Loads both libraries once; null (and one log line) when either is missing.
+        const Api* LoadApi()
+        {
+            static Api api;
+            static const Api* loaded = [] () -> const Api* {
+                void* ft = OpenLibrary("libfreetype.so.6");
+                void* fc = OpenLibrary("libfontconfig.so.1");
+                bool ok = Resolve(ft, "FT_Init_FreeType", api.FT_Init_FreeType) && Resolve(ft, "FT_New_Face", api.FT_New_Face) &&
+                          Resolve(ft, "FT_Set_Pixel_Sizes", api.FT_Set_Pixel_Sizes) &&
+                          Resolve(ft, "FT_Get_Char_Index", api.FT_Get_Char_Index) && Resolve(ft, "FT_Load_Glyph", api.FT_Load_Glyph) &&
+                          Resolve(fc, "FcInit", api.FcInit) && Resolve(fc, "FcPatternCreate", api.FcPatternCreate) &&
+                          Resolve(fc, "FcPatternAddString", api.FcPatternAddString) &&
+                          Resolve(fc, "FcPatternAddInteger", api.FcPatternAddInteger) &&
+                          Resolve(fc, "FcPatternAddBool", api.FcPatternAddBool) &&
+                          Resolve(fc, "FcConfigSubstitute", api.FcConfigSubstitute) &&
+                          Resolve(fc, "FcDefaultSubstitute", api.FcDefaultSubstitute) && Resolve(fc, "FcFontMatch", api.FcFontMatch) &&
+                          Resolve(fc, "FcPatternGetString", api.FcPatternGetString) && Resolve(fc, "FcPatternDestroy", api.FcPatternDestroy);
+                if (!ok)
+                    Log("[text] libfreetype.so.6 / libfontconfig.so.1 not usable (%s): no subtitles or console text",
+                        LastErrorText().c_str());
+                return ok ? &api : nullptr;
+            }();
+            return loaded;
+        }
+
         struct Glyph
         {
             int left = 0, top = 0, width = 0, height = 0, advance = 0;
@@ -44,8 +106,9 @@ namespace plat
                 if (it != glyphs.end())
                     return it->second;
                 Glyph& glyph = glyphs[c];
-                FT_UInt index = FT_Get_Char_Index(face, c);
-                if (index && FT_Load_Glyph(face, index, FT_LOAD_RENDER | FT_LOAD_TARGET_LIGHT) == 0)
+                const Api& ft = *LoadApi();  // a Font exists only once the API loaded
+                FT_UInt index = ft.FT_Get_Char_Index(face, c);
+                if (index && ft.FT_Load_Glyph(face, index, FT_LOAD_RENDER | FT_LOAD_TARGET_LIGHT) == 0)
                 {
                     FT_GlyphSlot slot = face->glyph;
                     const FT_Bitmap& bitmap = slot->bitmap;
@@ -74,23 +137,26 @@ namespace plat
             if (auto it = g_files.find(key); it != g_files.end())
                 return it->second;
             std::string file;
-            if (FcInit())
+            const Api& fc = *LoadApi();
+            if (fc.FcInit())
             {
-                FcPattern* pattern = FcPatternCreate();
-                FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>(face == FontFace::Monospace ? "monospace" : "sans-serif"));
-                FcPatternAddInteger(pattern, FC_WEIGHT, semibold ? FC_WEIGHT_SEMIBOLD : FC_WEIGHT_REGULAR);
-                FcPatternAddBool(pattern, FC_SCALABLE, FcTrue);
-                FcConfigSubstitute(nullptr, pattern, FcMatchPattern);
-                FcDefaultSubstitute(pattern);
-                FcResult result;
-                if (FcPattern* match = FcFontMatch(nullptr, pattern, &result))
+                FcPattern* pattern = fc.FcPatternCreate();
+                fc.FcPatternAddString(pattern, "family", reinterpret_cast<const FcChar8*>(face == FontFace::Monospace ? "monospace" : "sans-serif"));
+                fc.FcPatternAddInteger(pattern, "weight", semibold ? FC_WEIGHT_SEMIBOLD : FC_WEIGHT_REGULAR);
+                fc.FcPatternAddBool(pattern, "scalable", 1);
+                fc.FcConfigSubstitute(nullptr, pattern, FcMatchPattern);
+                fc.FcDefaultSubstitute(pattern);
+                int result;
+                if (FcPattern* match = fc.FcFontMatch(nullptr, pattern, &result))
                 {
                     FcChar8* path = nullptr;
-                    if (FcPatternGetString(match, FC_FILE, 0, &path) == FcResultMatch && path)
+                    if (fc.FcPatternGetString(match, "file", 0, &path) == FcResultMatch && path)
                         file = reinterpret_cast<const char*>(path);
-                    FcPatternDestroy(match);
+                    fc.FcPatternDestroy(match);
                 }
-                FcPatternDestroy(pattern);
+                fc.FcPatternDestroy(pattern);
+                Log("[text] %s%s: %s", face == FontFace::Monospace ? "monospace" : "sans-serif", semibold ? " semibold" : "",
+                    file.empty() ? "no font found" : file.c_str());
             }
             g_files[key] = file;
             return file;
@@ -102,14 +168,15 @@ namespace plat
             auto key = std::make_tuple(int(face), pixelHeight, semibold);
             if (auto it = g_fonts.find(key); it != g_fonts.end())
                 return it->second.get();
-            if (!g_library && FT_Init_FreeType(&g_library) != 0)
+            const Api* ft = LoadApi();
+            if (!ft || (!g_library && ft->FT_Init_FreeType(&g_library) != 0))
                 return nullptr;
             std::string file = FontFile(face, semibold);
             auto font = std::make_unique<Font>();
-            if (file.empty() || FT_New_Face(g_library, file.c_str(), 0, &font->face) != 0)
+            if (file.empty() || ft->FT_New_Face(g_library, file.c_str(), 0, &font->face) != 0)
                 return nullptr;
             // GDI's negative height: the character (em) height, without the internal leading.
-            FT_Set_Pixel_Sizes(font->face, 0, FT_UInt(pixelHeight));
+            ft->FT_Set_Pixel_Sizes(font->face, 0, FT_UInt(pixelHeight));
             const FT_Size_Metrics& metrics = font->face->size->metrics;
             font->ascent = int((metrics.ascender + 63) >> 6);
             font->height = font->ascent + int((-metrics.descender + 63) >> 6);

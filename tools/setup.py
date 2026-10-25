@@ -43,6 +43,13 @@ Steps (each one is skipped when its result is already up to date, so running it 
     gets them with pip, and a failure there only fails this step (the game is installed anyway).
     Retry it alone with --assets-only.
 
+On Linux (the Steam Deck first) the same steps, with no Windows piece: the portable toolchain is zig +
+CMake + Ninja + Python (tools/toolchain.py fetch), step 4 fetches FFmpeg's Linux LGPL .so files, DXC's
+libdxcompiler.so, FreeType's headers and SDL3's headers + library (Steam Runtime 3, the SDL3 Steam itself
+gives games), and there is no DLSS / FSR / launcher. The game is CrashRecomp (CrashOTTDE with --play-dir).
+
+    python3 tools/setup.py --game ~/Games/Crash
+
 Machine-readable progress for the graphical installer (installer/): lines starting with "@@".
 """
 import argparse
@@ -117,6 +124,30 @@ FFMPEG_ZIP = ("https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild
               "3e47bda1607740550141e37c0e49d1e5182b34699f15adfd137ee266d346811a")
 FFMPEG_DLLS = ["avcodec-62.dll", "avutil-60.dll", "swresample-6.dll"]
 
+WINDOWS = buildenv.WINDOWS
+EXE = ".exe" if WINDOWS else ""
+# Linux: the same FFmpeg 8.1 and DXC releases, in their Linux builds (glibc 2.28 / 2.38: SteamOS 3.8 has 2.41).
+FFMPEG_LINUX = ("https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/"
+                "ffmpeg-n8.1.3-9-g29e619e767-linux64-lgpl-shared-8.1.tar.xz",
+                "d4d7b6936f492c0b866b1cb4a29a1bbae09d6a064b4ec4eb90c95bed7969535a")
+FFMPEG_SOS = ["libavcodec.so.62", "libavutil.so.60", "libswresample.so.6"]
+DXC_LINUX = ("https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz",
+             "96faadc7f5c282d2ffda49804beb4c3ee38127bc252b723234e3c5cdf7aa39a1")
+DXC_LINUX_FILES = {"lib/libdxcompiler.so": "libdxcompiler.so", "LICENSE-MS.txt": "LICENSE-MS.txt", "LICENSE-LLVM.txt": "LICENSE-LLVM.txt"}
+# FreeType's headers only (platform/text_canvas_posix.cpp loads libfreetype.so.6 at run time). The
+# signature (freetype-2.14.3.tar.xz.sig, Werner Lemberg's key E306 7470 ... 63AD 8E3F) was checked.
+FREETYPE = ("https://sourceforge.net/projects/freetype/files/freetype2/2.14.3/freetype-2.14.3.tar.xz/download",
+            "36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f", "freetype-2.14.3.tar.xz")
+# SDL3 as the Steam Runtime 3 ("sniper") has it, the copy Steam gives the games it starts: the headers
+# to build with and the library to link against. Valve's pool keeps only the current version: the
+# installer carries these files, a clone downloads them.
+SDL3_DEBS = [
+    ("https://repo.steampowered.com/steamrt3/apt/pool/main/libs/libsdl3/libsdl3-0_3.4.18%2Bds-1%2Bsteamrt3.1%2Bbsrt3.1_amd64.deb",
+     "0f6a16b1f8f658f705a626fdf07742b169e22004390afcbaa29973c5175edcaf"),
+    ("https://repo.steampowered.com/steamrt3/apt/pool/main/libs/libsdl3/libsdl3-dev_3.4.18%2Bds-1%2Bsteamrt3.1%2Bbsrt3.1_amd64.deb",
+     "0036d658efb9690a4c7f24687ccf4ee7b7ae8da57591d9135973588110eaaf5b"),
+]
+
 STEPS = ["Pré-requisitos", "Jogo", "XenonRecomp", "Bibliotecas", "Recompilação", "Compilação",
          "Extras", "Pasta do jogo", "Assets"]
 
@@ -179,6 +210,11 @@ _ENV = None
 def build_env():
     """The build environment: the toolchain's folders first on PATH (+ vcvars64.bat for msvc), computed once."""
     global _ENV
+    if _ENV is None and not WINDOWS:
+        try:
+            _ENV = buildenv.build_env()
+        except SystemExit as error:
+            fail(str(error))
     if _ENV is None:
         lines = buildenv.cmd_prelude() + ["set"]
         script = ROOT / "build" / "setup_env.cmd"
@@ -237,8 +273,13 @@ def check_prerequisites():
         gaps = tc.missing()
         parts = {"Toolchain: llvm-mingw (clang)": ("llvm-mingw", tc.TOOLCHAIN / "llvm-mingw" / "bin" / "clang++.exe"),
                  "Toolchain: CMake": ("cmake", tc.TOOLCHAIN / "cmake" / "bin" / "cmake.exe"),
-                 "Toolchain: Ninja": ("ninja", tc.TOOLCHAIN / "ninja" / "ninja.exe")}
+                 "Toolchain: Ninja": ("ninja", tc.TOOLCHAIN / "ninja" / "ninja.exe")} if WINDOWS else \
+                {"Toolchain: zig (clang)": ("zig", tc.TOOLCHAIN / "zig" / "zig"),
+                 "Toolchain: CMake": ("cmake", tc.TOOLCHAIN / "cmake" / "bin" / "cmake"),
+                 "Toolchain: Ninja": ("ninja", tc.TOOLCHAIN / "ninja" / "ninja")}
         found = {name: None if part in gaps else path for name, (part, path) in parts.items()}
+    elif not WINDOWS:
+        found = {"clang": buildenv.which("clang++"), "CMake": buildenv.which("cmake"), "Ninja": buildenv.which("ninja")}
     else:
         found = {
             "Visual Studio (C++)": buildenv.vcvars(),
@@ -398,9 +439,91 @@ def setup_xenonrecomp():
     say("XenonRecomp ok (" + XENON_COMMIT[:10] + " + patches/XenonRecomp.patch)")
 
 
+def unpack_tar(archive, wanted):
+    """Copies members of a tar archive: wanted maps a member path (without the archive's top folder when
+    it has one) to a destination, or a member folder ending in "/" to a destination folder."""
+    import tarfile
+    with tarfile.open(archive) as t:
+        for member in t.getmembers():
+            if not (member.isfile() or member.issym()):  # extractfile follows links (libavcodec.so.62 -> .so.62.28.103)
+                continue
+            name = member.name[2:] if member.name.startswith("./") else member.name
+            for source, dest in wanted.items():
+                rel = None
+                for candidate in (name, name.split("/", 1)[1] if "/" in name else ""):
+                    if candidate == source:
+                        rel = ""
+                    elif source.endswith("/") and candidate.startswith(source):
+                        rel = candidate[len(source):]
+                if rel is None:
+                    continue
+                target = Path(dest) / rel if rel else Path(dest)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with t.extractfile(member) as src, open(target, "wb") as out:
+                    shutil.copyfileobj(src, out)
+
+
+def unpack_deb(archive, wanted):
+    """A .deb is an ar archive holding data.tar.*: copies its members like unpack_tar."""
+    import io
+    data = Path(archive).read_bytes()
+    if not data.startswith(b"!<arch>\n"):
+        fail(f"{Path(archive).name} não é um pacote .deb")
+    at = 8
+    while at + 60 <= len(data):
+        name = data[at:at + 16].decode("ascii").strip().rstrip("/")
+        size = int(data[at + 48:at + 58].decode("ascii").strip())
+        body = data[at + 60:at + 60 + size]
+        if name.startswith("data.tar"):
+            member = Path(archive).with_name(Path(archive).name + "." + name)
+            member.write_bytes(body)
+            try:
+                unpack_tar(member, wanted)
+            finally:
+                member.unlink()
+            return
+        at += 60 + size + (size & 1)
+    fail(f"{Path(archive).name}: sem data.tar")
+
+
+def fetch_thirdparty_linux():
+    """FFmpeg (LGPL .so), DXC, FreeType's headers and SDL3, each checked by SHA-256."""
+    downloads = ROOT / "build" / "downloads"
+    ffmpeg = ROOT / "thirdparty" / "ffmpeg"
+    if not all((ffmpeg / "lib" / name).is_file() for name in FFMPEG_SOS):
+        url, digest = FFMPEG_LINUX
+        archive = download(url, downloads / Path(url).name, digest, "FFmpeg 8.1 (LGPL, Linux)")
+        unpack_tar(archive, {**{f"lib/{name}": ffmpeg / "lib" / name for name in FFMPEG_SOS}, "include/": ffmpeg / "include"})
+    progress(0.4)
+    dxc = ROOT / "thirdparty" / "dxc" / "bin"
+    if not all((dxc / name).is_file() for name in DXC_LINUX_FILES.values()):
+        url, digest = DXC_LINUX
+        archive = download(url, downloads / Path(url).name, digest, "DirectX Shader Compiler (Linux)")
+        unpack_tar(archive, {source: dxc / name for source, name in DXC_LINUX_FILES.items()})
+    progress(0.6)
+    freetype = ROOT / "thirdparty" / "freetype"
+    if not (freetype / "include" / "ft2build.h").is_file():
+        url, digest, name = FREETYPE
+        archive = download(url, downloads / name, digest, "FreeType (headers)")
+        unpack_tar(archive, {"include/": freetype / "include", "LICENSE.TXT": freetype / "LICENSE.TXT",
+                             "docs/FTL.TXT": freetype / "FTL.TXT"})
+    progress(0.8)
+    sdl = ROOT / "thirdparty" / "sdl3"
+    if not ((sdl / "lib" / "libSDL3.so.0").is_file() and (sdl / "include" / "SDL3" / "SDL.h").is_file()):
+        for url, digest in SDL3_DEBS:
+            archive = download(url, downloads / Path(url).name.replace("%2B", "+"), digest, "SDL3 (Steam Runtime 3)")
+            unpack_deb(archive, {"usr/lib/x86_64-linux-gnu/libSDL3.so.0.4.18": sdl / "lib" / "libSDL3.so.0",
+                                 "usr/include/SDL3/": sdl / "include" / "SDL3",
+                                 "usr/share/doc/libsdl3-0/copyright": sdl / "copyright"})
+    progress(1.0)
+    say("FFmpeg, DXC, FreeType e SDL3 ok")
+
+
 def fetch_thirdparty(dlss=True):
     """dlss=False (--no-dlss): none of the DLSS files. With the installer's prebuilt CrashDlss.dll
     (thirdparty/dlss/bin) the SDK's headers and library aren't needed: only nvngx_dlss.dll."""
+    if not WINDOWS:
+        return fetch_thirdparty_linux()
     prebuilt = (ROOT / "thirdparty" / "dlss" / "bin" / "CrashDlss.dll").is_file()
     wanted = [d for d in DOWNLOADS if not d[1].startswith("thirdparty/dlss/") or
               (dlss and (not prebuilt or d[1].endswith("nvngx_dlss.dll")))]
@@ -456,7 +579,8 @@ def recompile():
     # llvm-mingw: XenonRecomp's fmt uses malloc without <cstdlib> under libc++; -static: no toolchain DLLs;
     # -Wno-unused-result: its recompiler.cpp drops a [[nodiscard]] value (harmless, but it shows in the installer).
     extra = ["-DCMAKE_CXX_FLAGS=-include cstdlib -Wno-unused-result", "-DCMAKE_EXE_LINKER_FLAGS=-static"] \
-        if buildenv.toolchain_kind() == "bundled" else []
+        if buildenv.toolchain_kind() == "bundled" and WINDOWS else \
+        ["-DCMAKE_CXX_FLAGS=-include cstdlib -Wno-unused-result"] if buildenv.toolchain_kind() == "bundled" else []
     # Its CMakeLists (and xxHash's) ask for an old cmake_minimum_required: a warning "for project developers".
     configure = buildenv.configure_build(XENON, build, [*extra, "-Wno-deprecated"])
     if configure:
@@ -465,7 +589,7 @@ def recompile():
     if GENERATED.exists():
         shutil.rmtree(GENERATED)
     GENERATED.mkdir(parents=True)
-    recomp = build / "XenonRecomp" / "XenonRecomp.exe"
+    recomp = build / "XenonRecomp" / f"XenonRecomp{EXE}"
     # This default.xex has no __savevmx_* / __restvmx_* helpers (config/Crash.toml): XenonRecomp reports
     # their missing addresses as "ERROR", which is expected; shown as a note instead.
     no_vmx = re.compile(r"ERROR: __(save|rest)vmx_\d+ address is unspecified")
@@ -575,7 +699,7 @@ def play_folder(play_dir):
 
 
 def game_exe(play_dir):
-    return play_folder(play_dir) / ("CrashOTTDE.exe" if play_dir else "CrashRecomp.exe")
+    return play_folder(play_dir) / (("CrashOTTDE" if play_dir else "CrashRecomp") + EXE)
 
 
 def assemble(game, copy_game, play_dir=None):
@@ -655,7 +779,9 @@ def main():
     if missing:
         if any(m.startswith("Toolchain") for m in missing):
             fail("falta a pasta toolchain\\ completa (" + ", ".join(missing) + "): ela vem no zip da release; "
-                 "num clone do repositório, rode: python tools\\toolchain.py fetch")
+                 "num clone do repositório, rode: python tools\\toolchain.py fetch" if WINDOWS else
+                 "falta a pasta toolchain/ completa (" + ", ".join(missing) + "): ela vem no instalador; "
+                 "num clone do repositório, rode: python3 tools/toolchain.py fetch")
         fail("falta instalar: " + ", ".join(missing) + " (README, \"Requisitos\")")
     if args.check:
         say("@@done")

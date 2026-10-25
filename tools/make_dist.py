@@ -32,6 +32,9 @@ also the project the game was built from (the runtime finds languages\\ and data
         game\\ (the dump, always copied), userdata\\, mods\\
         CrashRecomp\\                    languages\\, data\\, licencas\\ + the project (toolchain\\, build\\...)
 No LEIA.txt files there.
+
+On Linux the same, with CrashRecomp / CrashOTTDE (no .exe), no launcher and the .so files the build put
+next to the exe (FFmpeg, DXC; the exe finds them with its $ORIGIN rpath) instead of the DLLs.
 """
 import argparse
 import os
@@ -42,6 +45,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = ROOT / "private"
+WINDOWS = sys.platform == "win32"
+EXE = ".exe" if WINDOWS else ""
 
 LICENSES = {
     "CrashRecomp_LICENSE.txt": ROOT / "LICENSE",
@@ -54,6 +59,9 @@ LICENSES = {
     "dxc_LICENSE-LLVM.txt": ROOT / "thirdparty" / "dxc" / "bin" / "LICENSE-LLVM.txt",
     "smaa_LICENSE.txt": ROOT / "thirdparty" / "smaa" / "LICENSE.txt",
     "imgui_LICENSE.txt": ROOT / "thirdparty" / "imgui" / "LICENSE.txt",
+    "sdl3_copyright.txt": ROOT / "thirdparty" / "sdl3" / "copyright",
+    "freetype_LICENSE.txt": ROOT / "thirdparty" / "freetype" / "LICENSE.TXT",
+    "freetype_FTL.txt": ROOT / "thirdparty" / "freetype" / "FTL.TXT",
 }
 # HD AI Remaster: the mod folders the runtime looks for under data\ (runtime/settings/hd_remaster.cpp),
 # and the parts of them it reads.
@@ -100,12 +108,43 @@ Veja o README do projeto: "Mods de entradas de .rcf", "Extraindo e modificando a
 """
 
 
+LEIA_LINUX = """CrashRecomp - Crash of the Titans (Xbox 360) recompilado para Linux
+===================================================================
+
+Para jogar: ./CrashRecomp (ou adicione-o à Steam como jogo não-Steam).
+
+Pastas
+  game/       o seu jogo (default.xex, default.rcf, english.rcf, sound1.rcf...). Se o jogo
+              estiver em outra pasta, ela fica em userdata/settings.toml ([paths] game).
+  mods/       mods (um por pasta; veja o README do projeto, "Mods").
+  userdata/   seus saves, settings.toml (as opções da tela SETTINGS) e o cache de shaders.
+  languages/  pacotes de idioma (Português do Brasil).
+  data/       opcional, gerado a partir do SEU jogo (legendas, nomes de funções, HD AI Remaster).
+  licencas/   licenças do FFmpeg, DXC, SDL, FreeType, SMAA e Dear ImGui.
+
+Compartilhar
+  Esta pasta é a sua instalação: não a publique. O CrashRecomp contém o código do jogo
+  recompilado e game/ é o próprio jogo. Para outra pessoa jogar, mande o link do projeto
+  (https://github.com/VitoMiguelF/crashott-pc): o instalador monta tudo a partir da cópia dela.
+
+Atalhos no jogo: F1 overlay, F12 captura, Alt+Enter tela cheia.
+"""
+
 # The game's exe in the installed layout (--installed).
-INSTALLED_EXE = "CrashOTTDE.exe"
+INSTALLED_EXE = "CrashOTTDE" + EXE
 
 
 def running(exe):
-    """Whether a process is running from `exe` (PowerShell Get-Process gives the image paths)."""
+    """Whether a process is running from `exe` (PowerShell Get-Process gives the image paths; /proc on Linux)."""
+    if not WINDOWS:
+        target = str(exe.resolve())
+        for proc in Path("/proc").glob("[0-9]*"):
+            try:
+                if os.readlink(proc / "exe") == target:
+                    return True
+            except OSError:
+                pass
+        return False
     try:
         out = subprocess.run(["powershell", "-NoProfile", "-Command",
                               "Get-Process CrashRecomp, CrashOTTDE -ErrorAction SilentlyContinue | ForEach-Object { $_.Path }"],
@@ -192,7 +231,7 @@ def set_game_folder(userdata, game):
 def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Monta a pasta dist\\ (o jogo pronto para jogar) a partir do build.")
-    parser.add_argument("--exe", default=str(ROOT / "build" / "CrashRecomp.exe"), help="o CrashRecomp.exe compilado (padrão: build\\CrashRecomp.exe)")
+    parser.add_argument("--exe", default=str(ROOT / "build" / ("CrashRecomp" + EXE)), help="o CrashRecomp.exe compilado (padrão: build\\CrashRecomp.exe)")
     parser.add_argument("--out", default=str(ROOT / "dist"), help="pasta de saída (padrão: dist)")
     parser.add_argument("--game", help="pasta do seu jogo: grava [paths] game no userdata\\settings.toml de dist")
     parser.add_argument("--no-remaster", action="store_true", help="não põe o HD AI Remaster em data\\")
@@ -204,7 +243,7 @@ def main():
     exe = Path(args.exe).resolve()
     out = Path(args.out).resolve()
     support = out / "CrashRecomp" if args.installed else out  # languages\, data\, licencas\
-    game_exe = out / (INSTALLED_EXE if args.installed else "CrashRecomp.exe")
+    game_exe = out / (INSTALLED_EXE if args.installed else "CrashRecomp" + EXE)
     if not exe.is_file():
         raise SystemExit(f"não achei {exe}: compile antes (cmake --build build)")
     if running(game_exe):
@@ -212,9 +251,12 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     launcher = exe.parent / "CrashLauncher.exe"
-    files = [exe, *([launcher] if launcher.is_file() else []), *sorted(exe.parent.glob("*.dll"))]
-    if not launcher.is_file():
-        print(f"aviso: {launcher} não existe (cmake --build build --target CrashLauncher)")
+    if WINDOWS:
+        files = [exe, *([launcher] if launcher.is_file() else []), *sorted(exe.parent.glob("*.dll"))]
+        if not launcher.is_file():
+            print(f"aviso: {launcher} não existe (cmake --build build --target CrashLauncher)")
+    else:
+        files = [exe, *sorted(f for f in exe.parent.glob("*.so*") if f.is_file())]
     changed = [f.name for f in files if copy_if_newer(f, game_exe if f == exe else out / f.name)]
     print(f"exe e DLLs: {', '.join(changed) if changed else 'já atualizados'}")
     if (support / "languages").resolve() != (ROOT / "languages").resolve():
@@ -253,7 +295,7 @@ def main():
         if source.is_file():
             copy_if_newer(source, licenses / name)
     if not args.installed:
-        (out / "LEIA.txt").write_text(LEIA, encoding="utf-8")
+        (out / "LEIA.txt").write_text(LEIA if WINDOWS else LEIA_LINUX, encoding="utf-8")
 
     if args.game:
         game = Path(args.game)

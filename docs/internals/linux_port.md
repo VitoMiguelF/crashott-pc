@@ -101,9 +101,9 @@ work left for Linux, not what was moved already.
 |---|---|---|---|
 | Launcher (`CrashLauncher`, `launcher/*.cpp/.inc`, ~4.5k lines) | Dear ImGui on Win32 + D3D11, WIC, `dwmapi`, WinHTTP + bcrypt (the updater), `ShellExecute` | not built on Linux. The in-game settings screen covers the options; on the Deck the game starts directly. Port only if wanted: ImGui SDL3 + Vulkan backends, libcurl for the updater | L |
 | Installer (`CrashSetup`, `launcher/installer*.inc`, `tools/setup.py`, `tools/make_installer.py`) | LZMS payload inside a Windows EXE, Start menu / desktop shortcuts, `CrashDlss.dll` only on RTX | a tarball or AppImage with a `.desktop` file; on the Deck, "Add a non-Steam game". `setup.py`'s dump checks are plain Python and reusable | M |
-| `tools/buildenv.py`, `tools/toolchain.py` | write `.cmd` scripts run with `cmd /d /c`; the portable toolchain is llvm-mingw / CMake / Ninja / Python **Windows** zips; clang path `clang.exe` | a POSIX branch: a `sh` prelude, system clang + cmake + ninja (or zig), no toolchain download | S |
-| `tools/run_game.py` | builds through `cmd`, runs `build\CrashRecomp.exe`, `--dist` uses `dist\CrashRecomp.exe` | exe suffix from `sys.platform`, build via buildenv's POSIX branch | S |
-| `tools/make_dist.py`, `make_release.py`, `check_game_files.py`, `perf/*` | `CrashRecomp.exe` and `.dll` lists (FFmpeg, DXC, FSR, DLSS, vulkan_layers), `perf/bench.py` uses Win32 APIs | per-OS name tables (`.so`, no extension for the exe) | S each |
+| `tools/buildenv.py`, `tools/toolchain.py` | write `.cmd` scripts run with `cmd /d /c`; the portable toolchain is llvm-mingw / CMake / Ninja / Python **Windows** zips; clang path `clang.exe` | done: Linux pins in `toolchain.py` (zig, CMake, Ninja, python-build-standalone; `toolchain/bin/zig-cc` etc. wrappers with `-target x86_64-linux-gnu.2.35`); `buildenv.build_env()` / `build_commands()` instead of `.cmd`; toolchains `bundled` (zig) and `system` (PATH clang) | none |
+| `tools/run_game.py` | builds through `cmd`, runs `build\CrashRecomp.exe`, `--dist` uses `dist\CrashRecomp.exe` | done: `build()` through `buildenv.build_commands`, `run.toml`'s `build/CrashRecomp.exe` read as `build/CrashRecomp`. `vila_sem_cena` and `menu` pass | none |
+| `tools/make_dist.py`, `make_release.py`, `check_game_files.py`, `perf/*` | `CrashRecomp.exe` and `.dll` lists (FFmpeg, DXC, FSR, DLSS, vulkan_layers), `perf/bench.py` uses Win32 APIs | `make_dist.py` done (exe without `.exe`, the `.so` files next to it, `CrashOTTDE` with `--installed`, a Linux LEIA.txt, `/proc` for the running check); `make_release.py`, `perf/*` not yet | S each |
 | Backslash paths | many tools print or join `\` paths; most go through `pathlib` and are fine | fix as found | S |
 
 ## Build status
@@ -159,8 +159,34 @@ Not done yet:
    with SDL's queue.
 5. Steam Deck: run under Gamescope (fullscreen, 1280×800, the Hor+ path), Deck controls through
    SDL (Steam Input exposes them as a gamepad), and suspend/resume.
-6. tools: buildenv / run_game POSIX branch, packaging (tarball/AppImage), FFmpeg/DXC `.so` files.
+6. tools: ~~buildenv / run_game POSIX branch, FFmpeg/DXC `.so` files~~ (done, see "Building on a Steam Deck"); packaging (`make_installer.py --linux`), our own SDL3 build.
 7. Optional: DLSS (NGX Linux), FSR 3.1 from source, launcher.
+
+## Building on a Steam Deck (`setup.py` on Linux)
+
+A stock SteamOS has a read-only root, no package manager, no compiler and no `-dev` headers, so
+`python3 tools/setup.py --game <dump>` takes nothing from the system but glibc, Vulkan, and the
+libraries its desktop already has:
+
+| Piece | Where from | Notes |
+|---|---|---|
+| Compiler | zig 0.17 (`toolchain/zig`), as `toolchain/bin/zig-cc` / `zig-c++` / `zig-ar` / `zig-ranlib` | `-target x86_64-linux-gnu.2.35`: the exe needs GLIBC_2.35 at most (SteamOS 3.8 has 2.41); libc++ is linked statically, so the exe's NEEDED are libSDL3, libm, libc |
+| CMake, Ninja, Python | Kitware's and ninja's Linux builds, python-build-standalone 3.13 | `setup.py` runs with `toolchain/python/bin/python3` |
+| XenonRecomp | built by the same zig (`-include cstdlib`, like llvm-mingw) | |
+| FFmpeg | BtbN's `linux64-lgpl-shared-8.1` (glibc 2.28): `libavcodec.so.62`, `libavutil.so.60`, `libswresample.so.6` next to the exe | they have no rpath: `audio/ffmpeg.cpp` loads avutil, then swresample, then avcodec by path |
+| DXC | Microsoft's `linux_dxc_*.tar.gz`: `libdxcompiler.so` next to the exe | needs GLIBC_2.38, libstdc++ and libz (SteamOS has them) |
+| SDL3 | Steam Runtime 3 (`libsdl3-0` / `libsdl3-dev` 3.4.18 .debs from repo.steampowered.com, unpacked in Python): headers + the library to link against | not shipped next to the exe: Valve's build links X11, Wayland, PulseAudio, libdecor... directly, which a bare SteamOS may lack. At run time the game uses the SDL3 Steam provides to what it starts (or the system's). Valve's pool keeps only the current version, so the installer must carry the .debs |
+| FreeType, fontconfig | FreeType 2.14.3's headers (signature checked); the libraries are loaded with dlopen | `platform/text_canvas_posix.cpp` declares fontconfig's few calls itself |
+
+Measured on a 16-thread desktop: XenonRecomp + the recompilation + the game's build from scratch in
+about one minute (56-77 s). The exe gets `$ORIGIN` as **RUNPATH**: zig's linker ignores `--disable-new-dtags`, so it
+comes after `LD_LIBRARY_PATH` and doesn't reach dlopen'ed libraries' dependencies (hence the FFmpeg
+load order). `-Wl,-Map` is refused by zig's driver: CMake adds the map only when `check_linker_flag`
+accepts it.
+
+Still to do for the Deck: run it on one (build time on 4 Zen 2 cores, Game Mode / Gamescope, Steam
+Input); our own SDL3 with every backend loaded at run time (built once at release time, against the
+Steam Runtime 3 sysroot), shipped next to the exe; the installer.
 
 ## x86-only code (for an ARM64 / Android build)
 

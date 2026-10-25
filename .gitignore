@@ -46,6 +46,10 @@
 /thirdparty/fsr/Kits/
 /thirdparty/fsr/include/
 /thirdparty/dxc/bin/
+# Linux (tools/setup.py): FFmpeg .so files, FreeType headers, SDL3 from the Steam Runtime
+/thirdparty/ffmpeg/lib/
+/thirdparty/freetype/
+/thirdparty/sdl3/
 
 # Machine-specific settings of the tools (tools/buildenv.py)
 /config/local.toml

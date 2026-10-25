@@ -99,21 +99,45 @@ if (WIN32)
     target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
         hid setupapi windowscodecs)
 else()
-    find_package(SDL3 REQUIRED CONFIG)
+    # SDL3: thirdparty/sdl3 (setup.py: the Steam Runtime 3's headers and library, what a Steam Deck
+    # builds with, having no SDL headers), else the system's.
+    set(CRASH_SDL3_DIR ${CMAKE_SOURCE_DIR}/thirdparty/sdl3)
+    if (EXISTS ${CRASH_SDL3_DIR}/include/SDL3/SDL.h AND EXISTS ${CRASH_SDL3_DIR}/lib/libSDL3.so.0)
+        add_library(SDL3::SDL3 SHARED IMPORTED)
+        set_target_properties(SDL3::SDL3 PROPERTIES IMPORTED_LOCATION ${CRASH_SDL3_DIR}/lib/libSDL3.so.0
+            IMPORTED_SONAME libSDL3.so.0 INTERFACE_INCLUDE_DIRECTORIES ${CRASH_SDL3_DIR}/include)
+    else()
+        find_package(SDL3 REQUIRED CONFIG)
+    endif()
     find_package(Threads REQUIRED)
     target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage SDL3::SDL3 Threads::Threads ${CMAKE_DL_LIBS})
+    # The .so files next to the exe (FFmpeg's, DXC, an SDL3 shipped with the game): $ORIGIN. DT_RPATH
+    # where the linker honours --disable-new-dtags; zig's writes RUNPATH, which comes after the
+    # LD_LIBRARY_PATH Steam sets and doesn't reach dlopen'ed libraries' dependencies (audio/ffmpeg.cpp
+    # loads libswresample itself for that).
+    # Only that: CMake's own build rpath (thirdparty/sdl3/lib) would put the Steam Runtime's libSDL3,
+    # linked against libraries a bare SteamOS may lack, before Steam's and the system's.
+    target_link_options(CrashRecomp PRIVATE "-Wl,-rpath,\$ORIGIN" -Wl,--disable-new-dtags)
+    set_target_properties(CrashRecomp PROPERTIES SKIP_BUILD_RPATH ON)
     target_include_directories(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/thirdparty/stb)  # PNG (platform/image_posix.cpp)
-    # Text of the developer console and the subtitles (platform/text_canvas_posix.cpp); without them
-    # those overlays are not drawn.
-    find_package(PkgConfig)
-    if (PkgConfig_FOUND)
-        pkg_check_modules(CRASH_TEXT IMPORTED_TARGET freetype2 fontconfig)
+    # Text of the developer console and the subtitles (platform/text_canvas_posix.cpp): FreeType's
+    # headers only (libfreetype / libfontconfig are loaded at run time): thirdparty/freetype (setup.py,
+    # what a Steam Deck builds with), else the system's. Without them those overlays are not drawn.
+    set(CRASH_FREETYPE_INCLUDE "")
+    if (EXISTS ${CMAKE_SOURCE_DIR}/thirdparty/freetype/include/ft2build.h)
+        set(CRASH_FREETYPE_INCLUDE ${CMAKE_SOURCE_DIR}/thirdparty/freetype/include)
+    else()
+        find_package(PkgConfig)
+        if (PkgConfig_FOUND)
+            pkg_check_modules(CRASH_SYSTEM_FREETYPE freetype2)
+            set(CRASH_FREETYPE_INCLUDE ${CRASH_SYSTEM_FREETYPE_INCLUDE_DIRS})
+        endif()
     endif()
-    if (CRASH_TEXT_FOUND)
-        target_link_libraries(CrashRecomp PRIVATE PkgConfig::CRASH_TEXT)
+    if (CRASH_FREETYPE_INCLUDE)
+        target_include_directories(CrashRecomp PRIVATE ${CRASH_FREETYPE_INCLUDE})
         target_compile_definitions(CrashRecomp PRIVATE CRASH_HAVE_FREETYPE=1)
     else()
-        message(STATUS "freetype2 / fontconfig not found: no developer console or subtitles text")
+        message(STATUS "FreeType headers not found: no developer console or subtitles text")
     endif()
 endif()
 target_compile_options(CrashRecomp PRIVATE ${CRASH_COMPILE_OPTIONS})
@@ -129,7 +153,13 @@ if (MINGW)
 elseif (WIN32)
     target_link_options(CrashRecomp PRIVATE /MAP /DEBUG /OPT:REF /OPT:ICF)  # /DEBUG alone turns REF/ICF off
 else()
-    target_link_options(CrashRecomp PRIVATE -Wl,-Map=$<TARGET_FILE_DIR:CrashRecomp>/CrashRecomp.map -Wl,--gc-sections)
+    target_link_options(CrashRecomp PRIVATE -Wl,--gc-sections)
+    # The map file where the linker takes it (zig's driver refuses -Map: the Steam Deck build has none).
+    include(CheckLinkerFlag)
+    check_linker_flag(CXX "-Wl,-Map=${CMAKE_BINARY_DIR}/check.map" CRASH_LINKER_MAP)
+    if (CRASH_LINKER_MAP)
+        target_link_options(CrashRecomp PRIVATE -Wl,-Map=$<TARGET_FILE_DIR:CrashRecomp>/CrashRecomp.map)
+    endif()
 endif()
 target_compile_definitions(CrashRecomp PRIVATE
     NOMINMAX

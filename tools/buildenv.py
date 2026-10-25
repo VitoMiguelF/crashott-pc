@@ -21,10 +21,15 @@
 
 A build folder remembers which toolchain configured it (.crashrecomp_toolchain): switching toolchains
 reconfigures it from scratch (configure_build).
+
+On Linux (the Steam Deck first) "bundled" is toolchain/ with zig as the compiler (toolchain/bin/zig-cc,
+zig-c++, zig-ar, zig-ranlib) and "system" is clang / cmake / ninja from PATH (a development machine).
+There are no .cmd scripts there: build_env() is the environment and build_commands() the commands.
 """
 import os
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -32,7 +37,8 @@ import toolchain as portable
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL = ROOT / "config" / "local.toml"
-TOOLCHAINS = ("bundled", "msvc")
+WINDOWS = portable.WINDOWS
+TOOLCHAINS = ("bundled", "msvc") if WINDOWS else ("bundled", "system")
 # (msvc) Usual install folders, added after the ones from local.toml (all of them only if they exist).
 DEFAULT_PATH_PREPEND = [
     "%ProgramFiles%/LLVM/bin",
@@ -141,6 +147,20 @@ def vcvars():
     return None
 
 
+def build_env(kind=None):
+    """(POSIX) The environment the builds run in: this one with the toolchain's folders first on PATH.
+    Raises SystemExit when the bundled toolchain is missing."""
+    kind = kind or toolchain_kind()
+    if kind == "bundled":
+        gaps = portable.missing(parts=portable.BUILD_PARTS)
+        if gaps:
+            raise SystemExit(f"toolchain/ incompleta (falta {', '.join(gaps)}): use o instalador ou rode "
+                             "python3 tools/toolchain.py fetch")
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join([str(p) for p in path_prepend(kind)] + [env.get("PATH", "")])
+    return env
+
+
 def cmd_prelude(kind=None):
     """The first lines of a .cmd script that builds: PATH (+ vcvars64 for msvc). Raises SystemExit
     when the toolchain is missing."""
@@ -162,10 +182,25 @@ def cmd_prelude(kind=None):
 def compilers(kind=None):
     """(C compiler, C++ compiler) for CMake."""
     kind = kind or toolchain_kind()
+    if kind == "bundled" and not WINDOWS:
+        bin_dir = portable.TOOLCHAIN / "bin"
+        return (bin_dir / "zig-cc").as_posix(), (bin_dir / "zig-c++").as_posix()
     if kind == "bundled":
         bin_dir = portable.TOOLCHAIN / "llvm-mingw" / "bin"
         return (bin_dir / "clang.exe").as_posix(), (bin_dir / "clang++.exe").as_posix()
+    if kind == "system":
+        return "clang", "clang++"
     return "clang-cl", "clang-cl"
+
+
+def toolchain_flags(kind=None):
+    """CMake options a toolchain needs besides the compilers: zig's archiver (CMake would look for ar /
+    ranlib, which a Steam Deck doesn't have)."""
+    kind = kind or toolchain_kind()
+    if kind == "bundled" and not WINDOWS:
+        bin_dir = portable.TOOLCHAIN / "bin"
+        return [f"-DCMAKE_AR={(bin_dir / 'zig-ar').as_posix()}", f"-DCMAKE_RANLIB={(bin_dir / 'zig-ranlib').as_posix()}"]
+    return []
 
 
 def configure_build(src, build, extra=(), kind=None):
@@ -176,17 +211,21 @@ def configure_build(src, build, extra=(), kind=None):
     build = Path(build)
     stamp = build / ".crashrecomp_toolchain"
     configured = stamp.read_text().strip() if stamp.is_file() else ("msvc" if (build / "CMakeCache.txt").is_file() else None)
-    if configured == kind and (build / "build.ninja").is_file():
+    if not WINDOWS:
+        kind_stamp = f"{kind} {sys.platform}"  # a build/ copied from Windows says just "bundled"
+    else:
+        kind_stamp = kind
+    if configured == kind_stamp and (build / "build.ninja").is_file():
         return None
-    if configured != kind:
+    if configured != kind_stamp:
         (build / "CMakeCache.txt").unlink(missing_ok=True)
         shutil.rmtree(build / "CMakeFiles", ignore_errors=True)
         (build / "build.ninja").unlink(missing_ok=True)
     build.mkdir(parents=True, exist_ok=True)
-    stamp.write_text(kind + "\n")
+    stamp.write_text(kind_stamp + "\n")
     cc, cxx = compilers(kind)
     return ["cmake", "-S", str(src), "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-            f"-DCMAKE_C_COMPILER={cc}", f"-DCMAKE_CXX_COMPILER={cxx}", *extra]
+            f"-DCMAKE_C_COMPILER={cc}", f"-DCMAKE_CXX_COMPILER={cxx}", *toolchain_flags(kind), *extra]
 
 
 def build_lines(src, build, target=None, extra=(), kind=None):
@@ -199,11 +238,18 @@ def build_lines(src, build, target=None, extra=(), kind=None):
     return lines
 
 
+def build_commands(src, build, target=None, extra=(), kind=None):
+    """(POSIX) The commands (argv lists, run in build_env()) that configure src -> build when needed,
+    then build it: build_lines without a .cmd script."""
+    configure = configure_build(src, build, extra, kind)
+    return ([configure] if configure else []) + [["cmake", "--build", str(build)] + (["--target", target] if target else [])]
+
+
 def which(name, kind=None):
     """A tool: the bundled toolchain's first (when it is the one in use), then PATH and the usual install folders."""
     kind = kind or toolchain_kind()
     folders = path_prepend(kind)
-    candidates = [shutil.which(name)] if kind == "msvc" else []
+    candidates = [shutil.which(name)] if kind in ("msvc", "system") else []
     for folder in folders:
         candidates += [str(folder / f"{name}{ext}") for ext in ("", ".exe")]
     if kind == "bundled":

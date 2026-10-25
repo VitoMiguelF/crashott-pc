@@ -7,6 +7,15 @@ The release zip already has it, so a player installs nothing and downloads no co
     toolchain\\ninja\\        Ninja
     toolchain\\python\\       the official embeddable Python, with numpy and Pillow in Lib\\site-packages
 
+On Linux (the Steam Deck first: a read-only SteamOS with no compiler and no package manager) the
+same idea with Linux archives:
+
+    toolchain/zig/      zig: clang + lld + glibc and libc++ headers for any glibc (x86_64-linux-gnu.2.35)
+    toolchain/bin/      zig-cc, zig-c++, zig-ar, zig-ranlib: zig with the target, as CMake's compilers
+    toolchain/cmake/    CMake (bin/cmake + share/cmake-*)
+    toolchain/ninja/    Ninja
+    toolchain/python/   python-build-standalone (bin/python3), relocatable
+
 A git clone gets the same folder, from the same pinned archives (checked by SHA-256), with
 
     python tools/toolchain.py fetch      # download + unpack + trim (~300 MB of downloads)
@@ -27,11 +36,18 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOLCHAIN = ROOT / "toolchain"
 DOWNLOADS = ROOT / "build" / "downloads" / "toolchain"
 
+WINDOWS = sys.platform == "win32"
 LLVM_MINGW = "20261006"
 CMAKE = "4.4.4"
 NINJA = "1.13.2"
 PYTHON = "3.13.17"
 PYTHON_TAG = "313"  # the wheels below are for this CPython (cp313-win_amd64)
+ZIG = "0.17.0"
+LINUX_PYTHON = "3.13.16"
+LINUX_PYTHON_BUILD = "20261009"  # python-build-standalone release
+# The glibc the Linux build links against: older than every SteamOS 3.x (3.8 has 2.41) and the
+# desktop distributions people play on; zig carries the headers and stubs of each version.
+ZIG_TARGET = "x86_64-linux-gnu.2.35"
 
 # name: (url, sha256, file name in build\downloads\toolchain)
 PINS = {
@@ -54,6 +70,24 @@ PINS = {
                "9dda0788a9932776a75d8bcc020076edc308ce2508b51f6739a45e3158b3fc42"),
 }
 
+# The Linux toolchain (name: (url, sha256)); the file keeps the URL's name in build/downloads/toolchain.
+LINUX_PINS = {
+    "zig": (f"https://ziglang.org/download/{ZIG}/zig-x86_64-linux-{ZIG}.tar.xz",
+            "1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026"),
+    "cmake": (f"https://github.com/Kitware/CMake/releases/download/v{CMAKE}/cmake-{CMAKE}-linux-x86_64.tar.gz",
+              "e5bb807f7728cb60cd8b27ebc97a2edb469b68655f21e844a600c3575b76f5bb"),
+    "ninja": (f"https://github.com/ninja-build/ninja/releases/download/v{NINJA}/ninja-linux.zip",
+              "5749cbc4e668273514150a80e387a957f933c6ed3f5f11e03fb30955e2bbead6"),
+    "ninja-license": PINS["ninja-license"],
+    "python": (f"https://github.com/astral-sh/python-build-standalone/releases/download/{LINUX_PYTHON_BUILD}/"
+               f"cpython-{LINUX_PYTHON}%2B{LINUX_PYTHON_BUILD}-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+               "24801ea31c7d406d559a17e2226325c723d50c56900b9c0da7b62adaae2affc9"),
+}
+# zig's tools as the commands CMake and the build scripts call (toolchain/bin): the target goes in
+# every compile and link, so the result needs only the glibc of ZIG_TARGET.
+ZIG_WRAPPERS = {"zig-cc": f"cc -target {ZIG_TARGET}", "zig-c++": f"c++ -target {ZIG_TARGET}",
+                "zig-ar": "ar", "zig-ranlib": "ranlib"}
+
 # What the release's toolchain keeps of llvm-mingw: only the x86-64 Windows target. The other
 # targets, lldb, clangd / clang-tidy and the sanitizer runtimes are removed (~740 -> ~330 MB).
 LLVM_REMOVE_DIRS = ["aarch64-w64-mingw32", "armv7-w64-mingw32", "i686-w64-mingw32", "arm64ec-w64-mingw32",
@@ -64,7 +98,7 @@ LLVM_REMOVE_BIN_PREFIXES = ("aarch64-", "armv7-", "i686-", "arm64ec-", "lldb", "
 LLVM_KEEP_RUNTIME = ("libclang_rt.builtins-x86_64.a",)  # lib\clang\<ver>\lib\windows
 
 # The files each part must have (also what `check` reports).
-REQUIRED = {
+WINDOWS_REQUIRED = {
     "llvm-mingw": ["llvm-mingw/bin/clang.exe", "llvm-mingw/bin/clang++.exe", "llvm-mingw/bin/ld.lld.exe",
                    "llvm-mingw/x86_64-w64-mingw32/lib/libd3d12.a"],
     "cmake": ["cmake/bin/cmake.exe"],
@@ -73,20 +107,29 @@ REQUIRED = {
     "numpy": ["python/Lib/site-packages/numpy/__init__.py"],
     "pillow": ["python/Lib/site-packages/PIL/__init__.py"],
 }
+LINUX_REQUIRED = {
+    "zig": ["zig/zig", "bin/zig-cc", "bin/zig-c++", "bin/zig-ar", "bin/zig-ranlib"],
+    "cmake": ["cmake/bin/cmake"],
+    "ninja": ["ninja/ninja"],
+    "python": ["python/bin/python3"],
+}
+REQUIRED = WINDOWS_REQUIRED if WINDOWS else LINUX_REQUIRED
 
 
 def bin_dirs(root=TOOLCHAIN):
     """The folders that go first on PATH, in order."""
+    if not WINDOWS:
+        return [root / "bin", root / "zig", root / "cmake" / "bin", root / "ninja", root / "python" / "bin"]
     return [root / "llvm-mingw" / "bin", root / "cmake" / "bin", root / "ninja", root / "python"]
 
 
 def python_exe(root=TOOLCHAIN):
-    return root / "python" / "python.exe"
+    return root / "python" / ("python.exe" if WINDOWS else "bin/python3")
 
 
 # What building needs (numpy and Pillow are only for the asset export: the installer adds them
 # only with ASSETS FOR MODDING).
-BUILD_PARTS = ("llvm-mingw", "cmake", "ninja", "python")
+BUILD_PARTS = ("llvm-mingw", "cmake", "ninja", "python") if WINDOWS else ("zig", "cmake", "ninja", "python")
 
 
 def missing(root=TOOLCHAIN, parts=None):
@@ -110,8 +153,9 @@ def sha256(path):
 
 
 def download(name):
-    url, digest = PINS[name]
-    dest = DOWNLOADS / (Path(url).name if name != "ninja" else f"ninja-{NINJA}-win.zip")
+    url, digest = (PINS if WINDOWS else LINUX_PINS)[name]
+    dest = DOWNLOADS / (Path(url).name.replace("%2B", "+") if name != "ninja" else
+                        f"ninja-{NINJA}-{'win' if WINDOWS else 'linux'}.zip")
     if name == "ninja-license":
         dest = DOWNLOADS / f"ninja-COPYING-v{NINJA}.txt"
     if dest.is_file() and sha256(dest) == digest:
@@ -147,6 +191,72 @@ def extract(archive, dest, strip_top=False):
             target.parent.mkdir(parents=True, exist_ok=True)
             with z.open(info) as src, open(target, "wb") as out:
                 shutil.copyfileobj(src, out)
+
+
+def extract_tar(archive, dest, strip_top=False):
+    """Unpacks a .tar.gz / .tar.xz into dest (a new folder), keeping the executable bits."""
+    import tarfile
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    with tarfile.open(archive) as t:
+        members = []
+        for member in t.getmembers():
+            if strip_top:
+                member.name = member.name.split("/", 1)[1] if "/" in member.name else ""
+            if not member.name:
+                continue
+            target = (dest / member.name).resolve()
+            if dest.resolve() not in target.parents:
+                raise SystemExit(f"{archive.name}: caminho inválido {member.name}")
+            members.append(member)
+        t.extractall(dest, members=members, filter="tar" if hasattr(tarfile, "tar_filter") else None)
+
+
+def write_zig_wrappers(root):
+    """toolchain/bin/zig-cc etc.: sh scripts that find zig next to them, so the folder can move."""
+    folder = root / "bin"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, command in ZIG_WRAPPERS.items():
+        path = folder / name
+        path.write_text(f'#!/bin/sh\nexec "$(dirname "$0")/../zig/zig" {command} "$@"\n', encoding="ascii")
+        path.chmod(0o755)
+
+
+def trim_cmake_linux(folder):
+    for f in (folder / "bin").iterdir():
+        if f.name != "cmake":
+            f.unlink()
+    for rel in ["man", "share/aclocal", "share/bash-completion", "share/emacs", "share/vim", "share/applications",
+                "share/icons", "share/mime"]:
+        if (folder / rel).is_dir():
+            shutil.rmtree(folder / rel)
+    for html in (folder / "doc").glob("*/html"):
+        shutil.rmtree(html)
+
+
+def fetch_linux(root=TOOLCHAIN):
+    root.mkdir(exist_ok=True)
+    work = root / "_unpack"
+    extract_tar(download("zig"), work / "zig", strip_top=True)
+    for rel in ["doc"]:
+        if (work / "zig" / rel).is_dir():
+            shutil.rmtree(work / "zig" / rel)
+    extract_tar(download("cmake"), work / "cmake", strip_top=True)
+    trim_cmake_linux(work / "cmake")
+    extract(download("ninja"), work / "ninja")
+    (work / "ninja" / "ninja").chmod(0o755)
+    shutil.copy2(download("ninja-license"), work / "ninja" / "COPYING.txt")
+    extract_tar(download("python"), work / "python", strip_top=True)
+    for part in ["zig", "cmake", "ninja", "python"]:
+        if (root / part).exists():
+            shutil.rmtree(root / part)
+        (work / part).rename(root / part)
+    shutil.rmtree(work)
+    write_zig_wrappers(root)
+    (root / "VERSIONS.txt").write_text(
+        f"zig {ZIG} (x86_64-linux, target {ZIG_TARGET})\ncmake {CMAKE}\nninja {NINJA}\n"
+        f"python {LINUX_PYTHON} (python-build-standalone {LINUX_PYTHON_BUILD})\n", encoding="ascii")
 
 
 def trim_llvm_mingw(folder):
@@ -190,6 +300,8 @@ def setup_python(folder, wheels):
 
 
 def fetch(root=TOOLCHAIN):
+    if not WINDOWS:
+        return fetch_linux(root)
     root.mkdir(exist_ok=True)
     work = root / "_unpack"
     extract(download("llvm-mingw"), work / "llvm-mingw", strip_top=True)
@@ -222,11 +334,11 @@ def main():
     if args.command == "fetch":
         fetch()
     gaps = missing()
-    for part in ["llvm-mingw", "cmake", "ninja", "python"]:
+    for part in BUILD_PARTS:
         folder = TOOLCHAIN / part
         size = f"{size_of(folder) / 1048576:.0f} MB" if folder.is_dir() else "-"
         print(f"{part:11} {size:>8}  {'falta' if part in gaps else 'ok'}")
-    for part in ["numpy", "pillow"]:
+    for part in [p for p in REQUIRED if p not in BUILD_PARTS]:
         print(f"{part:11} {'':>8}  {'falta' if part in gaps else 'ok'}")
     return 1 if gaps else 0
 

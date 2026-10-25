@@ -65,6 +65,8 @@ import buildenv  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "run.toml"
+WINDOWS = buildenv.WINDOWS
+EXE = ".exe" if WINDOWS else ""
 # Profiles recorded with F5 (runtime/kernel/input_record.cpp), one file each.
 RECORDED = ROOT / "config" / "recorded"
 
@@ -112,6 +114,8 @@ def load_config(path):
             profiles[name] = profile
     # The dump is machine-specific: config/local.toml or the player's settings.toml (tools/buildenv.py).
     paths = config.setdefault("paths", {})
+    if not WINDOWS and paths.get("exe", "").endswith(".exe"):
+        paths["exe"] = paths["exe"][:-4]  # run.toml names the Windows build: build/CrashRecomp
     if not paths.get("game"):
         game = buildenv.game_folder()
         if game is None:
@@ -276,6 +280,25 @@ def parse_events(text):
 
 def build(config, run_dir):
     b = config.get("build", {})
+    if not WINDOWS:
+        log_path = run_dir / "build.log"
+        try:
+            env = buildenv.build_env()
+            commands = buildenv.build_commands(ROOT, resolve(b.get("build_dir", "build")), b.get("target", "CrashRecomp"))
+        except SystemExit as error:
+            print(error)
+            return False
+        with open(log_path, "w", encoding="utf-8", errors="replace") as log:
+            for command in commands:
+                result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT, env=env)
+                if result.returncode != 0:
+                    break
+        if result.returncode != 0:
+            tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-25:]
+            print("\n".join(tail))
+            print(f"build falhou (código {result.returncode}); log completo em {log_path}")
+            return False
+        return True
     script = run_dir / "build.cmd"
     lines = ["@echo off", *buildenv.cmd_prelude(),
              *buildenv.build_lines(ROOT, resolve(b.get("build_dir", "build")), b.get("target", "CrashRecomp"))]
@@ -712,7 +735,7 @@ def main():
     if args.runs:
         config["paths"]["runs"] = args.runs
     if args.dist:
-        config["paths"]["exe"] = str(resolve(config["paths"].get("dist", "dist")) / "CrashRecomp.exe")
+        config["paths"]["exe"] = str(resolve(config["paths"].get("dist", "dist")) / ("CrashRecomp" + EXE))
         args.no_build = True
     if args.exe:
         config["paths"]["exe"] = args.exe
