@@ -1,9 +1,12 @@
 #include "settings.h"
 #include "../diagnostics.h"
 
+#include <windows.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -28,9 +31,65 @@ namespace settings
         // The game's languages, then the language packs (AddLanguage, only during startup).
         std::vector<Language> LANGUAGES(std::begin(GAME_LANGUAGES), std::end(GAME_LANGUAGES));
 
-        constexpr Resolution RESOLUTIONS[] = {
-            { "1280x720", 720 }, { "1600x900", 900 }, { "1920x1080", 1080 }, { "2560x1440", 1440 }, { "3840x2160", 2160 },
+        // The resolutions of each aspect (the usual monitor sizes; 21:9 monitors are 64:27 or 43:18).
+        const std::vector<Resolution> RESOLUTIONS_16_9 = {
+            { "1280x720", 1280, 720 }, { "1600x900", 1600, 900 }, { "1920x1080", 1920, 1080 }, { "2560x1440", 2560, 1440 }, { "3840x2160", 3840, 2160 },
         };
+        const std::vector<Resolution> RESOLUTIONS_16_10 = {
+            { "1280x800", 1280, 800 }, { "1440x900", 1440, 900 }, { "1680x1050", 1680, 1050 }, { "1920x1200", 1920, 1200 },
+            { "2560x1600", 2560, 1600 }, { "3840x2400", 3840, 2400 },
+        };
+        const std::vector<Resolution> RESOLUTIONS_21_9 = {
+            { "1720x720", 1720, 720 }, { "2560x1080", 2560, 1080 }, { "3440x1440", 3440, 1440 }, { "3840x1600", 3840, 1600 }, { "5120x2160", 5120, 2160 },
+        };
+        const std::vector<Resolution> RESOLUTIONS_32_9 = {
+            { "2560x720", 2560, 720 }, { "3840x1080", 3840, 1080 }, { "5120x1440", 5120, 1440 }, { "7680x2160", 7680, 2160 },
+        };
+        // Auto: the list of the monitor's aspect, plus the monitor's own resolution (AutoResolutions).
+        std::vector<Resolution> g_autoResolutions;
+        std::string g_monitorName;
+        std::once_flag g_autoOnce;
+
+        const std::vector<Resolution>& NamedResolutions(Aspect aspect)
+        {
+            switch (aspect)
+            {
+            case Aspect::R16_10: return RESOLUTIONS_16_10;
+            case Aspect::R21_9: return RESOLUTIONS_21_9;
+            case Aspect::R32_9: return RESOLUTIONS_32_9;
+            default: return RESOLUTIONS_16_9;
+            }
+        }
+
+        const std::vector<Resolution>& AutoResolutions()
+        {
+            std::call_once(g_autoOnce, [] {
+                g_autoResolutions = NamedResolutions(EffectiveAspect(Aspect::Auto));
+                int width, height;
+                MonitorSize(width, height);
+                bool listed = false;
+                for (const Resolution& resolution : g_autoResolutions)
+                    listed |= resolution.width == width && resolution.height == height;
+                if (!listed && width >= 640 && height >= 480)
+                {
+                    // A monitor of its own size (e.g. 1366x768, 3840x1600 is listed): its native
+                    // resolution replaces the entry of the same height, or goes in by height.
+                    g_monitorName = std::to_string(width) + "x" + std::to_string(height);
+                    Resolution native{ g_monitorName.c_str(), width, height };
+                    auto it = std::find_if(g_autoResolutions.begin(), g_autoResolutions.end(), [&](const Resolution& r) { return r.height >= height; });
+                    if (it != g_autoResolutions.end() && it->height == height)
+                        *it = native;
+                    else
+                        g_autoResolutions.insert(it, native);
+                }
+            });
+            return g_autoResolutions;
+        }
+
+        const std::vector<Resolution>& ResolutionList(Aspect aspect)
+        {
+            return aspect == Aspect::Auto ? AutoResolutions() : NamedResolutions(aspect);
+        }
 
         std::mutex g_mutex;
         Values g_values;
@@ -123,11 +182,29 @@ namespace settings
             }
             else if (name == "video.resolution")
             {
-                const Resolution* resolution = FindResolution(lower);
-                ok = resolution != nullptr;
+                // "WxH": the height; the width follows video.aspect (ResolutionOf).
+                int width = 0, height = 0;
+                ok = sscanf(lower.c_str(), "%dx%d", &width, &height) == 2 && height >= 480 && height <= 4320;
                 if (ok)
-                    values.renderHeight = resolution->height;
+                    values.renderHeight = height;
             }
+            else if (name == "video.aspect")
+            {
+                if (lower == "auto")
+                    values.aspect = Aspect::Auto;
+                else if (lower == "16:9")
+                    values.aspect = Aspect::R16_9;
+                else if (lower == "16:10")
+                    values.aspect = Aspect::R16_10;
+                else if (lower == "21:9")
+                    values.aspect = Aspect::R21_9;
+                else if (lower == "32:9")
+                    values.aspect = Aspect::R32_9;
+                else
+                    ok = false;
+            }
+            else if (name == "video.hud_16_9")
+                ok = ParseBool(lower, values.hud16x9);
             else if (name == "video.overlay")
                 ok = ParseOverlayMode(lower, values.overlay);
             else if (name == "video.show_fps")  // before the overlay modes
@@ -326,7 +403,9 @@ namespace settings
                    "window = \"" << WindowModeName(v.window) << "\"   # windowed | borderless | fullscreen\n"
                    "vsync = " << (v.vsync ? "true" : "false") << "\n"
                    "fps_limit = " << v.fpsLimit << "   # 30 (original) | 60 | 120 | 0 = sem limite\n"
-                   "resolution = \"" << ResolutionOf(v.renderHeight).name << "\"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160 (vale ao sair da tela SETTINGS)\n"
+                   "resolution = \"" << ResolutionOf(v.aspect, v.renderHeight).name << "\"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160; 21:9 2560x1080 | 3440x1440...; 32:9 5120x1440...; 16:10 1280x800... (a largura segue aspect; vale ao sair da tela SETTINGS)\n"
+                   "aspect = \"" << AspectName(v.aspect) << "\"   # auto (o do monitor) | 16:9 (original) | 16:10 | 21:9 | 32:9: telas mais largas veem mais dos lados (vale ao sair da tela SETTINGS)\n"
+                   "hud_16_9 = " << (v.hud16x9 ? "true" : "false") << "   # HUD e menus na area 16:9 do meio; false = cantos do HUD nas bordas da tela (vale na hora)\n"
                    "overlay = \"" << OverlayModeName(v.overlay) << "\"   # off | fps | frametime | full (F1 alterna)\n"
                    "antialiasing = \"" << AntiAliasingName(v.antiAliasing) << "\"   # off | fxaa | smaa (pos-processamento da imagem final)\n"
                    "gpu_safe_mode = \"" << v.gpuSafeMode << "\"   # off | on | lista: barriers, instances, serial, memory, depth, present, cache (telas pretas em alguns drivers; ao reiniciar)\n"
@@ -401,35 +480,78 @@ namespace settings
         return LANGUAGES[0];
     }
 
-    const Resolution* Resolutions(size_t& count)
+    const Resolution* Resolutions(Aspect aspect, size_t& count)
     {
-        count = std::size(RESOLUTIONS);
-        return RESOLUTIONS;
+        const std::vector<Resolution>& list = ResolutionList(aspect);
+        count = list.size();
+        return list.data();
     }
 
-    const Resolution* FindResolution(const std::string& name)
+    const Resolution& ResolutionOf(Aspect aspect, int height)
     {
-        for (const Resolution& resolution : RESOLUTIONS)
+        const std::vector<Resolution>& list = ResolutionList(aspect);
+        const Resolution* best = &list[0];
+        for (const Resolution& resolution : list)
         {
-            if (name == resolution.name)
-                return &resolution;
+            if (std::abs(resolution.height - height) < std::abs(best->height - height))
+                best = &resolution;
         }
-        return nullptr;
+        return *best;
     }
 
-    const Resolution& ResolutionOf(int height)
+    void MonitorSize(int& width, int& height)
     {
-        for (const Resolution& resolution : RESOLUTIONS)
+        static int cachedWidth = 0, cachedHeight = 0;
+        if (!cachedWidth)
         {
-            if (height == resolution.height)
-                return resolution;
+            const char* forced = getenv("CRASH_MONITOR");
+            if (!forced || sscanf(forced, "%dx%d", &cachedWidth, &cachedHeight) != 2 || cachedWidth <= 0 || cachedHeight <= 0)
+            {
+                // The primary monitor's mode in physical pixels (not DPI scaled).
+                DEVMODEW mode{};
+                mode.dmSize = sizeof(mode);
+                if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmPelsWidth && mode.dmPelsHeight)
+                    cachedWidth = int(mode.dmPelsWidth), cachedHeight = int(mode.dmPelsHeight);
+                else
+                    cachedWidth = 1920, cachedHeight = 1080;
+            }
         }
-        return RESOLUTIONS[0];
+        width = cachedWidth;
+        height = cachedHeight;
+    }
+
+    Aspect EffectiveAspect(Aspect aspect)
+    {
+        if (aspect != Aspect::Auto)
+            return aspect;
+        int width, height;
+        MonitorSize(width, height);
+        float ratio = float(width) / float(height);
+        // Between the aspects: 16:10 1.6, 16:9 1.78, 21:9 2.37-2.4, 32:9 3.56.
+        return ratio < 1.69f ? Aspect::R16_10 : ratio < 2.05f ? Aspect::R16_9 : ratio < 2.9f ? Aspect::R21_9 : Aspect::R32_9;
+    }
+
+    const char* AspectName(Aspect aspect)
+    {
+        switch (aspect)
+        {
+        case Aspect::R16_9: return "16:9";
+        case Aspect::R16_10: return "16:10";
+        case Aspect::R21_9: return "21:9";
+        case Aspect::R32_9: return "32:9";
+        default: return "auto";
+        }
     }
 
     float RenderScale()
     {
-        return float(ResolutionOf(g_startup.renderHeight).height) / 720.0f;
+        return float(ResolutionOf(g_startup.aspect, g_startup.renderHeight).height) / 720.0f;
+    }
+
+    float RenderAspect()
+    {
+        const Resolution& resolution = ResolutionOf(g_startup.aspect, g_startup.renderHeight);
+        return float(resolution.width) / float(resolution.height);
     }
 
     const char* WindowModeName(WindowMode mode)
@@ -597,7 +719,7 @@ namespace settings
         g_values = g_startup = values;
         Log("[settings] audio %d/%d/%d/%d, window %s, vsync %s, fps limit %d, resolution %s, overlay %s, aa %s, language %s, mojo colors %s", values.masterVolume,
             values.musicVolume, values.effectsVolume, values.voiceVolume, WindowModeName(values.window), values.vsync ? "on" : "off",
-            values.fpsLimit, ResolutionOf(values.renderHeight).name,
+            values.fpsLimit, ResolutionOf(values.aspect, values.renderHeight).name,
             OverlayModeName(values.overlay), AntiAliasingName(values.antiAliasing), values.language.c_str(),
             values.ps2MojoColors ? "ps2" : "xbox360");
         Log("[settings] graphics: upscaler %s (%s), sharpness %d%%, motion blur %d%%, depth of field %d%%, anisotropic %dx, shadow softness %d%%, "
@@ -690,13 +812,16 @@ namespace settings
     bool RendererDiffers(const Values& v)
     {
         const Values& now = g_startup;
-        return v.renderHeight != now.renderHeight || v.upscaler != now.upscaler ||
+        const Resolution& wanted = ResolutionOf(v.aspect, v.renderHeight);
+        const Resolution& current = ResolutionOf(now.aspect, now.renderHeight);
+        return wanted.width != current.width || wanted.height != current.height || v.upscaler != now.upscaler ||
                (v.upscaler != Upscaler::Off && v.upscalerQuality != now.upscalerQuality);
     }
 
-    void RendererApplied(int renderHeight, Upscaler upscaler, UpscalerQuality quality)
+    void RendererApplied(int renderHeight, Aspect aspect, Upscaler upscaler, UpscalerQuality quality)
     {
         g_startup.renderHeight = renderHeight;
+        g_startup.aspect = aspect;
         g_startup.upscaler = upscaler;
         g_startup.upscalerQuality = quality;
     }

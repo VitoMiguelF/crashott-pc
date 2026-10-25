@@ -7,7 +7,9 @@
 //   [audio]   master, music, effects, voice = 0..100 (%)
 //   [video]   window = "windowed" | "borderless" | "fullscreen", vsync = true|false,
 //             fps_limit = 30 | 60 | 120 | 0 (no limit), resolution = "1280x720" | "1600x900" |
-//             "1920x1080" | "2560x1440" | "3840x2160" (internal),
+//             "1920x1080" | "2560x1440" | "3840x2160" | the other aspects' (internal),
+//             aspect = "auto" | "16:9" | "16:10" | "21:9" | "32:9", hud_16_9 = true|false
+//             (gpu/widescreen.h),
 //             overlay = "off" | "fps" | "frametime" | "full" (show_fps = true|false still read),
 //             antialiasing = "off" | "fxaa" | "smaa", gpu_safe_mode = "off" | "on" | a list (gpu/rhi.h
 //             SafeMode), gpu_diagnostics = true|false (on the next launch)
@@ -86,18 +88,31 @@ namespace settings
     // Adds a language pack (LoadLanguagePacks, before Load); false if the id is taken.
     bool AddLanguage(const Language& language);
 
+    // Aspect ratio of the picture (video.aspect): the game is laid out for 16:9; wider screens
+    // see more to the sides (Hor+, camera/hor_plus.cpp), 16:10 a little more above and below,
+    // and the HUD stays in a 16:9 area (gpu/widescreen.h). Auto: the monitor's.
+    enum class Aspect : uint8_t { Auto, R16_9, R16_10, R21_9, R32_9 };
+
     // Internal render resolutions: the game draws 1280x720, the renderer scales its render targets
-    // and resolves by height / 720.
+    // and resolves by height / 720 (and, for another aspect than 16:9, wider or narrower; see
+    // gpu/widescreen.h). The list depends on the aspect.
     struct Resolution
     {
         const char* name;  // "1920x1080"
+        int width;
         int height;
     };
-    const Resolution* Resolutions(size_t& count);
-    const Resolution* FindResolution(const std::string& name);  // nullptr if not in the list
-    const Resolution& ResolutionOf(int height);                  // 1280x720 if not in the list
-    // The internal resolution scale chosen at startup (1, 1.25, 1.5, 2 or 3).
+    // The resolutions of `aspect` (Auto: the monitor's, with its native resolution), by height.
+    const Resolution* Resolutions(Aspect aspect, size_t& count);
+    // The resolution of `aspect` with `height`, or the nearest height in its list.
+    const Resolution& ResolutionOf(Aspect aspect, int height);
+    // The aspect that Auto stands for (the monitor's, the closest of the others).
+    Aspect EffectiveAspect(Aspect aspect);
+    // The primary monitor's resolution (CRASH_MONITOR=WxH overrides it, for tests).
+    void MonitorSize(int& width, int& height);
+    // The internal resolution scale chosen at startup (1, 1.25, 1.5, 2 or 3), and its width / height.
     float RenderScale();
+    float RenderAspect();
 
     struct Values
     {
@@ -108,7 +123,9 @@ namespace settings
         WindowMode window = WindowMode::Windowed;
         bool vsync = false;  // off = as before (Present without waiting for the vblank)
         int fpsLimit = 30;   // 30 (the original), 60, 120 or 0 = no limit (gpu::SetFrameLimit)
-        int renderHeight = 720;  // internal resolution (Resolutions())
+        int renderHeight = 720;  // internal resolution (Resolutions(aspect)), with `aspect`
+        Aspect aspect = Aspect::Auto;
+        bool hud16x9 = true;      // video.hud_16_9: the HUD and menus in the middle 16:9 area (else the HUD corners at the screen's edges)
         OverlayMode overlay = OverlayMode::Off;
         AntiAliasing antiAliasing = AntiAliasing::Off;
         // gpu_safe_mode: "off", "on" or a list of the renderer's conservative paths (gpu/rhi.h
@@ -181,8 +198,8 @@ namespace settings
     bool NeedsRestart(const Values& values);
     // The renderer's options of `values` differ from the ones in effect (resolution, upscaler, quality).
     bool RendererDiffers(const Values& values);
-    // The renderer applied these resolution / upscaler / quality (render thread).
-    void RendererApplied(int renderHeight, Upscaler upscaler, UpscalerQuality quality);
+    // The renderer applied these resolution / aspect / upscaler / quality (render thread).
+    void RendererApplied(int renderHeight, Aspect aspect, Upscaler upscaler, UpscalerQuality quality);
 
     // Restarting the game (restart.cpp), for the options it reads at boot. CRASH_RESTART:
     // "relaunch" (default: a new process with the same arguments, environment and folder, then
@@ -230,6 +247,7 @@ namespace settings
     void EnableHdRemaster();
 
     const char* WindowModeName(WindowMode mode);
+    const char* AspectName(Aspect aspect);                        // "auto", "16:9", "16:10", "21:9", "32:9"
     const char* AntiAliasingName(AntiAliasing mode);
     const char* UpscalerName(Upscaler upscaler);                  // "off", "dlss", "fsr"
     const char* UpscalerQualityName(UpscalerQuality quality);     // "native", "quality", ...

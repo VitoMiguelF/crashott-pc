@@ -19,7 +19,7 @@ namespace settings::options
     enum class Item
     {
         Master, Music, Effects, Voice,
-        Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay,
+        Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay, Aspect, Hud16x9,
         Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, HdRemaster,
         Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Storage,
         Subtitles, SubtitleSize, SubtitleBackground,
@@ -47,7 +47,7 @@ namespace settings::options
 
     // The tabs, switched with LB / RB; both screens open on the first. The `configuracoes*`,
     // `controles_tela` and `iluminacao_tela` profiles of config/run.toml rely on the order: GAME
-    // (LANGUAGE, CO-OP, ...), AUDIO, VIDEO (RESOLUTION 2nd row, ANTI-ALIASING 5th), GRAPHICS
+    // (LANGUAGE, CO-OP, ...), AUDIO, VIDEO (RESOLUTION 2nd row, ANTI-ALIASING 5th, ASPECT 7th), GRAPHICS
     // (DLSS / FSR first), CONTROLS, DEFINITIVE EDITION (the port's own extras). DOWN skips the
     // sub-group headings.
     struct Tab

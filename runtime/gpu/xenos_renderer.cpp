@@ -35,6 +35,7 @@
 #include "overlay.h"
 #include "png_writer.h"
 #include "texture_decode.h"
+#include "widescreen.h"
 #include "window.h"
 #include "xenos.h"
 #include "../diagnostics.h"
@@ -90,6 +91,10 @@ namespace gpu::renderer
         // and the HUD use 1x targets), so render targets first used with 2x/4x MSAA get this scale,
         // and resolve targets get one surface per scale they are resolved at.
         float g_sceneScale = 1.0f;
+        // Wide screens (widescreen.h): host x per guest x is the scale times this (Aspect / 16:9);
+        // the scales above are per guest y. 1 at 16:9.
+        float g_stretch = 1.0f;
+        float XScale(float scale) { return scale * g_stretch; }
 
         uint32_t ScaledSize(uint32_t value, float scale) { return uint32_t(ceilf(float(value) * scale)); }
         int32_t ScaledFloor(float value, float scale) { return int32_t(floorf(value * scale + 0.001f)); }
@@ -113,8 +118,8 @@ namespace gpu::renderer
             uint32_t texSwizzles[32];
             float texLodBias[32];
             // Read only by shaders translated at an internal resolution above 720p.
-            float renderScale[4];      // x: guest pixels per host pixel
-            float texSizeScale[32];    // guest texels per host texel
+            float renderScale[4];      // xy: guest pixels per host pixel
+            float texSizeScale[64];    // xy per fetch constant: guest texels per host texel
         };
 
         enum SystemFlags : uint32_t
@@ -365,6 +370,7 @@ namespace gpu::renderer
         graphics::EffectConstants g_effects;
         int g_anisotropy = 1;
         rhi::Shader* g_rectListGs = nullptr;
+        rhi::Shader* g_hudGs = nullptr;  // HUD_GS (wide screens)
         rhi::Shader* g_depthAliasPs = nullptr;
         std::unordered_map<uint32_t, rhi::Pipeline*> g_resolvePipelines;  // by DXGI format
         rhi::Pipeline* g_resolveDepthPackedPipeline = nullptr;
@@ -531,6 +537,85 @@ void main(triangle XeVertexOutput input[3], inout TriangleStream<XeVertexOutput>
     stream.Append(input[a]);
     stream.Append(input[b]);
     stream.Append(Combine(input[a], input[b], input[c]));
+}
+)";
+
+        // Wide screens: the 2D triangles of the screen back into the middle 16:9 area (see
+        // HudTransform). Per triangle, so an element touching an edge moves in whole: only a
+        // triangle that spans the screen's width (fades, full-screen passes, backgrounds, bars)
+        // keeps its x at the edges, and a background (one that spans both ways, or a big one past
+        // an edge: the frontend's background sprites) zooms to fill the screen.
+        // xe_hud as in shader_translator.cpp (mode 2: fill, 4: just scaled, 8: anchored corners).
+        const char* HUD_GS = R"(
+cbuffer xe_effects : register(b3)
+{
+    float4 xe_effect;
+    float4 xe_jitter;
+    float4 xe_hud;
+    float4 xe_hud_target;
+};
+
+struct XeVertexOutput
+{
+    float4 interpolators[16] : TEXCOORD0;
+    float4 position : SV_Position;
+};
+
+[maxvertexcount(3)]
+void main(triangle XeVertexOutput input[3], inout TriangleStream<XeVertexOutput> stream)
+{
+    uint mode = uint(xe_hud.z + 0.5);
+    // W = 1: the game's own 2D, laid out for the whole 16:9 screen. Another W, the same on the three
+    // vertices: 2D drawn through a pure3d camera (the frontend's sprites, 640x480 at W = 0.5), which
+    // camera/hor_plus.cpp already put into the middle 16:9 area.
+    float w = input[0].position.w;
+    bool flat = w > 0.0 && abs(input[1].position.w - w) <= 1e-5 * w && abs(input[2].position.w - w) <= 1e-5 * w;
+    bool projected = flat && abs(w - 1.0) > 1e-5;
+    float2 px[3];
+    [unroll] for (uint i = 0; i < 3u; i++)
+    {
+        float2 ndc = input[i].position.xy / w;
+        px[i] = float2((ndc.x + 1.0) * 0.5 * xe_hud_target.x, (1.0 - ndc.y) * 0.5 * xe_hud_target.y);
+    }
+    float2 centre = xe_hud_target.zw * 0.5;
+    // The area the layout covers: the screen, or its middle 16:9 area for projected 2D.
+    float2 half = projected ? centre * min(xe_hud.xy, 1.0) : centre;
+    float2 lo = min(px[0], min(px[1], px[2])), hi = max(px[0], max(px[1], px[2]));
+    bool2 full = lo <= centre - half + 2.0 && hi >= centre + half - 2.0;
+    // A background: a triangle that spans the area both ways, or a big one that goes past its
+    // edges (the frontend's backgrounds are large sprites hanging out of the screen).
+    float2 extent = hi - lo;
+    bool past = any(lo < centre - half - 2.0) || any(hi > centre + half + 2.0);
+    bool background = (full.x && full.y) || (past && (extent.x > half.x * 0.5 || extent.y > half.y * 0.5));
+    float boxCentre = (lo.x + hi.x) * 0.5 - centre.x;
+    [unroll] for (uint j = 0; j < 3u; j++)
+    {
+        XeVertexOutput v = input[j];
+        if (flat)
+        {
+            float2 d = px[j] - centre;
+            float2 result = px[j];
+            if (projected)
+            {
+                // Already in place; a background zooms (keeping its aspect) to fill the screen.
+                if ((mode & 2u) && !(mode & 4u) && background) result = centre + d / min(xe_hud.x, xe_hud.y);
+            }
+            else
+            {
+                result = centre + d * xe_hud.xy;
+                if (!(mode & 4u))
+                {
+                    if ((mode & 8u) && !full.x && abs(boxCentre) > xe_hud_target.z / 6.0)
+                        result.x += sign(boxCentre) * xe_hud.w;
+                    if (full.x) result.x = px[j].x;
+                    if (full.y) result.y = px[j].y;
+                    if ((mode & 2u) && full.x && full.y) result = centre + d * float2(1.0 / xe_hud.y, 1.0 / xe_hud.x);
+                }
+            }
+            v.position.xy = float2(result.x / xe_hud_target.x * 2.0 - 1.0, 1.0 - result.y / xe_hud_target.y * 2.0) * w;
+        }
+        stream.Append(v);
+    }
 }
 )";
 
@@ -779,7 +864,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             uint32_t format = target.guestFormat;
             DestroyTexture(target.texture);
             target.scale = target.IsScene() ? g_sceneScale : g_renderScale;
-            target.hostWidth = ScaledSize(target.width, target.scale);
+            target.hostWidth = ScaledSize(target.width, XScale(target.scale));
             target.hostHeight = ScaledSize(target.height, target.scale);
 
             if (isDepth)
@@ -918,7 +1003,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             if (surface.texture)
                 return surface;
             surface.scale = scale;
-            surface.hostWidth = ScaledSize(target.width, scale);
+            surface.hostWidth = ScaledSize(target.width, XScale(scale));
             surface.hostHeight = ScaledSize(target.height, scale);
             surface.texture = CreateTexture(surface.hostWidth, surface.hostHeight, 1, target.format, rhi::USAGE_SAMPLED | rhi::USAGE_RENDER_TARGET,
                                             "resolve target");
@@ -1467,6 +1552,93 @@ float4 main(float4 position : SV_Position) : SV_Target
             return rhi::Rect{ x0, y0, x1, y1 };
         }
 
+        // Wide screens (widescreen.h) -----------------------------------------------------------
+        //
+        // The host targets are g_stretch times wider than the guest's 16:9, so the game's 2D (laid
+        // out in 1280x720) would be stretched. Draws of 2D (W = 1, checked in the vertex shader)
+        // into the screen's 1x targets (1280 wide) are put back into the middle 16:9 area by
+        // xe_hud_transform (shader_translator.cpp): scaled around the centre, except coordinates at
+        // the screen's edges, so full-screen quads (fades, screen-space passes, backgrounds) still
+        // cover the screen; a background (a full-screen quad of a texture that isn't a render
+        // target) zooms to fill it. The Bink videos are just scaled, between black bars.
+        constexpr uint32_t HUD_WIDTH = 1280, HUD_HEIGHT = 720;
+        constexpr uint64_t BINK_PS = 0xbd65c6f2d6f2d6d4ull;  // shaders\binkdecompress
+        bool g_hudCentered = true;  // settings video.hud_16_9 (Swap)
+
+        struct HudDraw
+        {
+            uint32_t mode = 0;  // xe_hud_transform's bits; 0 = not transformed
+            float scaleX = 1.0f, scaleY = 1.0f;
+            float shift = 0.0f;  // anchored HUD: guest pixels the outer thirds move out
+            bool video = false;
+        };
+        HudDraw g_drawHud;  // of the draw being set up (HudScissor)
+
+        HudDraw HudTransform(bool sceneDraw, uint32_t pitch, uint32_t msaa, uint64_t psHash, bool readsResolve)
+        {
+            HudDraw hud;
+            if (g_stretch == 1.0f || sceneDraw || pitch != HUD_WIDTH || msaa)
+                return g_drawHud = hud;
+            hud.scaleX = std::min(1.0f, 1.0f / g_stretch);
+            hud.scaleY = std::min(1.0f, g_stretch);
+            hud.video = psHash == BINK_PS;
+            if (hud.video)
+                hud.mode = 4;
+            else
+            {
+                hud.mode = readsResolve ? 1u : 3u;
+                if (!g_hudCentered && g_stretch > 1.0f)
+                {
+                    hud.mode |= 8u;
+                    hud.shift = float(HUD_WIDTH) * 0.5f * (1.0f - hud.scaleX);
+                }
+            }
+            return g_drawHud = hud;
+        }
+
+        float HudCoordinate(float value, float size, float scale)
+        {
+            if (value <= 2.0f || value >= size - 2.0f)
+                return value;
+            return size * 0.5f + (value - size * 0.5f) * scale;
+        }
+
+        // The draw's scissor (guest pixels) moved like its vertices (only the centred part: an
+        // anchored HUD element keeps the scissor of the centre).
+        void HudScissor(rhi::Rect& scissor)
+        {
+            const HudDraw& hud = g_drawHud;
+            scissor.left = int32_t(floorf(HudCoordinate(float(scissor.left), float(HUD_WIDTH), hud.scaleX)));
+            scissor.right = int32_t(ceilf(HudCoordinate(float(scissor.right), float(HUD_WIDTH), hud.scaleX)));
+            scissor.top = int32_t(floorf(HudCoordinate(float(scissor.top), float(HUD_HEIGHT), hud.scaleY)));
+            scissor.bottom = int32_t(ceilf(HudCoordinate(float(scissor.bottom), float(HUD_HEIGHT), hud.scaleY)));
+            if (hud.mode & 8u)
+                scissor.left = 0, scissor.right = std::max(scissor.right, int32_t(HUD_WIDTH));
+        }
+
+        // A video frame: black where the 16:9 picture doesn't reach (the sides, or above and below).
+        void ClearVideoBars(RenderTarget& target)
+        {
+            const float black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+            float sx = XScale(target.scale), sy = target.scale;
+            int32_t width = int32_t(ceilf(float(HUD_WIDTH) * sx)), height = int32_t(ceilf(float(HUD_HEIGHT) * sy));
+            const HudDraw& hud = g_drawHud;
+            if (hud.scaleX < 1.0f)
+            {
+                int32_t bar = int32_t(floorf(float(width) * (1.0f - hud.scaleX) * 0.5f));
+                rhi::Rect left{ 0, 0, bar, height }, right{ width - bar, 0, width, height };
+                g_rhi->ClearColor(target.texture, black, &left);
+                g_rhi->ClearColor(target.texture, black, &right);
+            }
+            else if (hud.scaleY < 1.0f)
+            {
+                int32_t bar = int32_t(floorf(float(height) * (1.0f - hud.scaleY) * 0.5f));
+                rhi::Rect top{ 0, 0, width, bar }, bottom{ 0, height - bar, width, height };
+                g_rhi->ClearColor(target.texture, black, &top);
+                g_rhi->ClearColor(target.texture, black, &bottom);
+            }
+        }
+
         // Resolve -------------------------------------------------------------------------------
 
         int32_t ToFixed16p8(float value)
@@ -1802,7 +1974,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             if (!input.texture || !depth || !depth->texture || t.depth->format != DXGI_FORMAT_R32_FLOAT)
                 return;
             uint32_t renderWidth = input.hostWidth, renderHeight = input.hostHeight;
-            uint32_t outputWidth = ScaledSize(color.width, g_renderScale), outputHeight = ScaledSize(color.height, g_renderScale);
+            uint32_t outputWidth = ScaledSize(color.width, XScale(g_renderScale)), outputHeight = ScaledSize(color.height, g_renderScale);
             if (depth->hostWidth < renderWidth || depth->hostHeight < renderHeight || !EnsureTemporalTargets(renderWidth, renderHeight, outputWidth, outputHeight))
                 return;
             if (!t.motionPipeline && !CreateTemporalPipeline())
@@ -1993,8 +2165,8 @@ float4 main(float4 position : SV_Position) : SV_Target
             t.candidates.clear();
             if (!t.active)
                 return;
-            upscaler::Jitter(nextFrame, ScaledSize(1280, g_sceneScale), ScaledSize(1280, g_renderScale), t.jitterX, t.jitterY);
-            t.jitterGuestX = t.jitterX / g_sceneScale;
+            upscaler::Jitter(nextFrame, ScaledSize(1280, XScale(g_sceneScale)), ScaledSize(1280, XScale(g_renderScale)), t.jitterX, t.jitterY);
+            t.jitterGuestX = t.jitterX / XScale(g_sceneScale);
             t.jitterGuestY = t.jitterY / g_sceneScale;
         }
 
@@ -2149,8 +2321,8 @@ float4 main(float4 position : SV_Position) : SV_Target
                 if (logThis && TracingSwap())
                     Log("[gpu]   -> texture %p (surface %u), source texture %p", (void*)surface->texture, SurfaceIndex(scale), (void*)source->texture);
                 NoteSceneResolve(*destination, *source, isDepth, sourceSelect);
-                rhi::Rect hostRect{ std::max(0, ScaledFloor(float(x0 + dx), scale)), std::max(0, ScaledFloor(float(y0 + dy), scale)),
-                                    std::min(int32_t(surface->hostWidth), ScaledCeil(float(x1 + dx), scale)),
+                rhi::Rect hostRect{ std::max(0, ScaledFloor(float(x0 + dx), XScale(scale))), std::max(0, ScaledFloor(float(y0 + dy), scale)),
+                                    std::min(int32_t(surface->hostWidth), ScaledCeil(float(x1 + dx), XScale(scale))),
                                     std::min(int32_t(surface->hostHeight), ScaledCeil(float(y1 + dy), scale)) };
                 rhi::PassDraw pass;
                 pass.viewport = { 0.0f, 0.0f, float(surface->hostWidth), float(surface->hostHeight) };
@@ -2162,7 +2334,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                 if (rhi::Pipeline* pipeline = GetResolvePipeline(format))
                 {
                     float expScale = ldexpf(1.0f, expBias);
-                    constants[0] = uint32_t(ScaledFloor(float(dx), scale));
+                    constants[0] = uint32_t(ScaledFloor(float(dx), XScale(scale)));
                     constants[1] = uint32_t(ScaledFloor(float(dy), scale));
                     memcpy(&constants[2], &expScale, 4);
                     constants[3] = uint32_t(swapRedBlue) | (samplesX == 2 ? 4u : 0u) | RowScaleFlags(rowScale);
@@ -2204,7 +2376,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                     {
                         EnsurePackedDepth(*surface);
                         bool isFloat = source->guestFormat == uint32_t(xenos::DepthRenderTargetFormat::kD24FS8);
-                        constants[0] = uint32_t(ScaledFloor(float(dx), scale));
+                        constants[0] = uint32_t(ScaledFloor(float(dx), XScale(scale)));
                         constants[1] = uint32_t(ScaledFloor(float(dy), scale));
                         constants[2] = 0;
                         constants[3] = (isFloat ? 2u : 0u) | (samplesX == 2 ? 4u : 0u) | RowScaleFlags(rowScale);
@@ -2226,8 +2398,8 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
 
             // Clears (in host pixels).
-            rhi::Rect clearRect{ ScaledFloor(float(x0 * int32_t(samplesX)), scale), ScaledFloor(floorf(float(y0) * rowScale), scale),
-                                  ScaledCeil(float(x1 * int32_t(samplesX)), scale), ScaledCeil(ceilf(float(y1) * rowScale), scale) };
+            rhi::Rect clearRect{ ScaledFloor(float(x0 * int32_t(samplesX)), XScale(scale)), ScaledFloor(floorf(float(y0) * rowScale), scale),
+                                  ScaledCeil(float(x1 * int32_t(samplesX)), XScale(scale)), ScaledCeil(ceilf(float(y1) * rowScale), scale) };
             if (colorClear && !isDepth)
             {
                 uint32_t value = Reg(xenos::REG_RB_COLOR_CLEAR);
@@ -2820,7 +2992,8 @@ float4 main(float4 position : SV_Position) : SV_Target
                 system.alphaRef[0] = RegF(xenos::REG_RB_ALPHA_REF);
             }
             memcpy(system.colorExpBias, expBias, sizeof(expBias));
-            system.renderScale[0] = 1.0f / scale;
+            system.renderScale[0] = 1.0f / XScale(scale);
+            system.renderScale[1] = 1.0f / scale;
             for (uint32_t i = 0; i < 8; i++)
                 system.boolConsts[i] = Reg(xenos::REG_SHADER_CONSTANT_BOOL_000_031 + i);
             for (uint32_t i = 0; i < 32; i++)
@@ -2849,6 +3022,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             rhi::TextureView textureViews[32];
             rhi::SamplerDesc samplers[32];
             g_drawIconPalette = nullptr;
+            bool readsResolve = false;  // samples a render target (a screen-space pass, not a background)
             for (uint32_t fc = 0; fc < textureSlots; fc++)
             {
                 textureViews[fc] = {};
@@ -2864,7 +3038,10 @@ float4 main(float4 position : SV_Position) : SV_Target
                 samplers[fc] = MakeSampler(fetch, bindings[fc], !fetchedTarget);
                 if (hdScale != 1.0f)
                     AdjustSamplerForHd(samplers[fc], hdScale);
-                system.texSizeScale[fc] = fetchedTarget && fetchedTarget->Current().scale > 0.0f ? 1.0f / fetchedTarget->Current().scale : hdScale;
+                readsResolve |= fetchedTarget != nullptr;
+                bool fetchedScaled = fetchedTarget && fetchedTarget->Current().scale > 0.0f;
+                system.texSizeScale[fc * 2] = fetchedScaled ? 1.0f / XScale(fetchedTarget->Current().scale) : hdScale;
+                system.texSizeScale[fc * 2 + 1] = fetchedScaled ? 1.0f / fetchedTarget->Current().scale : hdScale;
                 system.texSwizzles[fc] = fetch.Swizzle();
                 if (trace)
                 {
@@ -2906,6 +3083,11 @@ float4 main(float4 position : SV_Position) : SV_Target
                         textureViews[fc] = { g_drawIconPalette };
                 }
             }
+
+            // Wide screens: the 2D of the screen back into the middle 16:9 area (widescreen.h).
+            HudDraw hud = HudTransform(sceneDraw, pitch, msaa, ps ? ps->info.hash : 0, readsResolve);
+            if (hud.video && colorTargets[0])
+                ClearVideoBars(*colorTargets[0]);
 
             ProfileMark(3);
             // Constant buffers.
@@ -2952,6 +3134,11 @@ float4 main(float4 position : SV_Position) : SV_Target
             key.vs = vs->shader;
             key.ps = ps ? ps->shader : nullptr;
             key.gs = rectList ? g_rectListGs : nullptr;
+            if (hud.mode && !rectList && polygonal && g_hudGs)
+            {
+                key.gs = g_hudGs;
+                hud.mode |= 32u;  // the geometry shader does it, not the vertex shader
+            }
             key.vsHash = vs->info.hash;
             key.psHash = ps ? ps->info.hash : 0;
             for (uint32_t i = 0; i < renderTargetCount; i++)
@@ -3070,6 +3257,17 @@ float4 main(float4 position : SV_Position) : SV_Target
             call.vertexConstants = vsConstUpload.offset;
             call.pixelConstants = psConstUpload.offset;
             call.effects = g_effects;
+            if (hud.mode)
+            {
+                call.effects.hud[0] = hud.scaleX;
+                call.effects.hud[1] = hud.scaleY;
+                call.effects.hud[2] = float(hud.mode);
+                call.effects.hud[3] = hud.shift;
+                call.effects.hudTarget[0] = float(targetWidth);
+                call.effects.hudTarget[1] = float(targetHeight);
+                call.effects.hudTarget[2] = float(HUD_WIDTH);
+                call.effects.hudTarget[3] = float(HUD_HEIGHT);
+            }
             if (sceneDraw && g_temporal.active)
             {
                 // Sub-pixel jitter of the scene in NDC of this target (rectangle lists are clears).
@@ -3086,10 +3284,12 @@ float4 main(float4 position : SV_Position) : SV_Target
             call.blendFactor[2] = RegF(xenos::REG_RB_BLEND_RED + 2);
             call.blendFactor[3] = RegF(xenos::REG_RB_BLEND_RED + 3);
             call.stencilRef = Reg(xenos::REG_RB_STENCILREFMASK) & 0xFF;
-            call.viewport = { 0.0f, 0.0f, hostW * scale, h * rowScale * scale };
+            call.viewport = { 0.0f, 0.0f, hostW * XScale(scale), h * rowScale * scale };
             rhi::Rect scissor = GuestScissor(targetWidth, targetHeight);
-            scissor.left = ScaledFloor(float(scissor.left * int32_t(samplesX)), scale);
-            scissor.right = ScaledCeil(float(scissor.right * int32_t(samplesX)), scale);
+            if (hud.mode)
+                HudScissor(scissor);
+            scissor.left = ScaledFloor(float(scissor.left * int32_t(samplesX)), XScale(scale));
+            scissor.right = ScaledCeil(float(scissor.right * int32_t(samplesX)), XScale(scale));
             scissor.top = ScaledFloor(floorf(float(scissor.top) * rowScale), scale);
             scissor.bottom = std::min(ScaledCeil(ceilf(float(scissor.bottom) * rowScale), scale), int32_t(ScaledSize(RENDER_TARGET_HEIGHT, scale)));
             call.scissor = scissor;
@@ -3171,6 +3371,9 @@ float4 main(float4 position : SV_Position) : SV_Target
         bool CreatePassPipelines()
         {
             g_rectListGs = g_rhi->CreateShader(rhi::Stage::Geometry, RECT_LIST_GS, "rect_list_gs", rhi::Layout::Draw);
+            g_hudGs = g_rhi->CreateShader(rhi::Stage::Geometry, HUD_GS, "hud_gs", rhi::Layout::Draw);
+            if (!g_hudGs)
+                Log("[gpu] the wide-screen HUD geometry shader did not compile: 2D is placed per vertex");
             g_depthAliasPs = g_rhi->CreateShader(rhi::Stage::Pixel, DEPTH_ALIAS_PS, "depth_alias_ps", rhi::Layout::Draw);
             g_fxaaPipeline = CreateBlitPipeline("fxaa", FXAA_PS, DXGI_FORMAT_R8G8B8A8_UNORM);
             return g_rectListGs && g_depthAliasPs && g_fxaaPipeline && GetResolvePipeline(DXGI_FORMAT_R8G8B8A8_UNORM) &&
@@ -3193,7 +3396,12 @@ float4 main(float4 position : SV_Position) : SV_Target
             QueryPerformanceCounter(&start);
             WaitIdle();
 
-            float renderScale = float(settings::ResolutionOf(wanted.renderHeight).height) / 720.0f;
+            const settings::Resolution& resolution = settings::ResolutionOf(wanted.aspect, wanted.renderHeight);
+            float renderScale = float(resolution.height) / 720.0f;
+            float aspect = float(resolution.width) / float(resolution.height);
+            float stretch = aspect / widescreen::BASE_ASPECT;
+            if (fabsf(stretch - 1.0f) < 0.002f)
+                stretch = 1.0f;
             upscaler::Select(wanted.upscaler);
             bool temporal = upscaler::Active() != settings::Upscaler::Off;
             if (temporal && !g_temporal.motionPipeline && !CreateTemporalPipeline())
@@ -3202,10 +3410,12 @@ float4 main(float4 position : SV_Position) : SV_Target
                 temporal = false;
             }
             float sceneScale = temporal ? renderScale * settings::UpscalerRatio(wanted.upscalerQuality) : renderScale;
-            bool scaled = renderScale != 1.0f || sceneScale != 1.0f || hd::Active();
-            float oldRender = g_renderScale, oldScene = g_sceneScale;
+            bool scaled = renderScale != 1.0f || sceneScale != 1.0f || stretch != 1.0f || hd::Active();
+            float oldRender = g_renderScale, oldScene = g_sceneScale, oldStretch = g_stretch;
             g_renderScale = renderScale;
             g_sceneScale = sceneScale;
+            g_stretch = stretch;
+            widescreen::SetAspect(aspect);
 
             // Temporal upscaling: no history across the change; its targets follow the sizes.
             Temporal& t = g_temporal;
@@ -3220,7 +3430,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
 
             size_t targets = 0, surfaces = 0;
-            if (renderScale != oldRender || sceneScale != oldScene)
+            if (renderScale != oldRender || sceneScale != oldScene || stretch != oldStretch)
             {
                 for (auto& [key, target] : g_renderTargets)
                 {
@@ -3272,12 +3482,12 @@ float4 main(float4 position : SV_Position) : SV_Target
                 Log("[gpu] shaders will be translated again (%s variant)", scaled ? "scaled" : "720p");
             }
             g_rhi->Submit();  // the clears of the new resources
-            settings::RendererApplied(wanted.renderHeight, wanted.upscaler, wanted.upscalerQuality);
+            settings::RendererApplied(wanted.renderHeight, wanted.aspect, wanted.upscaler, wanted.upscalerQuality);
 
             QueryPerformanceCounter(&end);
             QueryPerformanceFrequency(&frequency);
-            Log("[gpu] reconfigured: internal resolution %s (%.2fx), %s%s%s, scene %.3fx; %zu render targets and %zu resolve surfaces recreated in %.0f ms",
-                settings::ResolutionOf(wanted.renderHeight).name, renderScale, temporal ? upscaler::ActiveName().c_str() : "no upscaler",
+            Log("[gpu] reconfigured: internal resolution %s (%.2fx, aspect %.3f), %s%s%s, scene %.3fx; %zu render targets and %zu resolve surfaces recreated in %.0f ms",
+                resolution.name, renderScale, aspect, temporal ? upscaler::ActiveName().c_str() : "no upscaler",
                 temporal ? " " : "", temporal ? settings::UpscalerQualityName(wanted.upscalerQuality) : "", sceneScale, targets, surfaces,
                 double(end.QuadPart - start.QuadPart) * 1000.0 / double(frequency.QuadPart));
         }
@@ -3333,8 +3543,14 @@ float4 main(float4 position : SV_Position) : SV_Target
         }
         g_renderScale = settings::RenderScale();
         g_sceneScale = g_renderScale;  // until the upscaler is known (after the device)
-        if (g_renderScale != 1.0f)
-            Log("[gpu] internal resolution %s (%.2fx the game's 1280x720)", settings::ResolutionOf(settings::AtStartup().renderHeight).name, g_renderScale);
+        widescreen::SetAspect(settings::RenderAspect());
+        g_stretch = widescreen::Stretch();
+        if (fabsf(g_stretch - 1.0f) < 0.002f)
+            g_stretch = 1.0f;
+        const settings::Resolution& startResolution = settings::ResolutionOf(settings::AtStartup().aspect, settings::AtStartup().renderHeight);
+        if (g_renderScale != 1.0f || g_stretch != 1.0f)
+            Log("[gpu] internal resolution %s (%.2fx the game's 1280x720, aspect %.3f: %.3fx as wide as 16:9)", startResolution.name, g_renderScale,
+                widescreen::Aspect(), g_stretch);
 
         g_debugLayer = getenv("CRASH_GPU_DEBUG") != nullptr;
         // [video] gpu_safe_mode (CRASH_GPU_SAFE overrides it) and gpu_diagnostics (CRASH_GPU_DIAG).
@@ -3362,7 +3578,9 @@ float4 main(float4 position : SV_Position) : SV_Target
 
         // Window and device (with its swap chain).
         window::SetMode(settings::Get().window);
-        g_hwnd = HWND(window::Create(WINDOW_WIDTH, WINDOW_HEIGHT, L"Crash of the Titans (CrashRecomp)"));
+        // A window of the picture's aspect, 720 lines (or the monitor's width, if narrower).
+        uint32_t windowWidth = uint32_t(std::lround(float(WINDOW_HEIGHT) * widescreen::Aspect() / 2.0f)) * 2u;
+        g_hwnd = HWND(window::Create(windowWidth, WINDOW_HEIGHT, L"Crash of the Titans (CrashRecomp)"));
         if (!g_hwnd)
         {
             Log("[gpu] could not create the window");
@@ -3370,7 +3588,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         }
         rhi::DeviceInfo info;
         info.window = g_hwnd;
-        info.width = WINDOW_WIDTH;
+        info.width = windowWidth;
         info.height = WINDOW_HEIGHT;
         info.shaderCache = g_shaderCacheDir;
         info.debug = g_debugLayer;
@@ -3397,7 +3615,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         g_sceneScale = g_temporal.active ? settings::SceneScale() : g_renderScale;
         // HD textures need the guest texel size in the shaders too (xe_tex_size_scale).
         hd::Init();
-        g_renderScaled = g_renderScale != 1.0f || g_sceneScale != 1.0f || hd::Active();
+        g_renderScaled = g_renderScale != 1.0f || g_sceneScale != 1.0f || g_stretch != 1.0f || hd::Active();
         SetRenderScaled(g_renderScaled);
         if (g_temporal.active)
             Log("[gpu] %s %s: scene at %.3fx the game's 1280x720, output %.3fx", upscaler::ActiveName().c_str(),
@@ -3535,6 +3753,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         g_effects.motionBlur = float(options.motionBlur) / 100.0f;
         g_effects.depthOfField = float(options.depthOfField) / 100.0f;
         g_effects.shadowSoftness = float(options.shadowSoftness) / 100.0f;
+        g_hudCentered = options.hud16x9;
         // F8: the lighting remaster off / on (not saved), with a notice on screen.
         if (window::ConsumeLightingToggles() & 1)
         {
@@ -3576,7 +3795,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         bool antiAliasing = false;
         if (source && !showRaw && options.antiAliasing != settings::AntiAliasing::Off)
         {
-            uint32_t aaWidth = std::min(ScaledSize(width ? width : source->width, sourceSurface->scale), sourceSurface->hostWidth);
+            uint32_t aaWidth = std::min(ScaledSize(width ? width : source->width, XScale(sourceSurface->scale)), sourceSurface->hostWidth);
             uint32_t aaHeight = std::min(ScaledSize(height ? height : source->height, sourceSurface->scale), sourceSurface->hostHeight);
             antiAliasing = aaWidth && aaHeight && EnsureAaTargets(aaWidth, aaHeight);
         }
@@ -3588,7 +3807,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         float imageX = 0.0f, imageY = 0.0f, imageWidth = float(g_backBufferWidth), imageHeight = float(g_backBufferHeight);
         if (source && !showRaw)
         {
-            float frameWidth = float(width ? width : source->width), frameHeight = float(height ? height : source->height);
+            float frameWidth = float(width ? width : source->width) * g_stretch, frameHeight = float(height ? height : source->height);
             float aspect = frameWidth > 0.0f && frameHeight > 0.0f ? frameWidth / frameHeight : 16.0f / 9.0f;
             if (imageWidth > imageHeight * aspect + 0.5f)
                 imageWidth = std::round(imageHeight * aspect);

@@ -1034,7 +1034,7 @@ namespace gpu
                 Line("float3 uvw = %s;", coords.c_str());
                 Line("float2 size; xe_t%u.GetDimensions(size.x, size.y);", fc);
                 if (m_renderScaled)
-                    Line("size *= xe_tex_size_scale[%u].%c; // guest texels", fc >> 2, "xyzw"[fc & 3]);
+                    Line("size *= xe_tex_size_scale[%u].%s; // guest texels", fc >> 1, (fc & 1) ? "zw" : "xy");
                 if (fetch.TextureUnnormalized())
                     Line("uvw.xy /= size;");
                 float offsetX = fetch.TextureOffset(0) * 0.5f, offsetY = fetch.TextureOffset(1) * 0.5f;
@@ -1298,7 +1298,38 @@ cbuffer xe_effects : register(b3)
 {
     float4 xe_effect;           // x: motion blur, y: depth of field, z: shadow softness (scales), w: texture LOD scale
     float4 xe_jitter;           // xy: sub-pixel jitter in NDC for perspective draws (temporal upscaling)
+    float4 xe_hud;              // wide screens (gpu/widescreen.h): xy scale of the 2D around the centre, z: mode bits, w: anchor shift
+    float4 xe_hud_target;       // xy: the target's guest size of the NDC, zw: the screen's (1280x720)
 };
+
+// Wide screens: a 2D vertex (NDC) back into the middle 16:9 area of the screen (gpu/widescreen.h,
+// HudTransform in xenos_renderer.cpp). Mode 1: scaled around the centre except the coordinates at
+// the screen's edges (full-screen quads still cover it); 2: also a vertex at a corner zooms out of
+// the screen the other way (backgrounds keep their aspect and fill it); 4: just scaled (videos);
+// 8: the outer thirds keep their distance to the nearest edge (HUD corners at the edges); 32: done
+// per triangle by HUD_GS (xenos_renderer.cpp) instead, for triangles.
+float2 xe_hud_transform(float2 ndc)
+{
+    uint mode = uint(xe_hud.z + 0.5);
+    float2 px = float2((ndc.x + 1.0) * 0.5 * xe_hud_target.x, (1.0 - ndc.y) * 0.5 * xe_hud_target.y);
+    float2 centre = xe_hud_target.zw * 0.5;
+    float2 d = px - centre;
+    float2 result = centre + d * xe_hud.xy;
+    if (!(mode & 4u))
+    {
+        bool2 edge = bool2(px.x <= 2.0 || px.x >= xe_hud_target.z - 2.0, px.y <= 2.0 || px.y >= xe_hud_target.w - 2.0);
+        if (mode & 8u)
+        {
+            // Outside the middle third: shifted towards its side's edge by what the scale took away.
+            float third = xe_hud_target.z / 6.0;
+            if (abs(d.x) > third) result.x += sign(d.x) * xe_hud.w;
+        }
+        if (edge.x) result.x = px.x;
+        if (edge.y) result.y = px.y;
+        if ((mode & 2u) && edge.x && edge.y) result = centre + d * float2(1.0 / xe_hud.y, 1.0 / xe_hud.x);
+    }
+    return float2(result.x / xe_hud_target.x * 2.0 - 1.0, 1.0 - result.y / xe_hud_target.y * 2.0);
+}
 
 #define XE_FLAG_XY_DIVIDED_BY_W 1u
 #define XE_FLAG_Z_DIVIDED_BY_W 2u
@@ -1409,8 +1440,8 @@ float4 xe_unpack32(uint4 w, bool isSigned, bool normalized)
             std::string common = COMMON_HLSL;
             const std::string last = "    float4 xe_tex_lod_bias[8];  // texture fetch constant LOD biases\n";
             common.insert(common.find(last) + last.size(),
-                          "    float4 xe_render_scale;     // x: guest pixels per host pixel (internal resolution)\n"
-                          "    float4 xe_tex_size_scale[8]; // guest texels per host texel, per fetch constant\n");
+                          "    float4 xe_render_scale;     // xy: guest pixels per host pixel (internal resolution)\n"
+                          "    float4 xe_tex_size_scale[16]; // xy / zw: guest texels per host texel, per fetch constant\n");
             hlsl += common;
         }
         else
@@ -1454,6 +1485,8 @@ float4 xe_unpack32(uint4 w, bool isSigned, bool normalized)
     if (flags & XE_FLAG_XY_DIVIDED_BY_W) p.xy *= p.w;
     if (flags & XE_FLAG_Z_DIVIDED_BY_W) p.z *= p.w;
     p.xyz = p.xyz * xe_ndc_scale.xyz + xe_ndc_offset.xyz * p.w;
+    // Wide screens: 2D (W = 1) into the middle 16:9 area.
+    if (xe_hud.z > 0.5 && xe_hud.z < 31.5 && abs(p.w - 1.0) <= 1e-5) p.xy = xe_hud_transform(p.xy);
     // Temporal upscaling: jitter perspective geometry only (screen-space quads have W = 1).
     if (abs(p.w - 1.0) > 1e-5) p.xy += xe_jitter.xy * p.w;
     output.position = p;
@@ -1533,7 +1566,7 @@ float4 xe_unpack32(uint4 w, bool isSigned, bool normalized)
             // Param gen's pixel position in guest pixels.
             const std::string position = "float4(input.position.xy - 0.5,";
             if (size_t at = hlsl.find(position); at != std::string::npos)
-                hlsl.replace(at, position.size(), "float4(input.position.xy * xe_render_scale.x - 0.5,");
+                hlsl.replace(at, position.size(), "float4(input.position.xy * xe_render_scale.xy - 0.5,");
         }
         return std::move(m_out);
     }

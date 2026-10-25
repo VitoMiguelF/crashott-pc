@@ -33,6 +33,8 @@ namespace gpu::graphics
         float textureLodScale = 1.0f; // gradient scale of mipmapped fetches (upscaling: render / output)
         float jitter[4] = {};         // xy: sub-pixel offset in NDC added to perspective draws;
                                       // z: soft shadows (lighting remaster, > 0.5 = on); w: unused
+        float hud[4] = {};            // wide screens (widescreen.h): xy scale of 2D draws, z mode (0 = none), w anchor shift
+        float hudTarget[4] = {};      // xy: guest size of the target's NDC, zw: the screen (1280x720)
     };
     constexpr uint32_t EFFECT_CONSTANT_DWORDS = sizeof(EffectConstants) / 4;
 

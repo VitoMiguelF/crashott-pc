@@ -219,7 +219,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         // "RENDER 2560X1440 (2X) -> 1920X1080": the internal resolution and the window's.
         std::string ResolutionText(uint32_t width, uint32_t height)
         {
-            const settings::Resolution& render = settings::ResolutionOf(settings::AtStartup().renderHeight);
+            const settings::Resolution& render = settings::ResolutionOf(settings::AtStartup().aspect, settings::AtStartup().renderHeight);
             char text[64];
             float scale = float(render.height) / 720.0f;
             snprintf(text, sizeof(text), "RENDER %s (%gX) -> %ux%u", render.name, double(scale), width, height);

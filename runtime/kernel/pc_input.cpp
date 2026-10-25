@@ -9,6 +9,7 @@
 #include "../settings/menu_mouse.h"
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
+#include "../gpu/widescreen.h"
 
 #include <algorithm>
 #include <array>
@@ -429,6 +430,22 @@ namespace input::pc
         return typed;
     }
 
+    // The game's image is fitted into the window with the picture's aspect and centred
+    // (gpu/xenos_renderer.cpp, present), with black bars around it; its 2D (menus, HUD) is in the
+    // middle 16:9 area of it (gpu/widescreen.h).
+    void HudRect(int w, int h, float& x, float& y, float& width, float& height)
+    {
+        float aspect = gpu::widescreen::Aspect();
+        float iw = float(w), ih = float(h);
+        if (iw > ih * aspect)
+            iw = ih * aspect;
+        else
+            ih = iw / aspect;
+        gpu::widescreen::HudArea(uint32_t(std::lround(iw)), uint32_t(std::lround(ih)), x, y, width, height);
+        x += (float(w) - iw) * 0.5f;
+        y += (float(h) - ih) * 0.5f;
+    }
+
     void UseScriptedMouse()
     {
         g_scriptedMouse = true;
@@ -436,22 +453,19 @@ namespace input::pc
 
     void ScriptMouse(float x, float y, int click)
     {
-        // 1280x720 game image -> client pixels (the image is 16:9, centred).
+        // 1280x720 game image -> client pixels (the menus' 16:9 area, centred: HudRect).
         int w = g_clientW, h = g_clientH;
         if (w <= 0 || h <= 0)
             w = 1280, h = 720;
-        float iw = float(w), ih = float(h);
-        if (iw > ih * 16.0f / 9.0f)
-            iw = ih * 16.0f / 9.0f;
-        else
-            ih = iw * 9.0f / 16.0f;
+        float ix, iy, iw, ih;
+        HudRect(w, h, ix, iy, iw, ih);
         g_scriptedMouse = true;
         if (click == 5)
         {
             OnWheel(int(std::lround(x)));
             return;
         }
-        SetCursor(int((w - iw) * 0.5f + x / 1280.0f * iw), int((h - ih) * 0.5f + y / 720.0f * ih), w, h);
+        SetCursor(int(ix + x / 1280.0f * iw), int(iy + y / 720.0f * ih), w, h);
         if (click == 1 || click == 3)
         {
             g_leftClicks++;
@@ -472,17 +486,13 @@ namespace input::pc
 
     bool CursorOnImage(float& x, float& y)
     {
-        // The game's image is 16:9, fitted into the window and centred (gpu/xenos_renderer.cpp,
-        // present: the front buffer's aspect), with black bars around it.
+        // The game's 2D lives in the 16:9 area of its image (HudRect).
         int cx = g_cursorX, cy = g_cursorY, w = g_clientW, h = g_clientH;
         if (cx < 0 || w <= 0 || h <= 0)
             return false;
-        float iw = float(w), ih = float(h);
-        if (iw > ih * 16.0f / 9.0f)
-            iw = ih * 16.0f / 9.0f;
-        else
-            ih = iw * 9.0f / 16.0f;
-        float u = (cx + 0.5f - (w - iw) * 0.5f) / iw, v = (cy + 0.5f - (h - ih) * 0.5f) / ih;
+        float ix, iy, iw, ih;
+        HudRect(w, h, ix, iy, iw, ih);
+        float u = (cx + 0.5f - ix) / iw, v = (cy + 0.5f - iy) / ih;
         if (u < 0 || u > 1 || v < 0 || v > 1)
             return false;
         x = u * 1280.0f, y = v * 720.0f;

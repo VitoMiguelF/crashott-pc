@@ -61,7 +61,8 @@ namespace settings::options
             { "audio", { "AUDIO", "ÁUDIO" },
               { Item::Master, Item::Music, Item::Effects, Item::Voice, Item::HeaderSubtitles, Item::Subtitles, Item::SubtitleSize,
                 Item::SubtitleBackground } },
-            { "video", { "VIDEO", "VÍDEO" }, { Item::Window, Item::Resolution, Item::FpsLimit, Item::VSync, Item::AntiAliasing, Item::Overlay } },
+            { "video", { "VIDEO", "VÍDEO" }, { Item::Window, Item::Resolution, Item::FpsLimit, Item::VSync, Item::AntiAliasing, Item::Overlay, Item::Aspect,
+                Item::Hud16x9 } },
             { "graphics", { "GRAPHICS", "GRÁFICOS" },
               { Item::Upscaler, Item::UpscalerQuality, Item::Sharpness, Item::MotionBlur, Item::DepthOfField, Item::Anisotropy,
                 Item::ShadowSoftness } },
@@ -100,6 +101,8 @@ namespace settings::options
         case Item::VSync: return "video.vsync";
         case Item::AntiAliasing: return "video.antialiasing";
         case Item::Overlay: return "video.overlay";
+        case Item::Aspect: return "video.aspect";
+        case Item::Hud16x9: return "video.hud_16_9";
         case Item::Upscaler: return "graphics.upscaler";
         case Item::UpscalerQuality: return "graphics.upscaler_quality";
         case Item::Sharpness: return "graphics.sharpness";
@@ -159,6 +162,8 @@ namespace settings::options
         case Item::VSync: return "V-SYNC";
         case Item::AntiAliasing: return "ANTI-ALIASING";
         case Item::Overlay: return "OVERLAY (F1)";
+        case Item::Aspect: return t({ "ASPECT RATIO", "PROPORÇÃO" });
+        case Item::Hud16x9: return t({ "HUD AT 16:9", "HUD EM 16:9" });
         case Item::Upscaler: return "DLSS / FSR";
         case Item::UpscalerQuality: return t({ "UPSCALER MODE", "MODO DO UPSCALER" });
         case Item::Sharpness: return t({ "SHARPNESS (FSR)", "NITIDEZ (FSR)" });
@@ -251,7 +256,12 @@ namespace settings::options
             case OverlayMode::Full: return t({ "FULL", "COMPLETO" });
             default: return OnOff(pt, false);
             }
-        case Item::Resolution: return ResolutionOf(values.renderHeight).name;
+        case Item::Resolution: return ResolutionOf(values.aspect, values.renderHeight).name;
+        case Item::Aspect:
+            if (values.aspect == Aspect::Auto)
+                return std::string("AUTO (") + AspectName(EffectiveAspect(Aspect::Auto)) + ")";
+            return std::string(AspectName(values.aspect)) + (values.aspect == Aspect::R16_9 ? " (ORIGINAL)" : "");
+        case Item::Hud16x9: return OnOff(pt, values.hud16x9);
         case Item::FpsLimit:
             return values.fpsLimit ? std::to_string(values.fpsLimit) + (values.fpsLimit == 30 ? " (ORIGINAL)" : "") : t({ "UNLIMITED", "SEM LIMITE" });
         case Item::Upscaler:
@@ -355,6 +365,12 @@ namespace settings::options
         case Item::AntiAliasing:
             return { t({ "FXAA/SMAA smooth the edges of the final image.", "FXAA/SMAA suavizam as bordas na imagem final." }),
                      t({ "With DLSS/FSR on it can stay off.", "Com DLSS/FSR ligado pode ficar desligado." }) };
+        case Item::Aspect:
+            return { t({ "Wider screens see more to the sides (21:9, 32:9);", "Telas mais largas veem mais dos lados (21:9, 32:9);" }),
+                     t({ "AUTO uses the monitor's. Applies when you leave.", "AUTO usa a do monitor. Vale ao sair da tela." }) };
+        case Item::Hud16x9:
+            return { t({ "On: HUD and menus in the middle 16:9 area.", "Ligado: HUD e menus na área 16:9 do meio." }),
+                     t({ "Off: the HUD corners go to the screen's edges.", "Desligado: os cantos do HUD vão às bordas da tela." }) };
         case Item::Overlay:
             return { t({ "Performance overlay: FPS, frame time and graph.", "Overlay de desempenho: FPS, frame time e gráfico." }),
                      t({ "F1 switches it at any time.", "O F1 alterna a qualquer momento." }) };
@@ -542,11 +558,17 @@ namespace settings::options
         case Item::Resolution:
         {
             size_t count;
-            const Resolution* list = Resolutions(count);
-            size_t index = size_t(&ResolutionOf(values.renderHeight) - list);
+            const Resolution* list = Resolutions(values.aspect, count);
+            size_t index = size_t(&ResolutionOf(values.aspect, values.renderHeight) - list);
             values.renderHeight = list[(index + count + direction) % count].height;
             break;
         }
+        case Item::Aspect:
+            // The resolution follows: the same height, or the nearest one of the new aspect's list.
+            values.aspect = Cycle(values.aspect, 5, direction);
+            values.renderHeight = ResolutionOf(values.aspect, values.renderHeight).height;
+            break;
+        case Item::Hud16x9: values.hud16x9 = !values.hud16x9; break;
         case Item::AntiAliasing: values.antiAliasing = Cycle(values.antiAliasing, 3, direction); break;
         case Item::Overlay: values.overlay = Cycle(values.overlay, 4, direction); break;
         case Item::Upscaler: values.upscaler = Cycle(values.upscaler, 3, direction); break;

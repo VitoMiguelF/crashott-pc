@@ -8,6 +8,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -27,6 +28,8 @@ namespace gpu::window
         std::atomic<uint32_t> g_clientWidth;
         std::atomic<uint32_t> g_clientHeight;
         std::atomic<bool> g_screenshotRequested;
+        // CRASH_WINDOW_SIZE=WxH (tests, captures): the client in screen pixels, even past the monitor.
+        bool g_forcedSize = false;
         std::atomic<uint32_t> g_overlayToggles;
         std::atomic<uint32_t> g_markRequests;
         std::atomic<uint32_t> g_recordToggles;
@@ -146,6 +149,13 @@ namespace gpu::window
         {
             switch (message)
             {
+            case WM_GETMINMAXINFO:
+                if (g_forcedSize)
+                {
+                    reinterpret_cast<MINMAXINFO*>(lParam)->ptMaxTrackSize = { 16384, 16384 };
+                    return 0;
+                }
+                break;
             case WM_CREATE:
             {
                 // Raw mouse motion for the camera (pc_input.h): counts, not the clipped cursor.
@@ -311,10 +321,44 @@ namespace gpu::window
             UINT dpi = GetDpiForSystem();
             uint32_t scaledWidth = uint32_t(MulDiv(int(clientWidth), int(dpi), 96));
             uint32_t scaledHeight = uint32_t(MulDiv(int(clientHeight), int(dpi), 96));
+            if (const char* forced = getenv("CRASH_WINDOW_SIZE"))
+            {
+                int forcedWidth, forcedHeight;
+                if (sscanf(forced, "%dx%d", &forcedWidth, &forcedHeight) == 2 && forcedWidth >= 160 && forcedHeight >= 120)
+                {
+                    scaledWidth = uint32_t(forcedWidth), scaledHeight = uint32_t(forcedHeight);
+                    g_forcedSize = true;
+                }
+            }
             DWORD style = WS_OVERLAPPEDWINDOW;
+            // A wide picture (21:9, 32:9 at 720 lines and a high DPI) can be wider than the monitor:
+            // shrink the window into the primary monitor's work area, same aspect, centred.
+            MONITORINFO workArea{ sizeof(workArea) };
+            bool fitted = false;
+            if (!g_forcedSize && GetMonitorInfoW(MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY), &workArea))
+            {
+                RECT frame{ 0, 0, 0, 0 };
+                AdjustWindowRectExForDpi(&frame, style, FALSE, 0, dpi);
+                const RECT& work = workArea.rcWork;
+                float room = float(work.right - work.left - (frame.right - frame.left)) * 0.95f;
+                float roomHeight = float(work.bottom - work.top - (frame.bottom - frame.top)) * 0.95f;
+                float fit = std::min({ 1.0f, room / float(scaledWidth), roomHeight / float(scaledHeight) });
+                if (fit < 1.0f && fit > 0.1f)
+                {
+                    scaledWidth = uint32_t(float(scaledWidth) * fit);
+                    scaledHeight = uint32_t(float(scaledHeight) * fit);
+                    fitted = true;
+                }
+            }
             RECT rect{ 0, 0, LONG(scaledWidth), LONG(scaledHeight) };
             AdjustWindowRectExForDpi(&rect, style, FALSE, 0, dpi);
             int x = CW_USEDEFAULT, y = CW_USEDEFAULT, width = rect.right - rect.left, height = rect.bottom - rect.top;
+            if (fitted)
+            {
+                const RECT& work = workArea.rcWork;
+                x = work.left + (work.right - work.left - width) / 2;
+                y = work.top + (work.bottom - work.top - height) / 2;
+            }
             // After a restart from the settings screen: where the previous process had it.
             if (const char* placement = getenv("CRASH_RESTART_WINDOW"))
             {
