@@ -151,7 +151,9 @@ Full write-up: `runtime/NOTES.md` "Ultrawide". Settings `[video] aspect` (auto /
   `vf16` sub_823170F8 (sphere test). `pddiBaseContext::vf29` sub_82393980 = SetProjection(near, far, fov,
   aspect) into state (context +136) +36..+48, mode at +16 (0 perspective, 1 ortho, 2 pixels);
   `vf30` sub_823939A8 = GetProjection; `xnContext::vf119` sub_8238D248 builds the matrix of the mode.
-- Hor+ = SetProjection widened (same vertical FOV) + vf16 with widened planes + vf119 building the
+- Hor+ = SetProjection widened (same vertical FOV) + vf16 with widened planes + `Camera::vf11`
+  sub_82316E58 (one frustum plane, read by the scene's sector/object culling; without it the door of
+  Crash's house vanished past the old 16:9 edge) giving the widened side planes + vf119 building the
   ortho/pixel matrices from the game's own fov/aspect + GetProjection returning them.
 - **Traps**: writing the widened values into the camera (+16/+28/+40/+44 or the planes) made the ice
   shards of the village blink (other code reads them). The HUD's 2D is the ortho mode of the same

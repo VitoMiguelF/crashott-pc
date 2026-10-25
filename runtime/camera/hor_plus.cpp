@@ -16,11 +16,13 @@
 // SetProjection(near, far, fov, aspect), which builds the projection matrix. The HUD's 3D icons
 // set their own projections there too (fov 1, aspect 16:9).
 //
-// Hor+ is done in two places:
+// Hor+ is done in these places:
 // - SetProjection: a 16:9 projection is widened to the picture's aspect with the same vertical
 //   FOV (on a narrower screen, 16:10, the same horizontal FOV: more above and below).
 // - vf16 (sub_823170F8, the culling's sphere test): tested against side planes widened the same
-//   way, so the sides are not culled. The camera itself stays 16:9: other code reads its derived
+//   way, so the sides are not culled; vf11 (sub_82316E58, one plane of the frustum, which the
+//   scene's own culling of sectors and objects reads) gives the same widened side planes. The
+//   camera itself stays 16:9: other code reads its derived
 //   fields (writing the wider FOV, scales or planes into it made the ice shards of the village
 //   blink once the camera moved), and +20 / +24 keep what the game asked for.
 
@@ -33,6 +35,7 @@
 #include <cstring>
 
 extern "C" PPC_FUNC(__imp__sub_823170F8);  // pure3d::Camera::vf16 (sphere in the frustum)
+extern "C" PPC_FUNC(__imp__sub_82316E58);  // pure3d::Camera::vf11 (a plane of the frustum)
 extern "C" PPC_FUNC(__imp__sub_82393980);  // pure3d::pddiBaseContext::vf29 (SetProjection(near, far, fov, aspect))
 extern "C" PPC_FUNC(__imp__sub_823939A8);  // pure3d::pddiBaseContext::vf30 (GetProjection(&near, &far, &fov, &aspect))
 extern "C" PPC_FUNC(__imp__sub_8238D248);  // pure3d::xnContext::vf119 (builds the projection matrix)
@@ -92,15 +95,14 @@ namespace
     thread_local Projection g_projection;
 }
 
-// vf16: is the sphere (r4: camera space x, y, z; f1: radius) in the frustum? The original's test
-// with the widened side planes (the camera's own planes stay 16:9).
-PPC_FUNC(sub_823170F8)
+// The side planes of the camera (+48..+76: left x/z, right x/z, bottom y/z, top y/z) widened to
+// the picture's aspect; null if nothing changes. Cached per thread by the camera's fov / aspect.
+static const float* WidePlanes(uint32_t camera)
 {
-    uint32_t self = ctx.r3.u32;
     thread_local float cachedFov = 0.0f, cachedAspect = 0.0f, cachedPicture = 0.0f;
     thread_local bool cachedWide = false;
     thread_local float planes[8];
-    float fov = LoadF(self + CAMERA_FOV), gameAspect = LoadF(self + CAMERA_ASPECT), picture = gpu::widescreen::Aspect();
+    float fov = LoadF(camera + CAMERA_FOV), gameAspect = LoadF(camera + CAMERA_ASPECT), picture = gpu::widescreen::Aspect();
     if (fov != cachedFov || gameAspect != cachedAspect || picture != cachedPicture)
     {
         cachedFov = fov, cachedAspect = gameAspect, cachedPicture = picture;
@@ -110,7 +112,40 @@ PPC_FUNC(sub_823170F8)
         float values[8] = { -cosf(h), -sinf(h), cosf(h), -sinf(h), cosf(v), -sinf(v), -cosf(v), -sinf(v) };
         memcpy(planes, values, sizeof(planes));
     }
-    if (!cachedWide)
+    return cachedWide ? planes : nullptr;
+}
+
+// vf11: plane `which` of the frustum (r4: 1 near, 2 far, 4 bottom, 8 top, 16 left, 32 right) as
+// (nx, ny, nz, d) into r5. The game's other culling (the scene's sectors and objects, e.g. the
+// door of Crash's house) gets the planes from here: the side ones are given widened.
+PPC_FUNC(sub_82316E58)
+{
+    uint32_t self = ctx.r3.u32, which = ctx.r4.u32, out = ctx.r5.u32;
+    __imp__sub_82316E58(ctx, base);
+    const float* planes = (which == 4 || which == 8 || which == 16 || which == 32) ? WidePlanes(self) : nullptr;
+    if (!planes)
+        return;
+    if (which == 16 || which == 32)
+    {
+        const float* p = planes + (which == 16 ? 0 : 2);
+        StoreF(out, p[0]);
+        StoreF(out + 8, p[1]);
+    }
+    else
+    {
+        const float* p = planes + (which == 4 ? 4 : 6);
+        StoreF(out + 4, p[0]);
+        StoreF(out + 8, p[1]);
+    }
+}
+
+// vf16: is the sphere (r4: camera space x, y, z; f1: radius) in the frustum? The original's test
+// with the widened side planes (the camera's own planes stay 16:9).
+PPC_FUNC(sub_823170F8)
+{
+    uint32_t self = ctx.r3.u32;
+    const float* planes = WidePlanes(self);
+    if (!planes)
     {
         __imp__sub_823170F8(ctx, base);
         return;
