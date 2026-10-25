@@ -38,14 +38,6 @@
 // CRASH_SETUP_LANGUAGE=en|pt (else the language of Windows).
 // Included inside launcher.cpp's anonymous namespace: its headers (<mutex>, <thread>) are at the top there.
 
-std::wstring Widen(const std::string& text)
-{
-    int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), nullptr, 0);
-    std::wstring out(n, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), out.data(), n);
-    return out;
-}
-
 #include "installer_payload.inc"
 
 // --- the game dump --------------------------------------------------------------------------
@@ -74,39 +66,6 @@ bool InstallerPt()
     if (const char* forced = getenv("CRASH_SETUP_LANGUAGE"); forced && *forced)
         return _strnicmp(forced, "pt", 2) == 0;
     return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_PORTUGUESE;
-}
-
-// Lower-case hex SHA-256 of a file (Windows CNG), "" if it can't be read.
-std::string Sha256File(const fs::path& file)
-{
-    std::string hex;
-    BCRYPT_ALG_HANDLE algorithm = nullptr;
-    BCRYPT_HASH_HANDLE hash = nullptr;
-    HANDLE f = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-    if (f != INVALID_HANDLE_VALUE && BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0)) &&
-        BCRYPT_SUCCESS(BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0)))
-    {
-        std::vector<uint8_t> buffer(1 << 20);
-        DWORD read = 0;
-        bool ok = true;
-        while ((ok = ReadFile(f, buffer.data(), DWORD(buffer.size()), &read, nullptr) != 0) && read)
-            BCryptHashData(hash, buffer.data(), read, 0);
-        uint8_t digest[32];
-        if (ok && BCRYPT_SUCCESS(BCryptFinishHash(hash, digest, sizeof(digest), 0)))
-        {
-            char text[65];
-            for (int i = 0; i < 32; i++)
-                snprintf(text + i * 2, 3, "%02x", digest[i]);
-            hex = text;
-        }
-    }
-    if (hash)
-        BCryptDestroyHash(hash);
-    if (algorithm)
-        BCryptCloseAlgorithmProvider(algorithm, 0);
-    if (f != INVALID_HANDLE_VALUE)
-        CloseHandle(f);
-    return hex;
 }
 
 // Why `folder` can't be used, in two lines (English, Portuguese), or empty lines when it is a
@@ -1596,6 +1555,14 @@ void UpdateInstaller()
         RememberInstallDir();
         g_inst.selected = 2;  // DESKTOP SHORTCUT
     }
+    // The release now in the play folder (also when only the asset export failed): the launcher's
+    // UPDATE compares it with GitHub's latest (updater.inc).
+    if (g_inst.bundle && (g_inst.phase == Phase::Done || g_inst.gameReady) && !g_payload.tag.empty())
+        if (FILE* f = _wfopen((PlayDir() / VERSION_FILE).c_str(), L"wb"))
+        {
+            fprintf(f, "%s\n", g_payload.tag.c_str());
+            fclose(f);
+        }
     if (g_inst.logFile)
         fclose(g_inst.logFile), g_inst.logFile = nullptr;
 }

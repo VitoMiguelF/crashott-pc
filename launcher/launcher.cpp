@@ -16,6 +16,9 @@
 // DLSS is offered only where it runs: an NVIDIA GPU (gpu_probe.inc, by Vulkan) with CrashDlss.dll
 // and nvngx_dlss.dll next to the exe, confirmed by NGX's own check in a child process
 // (--probe-dlss). Elsewhere the row shows "DLSS (REQUIRES NVIDIA RTX)" greyed out and skips it.
+//
+// In an install of the single-file installer the menu has UPDATE: the next release's installer,
+// downloaded and run over this install (updater.inc).
 
 // windows.h first: menu_art.cpp is compiled with it, so DrawText is its DrawTextA macro there too.
 #include <windows.h>
@@ -52,10 +55,12 @@
 #include <string>
 #include <thread>
 #include <vector>
-#ifdef CRASH_INSTALLER
 #include <bcrypt.h>
 #include <shlobj.h>
+#ifdef CRASH_INSTALLER
 #include <shobjidl.h>
+#else
+#include <winhttp.h>  // updater.inc
 #endif
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -154,7 +159,7 @@ namespace
     bool g_capturing = false;          // CONTROLS: waiting for a key
     uint16_t g_captured = 0;           // set by the window procedure
     bool g_captureCancelled = false;
-    enum class Modal { None, Exit, Message } g_modal = Modal::None;
+    enum class Modal { None, Exit, Message, Update } g_modal = Modal::None;
     std::string g_message[2];
     bool g_quit = false;
     bool g_artLoaded = false, g_haveFonts = false;
@@ -199,10 +204,55 @@ namespace
         return out;
     }
 
+    std::wstring Widen(const std::string& text)
+    {
+        int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), nullptr, 0);
+        std::wstring out(n, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), out.data(), n);
+        return out;
+    }
+
     bool Exists(const fs::path& path)
     {
         std::error_code error;
         return fs::exists(path, error);
+    }
+
+    // The release tag of an install made by the single-file installer, next to CrashLauncher.exe
+    // (installer.inc writes it, updater.inc reads it).
+    constexpr const wchar_t* VERSION_FILE = L".crashrecomp_version";
+
+    // Lower-case hex SHA-256 of a file (Windows CNG), "" if it can't be read.
+    std::string Sha256File(const fs::path& file)
+    {
+        std::string hex;
+        BCRYPT_ALG_HANDLE algorithm = nullptr;
+        BCRYPT_HASH_HANDLE hash = nullptr;
+        HANDLE f = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+        if (f != INVALID_HANDLE_VALUE && BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0)) &&
+            BCRYPT_SUCCESS(BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0)))
+        {
+            std::vector<uint8_t> buffer(1 << 20);
+            DWORD read = 0;
+            bool ok = true;
+            while ((ok = ReadFile(f, buffer.data(), DWORD(buffer.size()), &read, nullptr) != 0) && read)
+                BCryptHashData(hash, buffer.data(), read, 0);
+            uint8_t digest[32];
+            if (ok && BCRYPT_SUCCESS(BCryptFinishHash(hash, digest, sizeof(digest), 0)))
+            {
+                char text[65];
+                for (int i = 0; i < 32; i++)
+                    snprintf(text + i * 2, 3, "%02x", digest[i]);
+                hex = text;
+            }
+        }
+        if (hash)
+            BCryptDestroyHash(hash);
+        if (algorithm)
+            BCryptCloseAlgorithmProvider(algorithm, 0);
+        if (f != INVALID_HANDLE_VALUE)
+            CloseHandle(f);
+        return hex;
     }
 
     fs::path GameFolder()
@@ -964,12 +1014,23 @@ namespace
         return false;
     }
 
+    bool Clicked(float x0, float y0, float x1, float y1)
+    {
+        ImVec2 m = ImGui::GetIO().MousePos;
+        float x = (m.x - g_view.ox) / g_view.s, y = (m.y - g_view.oy) / g_view.s;
+        return ImGui::IsMouseClicked(0) && x >= x0 && x < x1 && y >= y0 && y < y1;
+    }
+
     void SwitchTab(int direction)
     {
         g_tab = (g_tab + int(TABS.size()) + direction) % int(TABS.size());
         g_focusFirstRow = true;
         g_capturing = false;
     }
+
+#ifndef CRASH_INSTALLER
+#include "updater.inc"
+#endif
 
     void DrawLeft()
     {
@@ -987,15 +1048,25 @@ namespace
         }
         Draw(1, "DEFINITIVE EDITION", LEFT_CX, y, 38.0f, GOLD, 0.5f, 420.0f);
 
-        // The menu, as the main menu's items.
+        // The menu, as the main menu's items (UPDATE in an install of the installer: updater.inc).
         struct Entry { Text text; int id; };
-        const Entry entries[] = { { { "PLAY", "JOGAR" }, 0 }, { { "SAVE", "SALVAR" }, 1 }, { { "DEFAULTS", "PADRÕES" }, 2 }, { { "EXIT", "SAIR" }, 3 } };
-        float my = 384.0f;
+        std::vector<Entry> entries = { { { "PLAY", "JOGAR" }, 0 }, { { "SAVE", "SALVAR" }, 1 }, { { "DEFAULTS", "PADRÕES" }, 2 } };
+        bool updateAvailable = false;
+#ifndef CRASH_INSTALLER
+        if (UpdateOffered())
+            entries.push_back({ { "UPDATE", "ATUALIZAR" }, 4 });
+#endif
+        entries.push_back({ { "EXIT", "SAIR" }, 3 });
+        float my = entries.size() > 4 ? 372.0f : 384.0f, gap = entries.size() > 4 ? 10.0f : 18.0f;
         g_menuFocus = -1;
         ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         for (const Entry& entry : entries)
         {
             std::string text = T(entry.text);
+#ifndef CRASH_INSTALLER
+            if (entry.id == 4)
+                text = UpdateLabel(updateAvailable);
+#endif
             float size = entry.id == 0 ? 54.0f : 42.0f, width = TextWidth(1, text, size);
             ImGui::SetCursorScreenPos(g_view.P(LEFT_CX - width * 0.5f - 20.0f, my - 4.0f));
             ImGui::PushID(entry.id);
@@ -1005,8 +1076,8 @@ namespace
             if (hovered)
                 g_menuFocus = entry.id;
             bool disabled = entry.id == 1 && g_values == g_saved;
-            Style style = hovered ? MENU_SELECTED : disabled ? INFO : MENU;
-            Draw(1, text, LEFT_CX, my, size, style, 0.5f);
+            Style style = hovered ? MENU_SELECTED : disabled ? INFO : entry.id == 4 && updateAvailable ? GOLD : MENU;
+            Draw(1, text, LEFT_CX, my, size, style, 0.5f, 420.0f);
             if (pressed && g_modal == Modal::None)
             {
                 switch (entry.id)
@@ -1015,9 +1086,12 @@ namespace
                 case 1: Save(); break;
                 case 2: Defaults(); break;
                 case 3: RequestExit(); break;
+#ifndef CRASH_INSTALLER
+                case 4: OpenUpdate(); break;
+#endif
                 }
             }
-            my += size + 18.0f;
+            my += size + gap;
         }
         ImGui::PopItemFlag();
 
@@ -1238,13 +1312,6 @@ namespace
         }
     }
 
-    bool Clicked(float x0, float y0, float x1, float y1)
-    {
-        ImVec2 m = ImGui::GetIO().MousePos;
-        float x = (m.x - g_view.ox) / g_view.s, y = (m.y - g_view.oy) / g_view.s;
-        return ImGui::IsMouseClicked(0) && x >= x0 && x < x1 && y >= y0 && y < y1;
-    }
-
     void DrawModal()
     {
         g_draw->AddRectFilled(ImVec2(0, 0), ImGui::GetIO().DisplaySize, IM_COL32(10, 4, 0, 150));
@@ -1273,6 +1340,10 @@ namespace
             else if (back || KeyPressed({ ImGuiKey_GamepadFaceRight, ImGuiKey_Escape }, false))
                 g_modal = Modal::None;
         }
+#ifndef CRASH_INSTALLER
+        else if (g_modal == Modal::Update)
+            DrawUpdateModal(l, t, r, cx);
+#endif
         else
         {
             Draw(0, g_message[0], cx, t + 46.0f, 30.0f, HELP, 0.5f, r - l - 80.0f);
@@ -1371,6 +1442,9 @@ namespace
         g_draw = ImGui::GetWindowDrawList();
         if (g_backdrop.view)
             ImGui::GetBackgroundDrawList()->AddImage(g_backdrop.Id(), ImVec2(0, 0), io.DisplaySize);
+#ifndef CRASH_INSTALLER
+        PollUpdate();
+#endif
         HandleKeys();
         DrawFrame(PANEL_L, PANEL_T, PANEL_R, PANEL_B);
         DrawLeft();
@@ -1585,6 +1659,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     settings::LoadLanguagePacks(paths::Languages());
     settings::Load(paths::UserData());
     g_values = g_saved = settings::Get();
+    StartUpdateCheck();
 #endif
     if (!paths::Game().empty())
         ma::StartLoading();
@@ -1737,6 +1812,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     }
 #ifdef CRASH_INSTALLER
     ShutdownInstaller();
+#else
+    StopUpdater();
 #endif
     if (g_dlssProbe.state == 2)
         JoinDlssProbe();

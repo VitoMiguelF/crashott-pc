@@ -145,7 +145,9 @@ ones with `winget`.
 
    Release zips placed next to `CrashSetup-<version>.exe` are used instead of downloading them again. If
    only the asset export fails, the game is installed anyway: **TRY AGAIN** reruns just that step. To
-   update, run the new installer on the same folder (your saves and settings in `userdata\` stay).
+   update, use **UPDATE** in the launcher's menu: it shows when a new release is out, downloads only
+   its installer and runs it on the same folder (your saves and settings in `userdata\` stay). Running
+   the new installer on the same folder by hand does the same.
 4. Play with the shortcut, **`CrashLauncher.exe`** (options, then PLAY) or `CrashOTTDE.exe`. (A clone
    built with `tools\setup.py` plays from `dist\`: `dist\CrashLauncher.exe`, `dist\CrashRecomp.exe`.)
 
@@ -370,7 +372,9 @@ pelo `winget`.
 
    Zips da release colocados ao lado do `CrashSetup-<versão>.exe` são usados em vez de baixar de novo. Se só
    a exportação de assets falhar, o jogo fica instalado mesmo assim: **TENTAR DE NOVO** refaz só essa etapa.
-   Para atualizar, rode o instalador novo na mesma pasta (seus saves e opções em `userdata\` ficam).
+   Para atualizar, use **ATUALIZAR** no menu do launcher: ele avisa quando sai uma release nova, baixa só
+   o instalador dela e o roda na mesma pasta (seus saves e opções em `userdata\` ficam). Rodar o instalador
+   novo na mesma pasta à mão faz o mesmo.
 4. Jogue pelo atalho, pelo **`CrashLauncher.exe`** (opções e depois JOGAR) ou pelo `CrashOTTDE.exe`. (Um clone
    montado com o `tools\setup.py` joga da `dist\`: `dist\CrashLauncher.exe`, `dist\CrashRecomp.exe`.)
 

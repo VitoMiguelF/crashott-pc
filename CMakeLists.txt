@@ -202,7 +202,7 @@ add_executable(CrashLauncher WIN32
 target_include_directories(CrashLauncher PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
 target_compile_definitions(CrashLauncher PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 target_compile_options(CrashLauncher PRIVATE -Wno-deprecated-declarations)
-target_link_libraries(CrashLauncher PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi)
+target_link_libraries(CrashLauncher PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi uuid bcrypt winhttp)
 
 # Installer (launcher/installer.inc): the launcher's look in front of tools/setup.py. The same
 # sources with CRASH_INSTALLER; the release bundle ships it prebuilt as CrashSetup.exe (our code
