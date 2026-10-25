@@ -212,7 +212,7 @@ add_executable(CrashSetup WIN32 ${CRASH_LAUNCHER_SOURCES})
 target_include_directories(CrashSetup PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
 target_compile_definitions(CrashSetup PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS CRASH_INSTALLER)
 target_compile_options(CrashSetup PRIVATE -Wno-deprecated-declarations -Wno-unused-function)
-target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32 uuid)
+target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32 uuid bcrypt)
 
 # The player's folder (dist\): CrashRecomp.exe + DLLs, languages\, data\ (optional, derived from the
 # user's game), and mods\ / userdata\ / game\ kept as they are. `cmake --build build --target dist`

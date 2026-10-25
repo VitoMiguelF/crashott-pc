@@ -53,6 +53,7 @@
 #include <thread>
 #include <vector>
 #ifdef CRASH_INSTALLER
+#include <bcrypt.h>
 #include <shlobj.h>
 #include <shobjidl.h>
 #endif
@@ -1545,14 +1546,32 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     // asking: next to tools\setup.py, or in the install folder of the single-file installer.
     PrepareInstaller();
     std::string distGame;
+    // A --game that isn't a compatible dump (a Relaunch always passes a checked one): asked again.
+    auto given = std::find_if(pathArgs.begin(), pathArgs.end(), [](const char* a) { return strcmp(a, "--game") == 0; });
+    if (given != pathArgs.end() && given + 1 != pathArgs.end() && !g_inst.autoStart && !CheckDump(fs::path(*(given + 1))).Ok())
+    {
+        fs::path chosen = AskForDump(nullptr);
+        if (chosen.empty())
+            return 0;
+        distGame = Ansi(chosen.wstring());
+        *(given + 1) = distGame.data();
+    }
     if (std::none_of(pathArgs.begin(), pathArgs.end(), [](const char* a) { return strcmp(a, "--game") == 0; }))
     {
         wchar_t self[MAX_PATH];
         GetModuleFileNameW(nullptr, self, MAX_PATH);
         fs::path candidate = g_inst.bundle ? InstalledGameFolder() : fs::path(self).parent_path() / "dist" / "game";
+        // No game yet (or not a compatible one): ask for it before the window opens, which is
+        // drawn with that dump's art (installer.inc, AskForDump). --autostart (tests) never asks.
+        if (!CheckDump(candidate).Ok() && !g_inst.autoStart)
+        {
+            candidate = AskForDump(nullptr);
+            if (candidate.empty())
+                return 0;  // the player gave up: nothing to install from
+        }
         if (paths::IsGameFolder(candidate))
         {
-            distGame = Narrow(candidate.wstring());
+            distGame = Ansi(candidate.wstring());
             pathArgs.push_back(const_cast<char*>("--game"));
             pathArgs.push_back(distGame.data());
         }

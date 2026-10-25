@@ -102,9 +102,9 @@ ones with `winget`.
 1. Download **`CrashSetup-v1.05.exe`** (the latest, ~210 MB, one file) from the
    [releases](https://github.com/VitoMiguelF/crashott-pc/releases). (Up to v1.04 it was a zip with
    `CrashSetup.exe` inside; a `git clone` of this repository: see [CONTRIBUTING.md](CONTRIBUTING.md).)
-2. Run it. Choose **where to install** (default `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive
-   Edition`; any folder or drive of yours, the space needed and free is shown), your **game folder** (it
-   is copied into the install), the options (subtitles, HD AI Remaster, asset export for modding) and
+2. Run it. It first asks for your **game folder** and checks it is the supported Xbox 360 dump. Choose **where to install** (default `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive
+   Edition`; any folder or drive of yours, the space needed and free is shown; your game is copied into
+   the install), the options (subtitles, HD AI Remaster, asset export for modding) and
    click **INSTALL**. It unpacks its files there, recompiles the game code and builds everything (about
    3 minutes on an 8-core PC, longer on slower ones). The installer checks your GPU: DLSS is installed
    only on an NVIDIA RTX card (NVIDIA's own check); elsewhere you get FSR 3.1.
@@ -321,9 +321,9 @@ pelo `winget`.
 1. Baixe o **`CrashSetup-v1.05.exe`** (o mais recente, ~210 MB, um arquivo só) nas
    [releases](https://github.com/VitoMiguelF/crashott-pc/releases). (Até a v1.04 era um zip com o
    `CrashSetup.exe` dentro; para um `git clone` deste repositório, veja o [CONTRIBUTING.md](CONTRIBUTING.md).)
-2. Abra. Escolha **onde instalar** (padrão `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive Edition`;
-   qualquer pasta ou disco seu, com o espaço necessário e o livre na tela), a **pasta do jogo** (ela é copiada
-   para a instalação), as opções (legendas, HD AI Remaster, assets para modding) e clique em **INSTALAR**. Ele
+2. Abra. Primeiro ele pede a **pasta do jogo** e confere se é o dump de Xbox 360 suportado. Escolha **onde instalar** (padrão `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive Edition`;
+   qualquer pasta ou disco seu, com o espaço necessário e o livre na tela; o jogo é copiado para a instalação),
+   as opções (legendas, HD AI Remaster, assets para modding) e clique em **INSTALAR**. Ele
    extrai os arquivos lá, recompila o código do jogo e compila tudo (uns 3 minutos num PC de 8 núcleos, mais
    nos mais lentos). O instalador confere a placa de vídeo: o DLSS só é instalado numa NVIDIA RTX (pela
    verificação da própria NVIDIA); nas outras fica o FSR 3.1.

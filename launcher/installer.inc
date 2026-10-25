@@ -34,7 +34,8 @@
 // --option subtitles|no-subtitles|remaster|assets|copy|desktop|no-desktop|startmenu|no-startmenu (copy:
 // always in the single-file installer),
 // --autofinish (at the end: make the chosen shortcuts and exit, code 0, or 1 if it failed),
-// --shots <folder> (a PNG of every screen and step, 01_setup.png...), CRASH_GPU_VENDOR (gpu_vendor.h).
+// --shots <folder> (a PNG of every screen and step, 01_setup.png...), CRASH_GPU_VENDOR (gpu_vendor.h),
+// CRASH_SETUP_LANGUAGE=en|pt (else the language of Windows).
 // Included inside launcher.cpp's anonymous namespace: its headers (<mutex>, <thread>) are at the top there.
 
 std::wstring Widen(const std::string& text)
@@ -46,6 +47,186 @@ std::wstring Widen(const std::string& text)
 }
 
 #include "installer_payload.inc"
+
+// --- the game dump --------------------------------------------------------------------------
+// Asked for before the window opens (AskForDump, from WinMain): the screen is drawn with the art
+// of that dump, so without one it would open plain. A dump is compatible when it has the files the
+// install reads and the one default.xex the port is made for (the same check as tools/setup.py:
+// XEX_SHA256 and GAME_FILES there).
+
+const char* DUMP_XEX_SHA256 = "e76824b242c6c628738c373bdf052d456945d8e343eb934100617fd423e86373";
+const wchar_t* const DUMP_FILES[] = { L"default.xex", L"default.rcf", L"english.rcf", L"sound1.rcf", L"sound2.rcf" };
+
+// The command line's code page (__argv, std::filesystem's narrow paths, Relaunch): a game folder with
+// accents goes through it as the ANSI string, not UTF-8.
+std::string Ansi(const std::wstring& text)
+{
+    int n = WideCharToMultiByte(CP_ACP, 0, text.c_str(), int(text.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(n, '\0');
+    WideCharToMultiByte(CP_ACP, 0, text.c_str(), int(text.size()), out.data(), n, nullptr, nullptr);
+    return out;
+}
+
+// The installer speaks the language of Windows: Portuguese on a Portuguese Windows, else English.
+// CRASH_SETUP_LANGUAGE=en|pt picks one (tests).
+bool InstallerPt()
+{
+    if (const char* forced = getenv("CRASH_SETUP_LANGUAGE"); forced && *forced)
+        return _strnicmp(forced, "pt", 2) == 0;
+    return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_PORTUGUESE;
+}
+
+// Lower-case hex SHA-256 of a file (Windows CNG), "" if it can't be read.
+std::string Sha256File(const fs::path& file)
+{
+    std::string hex;
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    HANDLE f = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (f != INVALID_HANDLE_VALUE && BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0)) &&
+        BCRYPT_SUCCESS(BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0)))
+    {
+        std::vector<uint8_t> buffer(1 << 20);
+        DWORD read = 0;
+        bool ok = true;
+        while ((ok = ReadFile(f, buffer.data(), DWORD(buffer.size()), &read, nullptr) != 0) && read)
+            BCryptHashData(hash, buffer.data(), read, 0);
+        uint8_t digest[32];
+        if (ok && BCRYPT_SUCCESS(BCryptFinishHash(hash, digest, sizeof(digest), 0)))
+        {
+            char text[65];
+            for (int i = 0; i < 32; i++)
+                snprintf(text + i * 2, 3, "%02x", digest[i]);
+            hex = text;
+        }
+    }
+    if (hash)
+        BCryptDestroyHash(hash);
+    if (algorithm)
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (f != INVALID_HANDLE_VALUE)
+        CloseHandle(f);
+    return hex;
+}
+
+// Why `folder` can't be used, in two lines (English, Portuguese), or empty lines when it is a
+// compatible dump.
+struct DumpProblem
+{
+    std::string en[2], pt[2];
+    bool Ok() const { return en[0].empty(); }
+};
+
+DumpProblem CheckDump(const fs::path& folder)
+{
+    DumpProblem problem;
+    std::error_code error;
+    if (folder.empty() || !fs::is_directory(folder, error))
+    {
+        problem.en[0] = "No game folder chosen.", problem.pt[0] = "Nenhuma pasta do jogo escolhida.";
+        return problem;
+    }
+    std::string missing;
+    for (const wchar_t* name : DUMP_FILES)
+        if (!fs::is_regular_file(folder / name, error))
+            missing += (missing.empty() ? "" : ", ") + Narrow(name);
+    if (!fs::is_directory(folder / L"shaders", error))
+        missing += std::string(missing.empty() ? "" : ", ") + "shaders\\";
+    if (!missing.empty())
+    {
+        bool none = !fs::is_regular_file(folder / L"default.xex", error);
+        problem.en[0] = none ? "This is not the folder of the game (no default.xex)." : "The game files are incomplete.";
+        problem.pt[0] = none ? "Esta não é a pasta do jogo (não tem default.xex)." : "Os arquivos do jogo estão incompletos.";
+        problem.en[1] = "Missing: " + missing;
+        problem.pt[1] = "Faltam: " + missing;
+        return problem;
+    }
+    std::string digest = Sha256File(folder / L"default.xex");
+    if (digest != DUMP_XEX_SHA256)
+    {
+        problem.en[0] = "This default.xex is not the version the port supports.";
+        problem.pt[0] = "Este default.xex não é a versão que o port suporta.";
+        problem.en[1] = "It needs Crash of the Titans for Xbox 360 (retail disc, title 565507E4); SHA-256 " + digest.substr(0, 16) + "...";
+        problem.pt[1] = "Ele precisa do Crash of the Titans de Xbox 360 (disco comercial, título 565507E4); SHA-256 " + digest.substr(0, 16) + "...";
+    }
+    return problem;
+}
+
+// The chosen folder, or the folder inside it that has default.xex (people often pick the one above).
+fs::path FindDumpIn(const fs::path& chosen)
+{
+    std::error_code error;
+    if (fs::is_regular_file(chosen / L"default.xex", error))
+        return chosen;
+    for (const auto& entry : fs::directory_iterator(chosen, error))
+        if (entry.is_directory(error) && fs::is_regular_file(entry.path() / L"default.xex", error))
+            return entry.path();
+    return chosen;
+}
+
+// Asks for the game folder until a compatible one is chosen; empty if the player gives up.
+fs::path AskForDump(HWND owner)
+{
+    bool pt = InstallerPt();
+    const wchar_t* caption = pt ? L"Crash of the Titans: Definitive Edition - Instalação" : L"Crash of the Titans: Definitive Edition - Setup";
+    HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    fs::path chosen;
+    for (;;)
+    {
+        fs::path picked;
+        IFileOpenDialog* dialog = nullptr;
+        if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+        {
+            DWORD options = 0;
+            dialog->GetOptions(&options);
+            dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+            dialog->SetTitle(pt ? L"Escolha a pasta do seu Crash of the Titans (Xbox 360): a que tem default.xex e default.rcf"
+                                : L"Choose the folder of your Crash of the Titans (Xbox 360): the one with default.xex and default.rcf");
+            dialog->SetOkButtonLabel(pt ? L"Usar esta pasta" : L"Use this folder");
+            if (dialog->Show(owner) == S_OK)
+            {
+                IShellItem* item = nullptr;
+                PWSTR name = nullptr;
+                if (SUCCEEDED(dialog->GetResult(&item)) && SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &name)))
+                {
+                    picked = FindDumpIn(fs::path(name));
+                    CoTaskMemFree(name);
+                }
+                if (item)
+                    item->Release();
+            }
+            dialog->Release();
+        }
+        if (picked.empty())
+        {
+            std::wstring text = pt ? L"O instalador precisa da pasta do seu Crash of the Titans (Xbox 360) para continuar: o jogo é montado a "
+                                     L"partir dela, e nenhum arquivo do jogo vem no instalador.\n\nEscolher a pasta agora?"
+                                   : L"The installer needs the folder of your Crash of the Titans (Xbox 360) to go on: the game is built from "
+                                     L"it, and no game file comes with the installer.\n\nChoose the folder now?";
+            if (MessageBoxW(owner, text.c_str(), caption, MB_YESNO | MB_ICONQUESTION) != IDYES)
+                break;
+            continue;
+        }
+        DumpProblem problem = CheckDump(picked);
+        if (problem.Ok())
+        {
+            chosen = picked;
+            break;
+        }
+        const std::string* lines = pt ? problem.pt : problem.en;
+        std::wstring text = Widen(Narrow(picked.wstring()) + "\n\n" + lines[0] + (lines[1].empty() ? "" : "\n" + lines[1])) +
+                            (pt ? L"\n\nEscolha a pasta com os arquivos do seu disco do jogo (default.xex, default.rcf, english.rcf, "
+                                  L"sound1.rcf, sound2.rcf e shaders\\)."
+                                : L"\n\nChoose the folder with the files of your game disc (default.xex, default.rcf, english.rcf, "
+                                  L"sound1.rcf, sound2.rcf and shaders\\).");
+        if (MessageBoxW(owner, text.c_str(), caption, MB_RETRYCANCEL | MB_ICONWARNING) != IDRETRY)
+            break;
+    }
+    if (SUCCEEDED(init))
+        CoUninitialize();
+    Log("[setup] game folder %s", chosen.empty() ? "not chosen" : Narrow(chosen.wstring()).c_str());
+    return chosen;
+}
 
 struct InstallStep
 {
@@ -140,6 +321,7 @@ struct Installer
     std::thread reader;
     FILE* logFile = nullptr;
     int finalCode = 0;             // --autofinish exit code
+    DumpProblem dump;              // CheckDump of the game folder (InitInstaller)
 };
 Installer g_inst;
 
@@ -884,11 +1066,11 @@ std::wstring InstallerRelaunchArgs()
 
 void ChooseInstallerGameFolder()
 {
-    fs::path folder = paths::PickGameFolder(g_hwnd);
+    fs::path folder = AskForDump(g_hwnd);
     if (folder.empty())
         return;
     // Start again with --game: the art (logo, fonts, frame) is read from that folder at startup.
-    g_passArgs = { "--game", Narrow(folder.wstring()) };
+    g_passArgs = { "--game", Ansi(folder.wstring()) };
     Relaunch();
 }
 
@@ -947,12 +1129,15 @@ std::vector<InstallRow> InstallRows()
                        T({ "default.xex, default.rcf, english.rcf, sound1.rcf... It is never changed.",
                            "default.xex, default.rcf, english.rcf, sound1.rcf... Ela nunca é alterada." }) },
                      false, true, !game.empty(), RowGame });
-    rows.push_back({ { "GAME", "JOGO" },
-                     haveGame ? (g_artLoaded ? std::string("CRASH OF THE TITANS (XBOX 360)") : std::string(T({ "FOUND", "ENCONTRADO" })))
-                              : std::string(T({ "NOT FOUND", "NÃO ENCONTRADO" })),
-                     { T({ "The installer checks default.xex (only the known version is supported)", "O instalador confere o default.xex (só a versão conhecida é suportada)" }),
-                       T({ "and recompiles it on this PC. No game file is downloaded.", "e o recompila neste PC. Nenhum arquivo do jogo é baixado." }) },
-                     false, false, false, RowGameStatus });
+    const DumpProblem& dump = g_inst.dump;
+    if (haveGame && dump.Ok())
+        rows.push_back({ { "GAME", "JOGO" }, T({ "COMPATIBLE", "COMPATÍVEL" }),
+                         { T({ "Crash of the Titans (Xbox 360), the default.xex this port is made for.", "Crash of the Titans (Xbox 360), o default.xex para o qual o port é feito." }),
+                           T({ "It is recompiled on this PC. No game file is downloaded.", "Ele é recompilado neste PC. Nenhum arquivo do jogo é baixado." }) },
+                         false, false, true, RowGameStatus });
+    else
+        rows.push_back({ { "GAME", "JOGO" }, haveGame ? T({ "NOT COMPATIBLE", "INCOMPATÍVEL" }) : T({ "NOT FOUND", "NÃO ENCONTRADO" }),
+                         { Pt() ? dump.pt[0] : dump.en[0], Pt() ? dump.pt[1] : dump.en[1] }, false, false, true, RowGameStatus });
     if (g_inst.bundle)
     {
         rows.push_back(GpuRow());
@@ -1095,7 +1280,7 @@ bool CanInstall()
     if (g_inst.bundle && (!g_inst.gpuKnown || g_inst.installDir.empty()))
         return false;
     std::lock_guard lock(g_inst.mutex);
-    return paths::IsGameFolder(GameFolder()) && g_inst.checked && !g_inst.checking && MissingCount() == 0;
+    return g_inst.dump.Ok() && g_inst.checked && !g_inst.checking && MissingCount() == 0;
 }
 
 // The install stopped at the last step (the asset export) with the game already in dist\.
@@ -1257,7 +1442,7 @@ void DrawRows(const std::vector<InstallRow>& rows, bool allowInstall)
         bool selected = row.enabled && g_inst.selected == int(i);
         const Style& style = !row.enabled ? INFO : selected ? SELECTED : NORMAL;
         Draw(0, T(row.label), LABEL_RIGHT, vy, ROW_SIZE, style, 1.0f, LABEL_RIGHT - LABEL_LEFT);
-        const Style& valueStyle = row.id == RowGameStatus ? (paths::IsGameFolder(GameFolder()) ? SELECTED : WARNING)
+        const Style& valueStyle = row.id == RowGameStatus ? (g_inst.dump.Ok() ? SELECTED : WARNING)
                                   : row.id == RowPrereqs && MissingCount() && g_inst.checked ? WARNING
                                   : row.id == RowSpace ? (EnoughSpace() ? SELECTED : WARNING)
                                   : row.id == RowGpu ? (g_inst.gpuKnown ? SELECTED : INFO)
@@ -1556,8 +1741,9 @@ fs::path InstalledGameFolder()
 
 void InitInstaller()
 {
-    LANGID ui = GetUserDefaultUILanguage();
-    g_values.language = PRIMARYLANGID(ui) == LANG_PORTUGUESE ? "pt-br" : "english";
+    g_values.language = InstallerPt() ? "pt-br" : "english";
+    g_inst.dump = CheckDump(GameFolder());
+    Log("[setup] game folder %s: %s", Narrow(GameFolder().wstring()).c_str(), g_inst.dump.Ok() ? "compatible" : g_inst.dump.en[0].c_str());
     if (g_inst.bundle)
     {
         Log("[setup] single-file installer %s: %zu files, %.0f MB; install folder %s", g_payload.tag.c_str(), g_payload.files.size(),
