@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <vector>
 
-// Image decoding the OS provides: WIC on Windows (image_win32.cpp). Elsewhere (image_posix.cpp)
-// there is no decoder yet; the font and menu art PNGs inside the game's packages need one
-// (stb_image or libpng) before the Linux build shows them.
+// Image decoding for the fonts and menu art inside the game's packages: WIC on Windows
+// (image_win32.cpp), stb_image elsewhere (image_posix.cpp, thirdparty/stb). Both give the same
+// pixels for every PNG in default.rcf.
 namespace plat
 {
     // A PNG (any kind) to straight-alpha RGBA8, rows top-down; false on failure.

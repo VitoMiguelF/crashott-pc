@@ -102,6 +102,7 @@ else()
     find_package(SDL3 REQUIRED CONFIG)
     find_package(Threads REQUIRED)
     target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage SDL3::SDL3 Threads::Threads ${CMAKE_DL_LIBS})
+    target_include_directories(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/thirdparty/stb)  # PNG (platform/image_posix.cpp)
 endif()
 target_compile_options(CrashRecomp PRIVATE ${CRASH_COMPILE_OPTIONS})
 # Symbol map (build\CrashRecomp.map) and line tables in a PDB (build\CrashRecomp.pdb): name the

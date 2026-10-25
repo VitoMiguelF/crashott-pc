@@ -42,7 +42,8 @@ def jobs(kind):
     simde = f"-I{XR / 'thirdparty/simde'}"
     runtime = common + ["-std=gnu++20", "-DCRASH_HAVE_FFMPEG=1", "-DNOMINMAX", "-DWIN32_LEAN_AND_MEAN",
                         f"-I{ROOT / 'thirdparty/ffmpeg/include'}", f"-I{ROOT / 'thirdparty/vulkan/include'}",
-                        f"-I{ROOT / 'thirdparty/dxc/include'}", f"-I{ROOT / 'generated/ppc'}", simde, f"-I{sdl_include()}"]
+                        f"-I{ROOT / 'thirdparty/dxc/include'}", f"-I{ROOT / 'thirdparty/stb'}", f"-I{ROOT / 'generated/ppc'}", simde,
+                        f"-I{sdl_include()}"]
     xex = [f"-I{XR / 'XenonUtils'}", simde, f"-I{XR / 'thirdparty/libmspack/libmspack/mspack'}",
            f"-I{XR / 'thirdparty/tiny-AES-c'}", f"-I{XR / 'thirdparty/TinySHA1'}", "-DNOMINMAX"]
     result = []

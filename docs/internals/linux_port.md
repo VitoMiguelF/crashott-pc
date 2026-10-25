@@ -75,7 +75,7 @@ work left for Linux, not what was moved already.
 | FSR 3.1 | `amd_fidelityfx_vk.dll` | none: no official Linux binary; build the FidelityFX SDK's Vulkan backend from source | Windows only | M |
 | Upscaler version info | `GetFileVersionInfoW` | `plat::LibraryFileVersion` (empty on POSIX) | done | none |
 | Text drawing (console, subtitles) | GDI: `CreateFontW` (Segoe UI / Consolas), `DrawTextW` word wrap, `TextOutW`, DIB sections | `plat::TextCanvas`. The POSIX version fails every call, so **the console and subtitles are not drawn** | stub | M: FreeType or stb_truetype + a bundled font (DejaVu Sans / Sans Mono), word wrap |
-| PNG decoding | WIC (language fonts, menu art from `default.rcf`) | `plat::DecodePng`. The POSIX version returns false, so **the language-pack fonts and the menu art are missing** | stub | S: stb_image or libpng. Do this first |
+| PNG decoding | WIC (language fonts, menu art from `default.rcf`) | `plat::DecodePng` with stb_image (`thirdparty/stb`, PNG only). It decodes all 20,474 PNGs in `default.rcf` byte-identical to WIC (RGB, palette + tRNS, RGBA) | done | none |
 | Clipboard, dead keys | `OpenClipboard`, `ToUnicode` | `window::ClipboardText` (SDL_GetClipboardText), `FlushDeadKey` (no-op on SDL) | written | none |
 | Message box, folder picker | `MessageBoxW`, `IFileOpenDialog` | `zenity` / `kdialog`, else stderr | written | S: `SDL_ShowSimpleMessageBox` once SDL is up |
 | Restart from settings | `CreateProcessW` with the same console | `fork` + `execv` (`plat::StartSelf`), `waitpid`-free wait via `kill(pid, 0)` | written | S |
@@ -139,15 +139,14 @@ Not done yet:
 1. **First run** on a Linux machine or the Deck, with SDL3 ≥ 3.2 installed. Copy
    `build/linux/CrashRecomp` next to the game files as on Windows, but not the stub `libSDL3.so.0`.
    Also try the native CMake build there.
-2. `plat::DecodePng` (stb_image), so the menu art and language fonts appear.
-3. VFS case-folding for the game dump.
-4. `plat::TextCanvas` with FreeType or stb_truetype (developer console, subtitles).
-5. First boot: guest memory views, fault handlers, fibers, the timer fallback, and audio latency
+2. VFS case-folding for the game dump.
+3. `plat::TextCanvas` with FreeType or stb_truetype (developer console, subtitles).
+4. First boot: guest memory views, fault handlers, fibers, the timer fallback, and audio latency
    with SDL's queue.
-6. Steam Deck: run under Gamescope (fullscreen, 1280×800, the Hor+ path), Deck controls through
+5. Steam Deck: run under Gamescope (fullscreen, 1280×800, the Hor+ path), Deck controls through
    SDL (Steam Input exposes them as a gamepad), and suspend/resume.
-7. tools: buildenv / run_game POSIX branch, packaging (tarball/AppImage), FFmpeg/DXC `.so` files.
-8. Optional: DLSS (NGX Linux), FSR 3.1 from source, HID PlayStation reader (hidraw), launcher.
+6. tools: buildenv / run_game POSIX branch, packaging (tarball/AppImage), FFmpeg/DXC `.so` files.
+7. Optional: DLSS (NGX Linux), FSR 3.1 from source, HID PlayStation reader (hidraw), launcher.
 
 ## x86-only code (for an ARM64 / Android build)
 
