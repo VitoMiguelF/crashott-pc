@@ -13,9 +13,9 @@
 //   and sees more above and below), the culling's sphere test uses side planes widened the same
 //   way, and the orthographic matrix (the HUD) keeps the game's own aspect.
 // - 2D into the screen's 1x targets (1280 wide) is put back into the middle 16:9 area, per
-//   triangle (HUD_GS in xenos_renderer.cpp, xe_hud_transform for rectangle lists): scaled around
-//   the centre, except triangles spanning the screen's width (fades, full-screen passes, bars),
-//   which keep its edges; backgrounds zoom to fill the screen. The frontend's sprites, drawn
+//   triangle (HUD_GS in xenos_renderer.cpp; xe_hud_transform for points and lines; never D3D's
+//   rectangle-list clears): scaled around the centre, except triangles spanning the screen's
+//   width (fades, full-screen passes, bars), which keep its edges; backgrounds zoom to fill it. The frontend's sprites, drawn
 //   through a pure3d camera (W = 0.5), are already placed by the projection; only their big
 //   background sprites zoom. With hud_16_9 off, in gameplay, a HUD draw whose vertices all lie in
 //   the left or right 40% keeps its distance to that screen edge instead (HUD corners at the

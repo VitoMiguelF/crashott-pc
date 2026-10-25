@@ -1605,6 +1605,31 @@ float4 main(float4 position : SV_Position) : SV_Target
         // The game's 2D vertex shader: position = (x, y, z, 1) * c4..c7 (rows).
         constexpr uint64_t HUD_VS = 0xaecab5202246c470ull;
 
+        // c4..c7 of the vertex shader (the 2D matrix of HUD_VS).
+        void LoadHudMatrix(float c[16])
+        {
+            uint32_t base = Reg(xenos::REG_SQ_VS_CONST) & 0x1FF;
+            for (uint32_t i = 0; i < 16; i++)
+            {
+                uint32_t bits = LoadBE32(GPU_MMIO_BEGIN + (xenos::REG_SHADER_CONSTANT_000_X + (base + 4) * 4 + i) * 4);
+                memcpy(&c[i], &bits, 4);
+            }
+        }
+
+        // The game's own 2D (orthographic, W = 1): its scissor is in 16:9 space and moves with it.
+        // 2D drawn through a pure3d camera (W != 1, the frontend; HUD_GS) was placed by the Hor+
+        // projection, and the game computes its scissor from that projection: already in place
+        // (squeezing it again cut the HUB's carousel of titans); so is any other vertex shader's
+        // (3D, like the HUB's titan dolls).
+        bool HudDrawIsOrtho(uint64_t vsHash)
+        {
+            if (vsHash != HUD_VS)
+                return false;
+            float c[16];
+            LoadHudMatrix(c);
+            return c[3] == 0.0f && c[7] == 0.0f && c[11] == 0.0f && c[15] == 1.0f;
+        }
+
         // Anchored HUD: -1 if every vertex of the draw is in the left 40% of the screen, 1 in the
         // right 40%, 0 otherwise (or when it can't tell).
         int HudDrawSide(const float* data, uint32_t startDwords, uint32_t dwords, uint32_t stride, uint32_t minIndex, uint32_t maxIndex,
@@ -1612,13 +1637,8 @@ float4 main(float4 position : SV_Position) : SV_Target
         {
             if (!data || maxIndex < minIndex || maxIndex - minIndex > 4096)
                 return 0;
-            uint32_t base = Reg(xenos::REG_SQ_VS_CONST) & 0x1FF;
             float c[16];
-            for (uint32_t i = 0; i < 16; i++)
-            {
-                uint32_t bits = LoadBE32(GPU_MMIO_BEGIN + (xenos::REG_SHADER_CONSTANT_000_X + (base + 4) * 4 + i) * 4);
-                memcpy(&c[i], &bits, 4);
-            }
+            LoadHudMatrix(c);
             float lo = 1e30f, hi = -1e30f;
             for (uint32_t v = minIndex; v <= maxIndex; v++)
             {
@@ -3128,6 +3148,10 @@ float4 main(float4 position : SV_Position) : SV_Target
 
             // Wide screens: the 2D of the screen back into the middle 16:9 area (widescreen.h).
             HudDraw hud = HudTransform(sceneDraw, pitch, msaa, ps ? ps->info.hash : 0, readsResolve);
+            // Rectangle lists are D3D's clears (colour and depth, per tile): they cover what they
+            // cover. Squeezed, they left the HUB's depth uncleared in strips (titan dolls cut).
+            if (rectList)
+                hud = HudDraw{};
             if (hud.mode & 8u)
             {
                 // Anchored HUD: the side of the whole draw (its vertices through the game's 2D
@@ -3350,7 +3374,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             call.stencilRef = Reg(xenos::REG_RB_STENCILREFMASK) & 0xFF;
             call.viewport = { 0.0f, 0.0f, hostW * XScale(scale), h * rowScale * scale };
             rhi::Rect scissor = GuestScissor(targetWidth, targetHeight);
-            if (hud.mode)
+            if (hud.mode && HudDrawIsOrtho(vs->info.hash))
                 HudScissor(scissor);
             scissor.left = ScaledFloor(float(scissor.left * int32_t(samplesX)), XScale(scale));
             scissor.right = ScaledCeil(float(scissor.right * int32_t(samplesX)), XScale(scale));
