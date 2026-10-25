@@ -6,13 +6,19 @@
 // Two ways to run:
 //   - the single-file installer (release CrashSetup-<tag>.exe, tools/make_installer.py): everything
 //     the install needs is inside the exe (installer_payload.inc). The player chooses the install
-//     folder (default %LOCALAPPDATA%\Programs\CrashRecomp, any drive; the space needed and free is
-//     shown) and the game folder; INSTALL extracts the files there (EXTRACTING FILES), then runs
-//     setup.py from there, offline (only the optional subtitles / HD AI Remaster are downloaded).
+//     folder (default %LOCALAPPDATA%\Programs\Crash of the Titans Definitive Edition, any drive; the
+//     space needed and free is shown) and the game folder; INSTALL extracts the project into its
+//     CrashRecomp\ subfolder (EXTRACTING FILES), then runs setup.py from there with --play-dir, offline
+//     (only the optional subtitles / HD AI Remaster are downloaded). The install folder ends up with
+//     only what the player uses (tools/make_dist.py --installed): CrashLauncher.exe, CrashOTTDE.exe,
+//     the DLLs, game\ (the dump, always copied), userdata\, mods\, setup.log and .crashrecomp_files;
+//     languages\, data\, licencas\ and the build are in CrashRecomp\. Only what building and running
+//     needs is in the exe (no docs, tests or development tools); the asset export's tools and
+//     numpy / Pillow (component "modding") are extracted only with ASSETS FOR MODDING.
 //     The DLSS files (CrashDlss.dll, nvngx_dlss.dll) are installed only on a PC where NGX says DLSS
 //     runs (gpu_probe.inc: an NVIDIA RTX GPU, checked at startup with those two files unpacked to
 //     %TEMP%); elsewhere setup.py gets --no-dlss and the options offer FSR or nothing. At the end
-//     it asks for a desktop shortcut and a Start menu entry to the launcher (dist\CrashLauncher.exe);
+//     it asks for a desktop shortcut and a Start menu entry to the launcher (CrashLauncher.exe);
 //   - next to tools\setup.py (a clone, or build\CrashSetup.exe copied to the project root): the
 //     same screen without the install folder; it checks the prerequisites (setup.py --check; BUILD
 //     TOOLS = VISUAL STUDIO (advanced) builds with an installed Visual Studio + LLVM clang-cl
@@ -25,7 +31,8 @@
 // are used instead of downloading (setup.py --assets-dir).
 //
 // Tests and scripts: --install-dir <folder>, --autostart (install with the options given),
-// --option subtitles|no-subtitles|remaster|assets|copy|desktop|no-desktop|startmenu|no-startmenu,
+// --option subtitles|no-subtitles|remaster|assets|copy|desktop|no-desktop|startmenu|no-startmenu (copy:
+// always in the single-file installer),
 // --autofinish (at the end: make the chosen shortcuts and exit, code 0, or 1 if it failed),
 // --shots <folder> (a PNG of every screen and step, 01_setup.png...), CRASH_GPU_VENDOR (gpu_vendor.h).
 // Included inside launcher.cpp's anonymous namespace: its headers (<mutex>, <thread>) are at the top there.
@@ -136,8 +143,12 @@ struct Installer
 };
 Installer g_inst;
 
-// Where setup.py, the toolchain and dist\ are: the install folder, or next to this exe.
-fs::path Root() { return g_inst.bundle ? g_inst.installDir : paths::ExeDir(); }
+// Where setup.py and the toolchain are: the install folder's CrashRecomp\, or next to this exe.
+const wchar_t* PROJECT_FOLDER = L"CrashRecomp";
+fs::path Root() { return g_inst.bundle ? g_inst.installDir / PROJECT_FOLDER : paths::ExeDir(); }
+// Where the game is played from (the launcher, userdata\): the install folder, or dist\.
+fs::path PlayDir() { return g_inst.bundle ? g_inst.installDir : paths::ExeDir() / L"dist"; }
+fs::path SetupLog() { return (g_inst.bundle ? g_inst.installDir : paths::ExeDir()) / L"setup.log"; }
 fs::path SetupScript() { return Root() / "tools" / "setup.py"; }
 fs::path BundledPython() { return Root() / "toolchain" / "python" / "python.exe"; }
 bool UsesBundledToolchain() { return g_inst.toolchain != "msvc"; }
@@ -159,7 +170,10 @@ fs::path KnownFolder(REFKNOWNFOLDERID id)
     return out;
 }
 
-// The last install folder (HKCU\Software\CrashRecomp InstallDir), else %LOCALAPPDATA%\Programs\CrashRecomp.
+const wchar_t* INSTALL_FOLDER_NAME = L"Crash of the Titans Definitive Edition";
+
+// The last install folder (HKCU\Software\CrashRecomp InstallDir), else
+// %LOCALAPPDATA%\Programs\Crash of the Titans Definitive Edition.
 fs::path DefaultInstallDir()
 {
     wchar_t buffer[MAX_PATH * 2];
@@ -167,7 +181,7 @@ fs::path DefaultInstallDir()
     if (RegGetValueW(HKEY_CURRENT_USER, REGISTRY_KEY, L"InstallDir", RRF_RT_REG_SZ, nullptr, buffer, &size) == ERROR_SUCCESS && buffer[0])
         return fs::path(buffer);
     fs::path local = KnownFolder(FOLDERID_LocalAppData);
-    return local.empty() ? fs::path(L"C:\\CrashRecomp") : local / L"Programs" / L"CrashRecomp";
+    return (local.empty() ? fs::path(L"C:\\") : local / L"Programs") / INSTALL_FOLDER_NAME;
 }
 
 void RememberInstallDir()
@@ -200,17 +214,26 @@ uint64_t FolderBytes(const fs::path& dir)
     return total;
 }
 
-// What the chosen options need on the install drive.
-uint64_t RequiredBytes()
+// The parts of the payload this install leaves out: DLSS without an NVIDIA RTX GPU, the asset
+// export's tools without ASSETS FOR MODDING.
+std::set<std::string> SkippedComponents()
 {
     std::set<std::string> skip;
     if (!g_inst.dlss)
         skip.insert("dlss");
-    uint64_t bytes = g_payload.Bytes(skip) + BUILD_BYTES;
+    if (!g_inst.extractAssets)
+        skip.insert("modding");
+    return skip;
+}
+
+// What the chosen options need on the install drive.
+uint64_t RequiredBytes()
+{
+    uint64_t bytes = g_payload.Bytes(SkippedComponents()) + BUILD_BYTES;
     if (g_inst.subtitles) bytes += SUBTITLES_BYTES;
     if (g_inst.remaster) bytes += REMASTER_BYTES;
     if (g_inst.extractAssets) bytes += ASSETS_BYTES;
-    if (g_inst.copyGame) bytes += g_inst.gameBytes;
+    if (g_inst.copyGame || g_inst.bundle) bytes += g_inst.gameBytes;
     return bytes;
 }
 
@@ -260,8 +283,8 @@ void ChooseInstallDir()
         DWORD options = 0;
         dialog->GetOptions(&options);
         dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-        dialog->SetTitle(Pt() ? L"CrashRecomp: onde instalar (uma pasta CrashRecomp é criada dentro dela)"
-                              : L"CrashRecomp: where to install (a CrashRecomp folder is made inside it)");
+        dialog->SetTitle(Pt() ? L"Onde instalar (a pasta \"Crash of the Titans Definitive Edition\" é criada dentro dela)"
+                              : L"Where to install (a \"Crash of the Titans Definitive Edition\" folder is made inside it)");
         IShellItem* start = nullptr;
         fs::path parent = g_inst.installDir.parent_path();
         if (SUCCEEDED(SHCreateItemFromParsingName(parent.c_str(), nullptr, IID_PPV_ARGS(&start))))
@@ -273,10 +296,11 @@ void ChooseInstallDir()
             if (SUCCEEDED(dialog->GetResult(&item)) && SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &name)))
             {
                 fs::path chosen(name);
-                // A folder named CrashRecomp (or an install already) is used as it is; else one is made inside.
+                // A folder with that name (or an install already) is used as it is; else one is made inside.
                 std::error_code error;
-                bool install = fs::exists(chosen / L"tools" / L"setup.py", error) || _wcsicmp(chosen.filename().c_str(), L"CrashRecomp") == 0;
-                g_inst.installDir = install ? chosen : chosen / L"CrashRecomp";
+                bool install = fs::exists(chosen / PROJECT_FOLDER / L"tools" / L"setup.py", error) ||
+                               _wcsicmp(chosen.filename().c_str(), INSTALL_FOLDER_NAME) == 0;
+                g_inst.installDir = install ? chosen : chosen / INSTALL_FOLDER_NAME;
                 CoTaskMemFree(name);
                 std::string why;
                 if (!Writable(g_inst.installDir, why))
@@ -331,7 +355,7 @@ void ApplyShortcuts()
     if (!g_inst.bundle || g_inst.shortcutsDone || g_inst.phase != Phase::Done)
         return;
     g_inst.shortcutsDone = true;
-    fs::path launcher = Root() / L"dist" / L"CrashLauncher.exe";
+    fs::path launcher = PlayDir() / L"CrashLauncher.exe";
     std::wstring description = L"CrashRecomp: Crash of the Titans (launcher)";
     if (g_inst.desktopShortcut)
         CreateShortcut(KnownFolder(FOLDERID_Desktop) / SHORTCUT_NAME, launcher, description);
@@ -340,12 +364,13 @@ void ApplyShortcuts()
 }
 
 // The files of an older install that the new one doesn't have any more (a source file moved:
-// CMake would still compile the old copy). Only files the installer itself put there are listed.
+// CMake would still compile the old copy). Only files the installer itself put there are listed
+// (in the install folder, relative to CrashRecomp\).
 const wchar_t* MANIFEST = L".crashrecomp_files";
 
 void RemoveStaleFiles(const std::set<std::string>& skip)
 {
-    fs::path manifest = Root() / MANIFEST;
+    fs::path manifest = PlayDir() / MANIFEST;
     std::set<std::wstring> now;
     for (const PayloadFile& f : g_payload.files)
         if (!skip.count(f.component))
@@ -395,7 +420,7 @@ void StartGpuCheck()
     g_inst.probeDir = fs::path(temp) / (L"CrashSetup_dlss_" + std::to_wstring(GetCurrentProcessId()));
     std::thread([] {
         ExtractProgress progress;
-        std::string error = ExtractPayload(g_payload, g_inst.probeDir, { "base" }, progress);
+        std::string error = ExtractPayload(g_payload, g_inst.probeDir, { "base", "modding" }, progress);
         if (!error.empty())
         {
             Log("[setup] DLSS check: %s", error.c_str());
@@ -601,7 +626,7 @@ bool StartSetup(const std::wstring& args, bool check)
             g_inst.step = 0, g_inst.progress = -1.0f;
             g_inst.download.clear();
             if (!g_inst.logFile)
-                g_inst.logFile = _wfopen((Root() / L"setup.log").c_str(), L"w");
+                g_inst.logFile = _wfopen(SetupLog().c_str(), L"w");
         }
     }
     g_inst.reader = std::thread([readPipe, process = pi.hProcess] {
@@ -757,12 +782,10 @@ void StartExtraction(const std::wstring& args)
     g_inst.extract.done = 0, g_inst.extract.total = 0, g_inst.extract.cancel = false;
     g_inst.phase = Phase::Running;
     g_inst.extractor = std::thread([] {
-        std::set<std::string> skip;
-        if (!g_inst.dlss)
-            skip.insert("dlss");
+        std::set<std::string> skip = SkippedComponents();
         LARGE_INTEGER start, end, frequency;
         QueryPerformanceCounter(&start);
-        std::string error = ExtractPayload(g_payload, g_inst.installDir, skip, g_inst.extract);
+        std::string error = ExtractPayload(g_payload, Root(), skip, g_inst.extract);
         if (error.empty())
         {
             RemoveStaleFiles(skip);
@@ -771,8 +794,10 @@ void StartExtraction(const std::wstring& args)
                 // An older install's DLSS files go too (a GPU swap): the game would offer DLSS otherwise.
                 std::error_code ec;
                 for (const wchar_t* name : { L"thirdparty\\dlss\\bin\\CrashDlss.dll", L"thirdparty\\dlss\\bin\\nvngx_dlss.dll", L"build\\CrashDlss.dll",
-                                             L"build\\nvngx_dlss.dll", L"dist\\CrashDlss.dll", L"dist\\nvngx_dlss.dll" })
-                    fs::remove(g_inst.installDir / name, ec);
+                                             L"build\\nvngx_dlss.dll" })
+                    fs::remove(Root() / name, ec);
+                for (const wchar_t* name : { L"CrashDlss.dll", L"nvngx_dlss.dll" })
+                    fs::remove(PlayDir() / name, ec);
             }
         }
         QueryPerformanceCounter(&end);
@@ -797,7 +822,8 @@ void StartInstall(bool assetsOnly = false)
         if (g_inst.subtitles) args += L" --subtitles";
         if (g_inst.remaster) args += L" --remaster";
         if (g_inst.extractAssets) args += L" --extract-assets";
-        if (g_inst.copyGame) args += L" --copy-game";
+        if (g_inst.copyGame || g_inst.bundle) args += L" --copy-game";  // the single-file installer always copies the dump
+        if (g_inst.bundle) args += L" --play-dir \"" + PlayDir().wstring() + L"\"";
         if (g_inst.bundle && !g_inst.dlss) args += L" --no-dlss";
         args += L" --assets-dir \"" + paths::ExeDir().wstring() + L"\"";
         args += ToolchainArg();
@@ -828,7 +854,7 @@ void CancelInstall()
 void OpenLauncher()
 {
     ApplyShortcuts();
-    fs::path dir = g_inst.finishedDir.empty() ? Root() / "dist" : fs::u8path(g_inst.finishedDir);
+    fs::path dir = g_inst.finishedDir.empty() ? PlayDir() : fs::u8path(g_inst.finishedDir);
     fs::path exe = dir / "CrashLauncher.exe";
     std::wstring command = L"\"" + exe.wstring() + L"\"";
     STARTUPINFOW si{ sizeof(si) };
@@ -912,8 +938,8 @@ std::vector<InstallRow> InstallRows()
     bool haveGame = paths::IsGameFolder(game);
     if (g_inst.bundle)
         rows.push_back({ { "INSTALL TO", "INSTALAR EM" }, T({ "CHANGE...", "TROCAR..." }),
-                         { Narrow(g_inst.installDir.wstring()), T({ "Any folder or drive of yours. Your saves stay in dist\\userdata.",
-                                                                   "Qualquer pasta ou disco seu. Seus saves ficam em dist\\userdata." }) },
+                         { Narrow(g_inst.installDir.wstring()), T({ "Any folder or drive of yours. Your saves stay in its userdata folder.",
+                                                                   "Qualquer pasta ou disco seu. Seus saves ficam na pasta userdata dela." }) },
                          false, true, true, RowInstallDir });
     rows.push_back({ { "GAME FOLDER", "PASTA DO JOGO" }, game.empty() ? T({ "CHOOSE...", "ESCOLHER..." }) : T({ "CHANGE...", "TROCAR..." }),
                      { game.empty() ? T({ "The folder of your Crash of the Titans (Xbox 360) dump:", "A pasta do seu Crash of the Titans (Xbox 360):" })
@@ -992,10 +1018,11 @@ std::vector<InstallRow> InstallRows()
                        T({ "in private\\assets (about 9 minutes, 18 GB). Only for mods.",
                            "em private\\assets (cerca de 9 minutos, 18 GB). Só para mods." }) },
                      false, true, false, RowAssets });
-    rows.push_back({ { "COPY THE GAME INTO THE FOLDER", "COPIAR O JOGO PARA A PASTA" }, OnOff(g_inst.copyGame),
-                     { T({ "On: the dump is copied to dist\\game (3 GB). Off: the game keeps", "Ligado: o jogo é copiado para dist\\game (3 GB). Desligado: o jogo usa" }),
-                       T({ "using it where it is.", "a pasta onde ele está." }) },
-                     false, true, false, RowCopy });
+    if (!g_inst.bundle)  // the single-file installer always copies it (into game\ of the install folder)
+        rows.push_back({ { "COPY THE GAME INTO THE FOLDER", "COPIAR O JOGO PARA A PASTA" }, OnOff(g_inst.copyGame),
+                         { T({ "On: the dump is copied to dist\\game (3 GB). Off: the game keeps", "Ligado: o jogo é copiado para dist\\game (3 GB). Desligado: o jogo usa" }),
+                           T({ "using it where it is.", "a pasta onde ele está." }) },
+                         false, true, false, RowCopy });
     if (!g_inst.bundle)
         rows.push_back({ { "BUILD TOOLS", "FERRAMENTAS" }, UsesBundledToolchain() ? T({ "INCLUDED", "INCLUÍDAS" }) : std::string("VISUAL STUDIO"),
                          { T({ "Advanced. INCLUDED: the toolchain folder of the zip, nothing to install. VISUAL STUDIO:",
@@ -1011,8 +1038,8 @@ std::vector<InstallRow> DoneRows()
 {
     std::vector<InstallRow> rows;
     rows.push_back({ { "INSTALLED IN", "INSTALADO EM" }, T({ "OPEN...", "ABRIR..." }),
-                     { Narrow(Root().wstring()), T({ "The launcher is dist\\CrashLauncher.exe; your saves are in dist\\userdata.",
-                                                     "O launcher é o dist\\CrashLauncher.exe; seus saves ficam em dist\\userdata." }) },
+                     { Narrow(PlayDir().wstring()), T({ "The launcher is CrashLauncher.exe there; your saves are in userdata.",
+                                                        "O launcher é o CrashLauncher.exe de lá; seus saves ficam em userdata." }) },
                      false, true, true, RowInstalledIn });
     rows.push_back({ { "SHORTCUTS", "ATALHOS" }, "", {}, true });
     rows.push_back({ { "DESKTOP SHORTCUT", "ATALHO NA ÁREA DE TRABALHO" }, g_inst.desktopShortcut ? T({ "YES", "SIM" }) : T({ "NO", "NÃO" }),
@@ -1032,7 +1059,7 @@ void ActivateRow(int id, int direction)
     {
     case RowGame: ChooseInstallerGameFolder(); break;
     case RowInstallDir: ChooseInstallDir(); break;
-    case RowInstalledIn: OpenFolder(Root()); break;
+    case RowInstalledIn: OpenFolder(PlayDir()); break;
     case RowDesktop: g_inst.desktopShortcut = !g_inst.desktopShortcut; break;
     case RowStartMenu: g_inst.startMenu = !g_inst.startMenu; break;
     case RowPrereqs:
@@ -1134,9 +1161,9 @@ void DrawInstallerLeft()
             case 1: CancelInstall(); break;
             case 2: OpenLauncher(); break;
             case 3: g_quit = true; break;
-            case 4: OpenFolder(Root() / "dist"); break;
+            case 4: OpenFolder(PlayDir()); break;
             case 5: g_inst.phase = Phase::Setup; CheckPrerequisites(); break;
-            case 6: ShellExecuteW(nullptr, L"open", (Root() / L"setup.log").c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
+            case 6: ShellExecuteW(nullptr, L"open", SetupLog().c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
             case 7: StartInstall(true); break;  // only the asset export, again
             case 8: ApplyShortcuts(); g_quit = true; break;
             }
@@ -1518,7 +1545,7 @@ void PrepareInstaller()
 // The game folder of an earlier install in the same place (a second run), empty if none.
 fs::path InstalledGameFolder()
 {
-    fs::path dist = Root() / "dist";
+    fs::path dist = PlayDir();
     if (paths::IsGameFolder(dist / "game"))
         return dist / "game";
     std::string game = settings::ReadGameFolder(dist / "userdata");
@@ -1536,8 +1563,7 @@ void InitInstaller()
         Log("[setup] single-file installer %s: %zu files, %.0f MB; install folder %s", g_payload.tag.c_str(), g_payload.files.size(),
             double(g_payload.Bytes({})) / double(MB), Narrow(g_inst.installDir.wstring()).c_str());
         StartGpuCheck();
-        if (g_inst.copyGame)
-            g_inst.gameBytes = FolderBytes(GameFolder());
+        g_inst.gameBytes = FolderBytes(GameFolder());  // always copied
     }
     CheckPrerequisites();
 }

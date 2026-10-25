@@ -93,6 +93,8 @@ def game_folder():
         pass
     if is_game_folder(ROOT / "dist" / "game"):
         return ROOT / "dist" / "game"
+    if is_game_folder(ROOT.parent / "game") and (ROOT.parent / "CrashRecomp").resolve() == ROOT.resolve():
+        return ROOT.parent / "game"  # installed by the single-file installer (make_dist --installed)
     return None
 
 
@@ -145,7 +147,7 @@ def cmd_prelude(kind=None):
     kind = kind or toolchain_kind()
     prepend = ";".join(str(p) for p in path_prepend(kind))
     if kind == "bundled":
-        gaps = portable.missing()
+        gaps = portable.missing(parts=portable.BUILD_PARTS)
         if gaps:
             raise SystemExit(f"toolchain\\ incompleta (falta {', '.join(gaps)}): use o zip da release ou rode "
                              "python tools\\toolchain.py fetch")

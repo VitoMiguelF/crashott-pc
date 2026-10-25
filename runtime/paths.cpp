@@ -99,8 +99,14 @@ namespace paths
         fs::path player = g_exeDir;
         fs::path data = g_exeDir / "data";
         fs::path project = g_exeDir.parent_path();
-        bool dev = !IsDir(g_exeDir / "languages") && fs::exists(project / "CMakeLists.txt") && IsDir(project / "runtime");
-        if (dev)
+        bool installed = IsDir(g_exeDir / "CrashRecomp" / "languages");  // the single-file installer's layout
+        bool dev = !installed && !IsDir(g_exeDir / "languages") && fs::exists(project / "CMakeLists.txt") && IsDir(project / "runtime");
+        if (installed)
+        {
+            root = g_exeDir / "CrashRecomp";
+            data = root / "data";
+        }
+        else if (dev)
         {
             root = project;
             player = IsDir(project / "dist") ? project / "dist" : project;
@@ -169,7 +175,7 @@ namespace paths
                 (player / "game").string().c_str(), (g_userData / "settings.toml").string().c_str());
             MessageBoxW(nullptr, L"Sem a pasta do jogo não dá para abrir o CrashRecomp.\n\n"
                         L"Coloque os arquivos do jogo (default.xex, default.rcf...) na pasta game\\ ao lado do "
-                        L"CrashRecomp.exe, ou abra de novo e escolha a pasta.", L"CrashRecomp", MB_OK | MB_ICONERROR);
+                        L"executável do jogo, ou abra de novo e escolha a pasta.", L"CrashRecomp", MB_OK | MB_ICONERROR);
             return false;
         }
         if (g_xex.empty())

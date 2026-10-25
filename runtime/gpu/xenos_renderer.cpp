@@ -3384,8 +3384,8 @@ float4 main(float4 position : SV_Position) : SV_Target
             Log("[gpu] no Vulkan device: the game cannot be shown");
             MessageBoxW(g_hwnd,
                         L"O jogo precisa de uma placa de vídeo com Vulkan 1.3 (driver atualizado) e do dxcompiler.dll ao lado do "
-                        L"CrashRecomp.exe.\n\n"
-                        L"The game needs a Vulkan 1.3 GPU (an up-to-date driver) and dxcompiler.dll next to CrashRecomp.exe.",
+                        L"executável do jogo.\n\n"
+                        L"The game needs a Vulkan 1.3 GPU (an up-to-date driver) and dxcompiler.dll next to the game's exe.",
                         L"Crash of the Titans (CrashRecomp)", MB_OK | MB_ICONERROR);
             ExitProcess(3);
         }

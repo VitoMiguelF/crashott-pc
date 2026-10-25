@@ -8,6 +8,7 @@
     python tools/setup.py --check                                 # only check the prerequisites
     python tools/setup.py --game ... --toolchain msvc             # build with Visual Studio + clang-cl
     python tools/setup.py --game ... --no-dlss                    # without DLSS (no NVIDIA RTX GPU)
+    python tools/setup.py --game ... --copy-game --play-dir ..    # the installer's layout (make_dist --installed)
 
 Run it with the Python of the release (toolchain\\python\\python.exe, what CrashSetup.exe uses) or any
 Python 3.11+. The single-file installer (CrashSetup-<tag>.exe, tools/make_installer.py) unpacks this
@@ -549,10 +550,21 @@ def install_extras(subtitles, remaster, assets_dir):
         say(f"instalado: {name}")
 
 
-def assemble(game, copy_game):
+def play_folder(play_dir):
+    """Where the game is played from: dist\\ of the project, or --play-dir (the installer's layout)."""
+    return Path(play_dir).resolve() if play_dir else ROOT / "dist"
+
+
+def game_exe(play_dir):
+    return play_folder(play_dir) / ("CrashOTTDE.exe" if play_dir else "CrashRecomp.exe")
+
+
+def assemble(game, copy_game, play_dir=None):
     game = Path(game).resolve()
-    dist_game = (ROOT / "dist" / "game").resolve()
+    dist_game = (play_folder(play_dir) / "game").resolve()
     args = [sys.executable, ROOT / "tools" / "make_dist.py"]
+    if play_dir:
+        args += ["--out", play_folder(play_dir), "--installed"]
     if copy_game and game != dist_game:
         files = [f for f in game.rglob("*") if f.is_file()]
         for i, f in enumerate(files):
@@ -565,14 +577,14 @@ def assemble(game, copy_game):
     elif game != dist_game:
         args += ["--game", game]
     run_all(args)
-    precompile_shaders(game if not copy_game else dist_game)
+    precompile_shaders(game if not copy_game else dist_game, play_dir)
 
 
-def precompile_shaders(game):
+def precompile_shaders(game, play_dir=None):
     """Translates and compiles the game's shaders into dist\\userdata\\shadercache (both variants, every
     core), so the first run doesn't compile them while playing (runtime/gpu/shader_warmup.h). Optional: a
     failure only costs that first-run compile time."""
-    exe = ROOT / "dist" / "CrashRecomp.exe"
+    exe = game_exe(play_dir)
     if not exe.is_file():
         return
     say(f"> {exe.name} --precompile-shaders")
@@ -607,6 +619,7 @@ def main():
                         "(avançado; fica salvo em config/local.toml)")
     p.add_argument("--check-packages", action="store_true", help="só confere os pacotes Python (tools/requirements.txt)")
     p.add_argument("--no-dlss", action="store_true", help="sem DLSS (PC sem placa NVIDIA RTX): não baixa nem instala os arquivos dele")
+    p.add_argument("--play-dir", help="a pasta do jogo no layout do instalador (exe, game\\, userdata\\; o projeto fica nela em CrashRecomp\\)")
     args = p.parse_args()
     if args.check_packages:
         return 1 if check_python_packages() else 0
@@ -640,7 +653,7 @@ def main():
         fail("diga onde está o jogo: --game <pasta>")
     step(1, str(game))
     check_game(game, args.allow_other_xex)
-    if not args.copy_game and game.resolve() != (ROOT / "dist" / "game").resolve():
+    if not args.copy_game and game.resolve() != (play_folder(args.play_dir) / "game").resolve():
         buildenv.write_local(game=game)
 
     if not args.assets_only:
@@ -655,16 +668,16 @@ def main():
         step(6)
         install_extras(args.subtitles, args.remaster, args.assets_dir)
         step(7)
-        assemble(game, args.copy_game)
-    if (ROOT / "dist" / "CrashRecomp.exe").is_file():
-        say(f"@@game-ready {ROOT / 'dist'}")
+        assemble(game, args.copy_game, args.play_dir)
+    if game_exe(args.play_dir).is_file():
+        say(f"@@game-ready {play_folder(args.play_dir)}")
     step(8)
     if args.extract_assets:
         require_python_packages()
         extract_assets(game)
     else:
         say("exportação de assets não pedida (--extract-assets)")
-    say(f"@@finished {ROOT / 'dist'}")
+    say(f"@@finished {play_folder(args.play_dir)}")
     say("@@done")
     return 0
 

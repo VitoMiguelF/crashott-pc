@@ -22,6 +22,16 @@ dist\\
 
 Updated on every run: the exe, the DLLs, languages\\, data\\, licencas\\ and LEIA.txt. Never touched:
 game\\, mods\\ and userdata\\ (only created when missing). Fails if dist\\CrashRecomp.exe is running.
+
+--installed (the single-file installer, through setup.py --play-dir): the play folder is the install
+folder and holds only what the player uses; the rest goes to its CrashRecomp\\ subfolder, which is
+also the project the game was built from (the runtime finds languages\\ and data\\ there, paths.h):
+
+    <install>\\                          "Crash of the Titans Definitive Edition"
+        CrashLauncher.exe, CrashOTTDE.exe (the game: build\\CrashRecomp.exe renamed), *.dll
+        game\\ (the dump, always copied), userdata\\, mods\\
+        CrashRecomp\\                    languages\\, data\\, licencas\\ + the project (toolchain\\, build\\...)
+No LEIA.txt files there.
 """
 import argparse
 import os
@@ -34,6 +44,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = ROOT / "private"
 
 LICENSES = {
+    "CrashRecomp_LICENSE.txt": ROOT / "LICENSE",
+    "THIRD_PARTY_NOTICES.md": ROOT / "THIRD_PARTY_NOTICES.md",
     "ffmpeg_LICENSE.txt": ROOT / "thirdparty" / "ffmpeg" / "LICENSE.txt",
     "ffmpeg_README.md": ROOT / "thirdparty" / "ffmpeg" / "README.md",
     "dlss_LICENSE.txt": ROOT / "thirdparty" / "dlss" / "LICENSE.txt",
@@ -88,11 +100,15 @@ Veja o README do projeto: "Mods de entradas de .rcf", "Extraindo e modificando a
 """
 
 
+# The game's exe in the installed layout (--installed).
+INSTALLED_EXE = "CrashOTTDE.exe"
+
+
 def running(exe):
     """Whether a process is running from `exe` (PowerShell Get-Process gives the image paths)."""
     try:
         out = subprocess.run(["powershell", "-NoProfile", "-Command",
-                              "Get-Process CrashRecomp -ErrorAction SilentlyContinue | ForEach-Object { $_.Path }"],
+                              "Get-Process CrashRecomp, CrashOTTDE -ErrorAction SilentlyContinue | ForEach-Object { $_.Path }"],
                              capture_output=True, text=True, timeout=30).stdout
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -181,31 +197,36 @@ def main():
     parser.add_argument("--game", help="pasta do seu jogo: grava [paths] game no userdata\\settings.toml de dist")
     parser.add_argument("--no-remaster", action="store_true", help="não põe o HD AI Remaster em data\\")
     parser.add_argument("--no-data", action="store_true", help="sem data\\ (legendas, símbolos, remaster)")
+    parser.add_argument("--installed", action="store_true",
+                        help="o layout do instalador: só o que o jogador usa em --out, o resto em --out\\CrashRecomp")
     args = parser.parse_args()
 
     exe = Path(args.exe).resolve()
     out = Path(args.out).resolve()
+    support = out / "CrashRecomp" if args.installed else out  # languages\, data\, licencas\
+    game_exe = out / (INSTALLED_EXE if args.installed else "CrashRecomp.exe")
     if not exe.is_file():
         raise SystemExit(f"não achei {exe}: compile antes (cmake --build build)")
-    if running(out / "CrashRecomp.exe"):
-        raise SystemExit(f"{out / 'CrashRecomp.exe'} está aberto: feche o jogo e rode de novo")
+    if running(game_exe):
+        raise SystemExit(f"{game_exe} está aberto: feche o jogo e rode de novo")
     out.mkdir(parents=True, exist_ok=True)
 
     launcher = exe.parent / "CrashLauncher.exe"
     files = [exe, *([launcher] if launcher.is_file() else []), *sorted(exe.parent.glob("*.dll"))]
     if not launcher.is_file():
         print(f"aviso: {launcher} não existe (cmake --build build --target CrashLauncher)")
-    changed = [f.name for f in files if copy_if_newer(f, out / f.name)]
+    changed = [f.name for f in files if copy_if_newer(f, game_exe if f == exe else out / f.name)]
     print(f"exe e DLLs: {', '.join(changed) if changed else 'já atualizados'}")
-    print(f"languages\\: {mirror(ROOT / 'languages', out / 'languages')} arquivo(s) atualizados")
+    if (support / "languages").resolve() != (ROOT / "languages").resolve():
+        print(f"languages\\: {mirror(ROOT / 'languages', support / 'languages')} arquivo(s) atualizados")
 
     for folder, text in (("game", GAME_LEIA), ("mods", MODS_LEIA)):
         (out / folder).mkdir(exist_ok=True)
-        if not any((out / folder).iterdir()):
+        if not args.installed and not any((out / folder).iterdir()):
             (out / folder / "LEIA.txt").write_text(text, encoding="utf-8")
     (out / "userdata").mkdir(exist_ok=True)
 
-    data = out / "data"
+    data = support / "data"
     if args.no_data:
         print("data\\: não incluída (--no-data)")
     else:
@@ -227,11 +248,12 @@ def main():
             print(f"data\\{remaster.split('/')[0]}: HD AI Remaster ({linked} arquivo(s) ligados por hard link, sem cópia)")
         print("data\\: legendas, símbolos" + (", HD AI Remaster" if remaster else ""))
 
-    licenses = out / "licencas"
+    licenses = support / "licencas"
     for name, source in LICENSES.items():
         if source.is_file():
             copy_if_newer(source, licenses / name)
-    (out / "LEIA.txt").write_text(LEIA, encoding="utf-8")
+    if not args.installed:
+        (out / "LEIA.txt").write_text(LEIA, encoding="utf-8")
 
     if args.game:
         game = Path(args.game)

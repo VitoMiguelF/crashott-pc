@@ -5,12 +5,16 @@ to it, compressed (release\\<tag>\\CrashSetup-<tag>.exe; not in git):
     python tools/make_installer.py v1.05 --out build\\x.exe
     python tools/make_installer.py test --worktree       # the working tree instead of HEAD (tests)
 
-What goes in (no game file, no recompiled code: the installer builds the game from the player's dump):
-- the source at HEAD (git archive), as in the release zip;
+What goes in (no game file, no recompiled code: the installer builds the game from the player's dump),
+only what building and running the game needs (INSTALL / MODDING below; docs, tests, .github and the
+development tools stay in git):
+- the source at HEAD (git archive) needed to build: CMakeLists.txt, runtime/, launcher/, thirdparty/,
+  languages/, the recompiler's config and patch, setup.py and the tools it runs, the licenses;
 - tools\\XenonRecomp\\: its source at setup.py's pinned commit with patches/XenonRecomp.patch
   applied, without .git (+ the .crashrecomp_source stamp setup.py checks);
-- toolchain\\: llvm-mingw, CMake, Ninja, the embeddable Python with numpy and Pillow
-  (`python tools/toolchain.py fetch`);
+- toolchain\\: llvm-mingw, CMake, Ninja, the embeddable Python (`python tools/toolchain.py fetch`);
+- as the "modding" component, installed only with ASSETS FOR MODDING: the asset export
+  (tools/assets.py and the scripts it runs, tools/assettool) and numpy / Pillow;
 - the third-party files setup.py would otherwise download, so the install works offline: FFmpeg's
   LGPL DLLs and headers, dxcompiler.dll with its licenses, FidelityFX's amd_fidelityfx_vk.dll and
   headers; and, as the "dlss" component the installer leaves out on PCs without an NVIDIA RTX GPU,
@@ -60,6 +64,27 @@ THIRDPARTY = [
     ("dlss", "thirdparty/dlss/bin/CrashDlss.dll", ROOT / "build" / "CrashDlss.dll"),
 ]
 SKIP_PARTS = {"__pycache__", "_unpack"}
+# What the install needs of the repository: the build (CMake, the runtime, the launcher, the
+# recompiler's config and patch), the play folder (languages, licenses) and setup.py's tools.
+INSTALL = ("CMakeLists.txt", "LICENSE", "THIRD_PARTY_NOTICES.md", "config/Crash.toml", "config/Crash_switch_tables.toml",
+           "launcher/", "languages/", "patches/", "runtime/", "thirdparty/", "tools/setup.py", "tools/buildenv.py",
+           "tools/toolchain.py", "tools/make_dist.py", "tools/requirements.txt")
+# ASSETS FOR MODDING only: tools/assets.py all, the scripts it runs and numpy / Pillow.
+MODDING = ("tools/assets.py", "tools/rcf.py", "tools/audio.py", "tools/textures.py", "tools/models.py", "tools/p3d.py",
+           "tools/assettool/", "toolchain/python/Lib/site-packages/numpy", "toolchain/python/Lib/site-packages/PIL",
+           "toolchain/python/Lib/site-packages/pillow")
+ORDER = {"base": 0, "modding": 1, "dlss": 2}
+
+
+def component(path):
+    """"base", "modding" or None (not installed) for a path of the repository or the toolchain."""
+    if path.startswith(MODDING):
+        return "modding"
+    if path.startswith(("toolchain/", "tools/XenonRecomp/")):
+        return None if "/.github/" in path else "base"  # as they are (XenonRecomp's fmt builds its README.md in)
+    if path.endswith(("README.md", "NOTES.md", "GLOSSARIO.md")) and path != "thirdparty/ffmpeg/README.md":
+        return None  # notes for developers (FFmpeg's README names the LGPL source: it goes to licencas\)
+    return "base" if path.startswith(INSTALL) else None
 
 
 class Lzms:
@@ -109,17 +134,18 @@ def worktree_files():
 def collect(worktree=False):
     """[(component, path, bytes or Path)] of everything in the payload."""
     if worktree:
-        entries = [("base", name, path) for name, path in worktree_files().items()]
+        files = worktree_files()
     else:
         status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, capture_output=True, text=True).stdout
         if status.strip():
             print("aviso: há mudanças não commitadas; o instalador leva o HEAD (--worktree leva a árvore de trabalho)", flush=True)
-        entries = [("base", name, data) for name, data in git_files().items()]
+        files = git_files()
+    entries = [(component(name), name, data) for name, data in files.items()]
     import make_release  # the XenonRecomp source, checked against setup.py's pin and the patch
     prefix = "x"
     xenon = make_release.xenon_source(prefix)
     for f, name in xenon:
-        entries.append(("base", name[len(prefix) + 1:], f))
+        entries.append((component(name[len(prefix) + 1:]), name[len(prefix) + 1:], f))
     sys.path.insert(0, str(ROOT / "tools"))
     import setup
     patch = read(next(e for e in entries if e[1] == "patches/XenonRecomp.patch"))
@@ -132,19 +158,20 @@ def collect(worktree=False):
     for f in sorted(toolchain.TOOLCHAIN.rglob("*")):
         rel = f.relative_to(toolchain.TOOLCHAIN)
         if f.is_file() and not SKIP_PARTS.intersection(rel.parts):
-            entries.append(("base", f"toolchain/{rel.as_posix()}", f))
-    for component, target, source in THIRDPARTY:
+            entries.append((component(f"toolchain/{rel.as_posix()}"), f"toolchain/{rel.as_posix()}", f))
+    for part, target, source in THIRDPARTY:
         if not source.exists():
             raise SystemExit(f"falta {source}: rode tools\\setup.py (FFmpeg, DXC, FSR, DLSS) e compile o CrashDlss "
                              "(cmake --build build --target CrashDlss)")
         if source.is_file():
-            entries.append((component, target, source))
+            entries.append((part, target, source))
         else:
             for f in sorted(source.rglob("*")):
                 if f.is_file():
-                    entries.append((component, f"{target}/{f.relative_to(source).as_posix()}", f))
-    # Similar files next to each other compress better; the DLSS files last, in chunks of their own.
-    entries.sort(key=lambda e: (e[0] != "base", Path(e[1]).suffix.lower(), e[1]))
+                    entries.append((part, f"{target}/{f.relative_to(source).as_posix()}", f))
+    # Similar files next to each other compress better; each component in chunks of its own.
+    entries = [e for e in entries if e[0]]
+    entries.sort(key=lambda e: (ORDER[e[0]], Path(e[1]).suffix.lower(), e[1]))
     return entries
 
 

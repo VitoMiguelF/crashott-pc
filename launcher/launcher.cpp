@@ -459,7 +459,10 @@ namespace
         }
         if (!(g_values == g_saved))
             Save();
-        fs::path exe = paths::ExeDir() / "CrashRecomp.exe";
+        // CrashOTTDE.exe in the single-file installer's layout (tools/make_dist.py --installed).
+        fs::path exe = paths::ExeDir() / "CrashOTTDE.exe";
+        if (!Exists(exe))
+            exe = paths::ExeDir() / "CrashRecomp.exe";
         std::wstring command = L"\"" + exe.wstring() + L"\"";
         for (const std::string& arg : g_passArgs)
         {

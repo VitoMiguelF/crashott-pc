@@ -81,8 +81,8 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 - Your Crash of the Titans (Xbox 360) game files: the folder with `default.xex`, `default.rcf`,
   `english.rcf`, `sound1.rcf`, `sound2.rcf` and `shaders\` (extracted from your disc). Only the known
   retail `default.xex` is supported (the installer checks its SHA-256).
-- About 1.6 GB of free space (the installer shows what your options need: plus 3 GB to copy the game
-  into the folder, 9.5 GB for the HD AI Remaster, 18 GB for the asset export, mostly WAV sounds).
+- About 4.3 GB of free space (1.3 GB + the 3 GB copy of your game; the installer shows what your
+  options need: plus 9.5 GB for the HD AI Remaster, 18 GB for the asset export, mostly WAV sounds).
 
 **One file, nothing else to install.** Since v1.05 the installer is a single `CrashSetup-<version>.exe`
 with everything inside: our source, the build tools ([llvm-mingw](https://github.com/mstorsjo/llvm-mingw)
@@ -102,17 +102,33 @@ ones with `winget`.
 1. Download **`CrashSetup-v1.05.exe`** (the latest, ~210 MB, one file) from the
    [releases](https://github.com/VitoMiguelF/crashott-pc/releases). (Up to v1.04 it was a zip with
    `CrashSetup.exe` inside; a `git clone` of this repository: see [CONTRIBUTING.md](CONTRIBUTING.md).)
-2. Run it. Choose **where to install** (default `%LOCALAPPDATA%\Programs\CrashRecomp`; any folder or drive
-   of yours, the space needed and free is shown), your **game folder**, the options (subtitles, HD AI
-   Remaster, asset export for modding, copying the game into the folder) and click **INSTALL**. It
-   unpacks its files there, recompiles the game code and builds everything (about 3 minutes on an
-   8-core PC, longer on slower ones). The installer checks your GPU: DLSS is installed only on an NVIDIA
-   RTX card (NVIDIA's own check); elsewhere you get FSR 3.1.
+2. Run it. Choose **where to install** (default `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive
+   Edition`; any folder or drive of yours, the space needed and free is shown), your **game folder** (it
+   is copied into the install), the options (subtitles, HD AI Remaster, asset export for modding) and
+   click **INSTALL**. It unpacks its files there, recompiles the game code and builds everything (about
+   3 minutes on an 8-core PC, longer on slower ones). The installer checks your GPU: DLSS is installed
+   only on an NVIDIA RTX card (NVIDIA's own check); elsewhere you get FSR 3.1.
 3. At the end it asks for a **desktop shortcut** and a **Start menu** entry for the launcher.
+
+   What it installs (only what building and running the game needs; docs, tests and development tools
+   stay on GitHub):
+
+   ```
+   Crash of the Titans Definitive Edition\
+     CrashLauncher.exe            the launcher (the shortcuts point here)
+     CrashOTTDE.exe               the game
+     *.dll                        FFmpeg, FSR, dxcompiler (+ DLSS on NVIDIA RTX)
+     game\                        your game files, copied here
+     userdata\                    saves, settings.toml, shader cache
+     mods\
+     CrashRecomp\                 languages\, data\, licencas\ and what the game is built with
+                                  (toolchain\, build\, the source; the asset export's tools only with
+                                  ASSETS FOR MODDING)
+   ```
 
    ![Installer](docs/screenshots/installer.jpg)
 
-   Without the GUI, the same in a terminal from the install folder, with the bundled Python:
+   Without the GUI, the same in a terminal from a clone or the release zip's folder, with the bundled Python:
 
    ```bat
    toolchain\python\python.exe tools\setup.py --game D:\Games\Crash --subtitles
@@ -122,8 +138,9 @@ ones with `winget`.
 
    Release zips placed next to `CrashSetup-<version>.exe` are used instead of downloading them again. If
    only the asset export fails, the game is installed anyway: **TRY AGAIN** reruns just that step. To
-   update, run the new installer on the same folder (your saves and settings in `dist\userdata` stay).
-4. Play with the shortcut, **`dist\CrashLauncher.exe`** (options, then PLAY) or `dist\CrashRecomp.exe`.
+   update, run the new installer on the same folder (your saves and settings in `userdata\` stay).
+4. Play with the shortcut, **`CrashLauncher.exe`** (options, then PLAY) or `CrashOTTDE.exe`. (A clone
+   built with `tools\setup.py` plays from `dist\`: `dist\CrashLauncher.exe`, `dist\CrashRecomp.exe`.)
 
 ### Known issues
 
@@ -284,8 +301,8 @@ de PC.
 - Os arquivos do seu Crash of the Titans (Xbox 360): a pasta com `default.xex`, `default.rcf`,
   `english.rcf`, `sound1.rcf`, `sound2.rcf` e `shaders\` (extraída do seu disco). Só o `default.xex`
   conhecido da versão comercial é suportado (o instalador confere o SHA-256).
-- Cerca de 1,6 GB livres (o instalador mostra o que as suas opções precisam: mais 3 GB para copiar o jogo
-  para a pasta, 9,5 GB para o HD AI Remaster e 18 GB para exportar os assets).
+- Cerca de 4,3 GB livres (1,3 GB + a cópia de 3 GB do seu jogo; o instalador mostra o que as suas opções
+  precisam: mais 9,5 GB para o HD AI Remaster e 18 GB para exportar os assets).
 
 **Um arquivo só, nada mais para instalar.** Desde a v1.05 o instalador é um único `CrashSetup-<versão>.exe`
 com tudo dentro: o nosso código, as ferramentas de compilação ([llvm-mingw](https://github.com/mstorsjo/llvm-mingw)
@@ -304,15 +321,31 @@ pelo `winget`.
 1. Baixe o **`CrashSetup-v1.05.exe`** (o mais recente, ~210 MB, um arquivo só) nas
    [releases](https://github.com/VitoMiguelF/crashott-pc/releases). (Até a v1.04 era um zip com o
    `CrashSetup.exe` dentro; para um `git clone` deste repositório, veja o [CONTRIBUTING.md](CONTRIBUTING.md).)
-2. Abra. Escolha **onde instalar** (padrão `%LOCALAPPDATA%\Programs\CrashRecomp`; qualquer pasta ou disco seu,
-   com o espaço necessário e o livre na tela), a **pasta do jogo**, as opções (legendas, HD AI Remaster, assets
-   para modding, copiar o jogo para a pasta) e clique em **INSTALAR**. Ele extrai os arquivos lá, recompila o
-   código do jogo e compila tudo (uns 3 minutos num PC de 8 núcleos, mais nos mais lentos). O instalador
-   confere a placa de vídeo: o DLSS só é instalado numa NVIDIA RTX (pela verificação da própria NVIDIA); nas
-   outras fica o FSR 3.1.
+2. Abra. Escolha **onde instalar** (padrão `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive Edition`;
+   qualquer pasta ou disco seu, com o espaço necessário e o livre na tela), a **pasta do jogo** (ela é copiada
+   para a instalação), as opções (legendas, HD AI Remaster, assets para modding) e clique em **INSTALAR**. Ele
+   extrai os arquivos lá, recompila o código do jogo e compila tudo (uns 3 minutos num PC de 8 núcleos, mais
+   nos mais lentos). O instalador confere a placa de vídeo: o DLSS só é instalado numa NVIDIA RTX (pela
+   verificação da própria NVIDIA); nas outras fica o FSR 3.1.
 3. No fim ele pergunta se quer um **atalho na área de trabalho** e uma entrada no **menu Iniciar** para o launcher.
 
-   Sem a interface, o mesmo num terminal na pasta da instalação, com o Python que vem junto:
+   O que ele instala (só o necessário para compilar e rodar o jogo; documentação, testes e ferramentas de
+   desenvolvimento ficam no GitHub):
+
+   ```
+   Crash of the Titans Definitive Edition\
+     CrashLauncher.exe            o launcher (os atalhos apontam para cá)
+     CrashOTTDE.exe               o jogo
+     *.dll                        FFmpeg, FSR, dxcompiler (+ DLSS em NVIDIA RTX)
+     game\                        os arquivos do seu jogo, copiados para cá
+     userdata\                    saves, settings.toml, cache de shaders
+     mods\
+     CrashRecomp\                 languages\, data\, licencas\ e o que monta o jogo
+                                  (toolchain\, build\, o código; as ferramentas da exportação de assets só
+                                  com ASSETS PARA MODDING)
+   ```
+
+   Sem a interface, o mesmo num terminal num clone ou na pasta do zip da release, com o Python que vem junto:
 
    ```bat
    toolchain\python\python.exe tools\setup.py --game D:\Jogos\Crash --subtitles
@@ -322,8 +355,9 @@ pelo `winget`.
 
    Zips da release colocados ao lado do `CrashSetup-<versão>.exe` são usados em vez de baixar de novo. Se só
    a exportação de assets falhar, o jogo fica instalado mesmo assim: **TENTAR DE NOVO** refaz só essa etapa.
-   Para atualizar, rode o instalador novo na mesma pasta (seus saves e opções em `dist\userdata` ficam).
-4. Jogue pelo atalho, pelo **`dist\CrashLauncher.exe`** (opções e depois JOGAR) ou pelo `dist\CrashRecomp.exe`.
+   Para atualizar, rode o instalador novo na mesma pasta (seus saves e opções em `userdata\` ficam).
+4. Jogue pelo atalho, pelo **`CrashLauncher.exe`** (opções e depois JOGAR) ou pelo `CrashOTTDE.exe`. (Um clone
+   montado com o `tools\setup.py` joga da `dist\`: `dist\CrashLauncher.exe`, `dist\CrashRecomp.exe`.)
 
 ### Problemas conhecidos
 

@@ -10,6 +10,10 @@
 //   <exe folder>\data\             optional data derived from the user's game: subtitles\english.txt,
 //                                  symbols\functions.csv, remaster_full\ / remaster_l1\ (HD AI Remaster)
 //
+// Installed by the single-file installer (tools\make_dist.py --installed): the exe is
+// CrashOTTDE.exe and only game\, mods\ and userdata\ are next to it; languages\ and data\ are in the
+// CrashRecomp\ subfolder (with the project the game was built from).
+//
 // Development build (build\CrashRecomp.exe, no languages\ next to it and the project's
 // CMakeLists.txt one level up): languages\ of the project, data = private\, and mods\ / userdata\
 // of dist\ (the player's folder made by tools\make_dist.py) or, without dist\, of the project.
