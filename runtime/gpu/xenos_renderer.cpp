@@ -3690,8 +3690,8 @@ float4 main(float4 position : SV_Position) : SV_Target
             Log("[gpu] no Vulkan device: the game cannot be shown");
             MessageBoxW(g_hwnd,
                         L"O jogo precisa de uma placa de vídeo com Vulkan 1.3 (driver atualizado) e do dxcompiler.dll ao lado do "
-                        L"CrashRecomp.exe.\n\n"
-                        L"The game needs a Vulkan 1.3 GPU (an up-to-date driver) and dxcompiler.dll next to CrashRecomp.exe.",
+                        L"executável do jogo.\n\n"
+                        L"The game needs a Vulkan 1.3 GPU (an up-to-date driver) and dxcompiler.dll next to the game's exe.",
                         L"Crash of the Titans (CrashRecomp)", MB_OK | MB_ICONERROR);
             ExitProcess(3);
         }
@@ -3699,6 +3699,15 @@ float4 main(float4 position : SV_Position) : SV_Target
 
         // Temporal upscaler: probed on this device; the scene scale depends on it.
         upscaler::Init(g_rhi, settings::AtStartup().upscaler, (vfs::UserDataDir() / "ngx").wstring());
+        if (upscaler::Active() != settings::AtStartup().upscaler)
+        {
+            // It fell back (DLSS asked for where it can't run): the settings screen shows the one in
+            // use, and settings.toml changes only if the player saves the options.
+            settings::Values values = settings::Get();
+            values.upscaler = upscaler::Active();
+            settings::Set(values);
+            settings::RendererApplied(settings::AtStartup().renderHeight, settings::AtStartup().aspect, upscaler::Active(),settings::AtStartup().upscalerQuality);
+        }
         g_temporal.active = upscaler::Active() != settings::Upscaler::Off;
         g_sceneScale = g_temporal.active ? settings::SceneScale() : g_renderScale;
         // HD textures need the guest texel size in the shaders too (xe_tex_size_scale).

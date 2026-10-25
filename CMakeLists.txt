@@ -80,7 +80,7 @@ target_compile_options(XexImage PRIVATE -w)
 # the exe at run time, or given with --game / --mods / --userdata / --languages / --data
 # (runtime/paths.h). The image is decrypted from <game>\default.xex at startup.
 file(GLOB_RECURSE CRASH_RUNTIME_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/runtime/*.cpp)
-list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "/runtime/xex_image/")
+list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "/runtime/xex_image/|/runtime/gpu/dlss_module/")
 add_executable(CrashRecomp ${CRASH_RUNTIME_SOURCES})
 target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
     hid setupapi windowscodecs)
@@ -114,24 +114,37 @@ else()
     message(STATUS "thirdparty/ffmpeg not found: XMA audio will decode to silence")
 endif()
 
-# Temporal upscalers (runtime/gpu/upscaler.cpp), both optional:
-# - NVIDIA DLSS (NGX SDK, thirdparty/dlss: headers, the static nvsdk_ngx_s.lib and nvngx_dlss.dll,
-#   which is copied next to CrashRecomp.exe).
+# Temporal upscalers (runtime/gpu/upscaler.cpp), both optional and loaded at run time:
+# - NVIDIA DLSS: CrashDlss.dll (runtime/gpu/dlss_module, our code + the static nvsdk_ngx_s.lib of the
+#   NGX SDK) and NVIDIA's nvngx_dlss.dll, both next to CrashRecomp.exe. With the SDK in
+#   thirdparty/dlss (include/, lib/) the DLL is built here; the installer instead carries it prebuilt
+#   in thirdparty/dlss/bin, so building the game needs no SDK file. On a PC without an NVIDIA RTX GPU
+#   the installer leaves both DLLs out.
 # - AMD FSR 3.1 (FidelityFX API, Vulkan backend, thirdparty/fsr: include/ffx_api headers and the
 #   signed bin/amd_fidelityfx_vk.dll, loaded at run time and copied next to CrashRecomp.exe).
 set(CRASH_DLSS_DIR ${CMAKE_SOURCE_DIR}/thirdparty/dlss)
 if (EXISTS ${CRASH_DLSS_DIR}/include/nvsdk_ngx.h AND EXISTS ${CRASH_DLSS_DIR}/lib/nvsdk_ngx_s.lib)
-    target_include_directories(CrashRecomp PRIVATE ${CRASH_DLSS_DIR}/include)
-    target_link_libraries(CrashRecomp PRIVATE ${CRASH_DLSS_DIR}/lib/nvsdk_ngx_s.lib)
-    target_compile_definitions(CrashRecomp PRIVATE CRASH_HAVE_DLSS=1)
+    add_library(CrashDlss SHARED
+        ${CMAKE_SOURCE_DIR}/runtime/gpu/dlss_module/crash_dlss.cpp
+        ${CMAKE_SOURCE_DIR}/runtime/gpu/dlss_module/ngx_msvc_compat.cpp)
+    set_target_properties(CrashDlss PROPERTIES PREFIX "" RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    target_include_directories(CrashDlss PRIVATE ${CRASH_DLSS_DIR}/include ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
+    target_compile_definitions(CrashDlss PRIVATE CRASH_HAVE_DLSS=1 NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(CrashDlss PRIVATE ${CRASH_DLSS_DIR}/lib/nvsdk_ngx_s.lib)
     if (MINGW)
-        target_link_options(CrashRecomp PRIVATE -Wl,--Xlink=/nodefaultlib:LIBCMT -Wl,--Xlink=/nodefaultlib:OLDNAMES
+        target_link_options(CrashDlss PRIVATE -Wl,--Xlink=/nodefaultlib:LIBCMT -Wl,--Xlink=/nodefaultlib:OLDNAMES
             -Wl,--Xlink=/nodefaultlib:libcpmt)
     endif()
+    add_dependencies(CrashRecomp CrashDlss)
+elseif (EXISTS ${CRASH_DLSS_DIR}/bin/CrashDlss.dll)
+    add_custom_command(TARGET CrashRecomp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_DLSS_DIR}/bin/CrashDlss.dll $<TARGET_FILE_DIR:CrashRecomp>)
+else()
+    message(STATUS "thirdparty/dlss not found (nor a prebuilt bin/CrashDlss.dll): DLSS disabled")
+endif()
+if (EXISTS ${CRASH_DLSS_DIR}/bin/nvngx_dlss.dll)
     add_custom_command(TARGET CrashRecomp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_DLSS_DIR}/bin/nvngx_dlss.dll $<TARGET_FILE_DIR:CrashRecomp>)
-else()
-    message(STATUS "thirdparty/dlss not found: DLSS disabled")
 endif()
 set(CRASH_FSR_DIR ${CMAKE_SOURCE_DIR}/thirdparty/fsr)
 if (EXISTS ${CRASH_FSR_DIR}/include/ffx_api/vk/ffx_api_vk.h AND EXISTS ${CRASH_FSR_DIR}/bin/amd_fidelityfx_vk.dll)
@@ -165,8 +178,10 @@ endif()
 # Dear ImGui (thirdparty/imgui, MIT) on Direct3D 11, plus the runtime's own settings, paths, VFS
 # and the code that reads the fonts and the frontend art from the user's default.rcf.
 set(CRASH_IMGUI_DIR ${CMAKE_SOURCE_DIR}/thirdparty/imgui)
+enable_language(RC)  # launcher.rc: the icon (launcher/crashrecomp.ico, tools/make_icon.py)
 add_executable(CrashLauncher WIN32
     ${CMAKE_SOURCE_DIR}/launcher/launcher.cpp
+    ${CMAKE_SOURCE_DIR}/launcher/launcher.rc
     ${CMAKE_SOURCE_DIR}/launcher/launcher_stubs.cpp
     ${CRASH_IMGUI_DIR}/imgui.cpp
     ${CRASH_IMGUI_DIR}/imgui_draw.cpp
@@ -184,7 +199,7 @@ add_executable(CrashLauncher WIN32
     ${CMAKE_SOURCE_DIR}/runtime/settings/language_pack.cpp
     ${CMAKE_SOURCE_DIR}/runtime/settings/options.cpp
     ${CMAKE_SOURCE_DIR}/runtime/settings/hd_remaster.cpp)
-target_include_directories(CrashLauncher PRIVATE ${CRASH_IMGUI_DIR})
+target_include_directories(CrashLauncher PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
 target_compile_definitions(CrashLauncher PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 target_compile_options(CrashLauncher PRIVATE -Wno-deprecated-declarations)
 target_link_libraries(CrashLauncher PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi)
@@ -194,10 +209,10 @@ target_link_libraries(CrashLauncher PRIVATE d3d11 dxgi d3dcompiler windowscodecs
 # only: it reads the game's art from the dump the user picks, like the launcher).
 get_target_property(CRASH_LAUNCHER_SOURCES CrashLauncher SOURCES)
 add_executable(CrashSetup WIN32 ${CRASH_LAUNCHER_SOURCES})
-target_include_directories(CrashSetup PRIVATE ${CRASH_IMGUI_DIR})
+target_include_directories(CrashSetup PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include)
 target_compile_definitions(CrashSetup PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS CRASH_INSTALLER)
 target_compile_options(CrashSetup PRIVATE -Wno-deprecated-declarations -Wno-unused-function)
-target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32)
+target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32 uuid bcrypt)
 
 # The player's folder (dist\): CrashRecomp.exe + DLLs, languages\, data\ (optional, derived from the
 # user's game), and mods\ / userdata\ / game\ kept as they are. `cmake --build build --target dist`

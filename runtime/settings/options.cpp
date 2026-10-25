@@ -267,8 +267,8 @@ namespace settings::options
         case Item::Upscaler:
             switch (values.upscaler)
             {
-            case Upscaler::Dlss: return std::string("DLSS") + (context.dlss ? "" : T(pt, { " (N/A)", " (N/D)" }));
-            case Upscaler::Fsr: return std::string("FSR 3.1") + (context.fsr ? "" : T(pt, { " (N/A)", " (N/D)" }));
+            case Upscaler::Dlss: return std::string("DLSS") + (context.dlss ? "" : T(pt, { " (REQUIRES NVIDIA RTX)", " (REQUER NVIDIA RTX)" }));
+            case Upscaler::Fsr: return std::string("FSR 3.1") + (context.fsr ? "" : T(pt, { " (UNSUPPORTED GPU)", " (PLACA SEM SUPORTE)" }));
             default: return OnOff(pt, false);
             }
         case Item::UpscalerQuality:
@@ -376,10 +376,14 @@ namespace settings::options
                      t({ "F1 switches it at any time.", "O F1 alterna a qualquer momento." }) };
         case Item::Upscaler:
             if (values.upscaler == Upscaler::Dlss && !context.dlss)
-                return { t({ "DLSS needs an NVIDIA RTX card and nvngx_dlss.dll", "O DLSS precisa de uma placa NVIDIA RTX e do nvngx_dlss.dll" }),
-                         t({ "next to the game; without them it runs without DLSS.", "ao lado do jogo; sem eles o jogo roda sem DLSS." }) };
+                return { t({ "DLSS needs an NVIDIA RTX card (with DLSS installed):", "O DLSS precisa de uma placa NVIDIA RTX (com o DLSS instalado):" }),
+                         t({ "this PC plays with FSR or without an upscaler.", "este PC joga com FSR ou sem upscaler." }) };
+            if (values.upscaler == Upscaler::Fsr && !context.fsr)
+                return { t({ "This GPU or driver can't run FSR 3.1:", "Esta placa ou driver não roda o FSR 3.1:" }),
+                         t({ "the game plays without an upscaler.", "o jogo roda sem upscaler." }) };
             return { t({ "Temporal AA + upscaling of the 3D scene, no", "AA temporal + upscaling da cena 3D, sem" }),
-                     t({ "frame generation. DLSS: NVIDIA RTX only.", "frame generation. DLSS: só NVIDIA RTX." }) };
+                     context.dlss ? t({ "frame generation. DLSS: NVIDIA RTX only.", "frame generation. DLSS: só NVIDIA RTX." })
+                                  : t({ "frame generation. DLSS (requires NVIDIA RTX): not here.", "frame generation. DLSS (requer NVIDIA RTX): não aqui." }) };
         case Item::UpscalerQuality:
             return { t({ "Native = DLAA / FSR Native AA. The others", "Nativo = DLAA / FSR Native AA. Os outros" }),
                      t({ "draw the scene smaller and upscale it.", "desenham a cena menor e reescalam." }) };
@@ -536,7 +540,12 @@ namespace settings::options
         return value;
     }
 
-    bool Change(Item item, Values& values, int direction)
+    bool Unavailable(Item item, const Values& values, const Context& context)
+    {
+        return item == Item::Upscaler && ((values.upscaler == Upscaler::Dlss && !context.dlss) || (values.upscaler == Upscaler::Fsr && !context.fsr));
+    }
+
+    bool Change(Item item, Values& values, int direction, const Context& context)
     {
         int minimum, maximum, step;
         if (int* percent = Percent(item, values, &minimum, &maximum, &step))
@@ -571,7 +580,15 @@ namespace settings::options
         case Item::Hud16x9: values.hud16x9 = !values.hud16x9; break;
         case Item::AntiAliasing: values.antiAliasing = Cycle(values.antiAliasing, 3, direction); break;
         case Item::Overlay: values.overlay = Cycle(values.overlay, 4, direction); break;
-        case Item::Upscaler: values.upscaler = Cycle(values.upscaler, 3, direction); break;
+        case Item::Upscaler:
+            // The ones this PC can't run are skipped (OFF always can).
+            for (int i = 0; i < 3; i++)
+            {
+                values.upscaler = Cycle(values.upscaler, 3, direction);
+                if (!Unavailable(item, values, context))
+                    break;
+            }
+            break;
         case Item::UpscalerQuality: values.upscalerQuality = Cycle(values.upscalerQuality, 5, direction); break;
         case Item::Anisotropy:
         {

@@ -79,20 +79,23 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 
 - Windows 10/11 x64 and a GPU with **Vulkan 1.3** and an up-to-date driver (for example NVIDIA GTX 900
   or newer, AMD RX 400 or newer, Intel Iris Xe / Arc). The renderer is Vulkan only (Direct3D 12 was
-  dropped in October 2026). Linux / Steam Deck through Proton is the goal and still being tested. The
-  installer downloads Microsoft's `dxcompiler.dll` (HLSL to SPIR-V) next to the exe.
+  dropped in October 2026). Linux / Steam Deck through Proton is the goal and still being tested.
+  **DLSS** needs an NVIDIA RTX GPU; on other GPUs the installer leaves it out and the options offer
+  **FSR 3.1** (any GPU above) or no upscaler.
 - Your Crash of the Titans (Xbox 360) game files: the folder with `default.xex`, `default.rcf`,
   `english.rcf`, `sound1.rcf`, `sound2.rcf` and `shaders\` (extracted from your disc). Only the known
   retail `default.xex` is supported (the installer checks its SHA-256).
-- About 1.5 GB of free space (plus 3 GB to copy the game into the folder, 4.5 GB for the HD AI Remaster,
-  18 GB for the asset export, mostly WAV sounds).
+- About 4.3 GB of free space (1.3 GB + the 3 GB copy of your game; the installer shows what your
+  options need: plus 9.5 GB for the HD AI Remaster, 18 GB for the asset export, mostly WAV sounds).
 
-**Nothing else to install.** Since v1.03 the release zip carries its own build tools in `toolchain\`
-([llvm-mingw](https://github.com/mstorsjo/llvm-mingw) clang, [CMake](https://cmake.org),
-[Ninja](https://ninja-build.org) and the official embeddable [Python](https://www.python.org) with numpy and
-Pillow): no Visual Studio, LLVM, Python or Git, and nothing is installed on the system. The installer
-only downloads FFmpeg (LGPL), NVIDIA DLSS and AMD FSR from their official sources, checked by SHA-256
-(see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), and the optional extras you choose.
+**One file, nothing else to install.** Since v1.05 the installer is a single `CrashSetup-<version>.exe`
+with everything inside: our source, the build tools ([llvm-mingw](https://github.com/mstorsjo/llvm-mingw)
+clang, [CMake](https://cmake.org), [Ninja](https://ninja-build.org) and the official embeddable
+[Python](https://www.python.org) with numpy and Pillow) and the libraries (FFmpeg LGPL, AMD FSR,
+Microsoft's `dxcompiler.dll`, NVIDIA DLSS; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). No
+Visual Studio, LLVM, Python or Git, nothing is installed on the system, and it works offline: only the
+optional subtitles and HD AI Remaster are downloaded. It ships no game file and no recompiled code: the
+game is built on your PC from your own copy.
 
 Advanced: to build with an installed Visual Studio 2022+ / Build Tools and LLVM `clang-cl` instead, set
 **BUILD TOOLS = VISUAL STUDIO** in the installer (or `--toolchain msvc`); it offers to install the missing
@@ -100,16 +103,36 @@ ones with `winget`.
 
 ## Install
 
-1. Download **`CrashRecomp-v1.04.zip`** (the latest, ~150 MB) from the [releases](https://github.com/VitoMiguelF/crashott-pc/releases)
-   and unzip it. (A `git clone` of this repository has no `toolchain\`: see [CONTRIBUTING.md](CONTRIBUTING.md).)
-2. Run **`CrashSetup.exe`**. Choose your game folder, pick the options (subtitles, HD AI Remaster, asset
-   export for modding, copying the game into the folder) and click **INSTALL**. It recompiles the game
-   code and builds everything with the tools in `toolchain\` (about 2 minutes on an 8-core PC, longer on
-   slower ones).
+1. Download **`CrashSetup-v1.05.exe`** (the latest, ~210 MB, one file) from the
+   [releases](https://github.com/VitoMiguelF/crashott-pc/releases). (Up to v1.04 it was a zip with
+   `CrashSetup.exe` inside; a `git clone` of this repository: see [CONTRIBUTING.md](CONTRIBUTING.md).)
+2. Run it. It first asks for your **game folder** and checks it is the supported Xbox 360 dump. Choose **where to install** (default `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive
+   Edition`; any folder or drive of yours, the space needed and free is shown; your game is copied into
+   the install), the options (subtitles, HD AI Remaster, asset export for modding) and
+   click **INSTALL**. It unpacks its files there, recompiles the game code and builds everything (about
+   3 minutes on an 8-core PC, longer on slower ones). The installer checks your GPU: DLSS is installed
+   only on an NVIDIA RTX card (NVIDIA's own check); elsewhere you get FSR 3.1.
+3. At the end it asks for a **desktop shortcut** and a **Start menu** entry for the launcher.
+
+   What it installs (only what building and running the game needs; docs, tests and development tools
+   stay on GitHub):
+
+   ```
+   Crash of the Titans Definitive Edition\
+     CrashLauncher.exe            the launcher (the shortcuts point here)
+     CrashOTTDE.exe               the game
+     *.dll                        FFmpeg, FSR, dxcompiler (+ DLSS on NVIDIA RTX)
+     game\                        your game files, copied here
+     userdata\                    saves, settings.toml, shader cache
+     mods\
+     CrashRecomp\                 languages\, data\, licencas\ and what the game is built with
+                                  (toolchain\, build\, the source; the asset export's tools only with
+                                  ASSETS FOR MODDING)
+   ```
 
    ![Installer](docs/screenshots/installer.jpg)
 
-   Without the GUI, the same in a terminal, with the bundled Python:
+   Without the GUI, the same in a terminal from a clone or the release zip's folder, with the bundled Python:
 
    ```bat
    toolchain\python\python.exe tools\setup.py --game D:\Games\Crash --subtitles
@@ -117,9 +140,11 @@ ones with `winget`.
    toolchain\python\python.exe tools\setup.py --game D:\Games\Crash --assets-only   :: retry only the asset export
    ```
 
-   Release zips placed next to `CrashSetup.exe` are used instead of downloading them again. If only
-   the asset export fails, the game is installed anyway: **TRY AGAIN** reruns just that step.
-3. Play with **`dist\CrashLauncher.exe`** (options, then PLAY) or `dist\CrashRecomp.exe`.
+   Release zips placed next to `CrashSetup-<version>.exe` are used instead of downloading them again. If
+   only the asset export fails, the game is installed anyway: **TRY AGAIN** reruns just that step. To
+   update, run the new installer on the same folder (your saves and settings in `userdata\` stay).
+4. Play with the shortcut, **`CrashLauncher.exe`** (options, then PLAY) or `CrashOTTDE.exe`. (A clone
+   built with `tools\setup.py` plays from `dist\`: `dist\CrashLauncher.exe`, `dist\CrashRecomp.exe`.)
 
 ### Known issues
 
@@ -193,7 +218,7 @@ Mods made from the game's files are derived content: share them with care.
 ## Credits and licenses
 
 - Code of this project: MIT ([LICENSE](LICENSE)), by VitoMiguelF, written with Claude Code.
-- Build toolchain in the release zip: llvm-mingw (Apache 2.0 with LLVM Exceptions; mingw-w64), CMake
+- Build toolchain in the installer: llvm-mingw (Apache 2.0 with LLVM Exceptions; mingw-w64), CMake
   (BSD-3), Ninja (Apache 2.0), Python (PSF) with NumPy (BSD-3) and Pillow (MIT-CMU).
 - [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) by hedge-dev (MIT), with local fixes in
   [patches/XenonRecomp.patch](patches/XenonRecomp.patch).
@@ -278,20 +303,22 @@ de PC.
 
 - Windows 10/11 x64 e uma placa de vídeo com **Vulkan 1.3** e driver atualizado (por exemplo NVIDIA
   GTX 900 ou mais nova, AMD RX 400 ou mais nova, Intel Iris Xe / Arc). O renderizador é só Vulkan
-  (o Direct3D 12 saiu em outubro de 2026). Linux / Steam Deck pelo Proton é o objetivo e ainda está em teste. O
-  instalador baixa o `dxcompiler.dll` da Microsoft (HLSL para SPIR-V) ao lado do exe.
+  (o Direct3D 12 saiu em outubro de 2026). Linux / Steam Deck pelo Proton é o objetivo e ainda está em teste.
+  O **DLSS** precisa de uma placa NVIDIA RTX; nas outras o instalador o deixa de fora e as opções oferecem o
+  **FSR 3.1** (qualquer placa acima) ou nenhum upscaler.
 - Os arquivos do seu Crash of the Titans (Xbox 360): a pasta com `default.xex`, `default.rcf`,
   `english.rcf`, `sound1.rcf`, `sound2.rcf` e `shaders\` (extraída do seu disco). Só o `default.xex`
   conhecido da versão comercial é suportado (o instalador confere o SHA-256).
-- Cerca de 1,5 GB livres (mais 3 GB para copiar o jogo para a pasta, 4,5 GB para o HD AI Remaster e 18 GB
-  para exportar os assets).
+- Cerca de 4,3 GB livres (1,3 GB + a cópia de 3 GB do seu jogo; o instalador mostra o que as suas opções
+  precisam: mais 9,5 GB para o HD AI Remaster e 18 GB para exportar os assets).
 
-**Nada mais para instalar.** Desde a v1.03 o zip da release traz as próprias ferramentas de compilação em
-`toolchain\` ([llvm-mingw](https://github.com/mstorsjo/llvm-mingw) com clang, [CMake](https://cmake.org),
-[Ninja](https://ninja-build.org) e o [Python](https://www.python.org) embutido oficial com numpy e Pillow):
-sem Visual Studio, LLVM, Python ou Git, e nada é instalado no sistema. O instalador só baixa FFmpeg (LGPL),
-NVIDIA DLSS e AMD FSR das fontes oficiais, conferidos pelo SHA-256 (veja
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), e os extras opcionais que você escolher.
+**Um arquivo só, nada mais para instalar.** Desde a v1.05 o instalador é um único `CrashSetup-<versão>.exe`
+com tudo dentro: o nosso código, as ferramentas de compilação ([llvm-mingw](https://github.com/mstorsjo/llvm-mingw)
+com clang, [CMake](https://cmake.org), [Ninja](https://ninja-build.org) e o [Python](https://www.python.org)
+embutido oficial com numpy e Pillow) e as bibliotecas (FFmpeg LGPL, AMD FSR, `dxcompiler.dll` da Microsoft,
+NVIDIA DLSS; veja [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Sem Visual Studio, LLVM, Python ou Git,
+nada é instalado no sistema e funciona offline: só as legendas e o HD AI Remaster, opcionais, são baixados.
+Ele não traz nenhum arquivo do jogo nem código recompilado: o jogo é montado no seu PC a partir da sua cópia.
 
 Avançado: para compilar com um Visual Studio 2022+ / Build Tools e o `clang-cl` do LLVM instalados, escolha
 **FERRAMENTAS = VISUAL STUDIO** no instalador (ou `--toolchain msvc`); ele oferece instalar o que faltar
@@ -299,13 +326,34 @@ pelo `winget`.
 
 ## Instalação
 
-1. Baixe **`CrashRecomp-v1.04.zip`** (a mais recente, ~150 MB) nas [releases](https://github.com/VitoMiguelF/crashott-pc/releases) e
-   descompacte. (Um `git clone` deste repositório não tem a `toolchain\`: veja o [CONTRIBUTING.md](CONTRIBUTING.md).)
-2. Abra o **`CrashSetup.exe`**. Escolha a pasta do jogo, escolha as opções (legendas, HD AI Remaster, assets
-   para modding, copiar o jogo para a pasta) e clique em **INSTALAR**. Ele recompila o código do jogo e
-   compila tudo com as ferramentas de `toolchain\` (uns 2 minutos num PC de 8 núcleos, mais nos mais lentos).
+1. Baixe o **`CrashSetup-v1.05.exe`** (o mais recente, ~210 MB, um arquivo só) nas
+   [releases](https://github.com/VitoMiguelF/crashott-pc/releases). (Até a v1.04 era um zip com o
+   `CrashSetup.exe` dentro; para um `git clone` deste repositório, veja o [CONTRIBUTING.md](CONTRIBUTING.md).)
+2. Abra. Primeiro ele pede a **pasta do jogo** e confere se é o dump de Xbox 360 suportado. Escolha **onde instalar** (padrão `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive Edition`;
+   qualquer pasta ou disco seu, com o espaço necessário e o livre na tela; o jogo é copiado para a instalação),
+   as opções (legendas, HD AI Remaster, assets para modding) e clique em **INSTALAR**. Ele
+   extrai os arquivos lá, recompila o código do jogo e compila tudo (uns 3 minutos num PC de 8 núcleos, mais
+   nos mais lentos). O instalador confere a placa de vídeo: o DLSS só é instalado numa NVIDIA RTX (pela
+   verificação da própria NVIDIA); nas outras fica o FSR 3.1.
+3. No fim ele pergunta se quer um **atalho na área de trabalho** e uma entrada no **menu Iniciar** para o launcher.
 
-   Sem a interface, o mesmo num terminal, com o Python que vem junto:
+   O que ele instala (só o necessário para compilar e rodar o jogo; documentação, testes e ferramentas de
+   desenvolvimento ficam no GitHub):
+
+   ```
+   Crash of the Titans Definitive Edition\
+     CrashLauncher.exe            o launcher (os atalhos apontam para cá)
+     CrashOTTDE.exe               o jogo
+     *.dll                        FFmpeg, FSR, dxcompiler (+ DLSS em NVIDIA RTX)
+     game\                        os arquivos do seu jogo, copiados para cá
+     userdata\                    saves, settings.toml, cache de shaders
+     mods\
+     CrashRecomp\                 languages\, data\, licencas\ e o que monta o jogo
+                                  (toolchain\, build\, o código; as ferramentas da exportação de assets só
+                                  com ASSETS PARA MODDING)
+   ```
+
+   Sem a interface, o mesmo num terminal num clone ou na pasta do zip da release, com o Python que vem junto:
 
    ```bat
    toolchain\python\python.exe tools\setup.py --game D:\Jogos\Crash --subtitles
@@ -313,9 +361,11 @@ pelo `winget`.
    toolchain\python\python.exe tools\setup.py --game D:\Jogos\Crash --assets-only   :: tenta de novo só a exportação de assets
    ```
 
-   Zips da release colocados ao lado do `CrashSetup.exe` são usados em vez de baixar de novo. Se só a
-   exportação de assets falhar, o jogo fica instalado mesmo assim: **TENTAR DE NOVO** refaz só essa etapa.
-3. Jogue pelo **`dist\CrashLauncher.exe`** (opções e depois JOGAR) ou pelo `dist\CrashRecomp.exe`.
+   Zips da release colocados ao lado do `CrashSetup-<versão>.exe` são usados em vez de baixar de novo. Se só
+   a exportação de assets falhar, o jogo fica instalado mesmo assim: **TENTAR DE NOVO** refaz só essa etapa.
+   Para atualizar, rode o instalador novo na mesma pasta (seus saves e opções em `userdata\` ficam).
+4. Jogue pelo atalho, pelo **`CrashLauncher.exe`** (opções e depois JOGAR) ou pelo `CrashOTTDE.exe`. (Um clone
+   montado com o `tools\setup.py` joga da `dist\`: `dist\CrashLauncher.exe`, `dist\CrashRecomp.exe`.)
 
 ### Problemas conhecidos
 
@@ -396,7 +446,7 @@ partir dos arquivos do jogo são conteúdo derivado: compartilhe com cuidado.
 ## Créditos e licenças
 
 - Código deste projeto: MIT ([LICENSE](LICENSE)), por VitoMiguelF, escrito com o Claude Code.
-- Ferramentas de compilação do zip da release: llvm-mingw (Apache 2.0 com exceções do LLVM; mingw-w64),
+- Ferramentas de compilação do instalador: llvm-mingw (Apache 2.0 com exceções do LLVM; mingw-w64),
   CMake (BSD-3), Ninja (Apache 2.0), Python (PSF) com NumPy (BSD-3) e Pillow (MIT-CMU).
 - [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) da hedge-dev (MIT), com correções locais em
   [patches/XenonRecomp.patch](patches/XenonRecomp.patch).

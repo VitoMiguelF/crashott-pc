@@ -1,10 +1,13 @@
 #include "upscaler.h"
 #include "../diagnostics.h"
+#include "../settings/gpu_vendor.h"
 
 #include <windows.h>
 
 #define VK_NO_PROTOTYPES 1
 #include <vulkan/vulkan.h>
+
+#include "dlss_module/crash_dlss.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,11 +15,6 @@
 #include <filesystem>
 #include <vector>
 
-#if CRASH_HAVE_DLSS
-#include <nvsdk_ngx.h>
-#include <nvsdk_ngx_vk.h>
-#include <nvsdk_ngx_helpers_vk.h>
-#endif
 #if CRASH_HAVE_FSR
 #include <ffx_api/ffx_api.h>
 #include <ffx_api/ffx_upscale.h>
@@ -133,26 +131,85 @@ namespace gpu::upscaler
             return native;
         }
 
-#if CRASH_HAVE_DLSS
-        // NGX ----------------------------------------------------------------------------------
-        // Project id required by NVSDK_NGX_VULKAN_Init_with_ProjectID for custom engines (any
-        // GUID-like string; this one is CrashRecomp's).
-        constexpr const char* NGX_PROJECT_ID = "6c7a3f1e-0b58-4d6e-9a3c-56550e4c7261";
-        bool g_ngxInitialized = false;
-        NVSDK_NGX_Parameter* g_ngxParameters = nullptr;
-        NVSDK_NGX_Handle* g_dlss = nullptr;
-        uint32_t g_dlssKey[5] = {};  // render w/h, output w/h, quality + flags of the feature
-
-        void NVSDK_CONV NgxLog(const char* message, NVSDK_NGX_Logging_Level, NVSDK_NGX_Feature)
+        // DLSS: CrashDlss.dll (dlss_module/crash_dlss.h) ------------------------------------------
+        HMODULE g_dlssModule = nullptr;
+        struct
         {
-            std::string text = message ? message : "";
-            while (!text.empty() && (text.back() == '\n' || text.back() == '\r'))
-                text.pop_back();
-            Log("[dlss] %s", text.c_str());
+            CrashDlss_RequiredExtensionsFn RequiredExtensions;
+            CrashDlss_InitFn Init;
+            CrashDlss_EvaluateFn Evaluate;
+            CrashDlss_ReleaseFeatureFn ReleaseFeature;
+            CrashDlss_ShutdownFn Shutdown;
+        } g_dlssApi{};
+        bool g_ngxInitialized = false;
+
+        void DlssLog(const char* text)
+        {
+            Log("%s", text);
+        }
+
+        // CrashDlss.dll next to the exe, once; false if it isn't there (an install without DLSS: no
+        // NVIDIA RTX GPU) or is not the version this exe was built for.
+        bool LoadDlssModule()
+        {
+            static bool tried = false;
+            if (tried)
+                return g_dlssModule != nullptr;
+            tried = true;
+            std::filesystem::path dll = ExeDirectory() / "CrashDlss.dll";
+            std::error_code error;
+            if (!std::filesystem::exists(dll, error))
+                return false;
+            HMODULE module = LoadLibraryW(dll.c_str());
+            if (!module)
+            {
+                Log("[gpu] DLSS: CrashDlss.dll could not be loaded (error %lu)", GetLastError());
+                return false;
+            }
+            auto version = reinterpret_cast<CrashDlss_ApiVersionFn>(GetProcAddress(module, "CrashDlss_ApiVersion"));
+            g_dlssApi.RequiredExtensions = reinterpret_cast<CrashDlss_RequiredExtensionsFn>(GetProcAddress(module, "CrashDlss_RequiredExtensions"));
+            g_dlssApi.Init = reinterpret_cast<CrashDlss_InitFn>(GetProcAddress(module, "CrashDlss_Init"));
+            g_dlssApi.Evaluate = reinterpret_cast<CrashDlss_EvaluateFn>(GetProcAddress(module, "CrashDlss_Evaluate"));
+            g_dlssApi.ReleaseFeature = reinterpret_cast<CrashDlss_ReleaseFeatureFn>(GetProcAddress(module, "CrashDlss_ReleaseFeature"));
+            g_dlssApi.Shutdown = reinterpret_cast<CrashDlss_ShutdownFn>(GetProcAddress(module, "CrashDlss_Shutdown"));
+            if (!version || version() != CRASH_DLSS_API_VERSION || !g_dlssApi.RequiredExtensions || !g_dlssApi.Init || !g_dlssApi.Evaluate ||
+                !g_dlssApi.ReleaseFeature || !g_dlssApi.Shutdown)
+            {
+                Log("[gpu] DLSS: CrashDlss.dll is from another version (API %u, this exe wants %u)", version ? version() : 0u, CRASH_DLSS_API_VERSION);
+                FreeLibrary(module);
+                g_dlssApi = {};
+                return false;
+            }
+            g_dlssModule = module;
+            return true;
+        }
+
+        // The vendor of the renderer's GPU (0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel). CRASH_GPU_VENDOR
+        // (a hex id or nvidia / amd / intel) pretends another one, to test the options on one PC.
+        uint32_t GpuVendor()
+        {
+            uint32_t forced = settings::ForcedGpuVendor();
+            if (forced)
+                return forced;
+            auto getProperties =
+                g_getInstanceProcAddr ? reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(g_getInstanceProcAddr(g_instance, "vkGetPhysicalDeviceProperties"))
+                                      : nullptr;
+            if (!getProperties || !g_physical)
+                return 0;
+            VkPhysicalDeviceProperties properties{};
+            getProperties(g_physical, &properties);
+            return properties.vendorID;
         }
 
         void ProbeDlss(const std::wstring& dataDir)
         {
+            uint32_t vendor = GpuVendor();
+            if (vendor != 0x10DE)
+            {
+                Log("[gpu] DLSS: needs an NVIDIA RTX GPU (this GPU's vendor is 0x%04X%s)", vendor,
+                    settings::ForcedGpuVendor() ? ", CRASH_GPU_VENDOR" : "");
+                return;
+            }
             std::filesystem::path dll = ExeDirectory() / "nvngx_dlss.dll";
             std::error_code error;
             if (!std::filesystem::exists(dll, error))
@@ -160,126 +217,54 @@ namespace gpu::upscaler
                 Log("[gpu] DLSS: nvngx_dlss.dll not found next to the exe");
                 return;
             }
-            std::wstring exeDir = ExeDirectory().wstring();
-            const wchar_t* paths[] = { exeDir.c_str() };
-            NVSDK_NGX_FeatureCommonInfo info{};
-            info.PathListInfo.Path = paths;
-            info.PathListInfo.Length = 1;
-            info.LoggingInfo.LoggingCallback = NgxLog;
-            info.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_OFF;
+            if (!LoadDlssModule())
+            {
+                Log("[gpu] DLSS: CrashDlss.dll not found next to the exe");
+                return;
+            }
             std::filesystem::create_directories(dataDir, error);
-            NVSDK_NGX_Result result = NVSDK_NGX_VULKAN_Init_with_ProjectID(NGX_PROJECT_ID, NVSDK_NGX_ENGINE_TYPE_CUSTOM, "1.0", dataDir.c_str(),
-                                                                            g_instance, g_physical, g_device, g_getInstanceProcAddr,
-                                                                            g_getDeviceProcAddr, &info, NVSDK_NGX_Version_API);
-            if (NVSDK_NGX_FAILED(result))
-            {
-                Log("[gpu] DLSS: NGX initialization failed (0x%08X; not an NVIDIA RTX GPU or an old driver)", uint32_t(result));
+            std::wstring exeDir = ExeDirectory().wstring();
+            CrashDlssDevice device{ g_instance, g_physical, g_device, g_getInstanceProcAddr, g_getDeviceProcAddr, dataDir.c_str(), exeDir.c_str(), DlssLog };
+            g_ngxInitialized = true;  // Shutdown releases what Init started, even when it failed
+            if (!g_dlssApi.Init(&device))
                 return;
-            }
-            g_ngxInitialized = true;
-            if (NVSDK_NGX_FAILED(NVSDK_NGX_VULKAN_GetCapabilityParameters(&g_ngxParameters)) || !g_ngxParameters)
-            {
-                Log("[gpu] DLSS: no NGX capability parameters");
-                return;
-            }
-            int available = 0, needsDriver = 0;
-            NVSDK_NGX_Parameter_GetI(g_ngxParameters, NVSDK_NGX_Parameter_SuperSampling_Available, &available);
-            NVSDK_NGX_Parameter_GetI(g_ngxParameters, NVSDK_NGX_Parameter_SuperSampling_NeedsUpdatedDriver, &needsDriver);
-            if (!available)
-            {
-                int initResult = 0;
-                NVSDK_NGX_Parameter_GetI(g_ngxParameters, NVSDK_NGX_Parameter_SuperSampling_FeatureInitResult, &initResult);
-                Log("[gpu] DLSS: not available on this GPU (needs updated driver: %s, result 0x%08X)", needsDriver ? "yes" : "no", uint32_t(initResult));
-                return;
-            }
             g_dlssAvailable = true;
             std::string version = FileVersion(dll);
             Log("[gpu] DLSS available (nvngx_dlss.dll %s)", version.empty() ? "?" : version.c_str());
         }
 
-        NVSDK_NGX_PerfQuality_Value DlssQuality(settings::UpscalerQuality quality)
+        CrashDlssImage DlssImage(const NativeTexture& texture)
         {
-            switch (quality)
-            {
-            case settings::UpscalerQuality::Quality: return NVSDK_NGX_PerfQuality_Value_MaxQuality;
-            case settings::UpscalerQuality::Balanced: return NVSDK_NGX_PerfQuality_Value_Balanced;
-            case settings::UpscalerQuality::Performance: return NVSDK_NGX_PerfQuality_Value_MaxPerf;
-            case settings::UpscalerQuality::UltraPerformance: return NVSDK_NGX_PerfQuality_Value_UltraPerformance;
-            default: return NVSDK_NGX_PerfQuality_Value_DLAA;
-            }
-        }
-
-        NVSDK_NGX_Resource_VK DlssResource(const NativeTexture& texture, bool readWrite)
-        {
-            VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-            return NVSDK_NGX_Create_ImageView_Resource_VK(texture.view, texture.image, range, texture.format, texture.width, texture.height, readWrite);
+            return { texture.image, texture.view, texture.format, texture.width, texture.height };
         }
 
         bool EvaluateDlss(const Frame& frame)
         {
             NativeFrame native = Natives(frame);
-            int flags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure |
-                        (frame.depthInverted ? NVSDK_NGX_DLSS_Feature_Flags_DepthInverted : 0);
-            uint32_t key[5] = { frame.renderWidth, frame.renderHeight, frame.outputWidth, frame.outputHeight, uint32_t(frame.quality) | (uint32_t(flags) << 8) };
-            if (g_dlss && memcmp(key, g_dlssKey, sizeof(key)) != 0)
-            {
-                NVSDK_NGX_VULKAN_ReleaseFeature(g_dlss);
-                g_dlss = nullptr;
-            }
-            if (!g_dlss)
-            {
-                NVSDK_NGX_DLSS_Create_Params create{};
-                create.Feature.InWidth = frame.renderWidth;
-                create.Feature.InHeight = frame.renderHeight;
-                create.Feature.InTargetWidth = frame.outputWidth;
-                create.Feature.InTargetHeight = frame.outputHeight;
-                create.Feature.InPerfQualityValue = DlssQuality(frame.quality);
-                create.InFeatureCreateFlags = flags;
-                // Presets: the DLL's defaults (transformer K for DLAA/quality/balanced, M/L for the
-                // performance modes in DLSS 4.5).
-                NVSDK_NGX_Result result = NGX_VULKAN_CREATE_DLSS_EXT1(g_device, native.commandBuffer, 1, 1, &g_dlss, g_ngxParameters, &create);
-                if (NVSDK_NGX_FAILED(result))
-                {
-                    static uint32_t logged;
-                    if (logged++ < 4)
-                        Log("[gpu] DLSS: could not create the feature %ux%u -> %ux%u (0x%08X)", frame.renderWidth, frame.renderHeight,
-                            frame.outputWidth, frame.outputHeight, uint32_t(result));
-                    g_dlss = nullptr;
-                    return false;
-                }
-                memcpy(g_dlssKey, key, sizeof(key));
-                Log("[gpu] DLSS feature created: %ux%u -> %ux%u, %s", frame.renderWidth, frame.renderHeight, frame.outputWidth, frame.outputHeight,
-                    settings::UpscalerQualityName(frame.quality));
-            }
-            NVSDK_NGX_Resource_VK color = DlssResource(native.color, false), depth = DlssResource(native.depth, false),
-                                  motion = DlssResource(native.motion, false), output = DlssResource(native.output, true);
-            NVSDK_NGX_VK_DLSS_Eval_Params eval{};
-            eval.Feature.pInColor = &color;
-            eval.Feature.pInOutput = &output;
-            eval.pInDepth = &depth;
-            eval.pInMotionVectors = &motion;
-            eval.InJitterOffsetX = frame.jitterX;
-            eval.InJitterOffsetY = frame.jitterY;
-            eval.InRenderSubrectDimensions = { frame.renderWidth, frame.renderHeight };
-            eval.InReset = frame.reset ? 1 : 0;
-            // Motion vectors are in UV units: scale to render pixels.
-            eval.InMVScaleX = float(frame.renderWidth);
-            eval.InMVScaleY = float(frame.renderHeight);
-            eval.InFrameTimeDeltaInMsec = frame.frameTimeMs;
-            NVSDK_NGX_Result result = NGX_VULKAN_EVALUATE_DLSS_EXT(native.commandBuffer, g_dlss, g_ngxParameters, &eval);
-            if (NVSDK_NGX_FAILED(result))
-            {
-                static uint32_t logged;
-                if (logged++ < 4)
-                    Log("[gpu] DLSS: evaluation failed (0x%08X)", uint32_t(result));
-                return false;
-            }
-            return true;
+            CrashDlssFrame dlss{};
+            dlss.commandBuffer = native.commandBuffer;
+            dlss.color = DlssImage(native.color);
+            dlss.depth = DlssImage(native.depth);
+            dlss.motion = DlssImage(native.motion);
+            dlss.output = DlssImage(native.output);
+            dlss.renderWidth = frame.renderWidth;
+            dlss.renderHeight = frame.renderHeight;
+            dlss.outputWidth = frame.outputWidth;
+            dlss.outputHeight = frame.outputHeight;
+            dlss.jitterX = frame.jitterX;
+            dlss.jitterY = frame.jitterY;
+            dlss.frameTimeMs = frame.frameTimeMs;
+            dlss.quality = int32_t(frame.quality);
+            dlss.reset = frame.reset ? 1 : 0;
+            dlss.depthInverted = frame.depthInverted ? 1 : 0;
+            return g_dlssApi.Evaluate(&dlss) != 0;
         }
-#endif
 
 #if CRASH_HAVE_FSR
         // FidelityFX API ------------------------------------------------------------------------
+        const char* const FSR_DEVICE_EXTENSIONS[] = { VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME, VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME,
+                                                      VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME,
+                                                      VK_KHR_SHADER_SUBGROUP_EXTENDED_TYPES_EXTENSION_NAME };
         HMODULE g_ffxModule = nullptr;
         // The FidelityFX API entry points of amd_fidelityfx_vk.dll.
         struct
@@ -305,6 +290,17 @@ namespace gpu::upscaler
 
         void ProbeFsr()
         {
+            // The DLL calls these through vkGetDeviceProcAddr by their extension names: without them
+            // it would call null pointers, so FSR is only offered when the device has them all.
+            std::string missing;
+            for (const char* name : FSR_DEVICE_EXTENSIONS)
+                if (!g_rhi->DeviceExtensionEnabled(name))
+                    missing += (missing.empty() ? "" : ", ") + std::string(name);
+            if (!missing.empty())
+            {
+                Log("[gpu] FSR: not available on this GPU (the driver lacks %s)", missing.c_str());
+                return;
+            }
             std::filesystem::path dll = ExeDirectory() / "amd_fidelityfx_vk.dll";
             g_ffxModule = LoadLibraryW(dll.c_str());
             if (!g_ffxModule)
@@ -467,26 +463,25 @@ namespace gpu::upscaler
 
     void VulkanExtensions(std::vector<std::string>& instance, std::vector<std::string>& device)
     {
-#if CRASH_HAVE_DLSS
         // NGX's list (the same for every NVIDIA GPU; the device enables the ones the driver has).
-        unsigned int instanceCount = 0, deviceCount = 0;
-        const char** instanceNames = nullptr;
-        const char** deviceNames = nullptr;
-        if (NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_RequiredExtensions(&instanceCount, &instanceNames, &deviceCount, &deviceNames)))
+        uint32_t instanceCount = 0, deviceCount = 0;
+        const char* const* instanceNames = nullptr;
+        const char* const* deviceNames = nullptr;
+        uint32_t forced = settings::ForcedGpuVendor();  // another vendor pretended: as on a PC without DLSS
+        if ((!forced || forced == settings::VENDOR_NVIDIA) && LoadDlssModule() &&
+            g_dlssApi.RequiredExtensions(&instanceCount, &instanceNames, &deviceCount, &deviceNames))
         {
-            for (unsigned int i = 0; i < instanceCount; i++)
+            for (uint32_t i = 0; i < instanceCount; i++)
                 instance.push_back(instanceNames[i]);
-            for (unsigned int i = 0; i < deviceCount; i++)
+            for (uint32_t i = 0; i < deviceCount; i++)
                 device.push_back(deviceNames[i]);
         }
-#endif
 #if CRASH_HAVE_FSR
         // amd_fidelityfx_vk.dll looks these entry points up by their extension names
         // (vkGetBufferMemoryRequirements2KHR, vkSetDebugUtilsObjectNameEXT...), which
         // vkGetDeviceProcAddr only resolves with the extension enabled: a null call otherwise.
         instance.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-        for (const char* name : { VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME, VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME,
-                                  VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME, VK_KHR_SHADER_SUBGROUP_EXTENDED_TYPES_EXTENSION_NAME })
+        for (const char* name : FSR_DEVICE_EXTENSIONS)
             device.push_back(name);
 #endif
         (void)instance;
@@ -503,11 +498,7 @@ namespace gpu::upscaler
         if (upscaler == settings::Upscaler::Dlss && !g_dlssProbed)
         {
             g_dlssProbed = probed = true;
-#if CRASH_HAVE_DLSS
             ProbeDlss(g_dataDir);
-#else
-            Log("[gpu] DLSS: not built in (thirdparty/dlss missing)");
-#endif
         }
         if (upscaler == settings::Upscaler::Fsr && !g_fsrProbed)
         {
@@ -542,6 +533,15 @@ namespace gpu::upscaler
         g_getInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(native.getInstanceProcAddr);
         g_getDeviceProcAddr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(native.getDeviceProcAddr);
         g_dataDir = dataDir;
+        // settings.toml asks for DLSS where it can't run (a settings.toml copied from another PC, a
+        // new GPU): FSR instead when it can run, else no upscaler. The file is left as it is.
+        if (wanted == settings::Upscaler::Dlss && !Available(settings::Upscaler::Dlss))
+        {
+            settings::Upscaler fallback = Available(settings::Upscaler::Fsr) ? settings::Upscaler::Fsr : settings::Upscaler::Off;
+            Log("[gpu] settings.toml asks for DLSS, which this PC can't run (it needs an NVIDIA RTX GPU): using %s instead",
+                fallback == settings::Upscaler::Fsr ? "FSR 3.1" : "no upscaler");
+            wanted = fallback;
+        }
         Select(wanted);
     }
 
@@ -558,13 +558,8 @@ namespace gpu::upscaler
             g_name = "FSR " + g_fsrVersionName;
 #endif
         // The one not in use gives its memory back (the GPU is idle: the renderer waited).
-#if CRASH_HAVE_DLSS
-        if (g_active != settings::Upscaler::Dlss && g_dlss)
-        {
-            NVSDK_NGX_VULKAN_ReleaseFeature(g_dlss);
-            g_dlss = nullptr;
-        }
-#endif
+        if (g_active != settings::Upscaler::Dlss && g_dlssAvailable)
+            g_dlssApi.ReleaseFeature();
 #if CRASH_HAVE_FSR
         if (g_active != settings::Upscaler::Fsr && g_fsr)
         {
@@ -576,17 +571,9 @@ namespace gpu::upscaler
 
     void Shutdown()
     {
-#if CRASH_HAVE_DLSS
-        if (g_dlss)
-            NVSDK_NGX_VULKAN_ReleaseFeature(g_dlss);
-        g_dlss = nullptr;
-        if (g_ngxParameters)
-            NVSDK_NGX_VULKAN_DestroyParameters(g_ngxParameters);
-        g_ngxParameters = nullptr;
         if (g_ngxInitialized)
-            NVSDK_NGX_VULKAN_Shutdown1(g_device);
+            g_dlssApi.Shutdown();
         g_ngxInitialized = false;
-#endif
 #if CRASH_HAVE_FSR
         if (g_fsr)
             g_ffx.DestroyContext(&g_fsr, nullptr);
@@ -618,10 +605,8 @@ namespace gpu::upscaler
     bool Evaluate(const Frame& frame)
     {
         bool ok = false;
-#if CRASH_HAVE_DLSS
         if (g_active == settings::Upscaler::Dlss)
             ok = EvaluateDlss(frame);
-#endif
 #if CRASH_HAVE_FSR
         if (g_active == settings::Upscaler::Fsr)
             ok = EvaluateFsr(frame);

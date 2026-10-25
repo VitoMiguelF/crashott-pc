@@ -2,10 +2,13 @@
 
 // Temporal upscaling / anti-aliasing of the 3D scene (settings [graphics] upscaler):
 //
-//   - NVIDIA DLSS Super Resolution / DLAA, through NGX's Vulkan API (thirdparty/dlss:
-//     nvsdk_ngx_s.lib, nvngx_dlss.dll next to the exe). NVIDIA RTX GPUs only.
+//   - NVIDIA DLSS Super Resolution / DLAA, through NGX's Vulkan API in CrashDlss.dll
+//     (dlss_module/crash_dlss.h, loaded at run time) and nvngx_dlss.dll, both next to the exe.
+//     NVIDIA RTX GPUs only: on other GPUs it isn't even loaded (CRASH_GPU_VENDOR pretends one).
 //   - AMD FSR 3.1 upscaler, through the FidelityFX API's Vulkan backend (thirdparty/fsr: the signed
-//     amd_fidelityfx_vk.dll of FidelityFX SDK 1.1.4, loaded at run time). Any Vulkan 1.3 GPU.
+//     amd_fidelityfx_vk.dll of FidelityFX SDK 1.1.4, loaded at run time). Any Vulkan 1.3 GPU whose
+//     driver has the extensions it calls.
+// A settings.toml asking for DLSS where it can't run gets FSR (or no upscaler) at startup (Init).
 //
 // Upscaling only: no frame generation. The renderer (xenos_renderer.cpp, "Temporal upscaling")
 // jitters the scene's projection, builds the motion vectors and calls Evaluate between the 3D

@@ -12,6 +12,10 @@
 //                                                          passed on to CrashRecomp.exe
 //   CrashLauncher.exe --screenshot <file.png> [--tab N] [--view simple|advanced]
 //                                                          draws one frame to a PNG and exits (tests)
+//
+// DLSS is offered only where it runs: an NVIDIA GPU (gpu_probe.inc, by Vulkan) with CrashDlss.dll
+// and nvngx_dlss.dll next to the exe, confirmed by NGX's own check in a child process
+// (--probe-dlss). Elsewhere the row shows "DLSS (REQUIRES NVIDIA RTX)" greyed out and skips it.
 
 // windows.h first: menu_art.cpp is compiled with it, so DrawText is its DrawTextA macro there too.
 #include <windows.h>
@@ -19,7 +23,9 @@
 #include "../runtime/fs/vfs.h"
 #include "../runtime/gpu/png_writer.h"
 #include "../runtime/paths.h"
+#include "../runtime/gpu/dlss_module/crash_dlss.h"
 #include "../runtime/settings/controls.h"
+#include "../runtime/settings/gpu_vendor.h"
 #include "../runtime/settings/language_pack.h"
 #include "../runtime/settings/menu_art.h"
 #include "../runtime/settings/options.h"
@@ -37,14 +43,19 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <set>
 #include <string>
+#include <thread>
 #include <vector>
 #ifdef CRASH_INSTALLER
-#include <mutex>
-#include <thread>
+#include <bcrypt.h>
+#include <shlobj.h>
+#include <shobjidl.h>
 #endif
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -147,7 +158,7 @@ namespace
     std::string g_message[2];
     bool g_quit = false;
     bool g_artLoaded = false, g_haveFonts = false;
-    bool g_dlss = false, g_fsr = false;
+    bool g_dlss = false, g_fsr = false;  // the files are there and the GPU is NVIDIA / has FSR's extensions (CreateDevice)
     int g_menuFocus = -1;  // left menu item under the mouse
     std::vector<std::string> g_passArgs;  // folder arguments passed on to the game
     bool g_focusFirstRow = true;    // select the first row of the tab (opening it)
@@ -218,13 +229,21 @@ namespace
         return count;
     }
 
+#include "gpu_probe.inc"
+
+    // While NGX's check runs, an NVIDIA GPU counts as able (most are RTX); then its answer.
+    bool DlssConfirmed()
+    {
+        return g_dlssProbe.state != 2 || g_dlssProbe.available;
+    }
+
     // What the options' texts depend on here: everything applies when the game starts.
     opt::Context OptionContext()
     {
         opt::Context context;
         context.pt = Pt();
         context.launcher = true;
-        context.dlss = g_dlss;
+        context.dlss = g_dlss && DlssConfirmed();
         context.fsr = g_fsr;
         context.haveSubtitles = HaveSubtitles();
         return context;
@@ -308,6 +327,10 @@ namespace
         ShellExecuteW(g_hwnd, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }
 
+#ifdef CRASH_INSTALLER
+    std::wstring InstallerRelaunchArgs();  // installer.inc
+#endif
+
     void Relaunch()
     {
         // The game's art is read at startup: start again to show it with the new game folder.
@@ -321,6 +344,9 @@ namespace
             MultiByteToWideChar(CP_ACP, 0, arg.c_str(), -1, w.data(), n);
             command += L" \"" + std::wstring(w.c_str()) + L"\"";
         }
+#ifdef CRASH_INSTALLER
+        command += InstallerRelaunchArgs();
+#endif
         STARTUPINFOW si{ sizeof(si) };
         PROCESS_INFORMATION pi{};
         if (CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
@@ -365,7 +391,7 @@ namespace
 
     void Change(Item item, int direction)
     {
-        opt::Change(item, g_values, direction);
+        opt::Change(item, g_values, direction, OptionContext());
     }
 
     // A (Enter, click): change forward, or the row's own action.
@@ -434,7 +460,10 @@ namespace
         }
         if (!(g_values == g_saved))
             Save();
-        fs::path exe = paths::ExeDir() / "CrashRecomp.exe";
+        // CrashOTTDE.exe in the single-file installer's layout (tools/make_dist.py --installed).
+        fs::path exe = paths::ExeDir() / "CrashOTTDE.exe";
+        if (!Exists(exe))
+            exe = paths::ExeDir() / "CrashRecomp.exe";
         std::wstring command = L"\"" + exe.wstring() + L"\"";
         for (const std::string& arg : g_passArgs)
         {
@@ -510,17 +539,19 @@ namespace
         if (FAILED(hr))
             return false;
         CreateRenderTarget();
-        // DLSS needs an NVIDIA card (and its DLL); FSR 3.1 runs anywhere (with its DLLs).
-        IDXGIDevice* dxgi = nullptr;
-        IDXGIAdapter* adapter = nullptr;
-        DXGI_ADAPTER_DESC desc{};
-        if (SUCCEEDED(g_device->QueryInterface(IID_PPV_ARGS(&dxgi))) && SUCCEEDED(dxgi->GetAdapter(&adapter)))
-            adapter->GetDesc(&desc);
-        if (adapter) adapter->Release();
-        if (dxgi) dxgi->Release();
-        g_dlss = desc.VendorId == 0x10DE && Exists(paths::ExeDir() / "nvngx_dlss.dll");
-        g_fsr = Exists(paths::ExeDir() / "amd_fidelityfx_vk.dll");
-        Log("[launcher] GPU %s: DLSS %s, FSR %s", Narrow(desc.Description).c_str(), g_dlss ? "yes" : "no", g_fsr ? "yes" : "no");
+#ifndef CRASH_INSTALLER
+        // DLSS needs an NVIDIA RTX GPU and its DLLs (NGX checks on a thread); FSR 3.1 any GPU
+        // whose driver has its extensions (with its DLL).
+        GpuInfo gpu = DetectGpu();
+        bool dlssFiles = Exists(paths::ExeDir() / "CrashDlss.dll") && Exists(paths::ExeDir() / "nvngx_dlss.dll");
+        g_dlss = gpu.vendor == settings::VENDOR_NVIDIA && dlssFiles;
+        g_fsr = Exists(paths::ExeDir() / "amd_fidelityfx_vk.dll") && (!gpu.vulkan || gpu.fsrExtensions);
+        Log("[launcher] GPU %s (%s%s): DLSS %s, FSR %s", gpu.name.empty() ? "?" : gpu.name.c_str(), settings::GpuVendorName(gpu.vendor),
+            gpu.forced ? ", CRASH_GPU_VENDOR" : "", g_dlss ? "checking" : dlssFiles ? "no (not an NVIDIA GPU)" : "no (DLSS not installed)",
+            g_fsr ? "yes" : "no");
+        if (g_dlss)
+            StartDlssProbe(paths::ExeDir());
+#endif
         return true;
     }
 
@@ -1135,7 +1166,9 @@ namespace
                 if (arrows)
                     left = Icon(ma::ICON_LEFT, VALUE_X, vy + 3.0f, iconSize) + 6.0f;
                 float maxW = VALUE_R - left - (arrows ? 34.0f : 0.0f);
-                float end = Draw(0, value, left, vy, ROW_SIZE, g_capturing && selected ? WARNING : style, 0.0f, maxW);
+                // A value this PC can't run (DLSS without an NVIDIA RTX GPU) is greyed out.
+                const Style& valueStyle = g_capturing && selected ? WARNING : opt::Unavailable(item, g_values, OptionContext()) ? INFO : style;
+                float end = Draw(0, value, left, vy, ROW_SIZE, valueStyle, 0.0f, maxW);
                 if (arrows)
                     Icon(ma::ICON_RIGHT, end + 6.0f, vy + 3.0f, iconSize);
                 if (pressed)
@@ -1466,6 +1499,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
 {
     int argc = __argc;
     char** argv = __argv;
+    if (argc == 4 && strcmp(argv[1], "--probe-dlss") == 0)  // the DLSS check's child process (gpu_probe.inc)
+        return RunDlssProbe(fs::u8path(argv[2]), fs::u8path(argv[3]));
     fs::path screenshot;
     int screenshotTab = -1;
     const char* screenshotView = nullptr;
@@ -1481,13 +1516,22 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
 #ifdef CRASH_INSTALLER
         else if (strcmp(argv[i], "--autostart") == 0)  // starts installing with the default options (scripts, tests)
             g_inst.autoStart = true;
-        else if (strcmp(argv[i], "--option") == 0 && i + 1 < argc)  // --option subtitles|remaster|assets|copy (with --autostart)
+        else if (strcmp(argv[i], "--autofinish") == 0)  // at the end: the chosen shortcuts, then exit (0 = installed)
+            g_inst.autoFinish = true;
+        else if ((strcmp(argv[i], "--install-dir") == 0 || strcmp(argv[i], "--shots") == 0) && i + 1 < argc)
+            ++i;  // read as wide strings by PrepareInstaller
+        else if (strcmp(argv[i], "--option") == 0 && i + 1 < argc)  // --option subtitles|remaster|assets|copy|desktop|startmenu (no-...)
         {
             std::string option = argv[++i];
             g_inst.subtitles |= option == "subtitles", g_inst.remaster |= option == "remaster";
             g_inst.extractAssets |= option == "assets", g_inst.copyGame |= option == "copy";
+            g_inst.desktopShortcut |= option == "desktop", g_inst.startMenu |= option == "startmenu";
             if (option == "no-subtitles")
                 g_inst.subtitles = false;
+            if (option == "no-desktop")
+                g_inst.desktopShortcut = false;
+            if (option == "no-startmenu")
+                g_inst.startMenu = false;
         }
 #endif
         else
@@ -1498,17 +1542,36 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
     }
 
 #ifdef CRASH_INSTALLER
-    // The installer sits next to tools\setup.py: a dump already in dist\game (a second run) is used
-    // without asking.
+    // The game of an earlier install (dist\game, or its settings.toml's [paths] game) is used without
+    // asking: next to tools\setup.py, or in the install folder of the single-file installer.
+    PrepareInstaller();
     std::string distGame;
+    // A --game that isn't a compatible dump (a Relaunch always passes a checked one): asked again.
+    auto given = std::find_if(pathArgs.begin(), pathArgs.end(), [](const char* a) { return strcmp(a, "--game") == 0; });
+    if (given != pathArgs.end() && given + 1 != pathArgs.end() && !g_inst.autoStart && !CheckDump(fs::path(*(given + 1))).Ok())
+    {
+        fs::path chosen = AskForDump(nullptr);
+        if (chosen.empty())
+            return 0;
+        distGame = Ansi(chosen.wstring());
+        *(given + 1) = distGame.data();
+    }
     if (std::none_of(pathArgs.begin(), pathArgs.end(), [](const char* a) { return strcmp(a, "--game") == 0; }))
     {
         wchar_t self[MAX_PATH];
         GetModuleFileNameW(nullptr, self, MAX_PATH);
-        fs::path candidate = fs::path(self).parent_path() / "dist" / "game";
+        fs::path candidate = g_inst.bundle ? InstalledGameFolder() : fs::path(self).parent_path() / "dist" / "game";
+        // No game yet (or not a compatible one): ask for it before the window opens, which is
+        // drawn with that dump's art (installer.inc, AskForDump). --autostart (tests) never asks.
+        if (!CheckDump(candidate).Ok() && !g_inst.autoStart)
+        {
+            candidate = AskForDump(nullptr);
+            if (candidate.empty())
+                return 0;  // the player gave up: nothing to install from
+        }
         if (paths::IsGameFolder(candidate))
         {
-            distGame = Narrow(candidate.wstring());
+            distGame = Ansi(candidate.wstring());
             pathArgs.push_back(const_cast<char*>("--game"));
             pathArgs.push_back(distGame.data());
         }
@@ -1641,6 +1704,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
         DrawInstallerContents();
 #else
         DrawFrameContents();
+        // CRASH_LAUNCHER_AUTOPLAY=1 (tests: a shortcut has no arguments): PLAY on the 30th frame.
+        static int autoplay = getenv("CRASH_LAUNCHER_AUTOPLAY") && strcmp(getenv("CRASH_LAUNCHER_AUTOPLAY"), "0") != 0 ? 30 : 0;
+        if (autoplay && --autoplay == 0)
+            StartGame();
 #endif
         ImGui::Render();
         const float clear[4] = { 0.85f, 0.55f, 0.12f, 1.0f };
@@ -1658,14 +1725,30 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
             Log("[launcher] screenshot %s: %s", screenshot.string().c_str(), ok ? "ok" : "failed");
             g_quit = true;
         }
+#ifdef CRASH_INSTALLER
+        if (!g_inst.pendingShot.empty())  // --shots
+        {
+            bool ok = SaveScreenshot(g_inst.pendingShot);
+            Log("[setup] screenshot %s: %s", Narrow(g_inst.pendingShot.wstring()).c_str(), ok ? "ok" : "failed");
+            g_inst.pendingShot.clear();
+        }
+#endif
         g_swapChain->Present(1, 0);
     }
 #ifdef CRASH_INSTALLER
     ShutdownInstaller();
 #endif
+    if (g_dlssProbe.state == 2)
+        JoinDlssProbe();
+    else if (g_dlssProbe.thread.joinable())
+        g_dlssProbe.thread.detach();  // still checking: the process ends anyway
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
+#ifdef CRASH_INSTALLER
+    return g_inst.finalCode;
+#else
     return 0;
+#endif
 }

@@ -1,5 +1,5 @@
 // The few MSVC runtime pieces NVIDIA's static NGX library (thirdparty/dlss/lib/nvsdk_ngx_s.lib, built
-// with Visual Studio for the static CRT) needs when CrashRecomp is linked by llvm-mingw instead of
+// with Visual Studio for the static CRT) needs when CrashDlss.dll is linked by llvm-mingw instead of
 // lld-link + the MSVC libraries. The library's objects are plain COFF, so lld links them as they are;
 // everything else they import (the UCRT, __CxxFrameHandler3 and _CxxThrowException, kernel32) comes
 // from ucrtbase.dll through mingw-w64's import libraries. Its /DEFAULTLIB:LIBCMT / libcpmt / OLDNAMES

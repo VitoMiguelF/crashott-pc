@@ -2,8 +2,21 @@
 
 CrashRecomp's own code is MIT (see `LICENSE`). It uses the components below, each under its own
 license. None of their binaries are stored in git: `tools/setup.py` downloads them from the
-official sources listed here (pinned versions, checked by SHA-256), and the release bundle carries
-the same files next to their licenses (`dist\licencas\` in the play folder).
+official sources listed here (pinned versions, checked by SHA-256) for a git clone, and the
+single-file installer (`CrashSetup-<version>.exe`, `tools/make_installer.py`) carries the same files,
+so the install works offline; the play folder keeps their licenses (`dist\licencas\`). What it carries
+and why each license allows it:
+
+- FFmpeg (LGPL v3): the unmodified shared DLLs and headers, loaded at run time, with the license and
+  the exact source tag below (LGPL v3 section 4 / GPL v3 section 6(d): the source is offered from the
+  network server named here); replaceable by the user (any compatible build of the same DLLs).
+- AMD FidelityFX SDK (MIT): the signed DLL and the `ffx_api` headers, with the license.
+- DirectX Shader Compiler: `dxcompiler.dll` is "distributable code" of Microsoft's license
+  (`LICENSE-MS.txt`), shipped unmodified with its LLVM license.
+- NVIDIA DLSS (RTX SDKs license): only `nvngx_dlss.dll` and our `CrashDlss.dll`, which contains the NGX
+  static library in object code form, "incorporated ... into a software application" (section 1.c);
+  **no SDK header or library** is in the installer. Installed only on NVIDIA RTX systems.
+- The build toolchain (below): unmodified binaries under permissive licenses, each with its license files.
 
 | Component | Used for | License | Source |
 |---|---|---|---|
@@ -13,16 +26,16 @@ the same files next to their licenses (`dist\licencas\` in the play folder).
 | [tiny-AES-c](https://github.com/kokke/tiny-AES-c) (XenonRecomp submodule) | AES decryption of `default.xex` | Unlicense (public domain) | XenonRecomp submodule |
 | fmt, toml++, xxHash, disasm, TinySHA1 (XenonRecomp submodules) | The recompiler tools only (not in the game exe) | MIT / BSD-2 / BSD-2 / GPL-compatible (see each) | XenonRecomp submodules |
 | [FFmpeg](https://ffmpeg.org) 8.1 (`avcodec-62`, `avutil-60`, `swresample-6`), LGPL build by [BtbN](https://github.com/BtbN/FFmpeg-Builds) | XMA audio (WMA Pro decoder), loaded at run time with `LoadLibrary` | LGPL v3 (`thirdparty/ffmpeg/LICENSE.txt`) | `ffmpeg-n8.1.3-9-g29e619e767-win64-lgpl-shared-8.1.zip` (BtbN autobuild-2026-09-30-13-08); source: https://github.com/FFmpeg/FFmpeg/tree/n8.1.3 |
-| [NVIDIA DLSS](https://github.com/NVIDIA/DLSS) 310.9.16 (`nvngx_dlss.dll`, NGX SDK headers incl. the Vulkan ones, and `nvsdk_ngx_s.lib`) | DLSS Super Resolution / DLAA (NGX Vulkan API) | NVIDIA RTX SDKs License (`thirdparty/dlss/LICENSE.txt`) | tag `v310.9.16` |
+| [NVIDIA DLSS](https://github.com/NVIDIA/DLSS) 310.9.16 (`nvngx_dlss.dll`, NGX SDK headers incl. the Vulkan ones, and `nvsdk_ngx_s.lib`, linked into our `CrashDlss.dll`) | DLSS Super Resolution / DLAA (NGX Vulkan API) | NVIDIA RTX SDKs License (`thirdparty/dlss/LICENSE.txt`) | tag `v310.9.16` |
 | [AMD FidelityFX SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) 1.1.4 (FSR 3.1 upscaler: the signed `amd_fidelityfx_vk.dll` + `ffx_api` headers) | FSR 3.1 on Vulkan, loaded at run time | MIT (`thirdparty/fsr/license.md`) | tag `v1.1.4` (`PrebuiltSignedDLL/`, `ffx-api/include/ffx_api/`) |
 | [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) 1.4.363 | The Vulkan renderer (headers only; the system's `vulkan-1.dll` is loaded at run time) | Apache-2.0 OR MIT | from the LunarG Vulkan SDK 1.4.363.0 (in git, `thirdparty/vulkan`) |
 | [DirectXShaderCompiler](https://github.com/microsoft/DirectXShaderCompiler) (`dxcompiler.dll` with SPIR-V, `dxcapi.h`) | HLSL to SPIR-V for the Vulkan renderer, loaded at run time | Headers: University of Illinois/NCSA. The signed release binary: Microsoft DirectX Shader Compiler license (distributable code) + LLVM (`LICENSE-MS.txt`, `LICENSE-LLVM.txt` in `licencas\`) | headers in git (`thirdparty/dxc`); `bin/x64/dxcompiler.dll` of release `v1.9.2609` (`dxc_2026_09_29.zip`), downloaded by the installer |
 | [SMAA](https://github.com/iryoku/smaa) | SMAA anti-aliasing | MIT (`thirdparty/smaa/LICENSE.txt`) | commit `71c806a838bdd7d517df19192a20f0c61b3ca29d` (in git) |
 | [Dear ImGui](https://github.com/ocornut/imgui) 1.91.8 | The launcher and the installer | MIT (`thirdparty/imgui/LICENSE.txt`) | tag `v1.91.8` (in git) |
 
-## The build toolchain (`toolchain\` in the release zip)
+## The build toolchain (`toolchain\` in the installer)
 
-The release zip carries the tools that build the game on the player's PC, unmodified except for
+The installer carries the tools that build the game on the player's PC, unmodified except for
 files removed to save space (other CPU targets, debuggers, manuals). They are not part of the game:
 the installer runs them. Each folder keeps its own license files, listed here.
 `tools/toolchain.py` downloads the same pinned archives (checked by SHA-256) for a git clone.
@@ -40,7 +53,7 @@ the installer runs them. Each folder keeps its own license files, listed here.
 Programs built with this toolchain (`CrashRecomp.exe`, `CrashLauncher.exe`, `CrashSetup.exe`) link
 libc++ and libunwind (LLVM Exceptions: no notice needed in binaries) and the mingw-w64 runtime
 statically; the mingw-w64 / winpthreads notices above cover the prebuilt `CrashSetup.exe`.
-`CrashRecomp.exe` links NVIDIA's `nvsdk_ngx_s.lib` (below) unchanged; `runtime/gpu/ngx_msvc_compat.cpp`
+`CrashDlss.dll` links NVIDIA's `nvsdk_ngx_s.lib` (above) unchanged; `runtime/gpu/dlss_module/ngx_msvc_compat.cpp`
 (our code) provides the few Visual C++ runtime functions that library expects.
 
 Optional tools used only by the asset exporter (`tools/assettool`, built on your machine): FFmpeg

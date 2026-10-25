@@ -637,7 +637,9 @@ namespace settings::menu
                     g_zones.push_back({ PANEL_L, rowT, PANEL_R, rowB, Zone::Row, int(row) });
                     continue;
                 }
-                float end = Draw(v, FontId::Small, Value(item), valueX, y, ROW_CELL, style, 0.0f, PANEL_R - valueX - arrowW - 10.0f);
+                // A value this PC can't run (DLSS without an NVIDIA RTX GPU) is greyed out.
+                const TextStyle& valueStyle = options::Unavailable(item, g_values, OptionContext()) ? pal.info : style;
+                float end = Draw(v, FontId::Small, Value(item), valueX, y, ROW_CELL, valueStyle, 0.0f, PANEL_R - valueX - arrowW - 10.0f);
                 if (Selectable(item) && !unavailable && !IsBinding(item))
                 {
                     // Where the arrows are (drawn on the selected row only); clicking them on any
@@ -699,7 +701,7 @@ namespace settings::menu
                 size_t index = size_t(std::find(keys.begin(), keys.end(), chosen) - keys.begin());
                 chosen = keys[(index + keys.size() + direction) % keys.size()];
             }
-            else if (!options::Change(item, g_values, direction))
+            else if (!options::Change(item, g_values, direction, OptionContext()))
                 return;
             if (!(g_values == before))
             {

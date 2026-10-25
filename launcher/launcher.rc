@@ -1,0 +1,3 @@
+// CrashLauncher.exe and CrashSetup.exe: their icon (resource 1, which the window class loads too),
+// drawn by tools/make_icon.py.
+1 ICON "crashrecomp.ico"

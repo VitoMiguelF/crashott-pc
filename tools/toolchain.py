@@ -84,9 +84,15 @@ def python_exe(root=TOOLCHAIN):
     return root / "python" / "python.exe"
 
 
-def missing(root=TOOLCHAIN):
-    """The parts of REQUIRED that are not there."""
-    return [name for name, files in REQUIRED.items() if not all((root / f).is_file() for f in files)]
+# What building needs (numpy and Pillow are only for the asset export: the installer adds them
+# only with ASSETS FOR MODDING).
+BUILD_PARTS = ("llvm-mingw", "cmake", "ninja", "python")
+
+
+def missing(root=TOOLCHAIN, parts=None):
+    """The parts of REQUIRED (or of `parts`) that are not there."""
+    return [name for name, files in REQUIRED.items()
+            if (parts is None or name in parts) and not all((root / f).is_file() for f in files)]
 
 
 def present(root=TOOLCHAIN):

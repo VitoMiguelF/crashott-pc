@@ -1,9 +1,14 @@
 """Builds the GitHub release assets into release\\<tag>\\ (not in git):
 
-    python tools/make_release.py v1.0
+    python tools/make_release.py v1.05                       # everything
+    python tools/make_release.py v1.05 --only installer      # only the installer (a code-only version)
 
-- CrashRecomp-<tag>.zip: the source at HEAD (git archive) + CrashSetup.exe (the installer, our code
-  only) at the top, + everything the installer needs to build, so a player installs nothing:
+- CrashSetup-<tag>.exe: the single-file installer (tools/make_installer.py): CrashSetup.exe with the
+  source, XenonRecomp, the toolchain and the third-party DLLs inside, so the install is offline. The
+  way players install since v1.05.
+- CrashRecomp-<tag>.zip (--only source; the way of v1.0 to v1.04): the source at HEAD (git archive)
+  + CrashSetup.exe (the installer, our code only) at the top, + everything the installer needs to
+  build, so a player installs nothing:
   toolchain\\ (llvm-mingw, CMake, Ninja, the embeddable Python with numpy and Pillow; fetch it with
   `python tools/toolchain.py fetch`) and tools\\XenonRecomp\\ (its source at setup.py's pinned commit
   with patches/XenonRecomp.patch applied, without .git: no Git needed). No game file, no recompiled
@@ -84,12 +89,16 @@ def zip_files(target, files, arcname, compress=zipfile.ZIP_DEFLATED, extra=None)
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("tag")
-    p.add_argument("--only", choices=["source", "subtitles", "remaster"], action="append")
+    p.add_argument("--only", choices=["installer", "source", "subtitles", "remaster"], action="append")
     args = p.parse_args()
     out = ROOT / "release" / args.tag
     out.mkdir(parents=True, exist_ok=True)
-    only = set(args.only or ["source", "subtitles", "remaster"])
+    only = set(args.only or ["installer", "subtitles", "remaster"])
     prefix = f"CrashRecomp-{args.tag}"
+
+    if "installer" in only:
+        subprocess.run([sys.executable, str(ROOT / "tools" / "make_installer.py"), args.tag, "--out", str(out / f"CrashSetup-{args.tag}.exe")],
+                       check=True)
 
     if "source" in only:
         status = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout
@@ -143,7 +152,7 @@ def main():
                       extra={"private/remaster_full/LEIA-README.txt": REMASTER_README} if i == 1 else None)
 
     sums = out / "SHA256SUMS.txt"
-    lines = [f"{sha256(f)}  {f.name}" for f in sorted(out.glob("*.zip"))]
+    lines = [f"{sha256(f)}  {f.name}" for f in sorted([*out.glob("*.zip"), *out.glob("*.exe")])]
     sums.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(sums.read_text(encoding="utf-8"))
     return 0
