@@ -580,7 +580,8 @@ def recompile():
     # -Wno-unused-result: its recompiler.cpp drops a [[nodiscard]] value (harmless, but it shows in the installer).
     extra = ["-DCMAKE_CXX_FLAGS=-include cstdlib -Wno-unused-result", "-DCMAKE_EXE_LINKER_FLAGS=-static"] \
         if buildenv.toolchain_kind() == "bundled" and WINDOWS else \
-        ["-DCMAKE_CXX_FLAGS=-include cstdlib -Wno-unused-result"] if buildenv.toolchain_kind() == "bundled" else []
+        ["-DCMAKE_CXX_FLAGS=-include cstdlib -Wno-unused-result",
+         "-DCMAKE_C_FLAGS=-Wno-format"] if buildenv.toolchain_kind() == "bundled" else []  # its disasm/ppc-dis.c prints a bfd_vma with %llu
     # Its CMakeLists (and xxHash's) ask for an old cmake_minimum_required: a warning "for project developers".
     configure = buildenv.configure_build(XENON, build, [*extra, "-Wno-deprecated"])
     if configure:

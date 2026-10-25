@@ -474,7 +474,7 @@ PPC_FUNC(__imp__XamInputGetState)
     // default.rcf bytes read so far, other game file bytes): how the tick clock and the loads line up.
     if (static FILE* trace = getenv("CRASH_INPUT_TRACE") ? fopen(getenv("CRASH_INPUT_TRACE"), "w") : nullptr; trace && user == 0)
     {
-        fprintf(trace, "%llu,%llu,%llu,%llu\n", ClockNow(), (unsigned long long)g_frame.load(), (unsigned long long)g_levelBytes.load(), (unsigned long long)g_otherBytes.load());
+        fprintf(trace, "%llu,%llu,%llu,%llu\n", (unsigned long long)ClockNow(), (unsigned long long)g_frame.load(), (unsigned long long)g_levelBytes.load(), (unsigned long long)g_otherBytes.load());
         fflush(trace);
     }
     if (statePtr)

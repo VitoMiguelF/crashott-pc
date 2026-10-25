@@ -359,6 +359,8 @@ else()
         if (CRASH_FREETYPE_INCLUDE)
             target_compile_definitions(${CRASH_TARGET} PRIVATE CRASH_HAVE_FREETYPE=1)
         endif()
+        # std::filesystem::u8path is deprecated in C++20, as on Windows (the same sources use it there).
+        target_compile_options(${CRASH_TARGET} PRIVATE -Wno-deprecated-declarations)
         target_link_libraries(${CRASH_TARGET} PRIVATE SDL3::SDL3 Threads::Threads ${CMAKE_DL_LIBS})
         # libSDL3.so.0 next to the exe (the installed launcher), or in ../lib (the installer in its AppImage).
         target_link_options(${CRASH_TARGET} PRIVATE "-Wl,-rpath,\$ORIGIN:\$ORIGIN/../lib" -Wl,--disable-new-dtags -Wl,--gc-sections)
