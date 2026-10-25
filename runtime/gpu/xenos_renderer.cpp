@@ -60,6 +60,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdarg>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -382,6 +383,20 @@ namespace gpu::renderer
         // Device: the graphics API backend (rhi.h) and the window.
         std::atomic<bool> g_active;
         rhi::Device* g_rhi = nullptr;
+
+        // CRASH_GPU_PROFILE: what the GPU work recorded from here on is for (the label of its rows).
+        __attribute__((format(printf, 1, 2))) void ProfileLabel(const char* format, ...)
+        {
+            if (!g_rhi->Profiling())
+                return;
+            char label[96];
+            va_list args;
+            va_start(args, format);
+            vsnprintf(label, sizeof(label), format, args);
+            va_end(args);
+            g_rhi->ProfileLabel(label);
+        }
+
         bool g_debugLayer = false;
         HWND g_hwnd;
         uint32_t g_backBufferWidth = WINDOW_WIDTH, g_backBufferHeight = WINDOW_HEIGHT;
@@ -2051,6 +2066,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         // Runs the upscaler on this frame's scene (see "Temporal upscaling" above).
         void RunTemporal()
         {
+            ProfileLabel("scene effects");
             Temporal& t = g_temporal;
             t.done = true;
             ResolveTarget& color = *t.color;
@@ -2402,6 +2418,8 @@ float4 main(float4 position : SV_Position) : SV_Target
                     loggedResolves++;
                 }
 
+                ProfileLabel("resolve %s EDRAM %u -> 0x%08X", isDepth ? "depth" : "color",
+                             (isDepth ? depthInfo : Reg(xenos::ColorInfoRegister(sourceSelect))) & 0xFFF, destBase);
                 ResolveSurface* surface = &EnsureSurface(*destination, scale);
                 destination->current = SurfaceIndex(scale);
                 if (logThis && TracingSwap())
@@ -2492,6 +2510,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
 
             // Clears (in host pixels).
+            ProfileLabel("resolve clear");
             rhi::Rect clearRect{ ScaledFloor(float(x0 * int32_t(samplesX)), XScale(scale)), ScaledFloor(floorf(float(y0) * rowScale), scale),
                                   ScaledCeil(float(x1 * int32_t(samplesX)), XScale(scale)), ScaledCeil(ceilf(float(y1) * rowScale), scale) };
             if (colorClear && !isDepth)
@@ -3423,6 +3442,14 @@ float4 main(float4 position : SV_Position) : SV_Target
             call.topology = topology;
             call.firstIndex = uint32_t(indexUpload.offset / 4);
             call.indexCount = uint32_t(indexData.indices.size());
+            static const bool s_profileDraws = getenv("CRASH_GPU_PROFILE_DRAWS") != nullptr;
+            if (s_profileDraws)
+                ProfileLabel("%s draws EDRAM %d/%d vs %016llx ps %016llx", sceneDraw ? "scene" : "2D",
+                             colorTargets[0] ? int(Reg(xenos::ColorInfoRegister(0)) & 0xFFF) : -1, depthTarget ? int(depthInfo & 0xFFF) : -1,
+                             (unsigned long long)vs->info.hash, ps ? (unsigned long long)ps->info.hash : 0ull);
+            else
+                ProfileLabel("%s draws EDRAM %d/%d", sceneDraw ? "scene" : "2D", colorTargets[0] ? int(Reg(xenos::ColorInfoRegister(0)) & 0xFFF) : -1,
+                             depthTarget ? int(depthInfo & 0xFFF) : -1);
             g_rhi->Draw(call);
             if (aliasPipeline)
             {
@@ -3886,6 +3913,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             return;
         g_stats.swaps++;
         g_profileFrame = g_stats.swaps % 4 == 0;
+        ProfileLabel("swap");
         overlay::BeginFrame(g_stats.swaps);
         settings::Values options = settings::Get();
         g_effects.motionBlur = float(options.motionBlur) / 100.0f;

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace gpu
@@ -280,6 +281,11 @@ namespace gpu
             std::vector<uint8_t> m_gradientFetch;
             uint32_t m_gradientRegisters = 0;
             uint32_t m_currentSlot = 0;
+            // Structured control flow (FindStructuredFlow): the loop end of each loop start, and
+            // the instructions a forward jump can skip.
+            std::vector<uint32_t> m_loopEnd;
+            std::vector<uint8_t> m_skippable;
+            bool m_hasLoops = false;
 
             bool IsPixel() const { return m_stage == ShaderStage::Pixel; }
 
@@ -288,6 +294,9 @@ namespace gpu
             void ScanRegisters();
             void FindGradientFetches();
             void EmitStructured();
+            bool FindStructuredFlow();
+            void EmitStructuredFlow();
+            void EmitStructuredRange(uint32_t begin, uint32_t end, uint32_t depth);
             void EmitStateMachine();
             void EmitExecBody(const Cf& cf);
             std::string ExecCondition(const Cf& cf) const;
@@ -1161,6 +1170,179 @@ namespace gpu
             }
         }
 
+        // Control flow that can be emitted structured: no calls, loops nested with the loop start's
+        // target just past its loop end and the loop end's just past its start, and only forward
+        // jumps that land in the loop they leave from (not out of a loop nor into one).
+        bool Translator::FindStructuredFlow()
+        {
+            uint32_t count = uint32_t(m_cf.size());
+            m_loopEnd.assign(count, UINT32_MAX);
+            m_skippable.assign(count, 0);
+            std::vector<uint32_t> container(count + 1, UINT32_MAX);  // innermost loop start with start < i <= end
+            std::vector<uint32_t> stack;
+            for (uint32_t i = 0; i < count; i++)
+            {
+                uint32_t op = m_cf[i].Opcode();
+                if (op == CF_COND_CALL || op == CF_RETURN)
+                    return false;
+                if (op == CF_LOOP_END)
+                {
+                    if (stack.empty())
+                        return false;
+                    uint32_t start = stack.back();
+                    stack.pop_back();
+                    if (m_cf[start].TargetAddress() != i + 1 || m_cf[i].TargetAddress() != start + 1)
+                        return false;
+                    m_loopEnd[start] = i;
+                    m_hasLoops = true;
+                    container[i] = start;
+                }
+                else
+                {
+                    container[i] = stack.empty() ? UINT32_MAX : stack.back();
+                }
+                if (op == CF_LOOP_START)
+                    stack.push_back(i);
+            }
+            if (!stack.empty())
+                return false;
+            for (uint32_t i = 0; i < count; i++)
+            {
+                if (m_cf[i].Opcode() != CF_COND_JMP)
+                    continue;
+                uint32_t target = m_cf[i].TargetAddress();
+                if (target <= i || container[std::min(target, count)] != container[i])
+                    return false;
+                for (uint32_t k = i + 1; k < std::min(target, count); k++)
+                    m_skippable[k] = 1;
+            }
+            return true;
+        }
+
+        // Structured control flow: loops as HLSL loops, forward jumps as straight-line code where
+        // xe_resume is the control flow instruction execution goes on at (the instructions a jump
+        // can skip run only once it is reached). The state machine's loop and switch over every
+        // instruction cost more than the shader's own work on some GPUs (Intel UHD: ~13 of ~30 ms
+        // per frame in the village, see runtime/NOTES.md).
+        void Translator::EmitStructuredFlow()
+        {
+            if (std::find(m_skippable.begin(), m_skippable.end(), 1) != m_skippable.end())
+                Line("int xe_resume = 0;");
+            if (m_hasLoops)
+            {
+                Line("int xe_loop_iterator[4] = { 0, 0, 0, 0 };");
+                Line("int xe_loop_start[4] = { 0, 0, 0, 0 };");
+                Line("int xe_loop_step[4] = { 0, 0, 0, 0 };");
+            }
+            EmitStructuredRange(0, uint32_t(m_cf.size()), 0);
+        }
+
+        void Translator::EmitStructuredRange(uint32_t begin, uint32_t end, uint32_t depth)
+        {
+            for (uint32_t index = begin; index < end; index++)
+            {
+                const Cf& cf = m_cf[index];
+                std::string guard = m_skippable[index] ? "xe_resume <= " + std::to_string(index) : "";
+                if (cf.Opcode() == CF_COND_JMP)
+                {
+                    std::string condition;
+                    if (!cf.IsUnconditional())
+                    {
+                        if (cf.IsPredicated())
+                            condition = cf.Condition() ? "xe_p0" : "!xe_p0";
+                        else
+                            condition = BoolConstant(cf.BoolAddress()) + (cf.Condition() ? " != 0u" : " == 0u");
+                    }
+                    if (!guard.empty() && !condition.empty())
+                        condition = guard + " && (" + condition + ")";
+                    else if (!guard.empty())
+                        condition = guard;
+                    if (condition.empty())
+                        Line("xe_resume = %u;", cf.TargetAddress());
+                    else
+                        Line("if (%s) xe_resume = %u;", condition.c_str(), cf.TargetAddress());
+                    continue;
+                }
+                if (cf.Opcode() == CF_LOOP_START)
+                {
+                    // As the state machine's loop start and end, with the loop depth known here.
+                    uint32_t loopEnd = m_loopEnd[index];
+                    const Cf& endCf = m_cf[loopEnd];
+                    uint32_t d = std::min(depth, 3u);
+                    if (!guard.empty())
+                    {
+                        Line("if (%s) {", guard.c_str());
+                        m_indent++;
+                    }
+                    Line("{");
+                    m_indent++;
+                    uint32_t id = cf.LoopId(), endId = endCf.LoopId();
+                    Line("uint xe_lc%u = xe_loop_consts[%u].%c;", index, id >> 2, COMPONENTS[id & 3]);
+                    if (!cf.LoopIsRepeat())
+                        Line("xe_loop_iterator[%u] = 0;", d);
+                    Line("xe_loop_start[%u] = int(xe_lc%u >> 8) & 0xFF;", d, index);
+                    Line("xe_loop_step[%u] = int(xe_lc%u << 8) >> 24;", d, index);
+                    Line("xe_aL = xe_loop_iterator[%u] * xe_loop_step[%u] + xe_loop_start[%u];", d, d, d);
+                    Line("if (uint(xe_loop_iterator[%u]) < (xe_lc%u & 0xFFu)) {", d, index);
+                    m_indent++;
+                    Line("[loop] for (;;) {");
+                    m_indent++;
+                    bool jumps = std::find(m_skippable.begin() + index + 1, m_skippable.begin() + loopEnd, 1) != m_skippable.begin() + loopEnd;
+                    if (jumps)
+                        Line("xe_resume = 0;");
+                    EmitStructuredRange(index + 1, loopEnd, depth + 1);
+                    Line("uint xe_lc%u = xe_loop_consts[%u].%c;", loopEnd, endId >> 2, COMPONENTS[endId & 3]);
+                    Line("xe_loop_iterator[%u]++;", d);
+                    Line("xe_aL = xe_loop_iterator[%u] * xe_loop_step[%u] + xe_loop_start[%u];", d, d, d);
+                    std::string breakCondition = endCf.LoopEndPredicatedBreak() ? (endCf.Condition() ? "xe_p0" : "!xe_p0") : "false";
+                    Line("if (!(uint(xe_loop_iterator[%u]) < (xe_lc%u & 0xFFu) && !(%s))) break;", d, loopEnd, breakCondition.c_str());
+                    m_indent--;
+                    Line("}");
+                    m_indent--;
+                    Line("}");
+                    if (d > 0)
+                        Line("xe_aL = xe_loop_iterator[%u] * xe_loop_step[%u] + xe_loop_start[%u];", d - 1, d - 1, d - 1);
+                    m_indent--;
+                    Line("}");
+                    if (!guard.empty())
+                    {
+                        m_indent--;
+                        Line("}");
+                    }
+                    index = loopEnd;
+                    continue;
+                }
+                if (!cf.IsExec())
+                    continue;
+                if (!guard.empty())
+                {
+                    Line("if (%s) {", guard.c_str());
+                    m_indent++;
+                }
+                std::string condition = ExecCondition(cf);
+                if (!condition.empty())
+                {
+                    Line("if (%s) {", condition.c_str());
+                    m_indent++;
+                }
+                EmitExecBody(cf);
+                if (cf.EndsShader())
+                    Line("return;");
+                if (!condition.empty())
+                {
+                    m_indent--;
+                    Line("}");
+                }
+                if (!guard.empty())
+                {
+                    m_indent--;
+                    Line("}");
+                }
+                if (cf.EndsShader() && condition.empty() && guard.empty() && depth == 0)
+                    break;
+            }
+        }
+
         // General control flow: a program counter over the control flow instructions.
         void Translator::EmitStateMachine()
         {
@@ -1423,10 +1605,13 @@ float4 xe_unpack32(uint4 w, bool isSigned, bool normalized)
         if (IsPixel())
             registerCount = std::max(registerCount, 16u);
 
-        if (m_out.usesControlFlowMachine)
-            EmitStateMachine();
-        else
+        static const bool s_stateMachine = getenv("CRASH_SHADER_STATE_MACHINE") != nullptr;  // debug: every jump in the state machine
+        if (!m_out.usesControlFlowMachine)
             EmitStructured();
+        else if (!s_stateMachine && FindStructuredFlow())
+            EmitStructuredFlow();
+        else
+            EmitStateMachine();
 
         std::string& hlsl = m_out.hlsl;
         Append(hlsl, "// Xenos %s shader %016llX, %u control flow instructions\n", IsPixel() ? "pixel" : "vertex",

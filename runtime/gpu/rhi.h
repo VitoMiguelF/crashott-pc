@@ -370,6 +370,11 @@ namespace gpu::rhi
         // Debug (CRASH_GPU_PROBE): an 8x8 grid of texels of `texture` (RGBA8 or BGRA8) copied at
         // this point of the command stream, logged with `tag` once the GPU is past it (no wait).
         virtual void Probe(Texture*, const std::string&) {}
+        // Debug (CRASH_GPU_PROFILE=<first>-<last>, frames): GPU time of each rendering instance,
+        // pass and copy of those frames, by the renderer's label and the operation, logged as a
+        // table ([gpu profile] lines) once the GPU is past them.
+        virtual bool Profiling() const { return false; }
+        virtual void ProfileLabel(const char*) {}
 
         // GPU timestamps (the lighting remaster's timing): write, resolve after the work, read once
         // the frame that resolved them is done.

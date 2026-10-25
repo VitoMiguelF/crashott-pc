@@ -2087,7 +2087,39 @@ O ciclo era o anel de upload dando a volta. As constantes dos draws são lidas c
 
 **Conferido** (Intel, sem sonda): `vila_sem_cena` padrão, 1080p/60/V-Sync e 1600x900/30 sem V-Sync, 0 capturas pretas de 15–24 e, numa captura externa da janela pelo desktop (~20/s, sem tocar no jogo), nenhum preto na gameplay (só na abertura e no carregamento). Na NVIDIA, 0 de 901 com a sonda. Antes e depois: `build\intel_flicker\intel_uhd_antes_depois.jpg`.
 
-**Desempenho na Intel UHD** (vila, sem limite de FPS, janela 1728x1080): interno 1280x800, ~33 fps (30 ms por quadro, 22 ms deles esperando a GPU); 1920x1080, ~19 fps. Com limite: 30 fps a 1280x800 (1% low 9–14), 23 fps a 1600x900/30, 18 fps a 1080p/60. Motion blur e DOF a 0 não mudam nada (33,0 fps). É a GPU, não o thread de comandos (~1,6 ms por quadro); falta medir por passada.
+**Desempenho na Intel UHD** (vila, sem limite de FPS, janela 1728x1080): interno 1280x800, ~33 fps (30 ms por quadro, 22 ms deles esperando a GPU); 1920x1080, ~19 fps. Com limite: 30 fps a 1280x800 (1% low 9–14), 23 fps a 1600x900/30, 18 fps a 1080p/60. Motion blur e DOF a 0 não mudam nada (33,0 fps). É a GPU, não o thread de comandos (~1,6 ms por quadro); a medida por passada está na seção seguinte.
+
+## Desempenho na Intel UHD: o fluxo de controle dos shaders (2026-10-25) (`gpu/shader_translator.cpp`, `gpu/rhi_vulkan.cpp`, `gpu/rhi.h`, `gpu/xenos_renderer.cpp`)
+
+**Ferramenta: `CRASH_GPU_PROFILE=<primeiro>-<último>`** (quadros, contados nos presents). Nesses quadros o RHI Vulkan grava um timestamp onde começa cada instância de rendering, passada, cópia, upload ou chamada nativa (upscaler) e no fim de cada command buffer; cada trecho vai até o timestamp seguinte (as barreiras entram no trecho que começa depois delas). Os resultados são lidos quando a submissão termina, sem esperar a GPU, e saem como tabela no log (`[gpu profile]`: ms por quadro, %, trechos e barreiras por quadro), por rótulo do renderer (`ProfileLabel`: `scene draws EDRAM <cor>/<profundidade>`, `2D draws ...`, `resolve color EDRAM 1440 -> 0x0C022000`, `resolve clear`, `scene effects`, `swap`) e operação (`draws`, o nome da passada, `clear`, `copy`, `upload`, `native`) com o alvo. Com `CRASH_GPU_PROFILE_DRAWS=1`, também um timestamp antes de cada draw (dentro da instância; as queries são zeradas em blocos de 1024 fora dela), e o rótulo ganha os hashes do VS/PS. O custo da medida é pequeno: sem os draws, 29,9 ms de GPU ocupada contra 29–30 ms por quadro sem a ferramenta; com os draws, ~2 ms a mais.
+
+**Onde ia o tempo** (Intel UHD, vila parada depois da pausa, quadros 800–1200, 1280x800, antes): 29,4 ms de GPU por quadro, 67 instâncias, 143 barreiras.
+
+| ms/quadro | o quê |
+|---|---|
+| 16,1 | draws da cena no EDRAM 1440 (23,6 instâncias); 13,4 ms deles são 325 draws de `vs aecab520 / ps bc5a024f` (simpleshaderunlitfp) |
+| 7,1 | 3 draws 2D de tela cheia no EDRAM 0: motion blur `ps 1577d3c3` 2,8, DOF `ps 45775928` 2,2, `ps bc5a024f` 2,0 |
+| 1,7 | 14 resolves de cor 1440 -> `0x0C022000` / `0x0B55A000` (~0,12 ms cada, com as 2 barreiras) |
+| 1,5 | resolves de profundidade, empacotados e não |
+| 0,9 | sombra `ps fdf40807` (1 draw de tela cheia) |
+| 0,6 | present |
+
+As barreiras e os começos de instância medidos à parte (com `CRASH_GPU_PROFILE_DRAWS`, o trecho entre o começo da instância e o primeiro draw) somam ~0,01 ms por quadro: nem a quantidade de barreiras/instâncias nem uma descompressão na transição para leitura pesam. Anisotrópico 16x -> 1x e texturas HD desligadas também não mudam nada (31,3 / 31,5 ms com os draws medidos).
+
+**Causa: a máquina de estados.** Os 11 shaders do jogo com saltos ou loops (`simpleshaderunlitfp`, `palsimpleshaderunlitfp`, `motionblurfp`, pele, água, partículas...) eram traduzidos como `for (xe_guard < 65536) switch (xe_pc)`, um caso por instrução de controle de fluxo (32 no `bc5a024f`). O compilador da Intel não consegue achatar isso: cada pixel roda o laço e o switch para cada uma das instruções. A NVIDIA aguenta bem (o mesmo draw de tela cheia leva 0,1 ms nela, contra 2,0 ms na Intel).
+
+**Correção: fluxo estruturado** (`FindStructuredFlow`, `EmitStructuredFlow`). Quando não há call/return, os loops estão bem aninhados (o alvo do loop start fica logo depois do seu loop end, e o do loop end logo depois do seu start) e os saltos vão só para a frente, sem sair de um loop nem entrar em outro, o shader vira código em linha reta. Os loops viram `[loop] for (;;)` com a mesma conta de iterador, `aL` e break predicado da máquina de estados; a profundidade é conhecida, então os arrays são indexados por constantes. Os saltos usam `xe_resume`, a instrução onde a execução continua: um salto tomado faz `xe_resume = alvo`, e as instruções que algum salto pode pular rodam dentro de `if (xe_resume <= i)`. Dentro de um loop com saltos, `xe_resume` volta a 0 a cada iteração. Os 38 shaders do jogo saem assim (`--test-shaders dump\shaders`: 38 ok, nenhum com `xe_pc`); o resto continua na máquina de estados. `CRASH_SHADER_STATE_MACHINE=1` (debug) força o caminho antigo e dá exatamente o HLSL de antes. O HLSL muda, então o cache de SPIR-V e de pipelines é refeito uma vez (o precompile de início cobre).
+
+**Depois** (mesma janela): 18,9 ms de GPU por quadro. `bc5a024f` na cena, 13,4 -> 5,3 ms; o mesmo PS em tela cheia, 2,0 -> 0,5 ms; motion blur, 2,85 -> 0,94 ms. Ficam DOF 2,25 ms (16 fetches por pixel, já sem fluxo de controle, roda inteiro mesmo com a opção a 0), resolves ~3 ms e sombra 0,9 ms.
+
+| fps na gameplay (vila parada, 22–44 s do script, sem limite nem V-Sync) | antes | depois |
+|---|---|---|
+| Intel UHD, 1280x800 | 34,8 (1% low 30,6) | 59,1 (48,9) |
+| Intel UHD, 1680x1050 | 20,9 (18,2) | 36,4 (31,7) |
+| RTX 4070 Laptop, 1280x800 | 383 (267) | 445 (298) |
+| RTX 4070 Laptop, 1680x1050 | 300 (226) | 358 (256) |
+
+Medido com `tools\run_game.py vila_sem_cena` e `CRASH_SETTINGS="video.fps_limit=0;video.vsync=false"`, o "antes" com `CRASH_SHADER_STATE_MACHINE=1`.
 
 ## Ultrawide e 16:10 (issue #2, 2026-10-25, branch `ultrawide`) (`gpu/widescreen.*`, `camera/hor_plus.cpp`, `gpu/xenos_renderer.cpp`, `gpu/shader_translator.cpp`, `settings/*`, `kernel/pc_input.cpp`, `gpu/window.cpp`)
 

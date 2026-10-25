@@ -394,6 +394,13 @@ namespace gpu::rhi
             bool ReadBack(Texture* texture, std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) override;
             void Probe(Texture* texture, const std::string& tag) override;
             void CollectProbes(uint64_t completed);
+            bool Profiling() const override { return m_profiling; }
+            void ProfileLabel(const char* label) override { m_profileLabel = label; }
+            void ProfileStamp(const char* operation, const VulkanTexture* target);
+            void ProfileEnd();
+            uint32_t ProfileQuery();
+            void CollectProfile(uint64_t completed);
+            void LogProfile();
 
             void WriteTimestamp(uint32_t index) override;
             void ResolveTimestamps(uint32_t, uint32_t) override {}  // read straight from the query pool
@@ -651,6 +658,34 @@ namespace gpu::rhi
             Buffer* m_probeBuffer = nullptr;
             uint32_t m_probeNext = 0;
             std::deque<ProbeRecord> m_probes;
+
+            // Profile (CRASH_GPU_PROFILE): a timestamp where each rendering instance, pass or copy of
+            // the profiled frames begins and at the end of each command buffer, in a ring of queries
+            // read in order once their submission is done.
+            static constexpr uint32_t PROFILE_QUERIES = 16384, PROFILE_BLOCK = 1024;
+            static constexpr uint32_t PROFILE_END = UINT32_MAX;
+            struct ProfileRecord
+            {
+                uint64_t value;
+                uint32_t query;
+                uint32_t entry;     // into m_profileEntries; PROFILE_END: end of the command buffer
+                uint64_t barriers;  // m_stats.barriers when written
+            };
+            struct ProfileEntry
+            {
+                std::string name;
+                uint64_t ticks = 0, count = 0, barriers = 0;
+            };
+            VkQueryPool m_profilePool = VK_NULL_HANDLE;
+            uint64_t m_profileFirst = 1, m_profileLast = 0, m_presents = 0;
+            bool m_profiling = false, m_profileLogged = false;
+            bool m_profileDraws = false;  // CRASH_GPU_PROFILE_DRAWS: a timestamp before each draw too
+            uint64_t m_profileNext = 0, m_profileReset = 0;  // queries used / reset so far (the ring's index mod PROFILE_QUERIES)
+            std::string m_profileLabel;
+            const char* m_profileOperation = nullptr;  // the pass or clear beginning a rendering instance
+            std::deque<ProfileRecord> m_profileRecords;
+            std::unordered_map<std::string, uint32_t> m_profileIndex;
+            std::vector<ProfileEntry> m_profileEntries;
 
             Timing m_timing;
             struct
@@ -1450,6 +1485,17 @@ namespace gpu::rhi
             queries.queryCount = TIMESTAMPS;
             if (vkCreateQueryPool(m_device, &queries, nullptr, &m_queryPool) != VK_SUCCESS)
                 m_timestampFrequency = 0.0;
+            if (const char* profile = getenv("CRASH_GPU_PROFILE"); profile && m_timestampFrequency > 0.0)
+            {
+                char* end;
+                m_profileFirst = strtoull(profile, &end, 10);
+                m_profileLast = *end == '-' ? strtoull(end + 1, nullptr, 10) : m_profileFirst;
+                queries.queryCount = PROFILE_QUERIES;
+                if (vkCreateQueryPool(m_device, &queries, nullptr, &m_profilePool) != VK_SUCCESS)
+                    m_profileLast = 0;
+                m_profiling = m_profilePool && m_profileFirst <= 1 && m_profileLast >= 1;
+                m_profileDraws = getenv("CRASH_GPU_PROFILE_DRAWS") != nullptr;
+            }
 
             if (!CreateSwapchain(info.width, info.height))
                 return false;
@@ -1570,6 +1616,8 @@ float4 main(float4 position : SV_Position) : SV_Target
             m_uploadRing.Retire(completed);
             if (!m_probes.empty())
                 CollectProbes(completed);
+            if (m_profilePool)
+                CollectProfile(completed);
             while (!m_pendingContexts.empty() && m_pendingContexts.front().value <= completed)
             {
                 m_freeContexts.push_back(m_pendingContexts.front());
@@ -1604,6 +1652,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             VK_TRACE("submit%s", present ? " (present)" : "");
             EndRendering();
             FlushBarriers();
+            ProfileEnd();
             vkEndCommandBuffer(m_cmd);
             m_timelineValue++;
             VkCommandBufferSubmitInfo command{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
@@ -2123,6 +2172,8 @@ float4 main(float4 position : SV_Position) : SV_Target
                 m_stats.renderingReasons[reason]++;
             }
             EndRendering();
+            if (m_profiling)
+                ProfileStamp(m_profileOperation ? m_profileOperation : "draws", colorCount && colors[0] ? colors[0] : depth);
             m_passId++;
             VkExtent2D extent{ UINT32_MAX, UINT32_MAX };
             for (uint32_t i = 0; i < colorCount; i++)
@@ -2209,8 +2260,10 @@ float4 main(float4 position : SV_Position) : SV_Target
             auto* vulkanTexture = static_cast<VulkanTexture*>(texture);
             m_passId++;
             Transition(vulkanTexture, Access::TransferDst);
-            FlushBarriers();
             EndRendering();
+            if (m_profiling)
+                ProfileStamp("upload", vulkanTexture);
+            FlushBarriers();
             uint32_t blockWidth, blockHeight, bytesPerBlock;
             FormatBlock(texture->desc.format, blockWidth, blockHeight, bytesPerBlock);
             VkBufferImageCopy region{};
@@ -2233,8 +2286,10 @@ float4 main(float4 position : SV_Position) : SV_Target
             m_passId++;
             Transition(from, Access::TransferSrc);
             Transition(to, Access::TransferDst);
-            FlushBarriers();
             EndRendering();
+            if (m_profiling)
+                ProfileStamp("copy", to);
+            FlushBarriers();
             VkImageCopy copy{};
             VkImageAspectFlags aspect = from->depth ? VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
                                                     : VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT);
@@ -2275,7 +2330,9 @@ float4 main(float4 position : SV_Position) : SV_Target
             if (attachment == UINT32_MAX)
             {
                 VulkanTexture* colors[1] = { vulkanTexture };
+                m_profileOperation = "clear";
                 BeginRendering(colors, 1, nullptr);
+                m_profileOperation = nullptr;
                 attachment = 0;
             }
             int32_t left = rect ? std::max(rect->left, 0) : 0, top = rect ? std::max(rect->top, 0) : 0;
@@ -2296,7 +2353,11 @@ float4 main(float4 position : SV_Position) : SV_Target
             VK_TRACE("clear depth %s", texture->desc.name);
             auto* vulkanTexture = static_cast<VulkanTexture*>(texture);
             if (!(m_rendering.active && m_barriers.empty() && m_rendering.depth == vulkanTexture))
+            {
+                m_profileOperation = "clear";
                 BeginRendering(nullptr, 0, vulkanTexture);
+                m_profileOperation = nullptr;
+            }
             int32_t left = rect ? std::max(rect->left, 0) : 0, top = rect ? std::max(rect->top, 0) : 0;
             int32_t right = rect ? std::min(rect->right, int32_t(m_rendering.extent.width)) : int32_t(m_rendering.extent.width);
             int32_t bottom = rect ? std::min(rect->bottom, int32_t(m_rendering.extent.height)) : int32_t(m_rendering.extent.height);
@@ -3330,6 +3391,8 @@ float4 main(uint id : SV_VertexID) : SV_Position
             }
             SetViewportScissor(draw.viewport, draw.scissor);
             SetDrawDynamic(pipeline->dynamic);
+            if (m_profiling && m_profileDraws)
+                ProfileStamp("draw", nullptr);
             if (!state.dynamicValid || memcmp(state.blendFactor, draw.blendFactor, sizeof(draw.blendFactor)) != 0)
             {
                 vkCmdSetBlendConstants(m_cmd, draw.blendFactor);
@@ -3381,7 +3444,9 @@ float4 main(uint id : SV_VertexID) : SV_Position
                     return;
                 memcpy(constants.cpu, pass.constants, pass.constantBytes);
             }
+            m_profileOperation = pipeline->name.c_str();
             BeginRendering(targets, pass.targetCount, nullptr);
+            m_profileOperation = nullptr;
 
             VkDescriptorBufferInfo constantInfo{ m_upload.buffer, constants.offset, pass.constantBytes ? AlignUp64(pass.constantBytes, 16) : 16 };
             VkDescriptorBufferInfo bufferInfo{};
@@ -3573,6 +3638,8 @@ float4 main(uint id : SV_VertexID) : SV_Position
             m_timing.presentTicks = std::max(m_timing.presentTicks, uint64_t(presentEnd.QuadPart - submitEnd.QuadPart));
 
             m_frameValues.push_back(m_timelineValue);
+            m_presents++;
+            m_profiling = m_profilePool && m_presents + 1 >= m_profileFirst && m_presents + 1 <= m_profileLast;
             LARGE_INTEGER waitStart, waitEnd;
             QueryPerformanceCounter(&waitStart);
             // Two frames in flight; the safe mode's "serial" waits for this one.
@@ -3767,12 +3834,115 @@ float4 main(uint id : SV_VertexID) : SV_Position
             return true;
         }
 
+        // Profile ----------------------------------------------------------------------------------
+
+        // Queries are reset in blocks outside rendering instances, ahead of their use (the timestamps
+        // of CRASH_GPU_PROFILE_DRAWS are written inside them); UINT32_MAX: none free.
+        uint32_t VulkanDevice::ProfileQuery()
+        {
+            if (m_profileReset - m_profileNext < PROFILE_BLOCK / 4 && !m_rendering.active &&
+                m_profileRecords.size() + (m_profileReset - m_profileNext) + PROFILE_BLOCK <= PROFILE_QUERIES)
+            {
+                vkCmdResetQueryPool(m_cmd, m_profilePool, uint32_t(m_profileReset % PROFILE_QUERIES), PROFILE_BLOCK);
+                m_profileReset += PROFILE_BLOCK;
+            }
+            if (m_profileNext == m_profileReset)
+                return UINT32_MAX;  // the GPU is far behind: this segment joins the last one
+            return uint32_t(m_profileNext++ % PROFILE_QUERIES);
+        }
+
+        void VulkanDevice::ProfileStamp(const char* operation, const VulkanTexture* target)
+        {
+            uint32_t query = ProfileQuery();
+            if (query == UINT32_MAX)
+                return;
+            char text[160];
+            if (target)
+                snprintf(text, sizeof(text), " | %s -> %s %ux%u", operation, target->desc.name ? target->desc.name : "?", target->desc.width,
+                         target->desc.height);
+            else
+                snprintf(text, sizeof(text), " | %s", operation);
+            std::string name = m_profileLabel + text;
+            auto [it, inserted] = m_profileIndex.try_emplace(name, uint32_t(m_profileEntries.size()));
+            if (inserted)
+                m_profileEntries.push_back({ name });
+            vkCmdWriteTimestamp2(m_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, m_profilePool, query);
+            m_profileRecords.push_back({ m_timelineValue + 1, query, it->second, m_stats.barriers });
+        }
+
+        void VulkanDevice::ProfileEnd()
+        {
+            if (m_profileRecords.empty() || m_profileRecords.back().entry == PROFILE_END || m_profileRecords.back().value != m_timelineValue + 1)
+                return;
+            uint32_t query = ProfileQuery();
+            if (query == UINT32_MAX)
+            {
+                // No query left for the end: the command buffer's last segment is dropped.
+                m_profileRecords.back().entry = PROFILE_END;
+                return;
+            }
+            vkCmdWriteTimestamp2(m_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, m_profilePool, query);
+            m_profileRecords.push_back({ m_timelineValue + 1, query, PROFILE_END, m_stats.barriers });
+        }
+
+        // A record's segment lasts until the next record, of the same command buffer (each one ends
+        // with a PROFILE_END record).
+        void VulkanDevice::CollectProfile(uint64_t completed)
+        {
+            while (m_profileRecords.size() >= 2 && m_profileRecords.front().value <= completed)
+            {
+                ProfileRecord record = m_profileRecords.front();
+                m_profileRecords.pop_front();
+                if (record.entry == PROFILE_END)
+                    continue;
+                const ProfileRecord& next = m_profileRecords.front();
+                uint64_t start = 0, end = 0;
+                if (vkGetQueryPoolResults(m_device, m_profilePool, record.query, 1, 8, &start, 8, VK_QUERY_RESULT_64_BIT) != VK_SUCCESS ||
+                    vkGetQueryPoolResults(m_device, m_profilePool, next.query, 1, 8, &end, 8, VK_QUERY_RESULT_64_BIT) != VK_SUCCESS)
+                    continue;
+                ProfileEntry& entry = m_profileEntries[record.entry];
+                entry.ticks += (end - start) & m_timestampMask;
+                entry.count++;
+                entry.barriers += next.barriers - record.barriers;
+            }
+            if (m_profileRecords.size() == 1 && m_profileRecords.front().entry == PROFILE_END && m_profileRecords.front().value <= completed)
+                m_profileRecords.pop_front();
+            if (!m_profileLogged && m_presents >= m_profileLast && m_profileRecords.empty() && !m_profileEntries.empty())
+                LogProfile();
+        }
+
+        void VulkanDevice::LogProfile()
+        {
+            m_profileLogged = true;
+            double frames = double(m_profileLast - m_profileFirst + 1);
+            double msPerTick = 1000.0 / m_timestampFrequency;
+            std::vector<const ProfileEntry*> entries;
+            uint64_t ticks = 0, barriers = 0, count = 0;
+            for (const ProfileEntry& entry : m_profileEntries)
+            {
+                entries.push_back(&entry);
+                ticks += entry.ticks;
+                barriers += entry.barriers;
+                count += entry.count;
+            }
+            std::sort(entries.begin(), entries.end(), [](const ProfileEntry* a, const ProfileEntry* b) { return a->ticks > b->ticks; });
+            Log("[gpu profile] frames %llu-%llu: GPU busy %.2f ms per frame, %.1f segments, %.1f barriers", (unsigned long long)m_profileFirst,
+                (unsigned long long)m_profileLast, double(ticks) * msPerTick / frames, double(count) / frames, double(barriers) / frames);
+            Log("[gpu profile] ms/frame      %%   n/frame  barriers/frame  label | operation -> target");
+            for (const ProfileEntry* entry : entries)
+                Log("[gpu profile] %8.3f %6.1f %9.1f %15.1f  %s", double(entry->ticks) * msPerTick / frames,
+                    ticks ? 100.0 * double(entry->ticks) / double(ticks) : 0.0, double(entry->count) / frames, double(entry->barriers) / frames,
+                    entry->name.c_str());
+        }
+
         // Native access ----------------------------------------------------------------------------
 
         NativeHandles VulkanDevice::Native()
         {
-            FlushBarriers();
             EndRendering();
+            if (m_profiling)
+                ProfileStamp("native", nullptr);
+            FlushBarriers();
             NativeHandles handles;
             handles.device = m_device;
             handles.queue = m_queue;
