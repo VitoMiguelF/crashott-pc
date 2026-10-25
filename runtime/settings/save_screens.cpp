@@ -85,7 +85,7 @@ namespace settings::save_screens
         constexpr int32_t EXIT_TO_SLOT_SCREEN = 314;  // LoadFailed's ExitToGameSlotScreen -> AccessMemoryCard
         constexpr int32_t KNOWN_QUIT_EXIT = 86;       // the numbering this file knows (as direct_boot.cpp)
         constexpr uint32_t NAME_BUFFER = 0x82497328, NAME_LENGTH = 0x82497348;
-        constexpr int NAME_MAX = 5;
+        constexpr int NAME_CHARS = 5;
         constexpr uint32_t ACTION_PAGE_OBJECT = 20;  // the page (sprites are found from it, as vf04 finds the arrows)
         constexpr uint32_t ACTION_PAGE = 24, ACTION_ARROW_LEFT = 32, ACTION_ARROW_RIGHT = 36, ACTION_LETTER = 44;
         constexpr uint32_t PLAYER_DONE_BYTE = 16653;  // | 0x80: DONE (node 96 takes exit 97)
@@ -424,7 +424,7 @@ namespace settings::save_screens
             StoreBE32(action + ACTION_LETTER, uint32_t(letter));
             PlaySound(ctx, base, BANK_NAME, SOUND_LETTER);
             CallWithThis(ctx, base, action, sub_820B44C0);
-            Log("[saves] name: '%c'%s -> \"%s\"", char(c), before >= NAME_MAX ? " (the name is full: 5 characters)" : "", Name().c_str());
+            Log("[saves] name: '%c'%s -> \"%s\"", char(c), before >= NAME_CHARS ? " (the name is full: 5 characters)" : "", Name().c_str());
         }
 
         void Erase(PPCContext& ctx, uint8_t* base, uint32_t action)
@@ -576,7 +576,7 @@ namespace settings::save_screens
             Visual visual;
             visual.mode = Mode::Keyboard;
             visual.key = g_key;
-            visual.length = std::clamp(int(LoadBE32(NAME_LENGTH)), 0, NAME_MAX);
+            visual.length = std::clamp(int(LoadBE32(NAME_LENGTH)), 0, NAME_CHARS);
             visual.portuguese = Portuguese();
             Publish(visual);
         }
@@ -977,7 +977,7 @@ namespace settings::save_screens
         void DrawKeyboard(const View& v, const Visual& vis)
         {
             const std::vector<Key>& keys = Keys();
-            bool full = vis.length >= NAME_MAX, empty = vis.length == 0;
+            bool full = vis.length >= NAME_CHARS, empty = vis.length == 0;
             for (size_t i = 0; i < keys.size(); i++)
             {
                 const Key& key = keys[i];

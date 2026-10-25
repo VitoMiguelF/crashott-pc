@@ -46,9 +46,7 @@
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
 #include "../platform/platform.h"
-
-#include <windows.h>
-#include <xinput.h>
+#include "../kernel/xinput_types.h"
 
 #include <algorithm>
 #include <atomic>
@@ -259,7 +257,7 @@ namespace
         std::vector<std::string> levels = Levels();
         for (size_t i = 0; i < levels.size(); i++)
         {
-            if (_stricmp(levels[i].c_str(), name.c_str()) == 0)
+            if (plat::CompareNoCase(levels[i].c_str(), name.c_str()) == 0)
                 return int32_t(i);
         }
         return -1;

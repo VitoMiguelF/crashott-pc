@@ -1,11 +1,12 @@
 #include "wav_writer.h"
+#include "../platform/crt.h"
 
 #include <cstring>
 
 WavWriter::WavWriter(const std::filesystem::path& path, uint32_t sampleRate, uint32_t channels, uint32_t maxSeconds)
     : sampleRate(sampleRate), channels(channels), maxFrames(uint64_t(sampleRate) * maxSeconds)
 {
-    file = _wfopen(path.c_str(), L"wb");
+    file = plat::OpenCFile(path, "wb");
     if (file)
         UpdateHeader();
 }

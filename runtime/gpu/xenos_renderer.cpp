@@ -55,6 +55,7 @@
 #include "../subtitles/subtitle_draw.h"
 #include "../platform/platform.h"
 #include "../platform/text.h"
+#include "../platform/crt.h"
 
 
 #include <algorithm>
@@ -4216,7 +4217,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                 }
                 // CRASH_COMPILE_LOG=1: every frame's time and compiles in compiles.csv (screenshot folder).
                 static FILE* s_frameLog = [] {
-                    FILE* file = getenv("CRASH_COMPILE_LOG") ? _wfopen((g_screenshotDir / "compiles.csv").c_str(), L"w") : nullptr;
+                    FILE* file = getenv("CRASH_COMPILE_LOG") ? plat::OpenCFile(g_screenshotDir / "compiles.csv", "w") : nullptr;
                     if (file)
                         fprintf(file, "frame,ms,pipelines,pipeline_ms,shaders,shader_ms\n");
                     return file;

@@ -4,8 +4,6 @@
 #include "../fs/vfs.h"
 #include "../settings/settings.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -169,7 +167,7 @@ namespace gpu::hd
             if (stem.size() != 16)
                 return false;
             char* end = nullptr;
-            key = _strtoui64(stem.c_str(), &end, 16);
+            key = strtoull(stem.c_str(), &end, 16);
             return end == stem.c_str() + 16;
         }
 

@@ -6,8 +6,7 @@
 #include "../kernel/input.h"
 #include "../settings/settings.h"
 #include "../platform/platform.h"
-
-#include <windows.h>
+#include "../platform/crt.h"
 
 #include <algorithm>
 #include <cctype>
@@ -466,7 +465,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             g_marks++;
             std::string clock = ClockText();
             Log("[mark] frame %llu, input t=%s s", (unsigned long long)frame, clock.c_str());
-            if (FILE* file = _wfopen(g_marksPath.c_str(), L"a"))
+            if (FILE* file = plat::OpenCFile(g_marksPath, "a"))
             {
                 fprintf(file, "frame %llu, input t=%s s\n", (unsigned long long)frame, clock.c_str());
                 fclose(file);

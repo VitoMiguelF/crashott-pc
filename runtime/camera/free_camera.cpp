@@ -35,8 +35,6 @@
 #include "../settings/settings.h"
 #include "../platform/platform.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cmath>

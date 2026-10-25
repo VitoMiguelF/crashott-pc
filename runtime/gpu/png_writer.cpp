@@ -1,4 +1,5 @@
 #include "png_writer.h"
+#include "../platform/crt.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -90,7 +91,7 @@ namespace gpu
         Chunk(png, "IDAT", zlib);
         Chunk(png, "IEND", {});
 
-        FILE* file = _wfopen(path.c_str(), L"wb");
+        FILE* file = plat::OpenCFile(path, "wb");
         if (!file)
             return false;
         bool ok = fwrite(png.data(), 1, png.size(), file) == png.size();

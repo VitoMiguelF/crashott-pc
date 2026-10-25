@@ -598,7 +598,7 @@ namespace dev::console
                 }
                 std::string name;
                 for (const std::string& l : g_levels)
-                    if (_stricmp(l.c_str(), words[1].c_str()) == 0)
+                    if (plat::CompareNoCase(l.c_str(), words[1].c_str()) == 0)
                         name = l;
                 if (name.empty())
                 {

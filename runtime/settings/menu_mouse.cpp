@@ -10,8 +10,6 @@
 #include "save_screens.h"
 #include "../platform/platform.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <climits>
 #include <cmath>

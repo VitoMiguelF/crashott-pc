@@ -17,9 +17,8 @@
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
 #include "../platform/platform.h"
-
-#include <windows.h>
-#include <xinput.h>
+#include "../platform/crt.h"
+#include "xinput_types.h"
 
 #include <algorithm>
 #include <atomic>
@@ -126,10 +125,10 @@ namespace
             }
             for (const auto& [text, buttons] : BUTTON_NAMES)
             {
-                if (strlen(text) == length && _strnicmp(text, name, length) == 0)
+                if (strlen(text) == length && plat::CompareNoCaseN(text, name, length) == 0)
                     presses.push_back({ time, buttons, hold });
             }
-            if (length == 4 && _strnicmp(name, "SHOT", 4) == 0)
+            if (length == 4 && plat::CompareNoCaseN(name, "SHOT", 4) == 0)
             {
                 ScriptedPress press{ time, 0, hold };
                 press.shot = true;
@@ -137,14 +136,14 @@ namespace
             }
             for (const auto& [text, stick] : STICK_NAMES)
             {
-                if (strlen(text) == length && _strnicmp(text, name, length) == 0)
+                if (strlen(text) == length && plat::CompareNoCaseN(text, name, length) == 0)
                     presses.push_back({ time, 0, hold, stick });
             }
             for (auto [prefix, kind] : { std::pair<const char*, int>{ "MOUSE=", 0 }, { "CLICK=", 1 }, { "RCLICK=", 2 }, { "LDOWN=", 3 },
                                          { "LUP=", 4 }, { "WHEEL=", 5 } })
             {
                 size_t n = strlen(prefix);
-                if (length > n && _strnicmp(name, prefix, n) == 0)
+                if (length > n && plat::CompareNoCaseN(name, prefix, n) == 0)
                 {
                     ScriptedPress press{ time, 0, hold };
                     press.mouse = kind;
@@ -155,7 +154,7 @@ namespace
                     presses.push_back(press);
                 }
             }
-            if (length > 7 && _strnicmp(name, "DEVICE_", 7) == 0)
+            if (length > 7 && plat::CompareNoCaseN(name, "DEVICE_", 7) == 0)
             {
                 std::string device(name + 7, length - 7);
                 for (char& c : device)
@@ -170,7 +169,7 @@ namespace
                     }
                 }
             }
-            if (length > 4 && _strnicmp(name, "KEY_", 4) == 0)
+            if (length > 4 && plat::CompareNoCaseN(name, "KEY_", 4) == 0)
             {
                 uint16_t key;
                 if (settings::ParseKey(std::string(name + 4, length - 4), key) && key)

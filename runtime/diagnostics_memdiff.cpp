@@ -13,6 +13,7 @@
 #include "kernel/input.h"
 #include "kernel/memory.h"
 #include "platform/platform.h"
+#include "platform/crt.h"
 
 #include <algorithm>
 #include <atomic>
@@ -73,7 +74,7 @@ namespace
         {
             char name[64];
             snprintf(name, sizeof(name), "memdiff_%d.bin", g_snapshot);
-            FILE* out = _wfopen((g_directory / name).c_str(), L"wb");
+            FILE* out = plat::OpenCFile(g_directory / name, "wb");
             for (const Region& now : regions)
             {
                 auto previous = std::find_if(g_previous.begin(), g_previous.end(), [&](const Region& r) {

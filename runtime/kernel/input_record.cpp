@@ -39,6 +39,7 @@
 #include "../diagnostics.h"
 #include "../fs/vfs.h"
 #include "../platform/platform.h"
+#include "../platform/crt.h"
 
 #include <algorithm>
 #include <atomic>
@@ -151,7 +152,7 @@ namespace
     {
         time_t now = time(nullptr);
         tm local{};
-        localtime_s(&local, &now);
+        plat::LocalTime(now, local);
         char text[64];
         strftime(text, sizeof(text), format, &local);
         return text;
@@ -234,7 +235,7 @@ namespace
                     ok = false;
                     for (size_t i = 0; i < BUTTON_COUNT; i++)
                     {
-                        if (_stricmp(BUTTONS[i].first, name.c_str()) == 0)
+                        if (plat::CompareNoCase(BUTTONS[i].first, name.c_str()) == 0)
                             e.button = i, ok = true;
                     }
                     e.hold = std::max<int64_t>(e.hold, 1);

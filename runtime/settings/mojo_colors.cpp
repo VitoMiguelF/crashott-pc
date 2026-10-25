@@ -31,6 +31,7 @@
 #include "settings.h"
 #include "../diagnostics.h"
 #include "../fs/rcf_overlay.h"
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -368,7 +369,7 @@ namespace settings
                 size_t equals = item.find('=');
                 for (Recolor& recolor : g_recolors)
                 {
-                    if (equals != std::string::npos && _stricmp(item.substr(0, equals).c_str(), recolor.size) == 0)
+                    if (equals != std::string::npos && plat::CompareNoCase(item.substr(0, equals).c_str(), recolor.size) == 0)
                     {
                         recolor.enabled = true;
                         recolor.hue = float(atof(item.c_str() + equals + 1));

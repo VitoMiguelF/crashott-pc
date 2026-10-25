@@ -1,7 +1,5 @@
 // Button icons for the device in use (prompt_icons.h).
 
-#include <windows.h>
-
 #include "prompt_icons.h"
 #include "controls.h"
 #include "menu_art.h"

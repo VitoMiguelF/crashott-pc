@@ -16,13 +16,14 @@ All runtime code now goes through `runtime/platform/` or a per-OS backend.
 headers emptied: 92 of 92 are clean. The one it still flags, `gpu/rhi_vulkan_shaders.cpp`, is a
 known false positive.
 
-There is a Linux CMake target (SDL3, pthreads, dl). **It has never been compiled.** This machine
-has no Linux toolchain: there is no WSL2, and fetching zig/SDL3 was waiting on an OK. So
-everything below marked *written* is unverified until the first real Linux build. Expect a round
-of compile fixes in the `*_posix.cpp` / `*_sdl.cpp` files.
+**The Linux build compiles and links.** `python tools/linux_cross_build.py` cross-compiles it from
+Windows with zig: 189 objects (runtime, generated code, XexImage) for x86_64-linux-gnu,
+glibc 2.35. The result, `build/linux/CrashRecomp`, is an ELF that needs only `libSDL3.so.0`,
+`libc`, `libm` and the loader. **It has never run:** this machine has no Linux. So everything below
+marked *written* compiles but is unverified at run time.
 
 The Windows build is unchanged in behaviour: it builds with llvm-mingw, and the `vila_sem_cena`
-and `menu` profiles pass.
+and `menu` profiles pass at 30 fps and with no frame limit.
 
 ## The platform layer
 
@@ -99,7 +100,25 @@ work left for Linux, not what was moved already.
 **Windows (llvm-mingw):** builds `CrashRecomp`, `CrashLauncher` and `CrashSetup`.
 `python tools/run_game.py vila_sem_cena` and `menu` pass.
 
-**Linux:** `CMakeLists.txt` has a non-`WIN32` branch:
+**Linux, cross-compiled with zig (verified):**
+
+- Put the [ziglang](https://pypi.org/project/ziglang/) 0.15 wheel, unzipped, in `build/downloads/zig`.
+- Put the SDL3 3.2.x source tarball, unpacked, in `build/downloads/sdl`. Only its headers are used.
+- Run `python tools/linux_cross_build.py`. It produces `build/linux/CrashRecomp`.
+
+SDL3 itself is not built here, because there are no X11/Wayland headers. Instead the link uses a
+stub `libSDL3.so.0` that holds the 52 SDL functions the game calls, and at run time the
+system's SDL3 takes its place. No other symbol is left undefined.
+
+`python tools/linux_cross_build.py check [file ...]` recompiles runtime files at -O0 and lists
+their errors.
+
+The first compile also found Microsoft CRT calls that the empty-header check cannot see:
+`_wfopen`, `_stricmp`, `_strnicmp`, `localtime_s` and `_strtoui64`. They now go through
+`platform/crt.h` / `plat::CompareNoCase`. Some files still had a stray `<windows.h>` or
+`<xinput.h>` include. And `NAME_MAX` is a `<limits.h>` macro on Linux.
+
+**Linux, CMake (not tried yet):** `CMakeLists.txt` has a non-`WIN32` branch for a native build:
 
 - `-mavx`;
 - `find_package(SDL3 CONFIG)`, `Threads`, `${CMAKE_DL_LIBS}`;
@@ -117,12 +136,9 @@ cmake --build build-linux --target CrashRecomp
 
 Not done yet:
 
-1. **First compile.** It needs a Linux clang (WSL2, a Linux box, or `zig c++ -target
-   x86_64-linux-gnu`) plus SDL3 ≥ 3.2. Expect fixes in `platform_posix.cpp`, `file_posix.cpp`,
-   `window_sdl.cpp`, `audio_device_sdl.cpp`, `xinput_backend_sdl.cpp`, `platform_sdl.cpp` and
-   `diagnostics_posix.cpp`, none of which have been through a compiler. The generated code
-   (`generated/ppc`, SIMDe) and `XexImage` (XenonUtils) are expected to build as they are:
-   XenonRecomp itself builds on Linux.
+1. **First run** on a Linux machine or the Deck, with SDL3 ≥ 3.2 installed. Copy
+   `build/linux/CrashRecomp` next to the game files as on Windows, but not the stub `libSDL3.so.0`.
+   Also try the native CMake build there.
 2. `plat::DecodePng` (stb_image), so the menu art and language fonts appear.
 3. VFS case-folding for the game dump.
 4. `plat::TextCanvas` with FreeType or stb_truetype (developer console, subtitles).

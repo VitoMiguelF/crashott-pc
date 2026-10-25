@@ -17,9 +17,7 @@
 #include "../kernel/pc_input.h"
 #include "../subtitles/subtitles.h"
 #include "../platform/platform.h"
-
-#include <windows.h>
-#include <xinput.h>
+#include "../kernel/xinput_types.h"
 
 #include <algorithm>
 #include <atomic>
