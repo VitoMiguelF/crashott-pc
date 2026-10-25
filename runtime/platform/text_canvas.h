@@ -5,8 +5,8 @@
 
 // Text drawn by the OS into a CPU bitmap, for the overlays the runtime draws itself (developer
 // console, subtitles): white text, greyscale antialiasing, on black. GDI on Windows
-// (text_canvas_win32.cpp); elsewhere nothing yet (text_canvas_posix.cpp: every call fails, so
-// those overlays stay hidden) until FreeType or stb_truetype with a bundled font takes it.
+// (text_canvas_win32.cpp); FreeType with the font fontconfig picks elsewhere (text_canvas_posix.cpp;
+// built without them every call fails and those overlays stay hidden).
 namespace plat
 {
     enum class FontFace : uint8_t

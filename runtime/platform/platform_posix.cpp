@@ -365,6 +365,16 @@ namespace plat
             default: return PROT_NONE;
             }
         }
+
+        // VirtualAlloc/VirtualProtect round [address, address + size) out to whole pages; mprotect
+        // wants a page-aligned start (the kernel heap hands out 16-byte aligned blocks).
+        void PageAlign(void*& address, size_t& size)
+        {
+            uintptr_t first = uintptr_t(address) & ~uintptr_t(PAGE - 1);
+            uintptr_t end = (uintptr_t(address) + size + PAGE - 1) & ~uintptr_t(PAGE - 1);
+            address = reinterpret_cast<void*>(first);
+            size = end - first;
+        }
     }
 
     uint8_t* ReserveMemory(size_t size, uintptr_t preferred)
@@ -406,6 +416,7 @@ namespace plat
 
     bool CommitMemory(void* address, size_t size)
     {
+        PageAlign(address, size);
         if (mprotect(address, size, PROT_READ | PROT_WRITE) != 0)
             return false;
         MarkCommitted(address, size, true);
@@ -414,6 +425,7 @@ namespace plat
 
     bool DecommitMemory(void* address, size_t size)
     {
+        PageAlign(address, size);
         // Drop the pages (the next touch reads zeros) and make them inaccessible again.
         madvise(address, size, MADV_DONTNEED);
         if (mprotect(address, size, PROT_NONE) != 0)
@@ -424,6 +436,7 @@ namespace plat
 
     bool ProtectMemory(void* address, size_t size, PageAccess access)
     {
+        PageAlign(address, size);
         return mprotect(address, size, NativeAccess(access)) == 0;
     }
 

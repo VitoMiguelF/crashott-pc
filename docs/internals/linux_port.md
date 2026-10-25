@@ -22,6 +22,17 @@ glibc 2.35. The result, `build/linux/CrashRecomp`, is an ELF that needs only `li
 `libc`, `libm` and the loader. **It has never run:** this machine has no Linux. So everything below
 marked *written* compiles but is unverified at run time.
 
+**First run (2026-10-25, CachyOS, RTX 5080, NVIDIA 615, Wayland/PipeWire, SDL 3.4, FFmpeg 9):** the
+native CMake build (clang 23) boots to the main menu and into L1_E1 (`CRASH_BOOT=level:L1_E1
+CRASH_SKIP_CINEMATICS=1`) with the right picture, sound and the F1 overlay, ~1000 fps unlimited.
+Three fixes were needed: page-aligned `mprotect` in `CommitMemory`/`DecommitMemory`/`ProtectMemory`
+(the kernel heap commits 16-byte aligned blocks: `GuestAlloc: host commit failed at 0x7F000010`),
+`HostPath` splitting the guest's `\` (`make_preferred` does nothing on POSIX, so
+`shaders\simpleshaderlitvp.out` was one file name and the game crashed on the missing shader) with a
+case-insensitive match per component, and the system FFmpeg (below). Verified at run time: guest
+memory views (memfd), demand commit and the GPU/XMA MMIO traps (SIGSEGV + trap flag: 20,372 XMA
+register stores emulated), fibers, the SDL window thread, keyboard, SDL audio (PipeWire, 48 kHz).
+
 The Windows build is unchanged in behaviour: it builds with llvm-mingw, and the `vila_sem_cena`
 and `menu` profiles pass at 30 fps and with no frame limit.
 
@@ -60,21 +71,21 @@ work left for Linux, not what was moved already.
 | Vulkan surface | `vkCreateWin32SurfaceKHR` | `SDL_Vulkan_CreateSurface`, instance extensions from SDL | written | none |
 | Exclusive fullscreen | `VK_EXT_full_screen_exclusive` | none: borderless and fullscreen are both the desktop fullscreen window | written | none |
 | Xbox pads | `xinput1_4.dll` | `kernel/xinput_backend_sdl.cpp`: SDL_Gamepad by position, rumble via `SDL_RumbleGamepad` | written | S |
-| DualSense / DS4 HID | HID API + SetupAPI (`hid_pads_win32.cpp`, 590 lines: reports, CRC, Bluetooth) | `hid_pads_posix.cpp` stub. SDL already reads these pads as gamepads. PlayStation icons and the touchpad click need the gamepad type from SDL (`SDL_GetGamepadType`) or a hidraw port | stub | M |
+| DualSense / DS4 HID | HID API + SetupAPI (`hid_pads_win32.cpp`, 590 lines: reports, CRC, Bluetooth) | `hid_pads_sdl.cpp`: SDL's HIDAPI drivers read the pads; the ones `SDL_GetGamepadType` calls PS3/PS4/PS5 get the `hid::` interface (own ids, `NoteDevice(PlayStation)` on activity, rumble) and are left out of the SDL "Xbox" slots, so `pad_slots.cpp` treats them as on Windows: PlayStation icons in AUTO, touchpad click = BACK. Mapping shared in `kernel/gamepad_sdl.h` | written; a DualSense (USB) is detected as one | S: confirm the AUTO icon switch by hand; DualShock 4 / Bluetooth untested |
 | Audio output | XAudio2 (32-buffer ring, voice callback) | `audio/audio_device_sdl.cpp`: one `SDL_AudioStream`, SDL resamples | written | S |
-| Files, VFS | `CreateFileW`, `ReadFile` with OVERLAPPED offsets, `GetFileInformationByHandle`, `FindFirstFileW` | `plat::File` (pread/pwrite, `fstat`), `std::filesystem` | done | **M: case sensitivity.** The VFS lowercases guest paths and `HostPath` joins them to the dump folder. On a case-sensitive FS that only works if the dump is all lowercase. It needs a case-folding lookup (cached directory listing) in `fs/vfs.cpp`, the `.rcf` overlay and mods |
+| Files, VFS | `CreateFileW`, `ReadFile` with OVERLAPPED offsets, `GetFileInformationByHandle`, `FindFirstFileW` | `plat::File` (pread/pwrite, `fstat`), `std::filesystem` | done | `HostPath` splits the guest path on `\` and `/` and, when a component doesn't exist as spelled, takes the directory entry that matches it ignoring case (the dump has `DOF.out`, `LEIA.txt`). Only misses list a directory. S: a cache if mods with big folders make misses slow |
 | Paths | `GetModuleFileNameW`, `%APPDATA%` | `plat::ExecutablePath` (`/proc/self/exe`). Paths are next to the exe, as on Windows | done | S: XDG data dir if the install dir is read-only (Flatpak) |
-| Guest memory | `VirtualAlloc2` / `MapViewOfFile3` placeholders: physical memory aliased at 0xA0000000/0xC0000000, demand commit | memfd + `mmap(MAP_SHARED \| MAP_FIXED)` views, a committed-page bitmap for `QueryMemory`, SIGSEGV demand commit | written | S |
+| Guest memory | `VirtualAlloc2` / `MapViewOfFile3` placeholders: physical memory aliased at 0xA0000000/0xC0000000, demand commit | memfd + `mmap(MAP_SHARED \| MAP_FIXED)` views, a committed-page bitmap for `QueryMemory`, SIGSEGV demand commit. Commit/decommit/protect round out to whole pages as VirtualAlloc does | verified | none |
 | Fault handlers | vectored exception handlers (demand commit, GPU/XMA MMIO traps, texture watch) | sigaction SIGSEGV/SIGBUS/SIGTRAP. Handlers run newest first, `SetUnhandledFaultHandler` runs last. Single-step uses the x86 trap flag; the write bit comes from `REG_ERR` | written | S |
 | Threads, events, TLS | `CreateThread(CREATE_SUSPENDED)`, `ResumeThread`, priorities, `SetThreadDescription`, TLS slots | pthreads with a start gate for suspended threads, `setpriority` (nice values; negative ones need CAP_SYS_NICE and fail silently), `pthread_setname_np`. Guest events and semaphores already used std primitives; guest TLS is the runtime's own table | written | S |
 | Fibers | `CreateFiber` / `SwitchToFiber` | `ucontext` (makecontext/swapcontext) | written | S on glibc. **Android: bionic has no ucontext**, so it needs a small asm switch (or boost.context) |
 | Timer resolution, waits | `timeBeginPeriod`, waitable timers (vblank), `SleepEx` | `nanosleep`. `CreateTimerWait` returns null on POSIX and the callers fall back to sleeping | done | none |
 | Kernel / XAM HLE | `file_imports`, `memory_imports`, `thread_imports`, `rtl_imports` (time fields), `xam` content and saves called Win32 directly | all through `plat::` / `std::chrono` (`RtlTimeToTimeFields` via chrono, NT epoch 1601) | done | none |
-| DLL loading | `LoadLibraryW` / `GetProcAddress` | `plat::OpenLibrary` (dlopen next to the exe first): `libvulkan.so.1` (Android `libvulkan.so`), `libavcodec.so.62` etc., `libdxcompiler.so` | done | S: ship or depend on FFmpeg 8 / DXC .so files |
+| DLL loading | `LoadLibraryW` / `GetProcAddress` | `plat::OpenLibrary` (dlopen next to the exe first): `libvulkan.so.1` (Android `libvulkan.so`), `libavcodec.so.62` etc., `libdxcompiler.so` | done | FFmpeg: `.so` files next to the exe (`thirdparty/ffmpeg/lib`), else the system's: CMake then builds against the system headers (`find_path`) so `LIBAVCODEC_VERSION_MAJOR` matches (FFmpeg 9 = `libavcodec.so.63` on Arch). DXC: `libdxcompiler.so` of the system (`directx-shader-compiler`), required: without it the renderer refuses to start. S: packaging |
 | DLSS | `CrashDlss.dll` (NGX static lib) + `nvngx_dlss.dll` | none yet: NGX ships a Linux library, so build `CrashDlss` as a .so against it | Windows only | M |
 | FSR 3.1 | `amd_fidelityfx_vk.dll` | none: no official Linux binary; build the FidelityFX SDK's Vulkan backend from source | Windows only | M |
 | Upscaler version info | `GetFileVersionInfoW` | `plat::LibraryFileVersion` (empty on POSIX) | done | none |
-| Text drawing (console, subtitles) | GDI: `CreateFontW` (Segoe UI / Consolas), `DrawTextW` word wrap, `TextOutW`, DIB sections | `plat::TextCanvas`. The POSIX version fails every call, so **the console and subtitles are not drawn** | stub | M: FreeType or stb_truetype + a bundled font (DejaVu Sans / Sans Mono), word wrap |
+| Text drawing (console, subtitles) | GDI: `CreateFontW` (Segoe UI / Consolas), `DrawTextW` word wrap, `TextOutW`, DIB sections | `text_canvas_posix.cpp`: FreeType renders, fontconfig picks `sans-serif` (semibold) and `monospace` (Noto Sans / DejaVu here); greedy word wrap at spaces and line breaks, centred, like `DT_WORDBREAK \| DT_CENTER`; glyphs cached per font and size. Built without freetype2/fontconfig (`CRASH_HAVE_FREETYPE` unset, e.g. the zig cross-build) it stays a stub | verified (subtitles) | S: test the developer console |
 | PNG decoding | WIC (language fonts, menu art from `default.rcf`) | `plat::DecodePng` with stb_image (`thirdparty/stb`, PNG only). It decodes all 20,474 PNGs in `default.rcf` byte-identical to WIC (RGB, palette + tRNS, RGBA) | done | none |
 | Clipboard, dead keys | `OpenClipboard`, `ToUnicode` | `window::ClipboardText` (SDL_GetClipboardText), `FlushDeadKey` (no-op on SDL) | written | none |
 | Message box, folder picker | `MessageBoxW`, `IFileOpenDialog` | `zenity` / `kdialog`, else stderr | written | S: `SDL_ShowSimpleMessageBox` once SDL is up |
@@ -118,7 +129,7 @@ The first compile also found Microsoft CRT calls that the empty-header check can
 `platform/crt.h` / `plat::CompareNoCase`. Some files still had a stray `<windows.h>` or
 `<xinput.h>` include. And `NAME_MAX` is a `<limits.h>` macro on Linux.
 
-**Linux, CMake (not tried yet):** `CMakeLists.txt` has a non-`WIN32` branch for a native build:
+**Linux, CMake (verified 2026-10-25, clang 23, CMake 4.4, Ninja):** `CMakeLists.txt` has a non-`WIN32` branch for a native build:
 
 - `-mavx`;
 - `find_package(SDL3 CONFIG)`, `Threads`, `${CMAKE_DL_LIBS}`;
@@ -127,26 +138,29 @@ The first compile also found Microsoft CRT calls that the empty-header check can
 - FFmpeg from `thirdparty/ffmpeg/lib/*.so.*` or the system;
 - DXC from `thirdparty/dxc/bin/libdxcompiler.so` or `$VULKAN_SDK/lib`.
 
-To try it:
+Packages (Arch): `sdl3 vulkan-icd-loader ffmpeg directx-shader-compiler freetype2 fontconfig clang cmake ninja` plus the
+Vulkan driver. Build:
 
 ```sh
-cmake -S . -B build-linux -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Release
-cmake --build build-linux --target CrashRecomp
+cmake -S . -B build/linux-native -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_TYPE=Release
+cmake --build build/linux-native --target CrashRecomp
 ```
+
+The only compile error was a missing `<climits>` in `settings/language_font.cpp` (`LONG_MAX`).
+To run it, copy `build/linux-native/CrashRecomp` next to `game/`, `data/`, `languages/` and
+`userdata/` (the folder layout of `dist`).
 
 Not done yet:
 
-1. **First run** on a Linux machine or the Deck, with SDL3 ≥ 3.2 installed. Copy
-   `build/linux/CrashRecomp` next to the game files as on Windows, but not the stub `libSDL3.so.0`.
-   Also try the native CMake build there.
-2. VFS case-folding for the game dump.
-3. `plat::TextCanvas` with FreeType or stb_truetype (developer console, subtitles).
+1. ~~First run~~ (done on desktop Linux; the Deck is item 5).
+2. ~~VFS case-folding for the game dump~~ (done).
+3. ~~`plat::TextCanvas` with FreeType~~ (done: FreeType + fontconfig).
 4. First boot: guest memory views, fault handlers, fibers, the timer fallback, and audio latency
    with SDL's queue.
 5. Steam Deck: run under Gamescope (fullscreen, 1280×800, the Hor+ path), Deck controls through
    SDL (Steam Input exposes them as a gamepad), and suspend/resume.
 6. tools: buildenv / run_game POSIX branch, packaging (tarball/AppImage), FFmpeg/DXC `.so` files.
-7. Optional: DLSS (NGX Linux), FSR 3.1 from source, HID PlayStation reader (hidraw), launcher.
+7. Optional: DLSS (NGX Linux), FSR 3.1 from source, launcher.
 
 ## x86-only code (for an ARM64 / Android build)
 

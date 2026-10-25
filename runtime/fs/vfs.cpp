@@ -111,12 +111,48 @@ namespace
         return result;
     }
 
+#ifndef _WIN32
+    // `name` as the directory spells it: the guest paths are lowercase, the dump keeps a few capitals
+    // (DOF.out, LEIA.txt) and mods may have any. The exact name is tried first, a listing only on a miss.
+    std::string MatchCase(const fs::path& directory, const std::string& name)
+    {
+        std::error_code error;
+        if (fs::exists(directory / name, error))
+            return name;
+        std::string lower = Lower(name);
+        for (auto& entry : fs::directory_iterator(directory, error))
+        {
+            std::string candidate = entry.path().filename().string();
+            if (Lower(candidate) == lower)
+                return candidate;
+        }
+        return name;
+    }
+#endif
+
+    // Guest paths are relative with '\\' separators. Windows ignores the case; elsewhere each component
+    // is matched against the host's names.
     fs::path HostPath(const fs::path& root, const std::string& relative)
     {
         if (relative.empty())
             return root;
+#ifdef _WIN32
         std::string native = relative;
         return root / fs::path(native).make_preferred();
+#else
+        fs::path host = root;
+        size_t start = 0;
+        while (start < relative.size())
+        {
+            size_t end = relative.find_first_of("\\/", start);
+            if (end == std::string::npos)
+                end = relative.size();
+            if (end > start)
+                host /= MatchCase(host, relative.substr(start, end - start));
+            start = end + 1;
+        }
+        return host;
+#endif
     }
 
     bool Exists(const fs::path& path)

@@ -103,6 +103,18 @@ else()
     find_package(Threads REQUIRED)
     target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage SDL3::SDL3 Threads::Threads ${CMAKE_DL_LIBS})
     target_include_directories(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/thirdparty/stb)  # PNG (platform/image_posix.cpp)
+    # Text of the developer console and the subtitles (platform/text_canvas_posix.cpp); without them
+    # those overlays are not drawn.
+    find_package(PkgConfig)
+    if (PkgConfig_FOUND)
+        pkg_check_modules(CRASH_TEXT IMPORTED_TARGET freetype2 fontconfig)
+    endif()
+    if (CRASH_TEXT_FOUND)
+        target_link_libraries(CrashRecomp PRIVATE PkgConfig::CRASH_TEXT)
+        target_compile_definitions(CrashRecomp PRIVATE CRASH_HAVE_FREETYPE=1)
+    else()
+        message(STATUS "freetype2 / fontconfig not found: no developer console or subtitles text")
+    endif()
 endif()
 target_compile_options(CrashRecomp PRIVATE ${CRASH_COMPILE_OPTIONS})
 # Symbol map (build\CrashRecomp.map) and line tables in a PDB (build\CrashRecomp.pdb): name the
@@ -126,8 +138,17 @@ target_compile_definitions(CrashRecomp PRIVATE
 # FFmpeg (LGPL, shared DLLs loaded at run time) for the XMA decoder: headers and DLLs of an LGPL
 # build in thirdparty/ffmpeg (include/, bin/). Without it the runtime builds and XMA decodes to silence.
 set(CRASH_FFMPEG_DIR ${CMAKE_SOURCE_DIR}/thirdparty/ffmpeg)
-if (EXISTS ${CRASH_FFMPEG_DIR}/include/libavcodec/avcodec.h)
-    target_include_directories(CrashRecomp PRIVATE ${CRASH_FFMPEG_DIR}/include)
+set(CRASH_FFMPEG_INCLUDE ${CRASH_FFMPEG_DIR}/include)
+if (NOT WIN32 AND NOT EXISTS ${CRASH_FFMPEG_DIR}/lib)
+    # No bundled .so files: the system's libavcodec is loaded, so build against its headers (the
+    # structures are used directly and the major version must match; thirdparty/ffmpeg's are FFmpeg 8).
+    find_path(CRASH_SYSTEM_FFMPEG_INCLUDE libavcodec/avcodec.h)
+    if (CRASH_SYSTEM_FFMPEG_INCLUDE)
+        set(CRASH_FFMPEG_INCLUDE ${CRASH_SYSTEM_FFMPEG_INCLUDE})
+    endif()
+endif()
+if (EXISTS ${CRASH_FFMPEG_INCLUDE}/libavcodec/avcodec.h)
+    target_include_directories(CrashRecomp PRIVATE ${CRASH_FFMPEG_INCLUDE})
     target_compile_definitions(CrashRecomp PRIVATE CRASH_HAVE_FFMPEG=1)
     if (WIN32)
         file(GLOB CRASH_FFMPEG_DLLS ${CRASH_FFMPEG_DIR}/bin/*.dll)

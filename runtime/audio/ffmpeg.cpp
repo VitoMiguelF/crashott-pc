@@ -40,6 +40,25 @@ namespace
         return true;
     }
 
+    // The system's FFmpeg (the loader path), when none is bundled next to the exe. The build uses the
+    // system's headers then (CMakeLists.txt), so the major version matches.
+    bool LoadSystem(void*& avutil, void*& avcodec)
+    {
+#ifdef _WIN32
+        (void)avutil;
+        (void)avcodec;
+        return false;
+#else
+        std::string avcodecName = LibraryName("avcodec", LIBAVCODEC_VERSION_MAJOR);
+        avutil = plat::OpenLibrary(LibraryName("avutil", LIBAVUTIL_VERSION_MAJOR));
+        avcodec = avutil ? plat::OpenLibrary(avcodecName) : nullptr;
+        if (!avcodec)
+            return false;
+        Log("[ffmpeg] loaded the system's %s", avcodecName.c_str());
+        return true;
+#endif
+    }
+
     template <typename T>
     bool Resolve(void* module, const char* name, T& function)
     {
@@ -57,9 +76,9 @@ namespace
     {
         void* avutil = nullptr;
         void* avcodec = nullptr;
-        if (!LoadFrom(plat::ExecutablePath().parent_path(), avutil, avcodec))
+        if (!LoadFrom(plat::ExecutablePath().parent_path(), avutil, avcodec) && !LoadSystem(avutil, avcodec))
         {
-            Log("[ffmpeg] %s not found next to the exe: XMA decodes to silence",
+            Log("[ffmpeg] %s not found next to the exe or on the system: XMA decodes to silence",
                 LibraryName("avcodec", LIBAVCODEC_VERSION_MAJOR).c_str());
             return;
         }
