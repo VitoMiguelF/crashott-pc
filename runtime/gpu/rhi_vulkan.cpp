@@ -301,6 +301,10 @@ namespace gpu::rhi
             double TimestampFrequency() const override { return m_timestampFrequency; }
 
             NativeHandles Native() override;
+            bool DeviceExtensionEnabled(const char* name) const override
+            {
+                return std::any_of(m_enabledDeviceExtensions.begin(), m_enabledDeviceExtensions.end(), [&](const std::string& e) { return e == name; });
+            }
             void* NativeTexture(Texture* texture) override { return texture ? static_cast<VulkanTexture*>(texture)->image : nullptr; }
             void* NativeView(Texture* texture) override { return texture ? ImageView(static_cast<VulkanTexture*>(texture), View::Default) : nullptr; }
             void PrepareNative(Texture* texture, NativeState state) override;

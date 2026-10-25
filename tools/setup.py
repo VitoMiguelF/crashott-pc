@@ -7,9 +7,12 @@
     python tools/setup.py --game D:\\Games\\Crash --assets-only    # only the asset export (retry it)
     python tools/setup.py --check                                 # only check the prerequisites
     python tools/setup.py --game ... --toolchain msvc             # build with Visual Studio + clang-cl
+    python tools/setup.py --game ... --no-dlss                    # without DLSS (no NVIDIA RTX GPU)
 
 Run it with the Python of the release (toolchain\\python\\python.exe, what CrashSetup.exe uses) or any
-Python 3.11+.
+Python 3.11+. The single-file installer (CrashSetup-<tag>.exe, tools/make_installer.py) unpacks this
+project with everything below already in place, then runs this script: nothing is downloaded but the
+optional release assets.
 
 Steps (each one is skipped when its result is already up to date, so running it again is cheap):
  1. prerequisites: the portable toolchain in toolchain\\ (llvm-mingw clang, CMake, Ninja and Python
@@ -22,7 +25,10 @@ Steps (each one is skipped when its result is already up to date, so running it 
     release zip has it (tools\\XenonRecomp\\.crashrecomp_source names the commit and the patch); a git
     clone of this repository clones it with git;
  4. third-party SDK files (FFmpeg LGPL, NVIDIA DLSS, AMD FSR), from their official sources, checked
-    by SHA-256 (thirdparty\\*\\README.md);
+    by SHA-256 (thirdparty\\*\\README.md); already there in the single-file installer. DLSS: a
+    clone downloads the SDK (CMake builds CrashDlss.dll from it); the installer instead carries our
+    prebuilt CrashDlss.dll + nvngx_dlss.dll, and leaves them out (--no-dlss) on a PC whose GPU
+    can't run DLSS;
  5. XenonRecomp turns default.xex into C++ (generated\\ppc, ~60 MB, never shared);
  6. CMake + Ninja build CrashRecomp.exe, CrashLauncher.exe and CrashSetup.exe (build\\);
  7. optional release assets (--subtitles, --remaster): downloaded from the GitHub release (or taken
@@ -387,9 +393,18 @@ def setup_xenonrecomp():
     say("XenonRecomp ok (" + XENON_COMMIT[:10] + " + patches/XenonRecomp.patch)")
 
 
-def fetch_thirdparty():
-    total = len(DOWNLOADS) + 1
-    for i, (url, dest, digest) in enumerate(DOWNLOADS):
+def fetch_thirdparty(dlss=True):
+    """dlss=False (--no-dlss): none of the DLSS files. With the installer's prebuilt CrashDlss.dll
+    (thirdparty/dlss/bin) the SDK's headers and library aren't needed: only nvngx_dlss.dll."""
+    prebuilt = (ROOT / "thirdparty" / "dlss" / "bin" / "CrashDlss.dll").is_file()
+    wanted = [d for d in DOWNLOADS if not d[1].startswith("thirdparty/dlss/") or
+              (dlss and (not prebuilt or d[1].endswith("nvngx_dlss.dll")))]
+    if not dlss:
+        say("DLSS fora (--no-dlss): sem placa NVIDIA RTX, o jogo usa FSR ou nenhum upscaler")
+    elif prebuilt:
+        say("DLSS: CrashDlss.dll pré-compilado do instalador (o SDK não é necessário)")
+    total = len(wanted) + 1
+    for i, (url, dest, digest) in enumerate(wanted):
         download(url, ROOT / dest, digest)
         progress((i + 1) / total)
     dlls = [ROOT / "thirdparty" / "ffmpeg" / "bin" / name for name in FFMPEG_DLLS]
@@ -418,7 +433,7 @@ def fetch_thirdparty():
                 with z.open(source) as src, open(dxc / name, "wb") as out:
                     shutil.copyfileobj(src, out)
     progress(1.0)
-    say("FFmpeg, DXC, DLSS e FSR ok")
+    say("FFmpeg, DXC, FSR" + (" e DLSS" if dlss else "") + " ok")
 
 
 def recompile():
@@ -451,12 +466,25 @@ def recompile():
     say(f"recompilado: {len(list(GENERATED.glob('*.cpp')))} arquivos em generated/ppc")
 
 
+def dlss_files():
+    """Which DLSS files CMake would use now: the SDK, the prebuilt DLL, nvngx_dlss.dll."""
+    dlss = ROOT / "thirdparty" / "dlss"
+    return " ".join(name for name, path in (("sdk", dlss / "lib" / "nvsdk_ngx_s.lib"), ("prebuilt", dlss / "bin" / "CrashDlss.dll"),
+                                              ("nvngx", dlss / "bin" / "nvngx_dlss.dll")) if path.is_file()) or "none"
+
+
 def compile_project(jobs=None):
     env = build_env()
     build = ROOT / "build"
     configure = buildenv.configure_build(ROOT, build)
     if configure:
         run_all(configure, env=env)
+    # CMake looks for the DLSS files when it configures: configure again when they changed (a new
+    # GPU, a reinstall with or without DLSS), or the build would copy a DLL that is gone.
+    stamp = build / ".crashrecomp_dlss"
+    if stamp.is_file() and stamp.read_text().strip() != dlss_files() and not configure:
+        run_all(["cmake", "-S", ROOT, "-B", build], env=env)
+    stamp.write_text(dlss_files() + "\n")
     args = ["cmake", "--build", build] + (["--parallel", str(jobs)] if jobs else [])
     for line in run(args, env=env):
         # Ninja: "[123/456] Building CXX ..."
@@ -578,6 +606,7 @@ def main():
                    help="bundled = a pasta toolchain\\ (padrão); msvc = Visual Studio + clang-cl instalados "
                         "(avançado; fica salvo em config/local.toml)")
     p.add_argument("--check-packages", action="store_true", help="só confere os pacotes Python (tools/requirements.txt)")
+    p.add_argument("--no-dlss", action="store_true", help="sem DLSS (PC sem placa NVIDIA RTX): não baixa nem instala os arquivos dele")
     args = p.parse_args()
     if args.check_packages:
         return 1 if check_python_packages() else 0
@@ -618,7 +647,7 @@ def main():
         step(2)
         setup_xenonrecomp()
         step(3)
-        fetch_thirdparty()
+        fetch_thirdparty(dlss=not args.no_dlss)
         step(4, "default.xex -> C++")
         recompile()
         step(5, "pode levar alguns minutos")

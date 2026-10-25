@@ -59,11 +59,22 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
   presented black every other frame), hence regular sets for passes; the SDK 1.4.363 validation layer
   crashes in `vkCmdPushDescriptorSetKHR` when the push set is not set 0; llvm-mingw needs the DXC
   interface GUIDs declared (`__CRT_UUID_DECL`).
-- Upscalers (`upscaler.cpp`) run on the renderer's device: DLSS through NGX's Vulkan API (same static
-  `nvsdk_ngx_s.lib`), FSR 3.1.4 through `amd_fidelityfx_vk.dll` (FidelityFX SDK 1.1.4; SDK 2.x is DX12
+- Upscalers (`upscaler.cpp`) run on the renderer's device: DLSS through NGX's Vulkan API inside
+  `CrashDlss.dll` (`gpu/dlss_module/crash_dlss.h`: C interface, `CRASH_DLSS_API_VERSION`; loaded at run time,
+  the exe has no NGX code), FSR 3.1.4 through `amd_fidelityfx_vk.dll` (FidelityFX SDK 1.1.4; SDK 2.x is DX12
   only). The device enables the extensions they ask for (`rhi::DeviceInfo`): NGX's list, and the ones
   the FidelityFX DLL looks up by extension name (`vkGetBufferMemoryRequirements2KHR`,
   `vkSetDebugUtilsObjectNameEXT`: a null call otherwise).
+- Availability (v1.05): DLSS is probed only on an NVIDIA GPU (vendor 0x10DE; `CRASH_GPU_VENDOR=amd|intel|nvidia|<hex>`
+  pretends another one, `settings/gpu_vendor.h`), with both DLLs present, and NGX's
+  `SuperSampling_Available` set. FSR only when the device really enabled `FSR_DEVICE_EXTENSIONS`
+  (`rhi::Device::DeviceExtensionEnabled`). `upscaler::Init`: a settings.toml asking for DLSS where it can't run
+  gets FSR (else off) with a log line; `xenos_renderer` puts that into the in-memory values
+  (`settings::Set` + `RendererApplied`), the file only changes if the player saves. The options
+  (`options.cpp`): `Change(item, values, dir, context)` skips the unavailable upscalers, `Unavailable()` greys
+  "DLSS (REQUIRES NVIDIA RTX)" in both screens. The launcher asks NGX itself in a child process
+  (`CrashLauncher.exe --probe-dlss <dir> <file>`, `launcher/gpu_probe.inc`, ~4 s on a thread; a driver crash
+  there can't take the window).
 - Upload ring (`rhi_ring.h`): a draw's uploads come before the draw is recorded, so `DrawImpl` (and
   `DrawPass`) hold them (`Device::HoldUploads`): a submission in between (ring or descriptor pool full)
   is marked where the hold began. Without it those uploads were freed and reused under the pending draw
@@ -90,7 +101,7 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
 
 ## PC graphics options (`[graphics]`, `gpu/graphics_options.cpp`)
 
-- DLSS 3.x (static `nvsdk_ngx_s.lib`) and FSR 3.1 through the FidelityFX API, upscaling only; SMAA; mipmaps +
+- DLSS (static `nvsdk_ngx_s.lib` in `CrashDlss.dll`) and FSR 3.1 through the FidelityFX API, upscaling only; SMAA; mipmaps +
   SampleGrad (derivatives of the pristine PS input registers taken in `main()`); motion blur / DOF / shadow
   softness through HLSL patches fed by root constants b3.
 - **Scene vs output**: scene = render targets first used with 2x/4x MSAA (`g_sceneScale`); 1x targets are

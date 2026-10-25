@@ -3393,6 +3393,15 @@ float4 main(float4 position : SV_Position) : SV_Target
 
         // Temporal upscaler: probed on this device; the scene scale depends on it.
         upscaler::Init(g_rhi, settings::AtStartup().upscaler, (vfs::UserDataDir() / "ngx").wstring());
+        if (upscaler::Active() != settings::AtStartup().upscaler)
+        {
+            // It fell back (DLSS asked for where it can't run): the settings screen shows the one in
+            // use, and settings.toml changes only if the player saves the options.
+            settings::Values values = settings::Get();
+            values.upscaler = upscaler::Active();
+            settings::Set(values);
+            settings::RendererApplied(settings::AtStartup().renderHeight, upscaler::Active(), settings::AtStartup().upscalerQuality);
+        }
         g_temporal.active = upscaler::Active() != settings::Upscaler::Off;
         g_sceneScale = g_temporal.active ? settings::SceneScale() : g_renderScale;
         // HD textures need the guest texel size in the shaders too (xe_tex_size_scale).

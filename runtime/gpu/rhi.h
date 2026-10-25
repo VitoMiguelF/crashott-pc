@@ -353,6 +353,9 @@ namespace gpu::rhi
         // view (VkImageView), its transition to `state`, and InvalidateState after recording
         // native work (the backend sets its descriptor heaps, pipelines and targets again).
         virtual NativeHandles Native() = 0;
+        // Whether the device was created with that extension (DeviceInfo::deviceExtensions the
+        // driver lacks are left out).
+        virtual bool DeviceExtensionEnabled(const char* name) const = 0;
         virtual void* NativeTexture(Texture* texture) = 0;
         virtual void* NativeView(Texture* texture) = 0;
         virtual void PrepareNative(Texture* texture, NativeState state) = 0;

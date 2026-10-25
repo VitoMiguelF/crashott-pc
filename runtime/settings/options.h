@@ -65,7 +65,7 @@ namespace settings::options
         bool pt = false;               // Brazilian Portuguese (the language chosen, Portuguese())
         bool launcher = false;         // the launcher: everything applies when the game starts
         bool canRestart = true;        // the game restarts by itself for the options it reads at boot
-        bool dlss = true, fsr = true;  // the upscalers can run here
+        bool dlss = true, fsr = true;  // the upscalers can run here (DLSS: an NVIDIA RTX GPU with DLSS installed)
         bool haveSubtitles = true;     // there are subtitles for the chosen language
     };
     bool Portuguese(const Values& values);
@@ -79,8 +79,12 @@ namespace settings::options
     // Sliders: the value in `values`, its minimum, maximum and step; nullptr for the other rows.
     int* Percent(Item item, Values& values, int* minimum = nullptr, int* maximum = nullptr, int* step = nullptr);
     // LEFT (-1) / RIGHT (+1). Player 1 / 2 cycle AUTO and controllers 1-4 (the game lists the
-    // connected ones itself). False for the rows that are not values (headers, SETUP, bindings).
-    bool Change(Item item, Values& values, int direction);
+    // connected ones itself). DLSS / FSR skips the upscalers `context` says can't run here. False
+    // for the rows that are not values (headers, SETUP, bindings).
+    bool Change(Item item, Values& values, int direction, const Context& context = Context());
+    // The row's value can't run on this PC (DLSS without an NVIDIA RTX GPU, FSR on a GPU without
+    // what it needs): the screens draw it greyed out ("DLSS (REQUIRES NVIDIA RTX)").
+    bool Unavailable(Item item, const Values& values, const Context& context);
     // The game reads it at boot (the SETTINGS screen offers a restart; the launcher starts the game).
     bool RestartOnly(Item item);
 

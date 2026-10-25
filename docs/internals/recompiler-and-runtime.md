@@ -13,8 +13,9 @@ Full write-ups: `runtime/NOTES.md` steps 1-17, GUIA "Funções engolidas", "Lend
   winpthreads DLLs), `_WIN32_WINNT=0x0A00` (mingw-w64 defaults to older APIs: `SetProcessInformation`,
   `GetDpiForSystem`...), `xaudio2_9`, `-gcodeview -Wl,--pdb=` + `-Wl,--Xlink=/map:` (the MSVC-style map
   `tools/perf` parses; names are Itanium-mangled, `profile.py` demangles both).
-- **DLSS**: NVIDIA's static `nvsdk_ngx_s.lib` (MSVC, /MT) links unchanged under lld in mingw mode with
-  `/nodefaultlib:LIBCMT,OLDNAMES,libcpmt` and `runtime/gpu/ngx_msvc_compat.cpp`, which supplies the 12
+- **DLSS**: NVIDIA's static `nvsdk_ngx_s.lib` (MSVC, /MT) links unchanged under lld in mingw mode into
+  `CrashDlss.dll` (not the exe since v1.05) with `/nodefaultlib:LIBCMT,OLDNAMES,libcpmt` and
+  `runtime/gpu/dlss_module/ngx_msvc_compat.cpp`, which supplies the 12
   missing MSVC symbols (`_Init_thread_*`, `__security_cookie`, `__GSHandlerCheck[_EH]`, `_fltused`,
   MSVC-mangled `operator new/delete`, `std::_Xbad_alloc/_Xlength_error`). `__CxxFrameHandler3` and
   `_CxxThrowException` come from ucrtbase (`api-ms-win-crt-private`). No Streamline needed.
