@@ -14,7 +14,7 @@ Termos usados em `texts\*.txt` para manter a tradução consistente. Ao traduzir
 
 ## Nomes que não mudam
 
-Crash, Coco, Aku Aku, Uka Uka, (Dr.) Neo Cortex, Nina (Cortex), N. Gin, Tiny, Crunch, Crash of the Titans, Mojo (e Sala de Mojo), Wumpa (frutas Wumpa, Ilha Wumpa), os titãs e inimigos com nome próprio: Ratcicle, Spike, Goar, Snipe, Stench, Sludge, Shellephant, Scorporilla (feminino: **a** Scorporilla), Yuktopus, Magmadon, Battler, Rhinoroller, EE-lectric, Arachnina (feminino), Doom Monkey, Koo-Ala, Ratnician, Bratgirl / Brat Girl, Doomraker, Freejack (máscaras Freejack). Nomes de desenvolvimento das cópias antigas (Grizzly, Parafox, Shurtle, Chiratta, Stinky, Roller, Sledgehog, Vampurricane) também ficam.
+Crash, Coco, Aku Aku, Uka Uka, (Dr.) Neo Cortex, Nina (Cortex), N. Gin, Tiny, Crunch, Crash of the Titans, Mojo (e Sala de Mojo), Wumpa (frutas Wumpa, Ilha Wumpa), Doomraker (título de episódio), Freejack (máscaras Freejack). Os titãs e os capangas têm nome em português (tabelas abaixo), o mesmo das legendas. Nomes de desenvolvimento das cópias antigas (Grizzly, Parafox, Shurtle, Chiratta, Stinky, Roller, Sledgehog, Vampurricane) também ficam.
 
 ## Jogo
 
@@ -27,7 +27,32 @@ Crash, Coco, Aku Aku, Uka Uka, (Dr.) Neo Cortex, Nina (Cortex), N. Gin, Tiny, Cr
 | minions, fodder | capangas |
 | captain | capitão (pl. capitães) |
 | Voodoo Bunny | coelho vodu |
+| Doom Monkey | macaco destrutivo (pl. macacos destrutivos) |
+| Koo-Ala | cuco-ala |
+| Ratnician | ratecnico |
+| Brat Girl / Bratgirl | pirralha |
 | Mojo room | Sala de Mojo |
+
+## Titãs
+
+Nomes escolhidos em 2026-10-25, juntando duas palavras como no inglês. Gênero: o artigo segue o nome em português (**a** Paraposa, **a** Magmatuga, **a** Eletrenguia, **a** Escorporila, **a** Aracnina; os outros masculinos).
+
+| Inglês | Português | De onde vem |
+|---|---|---|
+| Ratcicle | Picolato | picolé + rato |
+| Spike | Espeto | espeto, espinho |
+| Goar | Chifravali | chifre + javali |
+| Snipe | Paraposa (a) | papagaio + raposa |
+| Stench | Catinguento | catinga |
+| Sludge | Melecão (pl. melecões) | meleca |
+| Shellephant | Cascofante | casco + elefante |
+| Scorporilla | Escorporila (a) | escorpião + gorila |
+| Yuktopus | Uctopos | eca (yuck) + polvo (octopus) |
+| Magmadon | Magmatuga (a) | magma + tartaruga |
+| Battler | Batecego | bater + morcego |
+| Rhinoroller | Rinorrolo | rinoceronte + rolo |
+| EE-lectric | Eletrenguia (a) | elétrica + enguia |
+| Arachnina | Aracnina (a) | aracnídeo + Nina |
 | green mojo | mojo verde |
 | episode | episódio |
 | level | fase |
@@ -61,7 +86,7 @@ Crash, Coco, Aku Aku, Uka Uka, (Dr.) Neo Cortex, Nina (Cortex), N. Gin, Tiny, Cr
 | block / dodge | bloqueio, bloquear / esquiva, esquivar |
 | jump / air jump / back flip / wall jump | pulo, pular / pulo no ar / mortal para trás / pulo na parede |
 | spin attack / spin hover | ataque giratório / giro planador |
-| slide / Aku Air Grind | deslizar, deslize / deslize aéreo do Aku |
+| slide / Aku Air Grind (air grind) | deslizar, deslize / Deslize do Aku |
 | sprint | arrancada |
 | free kick | chute livre |
 | precision aiming | mira de precisão |
@@ -106,4 +131,6 @@ Crash, Coco, Aku Aku, Uka Uka, (Dr.) Neo Cortex, Nina (Cortex), N. Gin, Tiny, Cr
 
 ## Títulos de episódios e salas de mojo
 
-Os títulos são trocadilhos; a tradução procura o mesmo efeito: A Jornada de um Zero, Choque e Espanto, Um Sludge Longe Demais, A Guerra dos Redemoinhos, O Templo do Zum, Horror em Calamityville, Armas de Construção em Massa, A Nevasca de Garras, Um Novo Pulo, Provas na Madeira, A Pena Esmeralda, Uma História de Envelhecimento, Revingança 2: O Revingancídio, Edumacação pra Adutos, A Vida É uma Praia, Operação Homem ao Mar, Não Coma a Estrada de Tijolos Amarelos, Minority Rapport (mantido), Doomraker (mantido); salas de mojo: Oito Já É Demais, Bomba-Relógio, Silêncio nos Canos!, Perigo Debaixo dos Pés, Piscando e Desejando, Tenho Monstro, Vou Pisotear, Encontro Chocante, Baderna Geral!, Bárbaros no Portão!, Mais Mojo, Mais Mojo, Como Peixe no Cesto, Um Chute no Traseiro!, Rolando Solto!, Hábitos Perigosos!, Loucura de Mojo!, Snipe Escandaloso!, Difícil de Aguentar!, Farra de Freejack!, Cheiro de Espírito Verde, O Desafio dos Beagles!
+Os títulos são trocadilhos, quase sempre com nomes de filmes; a tradução procura o mesmo efeito com a referência do filme (não precisa ter o nome do titã): A Jornada de um Zero, Choque e Espanto, Uma Ponta Longe Demais, A Guerra dos Redemoinhos, O Templo do Zum, Horror em Calamityville, Armas de Construção em Massa, A Nevasca de Garras, Uma Nova Pulância, Provas na Madeira, A Pena Esmeralda, Uma História de Amadure-Ser, Revingança 2: O Revingancídio, Edumacação pra Adutos, A Vida É uma Praia, Operação Homem ao Mar, Não Coma a Estrada de Tijolos Amarelos, Minority Report-agem, Doomraker (mantido); salas de mojo: Oito Já É Demais, Bomba-Relógio, Silêncio nos Canos!, Perigo Debaixo dos Pés, Piscando e Desejando, Tenho Monstro, Vou Pisotear, Encontro Chocante, Baderna Geral!, Bárbaros no Portão!, Mais Mojo, Mais Mojo, Como Peixe no Cesto, Um Chute no Traseiro!, Rolando Solto!, Hábitos Perigosos!, Loucura de Mojo!, Paraposa Escandalosa!, Urro de Engolir!, Farra das Máscaras!, Cheiro de Espírito Verde, O Desafio dos Beagles!
+
+Outros nomes com piada (escolhidos em 2026-10-25): Surpresa Afiada (Spike's Surprise), Modo Miraposa (Sniper Mode), Combo Batecego (Bat Slash Combo), Combo Presa-Tsc (Tisk Tusk Combo), Déjà Vu Óptico (Eye Beam Here Before), Palmada no Macaco Destrutivo (Spank the Monkey), visual Raiz (Old Skool), Saída Giratória (Spin Dismount), Robotomia (Robotimize), Boliche do Trovão (Thunderbowl), Congela, Malandro! (Freeze Punks; sem os dois-pontos depois do "!"), Meleca Louca (Gooey Louie).

@@ -26,7 +26,7 @@
 0x00001ee4 = CONTINUAR SEM SALVAR
 0x00002451 = ±
 0x00003081 = Conecte o Nunchuk ao Wii Remote (J1).
-0x00003153 = UM SLUDGE LONGE DEMAIS
+0x00003153 = UMA PONTA LONGE DEMAIS
 0x000034e2 = Não foi possível ler o Disco de Jogo. Insira o Disco de Jogo de Crash of the Titans.
 0x000037b6 = A bateria está acabando.
 0x00003970 = Deseja começar a próxima fase?
@@ -56,8 +56,8 @@
 0x000072a1 = Deseja jogar esta fase de novo?
 0x00007364 = O perfil ativo mudou.  Você voltará ao Menu Principal.
 0x00007673 = A NEVASCA DE GARRAS
-0x00007aa5 = UM NOVO PULO
-0x00007f4a = MINORITY RAPPORT
+0x00007aa5 = UMA NOVA PULÂNCIA
+0x00007f4a = MINORITY REPORT-AGEM
 0x000083af = ´
 0x00008574 = CONTINUAR
 0x00008c45 = Insira o Disco de Jogo de Crash of the Titans.
@@ -76,7 +76,7 @@
 0x0000b1c2 = ¶
 0x0000b9e2 =  
 0x0000bcc2 = CONTINUAR
-0x0000be95 = UMA HISTÓRIA DE ENVELHECIMENTO
+0x0000be95 = UMA HISTÓRIA DE AMADURE-SER
 0x0000bfc8 = Continuar sem salvar
 0x0000c33a = REVINGANÇA 2: O REVINGANCÍDIO
 0x0000c3d9 = BLOQUEADO
