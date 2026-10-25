@@ -50,6 +50,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -147,8 +148,9 @@ def sha256(path, chunk=1 << 22):
     return h.hexdigest()
 
 
-def run(args, cwd=ROOT, env=None, log_prefix=""):
-    """Runs a command, streaming its output; fails the setup on a non-zero exit."""
+def run(args, cwd=ROOT, env=None, log_prefix="", hide=None):
+    """Runs a command, streaming its output (but the lines `hide` matches); fails the setup on a
+    non-zero exit."""
     say(f"> {' '.join(str(a) for a in args)}")
     args = [str(a) for a in args]
     if env is not None and not Path(args[0]).is_absolute():
@@ -159,7 +161,8 @@ def run(args, cwd=ROOT, env=None, log_prefix=""):
     for line in proc.stdout:
         line = line.rstrip()
         if line:
-            say(log_prefix + line)
+            if not (hide and hide(line)):
+                say(log_prefix + line)
             yield line
     if proc.wait() != 0:
         fail(f"o comando falhou (código {proc.returncode}): {Path(str(args[0])).name}")
@@ -450,8 +453,9 @@ def recompile():
         return
     env = build_env()
     build = XENON / "build"
-    # llvm-mingw: XenonRecomp's fmt uses malloc without <cstdlib> under libc++; -static: no toolchain DLLs.
-    extra = ["-DCMAKE_CXX_FLAGS=-include cstdlib", "-DCMAKE_EXE_LINKER_FLAGS=-static"] \
+    # llvm-mingw: XenonRecomp's fmt uses malloc without <cstdlib> under libc++; -static: no toolchain DLLs;
+    # -Wno-unused-result: its recompiler.cpp drops a [[nodiscard]] value (harmless, but it shows in the installer).
+    extra = ["-DCMAKE_CXX_FLAGS=-include cstdlib -Wno-unused-result", "-DCMAKE_EXE_LINKER_FLAGS=-static"] \
         if buildenv.toolchain_kind() == "bundled" else []
     configure = buildenv.configure_build(XENON, build, extra)
     if configure:
@@ -461,9 +465,13 @@ def recompile():
         shutil.rmtree(GENERATED)
     GENERATED.mkdir(parents=True)
     recomp = build / "XenonRecomp" / "XenonRecomp.exe"
-    for line in run([recomp, ROOT / "config" / "Crash.toml", XENON / "XenonUtils" / "ppc_context.h"], env=env):
+    # This default.xex has no __savevmx_* / __restvmx_* helpers (config/Crash.toml): XenonRecomp reports
+    # their missing addresses as "ERROR", which is expected; shown as a note instead.
+    no_vmx = re.compile(r"ERROR: __(save|rest)vmx_\d+ address is unspecified")
+    for line in run([recomp, ROOT / "config" / "Crash.toml", XENON / "XenonUtils" / "ppc_context.h"], env=env, hide=no_vmx.fullmatch):
         if line.startswith("[phase] analysed"):
             progress(0.3)
+    say("nota: este default.xex não tem as funções __savevmx/__restvmx (normal, veja config/Crash.toml)")
     stamp.write_text(inputs.hexdigest())
     say(f"recompilado: {len(list(GENERATED.glob('*.cpp')))} arquivos em generated/ppc")
 

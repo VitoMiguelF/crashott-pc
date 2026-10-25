@@ -20,7 +20,11 @@
 #include <windows.h>
 #include <unknwn.h>
 #include <objidl.h>  // IStream (WIN32_LEAN_AND_MEAN leaves the COM headers out)
+// dxcapi.h's __declspec(uuid(...)) is unknown to mingw's clang (the GUIDs are declared below).
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-attributes"
 #include <dxcapi.h>
+#pragma clang diagnostic pop
 
 #ifdef __MINGW32__
 // mingw's __uuidof needs the GUIDs declared (dxcapi.h only has __declspec(uuid), which MSVC-ABI compilers read).

@@ -290,6 +290,7 @@ namespace gpu::window
                 input::StopRecording();  // a recording in progress keeps everything up to here
                 Log("[gpu] window closed, exiting");
                 ExitProcess(0);
+                return 0;  // not reached (mingw's ExitProcess isn't marked noreturn)
             default:
                 return DefWindowProcW(hwnd, message, wParam, lParam);
             }

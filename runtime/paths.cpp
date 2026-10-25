@@ -146,7 +146,7 @@ namespace paths
             std::string saved = settings::ReadGameFolder(g_userData);
             if (!saved.empty())
             {
-                g_game = fs::u8path(saved).make_preferred();
+                g_game = fs::path(std::u8string(saved.begin(), saved.end())).make_preferred();  // UTF-8
                 gameSource = "settings.toml [paths] game";
                 if (!IsGameFolder(g_game))
                 {
