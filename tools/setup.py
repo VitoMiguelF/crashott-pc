@@ -78,8 +78,9 @@ XEX_SHA256 = "e76824b242c6c628738c373bdf052d456945d8e343eb934100617fd423e86373"
 GAME_FILES = ["default.xex", "default.rcf", "english.rcf", "sound1.rcf", "sound2.rcf"]
 
 # The release that holds the data assets (subtitles, HD AI Remaster) and their SHA256SUMS.txt.
-# They haven't changed since v1.0: later releases only publish the source + installer zip (v1.01 to v1.04)
-# or the single-file installer (v1.05 on), and setup keeps downloading the data from v1.0. Bump it only when the data assets are rebuilt.
+# They haven't changed since v1.0: later releases only publish the source + installer zip (v1.01 to
+# v1.04) or the single-file installer (v1.05 on), and setup keeps downloading the data from v1.0.
+# Bump it only when the data assets are rebuilt.
 RELEASE_TAG = "v1.0"
 RELEASE_URL = f"https://github.com/VitoMiguelF/crashott-pc/releases/download/{RELEASE_TAG}/"
 RELEASE_SUMS = "SHA256SUMS.txt"
@@ -497,16 +498,25 @@ def compile_project(jobs=None):
                 pass
 
 
-def release_sums(assets_dir):
-    """{name: sha256} of the release (SHA256SUMS.txt from --assets-dir or the GitHub release)."""
-    local = Path(assets_dir) / RELEASE_SUMS if assets_dir else None
-    path = local if local and local.is_file() else download(RELEASE_URL + RELEASE_SUMS, ROOT / "build" / "downloads" / RELEASE_SUMS)
+def read_sums(path):
     sums = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             digest, name = line.split(maxsplit=1)
             sums[name.lstrip("*").strip()] = digest.lower()
     return sums
+
+
+def release_sums(assets_dir, subtitles, remaster):
+    """{name: sha256} of the data release: SHA256SUMS.txt from --assets-dir when it lists the assets
+    wanted, else the GitHub release's. The installer passes its own folder as --assets-dir, and a
+    newer release's SHA256SUMS.txt saved next to CrashSetup-<tag>.exe lists only that exe."""
+    local = Path(assets_dir) / RELEASE_SUMS if assets_dir else None
+    if local and local.is_file():
+        sums = read_sums(local)
+        if (not subtitles or SUBTITLES_ASSET in sums) and (not remaster or any(n.startswith(REMASTER_PREFIX) for n in sums)):
+            return sums
+    return read_sums(download(RELEASE_URL + RELEASE_SUMS, ROOT / "build" / "downloads" / RELEASE_SUMS))
 
 
 def fetch_asset(name, sums, assets_dir):
@@ -541,7 +551,7 @@ def install_extras(subtitles, remaster, assets_dir):
     if not (subtitles or remaster):
         say("sem extras (legendas e HD AI Remaster são opcionais)")
         return
-    sums = release_sums(assets_dir)
+    sums = release_sums(assets_dir, subtitles, remaster)
     names = ([SUBTITLES_ASSET] if subtitles else []) + \
             (sorted(n for n in sums if n.startswith(REMASTER_PREFIX)) if remaster else [])
     for i, name in enumerate(names):
