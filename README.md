@@ -6,8 +6,11 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 
 **[Português do Brasil abaixo](#português-do-brasil)**
 
-> ### v1.05: ultrawide, no shader stutter, and updates from the launcher
+> ### v1.05: a single .exe, ultrawide, no shader stutter, and updates from the launcher
 >
+> - **A single `.exe`**: download only `CrashSetup-v1.05.exe` and run it. No zip to extract, nothing else to
+>   install, offline; it asks where to install, makes the shortcuts and installs DLSS only on a GPU that
+>   runs it.
 > - **Ultrawide (21:9, 32:9) and 16:10 with Hor+**: the same vertical view, more of the world on both
 >   sides, nothing stretched or cropped. The HUD and menus stay at 16:9 in the middle (or the HUD
 >   corners at the screen's edges), menu backgrounds fill the screen, and videos play at 16:9 between
@@ -18,9 +21,8 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 >   thread, and the pipelines of earlier sessions are rebuilt at start: **no hitches** in the village or
 >   level 3, cold cache or not. GRAPHICS > SHADER COMPILATION (SYNCHRONOUS brings back the old way).
 > - **UPDATE in the launcher**: when a new release is out, the launcher shows it; one click downloads
->   only the new installer, checks it and installs over the same folder, keeping saves, options and mods.
-> - **One-file installer**: `CrashSetup-v1.05.exe`, offline, choose where to install, shortcuts, and
->   DLSS installed only on a GPU that runs it.
+>   only the new installer `.exe`, checks it and installs over the same folder, keeping saves, options and
+>   mods.
 >
 > ![The same moment at 16:9 and at 21:9](docs/screenshots/ultrawide.jpg)
 >
@@ -245,8 +247,10 @@ código PowerPC do jogo para x86-64 com o [XenonRecomp](https://github.com/hedge
 um runtime que faz o papel do Xbox 360 (gráficos, áudio, controles, arquivos, saves) e várias melhorias
 de PC.
 
-> ### v1.05: ultrawide, sem engasgo de shader e atualização pelo launcher
+> ### v1.05: um .exe só, ultrawide, sem engasgo de shader e atualização pelo launcher
 >
+> - **Um `.exe` só**: baixe apenas o `CrashSetup-v1.05.exe` e abra. Sem zip para descompactar, nada mais para
+>   instalar, offline; ele pergunta onde instalar, cria os atalhos e só instala o DLSS numa placa que o roda.
 > - **Ultrawide (21:9, 32:9) e 16:10 com Hor+**: a mesma visão na vertical e mais do mundo dos dois
 >   lados, sem esticar nem cortar. O HUD e os menus ficam em 16:9 no meio (ou os cantos do HUD nas bordas
 >   da tela), os fundos dos menus preenchem a tela e os vídeos passam em 16:9 entre faixas pretas.
@@ -257,9 +261,7 @@ de PC.
 >   pipelines das sessões anteriores são refeitas na abertura: **nenhum engasgo** na vila nem na fase 3,
 >   com o cache frio ou não. GRÁFICOS > COMPILAÇÃO DE SHADERS (SINCRONIZADA volta ao jeito antigo).
 > - **ATUALIZAR no launcher**: quando sai uma release nova, o launcher avisa; um clique baixa só o
->   instalador novo, confere e instala por cima na mesma pasta, mantendo saves, opções e mods.
-> - **Instalador num arquivo só**: `CrashSetup-v1.05.exe`, offline, com a escolha de onde instalar,
->   atalhos, e o DLSS instalado só numa placa que o roda.
+>   `.exe` do instalador novo, confere e instala por cima na mesma pasta, mantendo saves, opções e mods.
 >
 > ![O mesmo momento em 16:9 e em 21:9](docs/screenshots/ultrawide.jpg)
 >
