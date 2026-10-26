@@ -59,6 +59,30 @@ lifecycle.
 - The NEON `HashContent` gives the same value as the SSE2 one: 30 of 30 sizes and seeds, run on
   x86 through SIMDe's NEON emulation.
 
+### First device: Galaxy S20 FE 5G (2026-10-26)
+
+SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 8 cores.
+- **What works:** the M2 APK installs (`adb install`), SDL starts `SDL_main` from `libmain.so`, and
+  logcat shows our log. The Vulkan instance, surface and swapchain work: 4 images, 2168x1008 then
+  2400x1080 once immersive, `currentTransform` = ROTATE_90, so pre-rotation matters. The screen
+  cleared orange: 361 frames in 3 s, a **120 Hz** panel.
+- **The stock driver is too old for the renderer.** Samsung's Qualcomm driver is **Vulkan
+  1.1.128** (`adb shell cmd gpu vkjson`).
+  - It has geometry shaders, ETC2/ASTC, depthClamp, anisotropy, independentBlend and
+    `VK_KHR_push_descriptor`.
+  - It has **no** BC textures, and no dynamic rendering, synchronization2, timeline semaphores,
+    demote, extended dynamic state or GPL, not even as extensions.
+  - The probe's first version read no features on a pre-1.3 driver (fixed: the 1.0 features
+    always, the 1.2/1.3 structures only where they exist).
+- **Ways forward for Adreno 6xx with old drivers:**
+  - Mesa's **Turnip** driver loaded by the app with **libadrenotools** (BSD-2; what the Switch
+    emulators do). Turnip gives Adreno 650 Vulkan 1.3 with the extensions above, and BC textures,
+    which the hardware has and Qualcomm's driver hides. Needs a Turnip build, from the Mesa source
+    or a published build: a download to approve.
+  - A Vulkan 1.1 path in the renderer (render passes, binary semaphores, static state). L.
+  - Newer phones (Adreno 7xx/8xx on Android 14+) ship 1.3 drivers: the S25 Ultra is the better
+    first boot target.
+
 ### The Android build (M1, M2)
 
 `python tools/android_build.py` does the whole build in ~40 s here (16 threads; 446 objects,

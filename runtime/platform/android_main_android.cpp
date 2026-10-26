@@ -308,11 +308,21 @@ namespace
         {
             VkPhysicalDeviceProperties p{};
             properties(physical, &p);
+            // The 1.0 features always; the 1.2 / 1.3 structures only where the device has them
+            // (a 1.1 driver, like the S20 FE's Adreno 650, must not see them in the chain).
             VkPhysicalDeviceVulkan13Features f13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-            VkPhysicalDeviceVulkan12Features f12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &f13 };
-            VkPhysicalDeviceFeatures2 f{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f12 };
-            if (p.apiVersion >= VK_API_VERSION_1_3)
+            VkPhysicalDeviceVulkan12Features f12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+            VkPhysicalDeviceFeatures2 f{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+            if (p.apiVersion >= VK_API_VERSION_1_2)
+            {
+                f.pNext = &f12;
+                if (p.apiVersion >= VK_API_VERSION_1_3)
+                    f12.pNext = &f13;
+            }
+            if (p.apiVersion >= VK_API_VERSION_1_1)
                 features2(physical, &f);
+            else
+                vk.Get<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(physical, &f.features);
             uint32_t extensionTotal = 0;
             deviceExtensions(physical, nullptr, &extensionTotal, nullptr);
             std::vector<VkExtensionProperties> ext(extensionTotal);
@@ -339,6 +349,11 @@ namespace
                 int(HasExtension(ext, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)), int(HasExtension(ext, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME)),
                 int(HasExtension(ext, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME)), int(HasExtension(ext, VK_EXT_DEPTH_BIAS_CONTROL_EXTENSION_NAME)),
                 int(HasExtension(ext, VK_KHR_MAINTENANCE_5_EXTENSION_NAME)), extensionTotal, p.limits.maxImageDimension2D);
+            Log("[android]   as extensions (pre-1.3 drivers): dynamic_rendering %d, synchronization2 %d, timeline_semaphore %d, "
+                "demote_to_helper %d, extended_dynamic_state %d/%d",
+                int(HasExtension(ext, "VK_KHR_dynamic_rendering")), int(HasExtension(ext, "VK_KHR_synchronization2")),
+                int(HasExtension(ext, "VK_KHR_timeline_semaphore")), int(HasExtension(ext, "VK_EXT_shader_demote_to_helper_invocation")),
+                int(HasExtension(ext, "VK_EXT_extended_dynamic_state")), int(HasExtension(ext, "VK_EXT_extended_dynamic_state2")));
             std::string missing;
             if (p.apiVersion < VK_API_VERSION_1_3)
                 missing += " Vulkan1.3";
