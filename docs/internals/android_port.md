@@ -308,7 +308,11 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     `libdxcompiler.so` with the NDK. They run with few jobs at a low priority (`CRASH_BUILD_JOBS`):
     at full speed the clang build made the PC unusable. clang (80 MB stripped) and lld build: PIE
     AArch64 programs that need only Android's libc / libm / libdl. DXC's table generators can't be
-    built with MinGW (its Windows code expects MSVC) and need MSVC with ATL (`atlbase.h`).
+    built with MinGW (its Windows code expects MSVC) and need MSVC with ATL (`atlbase.h`); with a
+    translated MSVC, CMake's rc.exe wrapper breaks on the localized "Note: including file:" prefix
+    (`CMAKE_NINJA_CMCLDEPS_RC=OFF`). `libdxcompiler.so` builds (446 MB, 26 MB stripped; libc / libm
+    / libdl only, `DxcCreateInstance` exported, 16 KB pages) and the `apk` step packs it, so a
+    fresh install compiles its own shaders (not yet seen on a device: the S20 FE was locked).
   - **Next for the single APK:** XenonRecomp + clang / lld on the phone (an LLVM built for Android arm64) and DXC for Android,
     so the APK carries no game code (the game's code then lives in the app's internal storage:
     `dlopen` is refused on the external one).

@@ -329,6 +329,13 @@ def apk(debuggable=False):
             for library in FFMPEG_LIBS:
                 z.write(library, f"lib/arm64-v8a/{library.name}", compress_type=zipfile.ZIP_DEFLATED)
             say("with FFmpeg (libavcodec.so, libavutil.so): audio")
+        if DXC_LIB.is_file():
+            # The shaders compiled on the phone (rhi_vulkan_shaders.cpp: dlopen by name, found in
+            # the app's library folder); 446 MB with its debug information, 26 MB without.
+            dxc_stripped = OUT / "libdxcompiler.so"
+            run([strip, "--strip-all", "-o", dxc_stripped, DXC_LIB])
+            z.write(dxc_stripped, "lib/arm64-v8a/libdxcompiler.so", compress_type=zipfile.ZIP_DEFLATED)
+            say("with DXC (libdxcompiler.so): shaders compiled on the phone")
 
     # 16 KB alignment of the stored .so files (-P 16), 4 bytes for the rest; then the signature.
     aligned = OUT / "aligned.apk"
@@ -439,7 +446,9 @@ def dxc():
     host_env, host = env, None
     if WINDOWS:
         host_env = msvc_env(env) or sys.exit("dxc: needs Visual Studio's C++ tools on Windows (for its table generators)")
-        host = ["-DCMAKE_C_COMPILER=cl", "-DCMAKE_CXX_COMPILER=cl"]
+        # No include tracking for rc.exe: CMake's wrapper passes it cl's "Note: including file:"
+        # prefix, which a translated MSVC ("Observação: ...") turns into a broken command line.
+        host = ["-DCMAKE_C_COMPILER=cl", "-DCMAKE_CXX_COMPILER=cl", "-DCMAKE_NINJA_CMCLDEPS_RC=OFF"]
     if not (DXC_HOST_BUILD / "build.ninja").is_file():
         say("configuring DXC's table generators (this machine)")
         run(["cmake", *cache, "-S", DXC_SOURCE, "-B", DXC_HOST_BUILD, "-G", "Ninja", *(host or host_compilers(env)), *lean],
