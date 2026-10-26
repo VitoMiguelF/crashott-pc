@@ -50,6 +50,7 @@
 #include "../settings/settings.h"
 #include "../settings/save_screens.h"
 #include "../settings/skip_cinematics.h"
+#include "../settings/touch_controls.h"
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
 #include "../subtitles/subtitle_draw.h"
@@ -465,6 +466,8 @@ namespace gpu::renderer
         // The palette of the icon bound by the draw being set up (GetTextureView), which replaces the
         // draw's 256x1 palette texture; null = none.
         rhi::Texture* g_drawIconPalette = nullptr;
+        char32_t g_drawIcon = 0;  // the button icon the draw samples (prompt_icons.h), 0 none
+        std::vector<settings::prompts::IconSpot> g_iconSpots;  // this frame's (clickable prompts)
         // CRASH_NO_PROMPT_ICONS=1 keeps the game's Xbox icons (and skips keying every texture).
         const bool g_promptIcons = getenv("CRASH_NO_PROMPT_ICONS") == nullptr;
         std::vector<uint8_t> g_hdKeyScratch;                    // decoded base level of the texture being uploaded
@@ -1441,6 +1444,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
             if (entry.icon)
             {
+                g_drawIcon = entry.icon;
                 uint32_t style = IconStyle();
                 if (style != entry.iconStyle)
                 {
@@ -1724,6 +1728,41 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
             float side = float(HUD_WIDTH) * 0.4f;
             return hi < side ? -1 : lo > float(HUD_WIDTH) - side ? 1 : 0;
+        }
+
+        // Where the draw of a button icon lands (through the game's 2D vertex shader, as HudDrawSide):
+        // its box, 0..1 of the picture, for the clickable prompts (prompt_icons.h IconSpots).
+        void NoteIconSpot(const float* data, uint32_t startDwords, uint32_t dwords, uint32_t stride, uint32_t minIndex, uint32_t maxIndex,
+                          const SystemConstants& system, float targetWidth, float targetHeight, const HudDraw& hud)
+        {
+            if (!data || maxIndex < minIndex || maxIndex - minIndex > 64 || g_iconSpots.size() >= 32)
+                return;
+            float c[16];
+            LoadHudMatrix(c);
+            float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
+            bool ortho = true;
+            for (uint32_t v = minIndex; v <= maxIndex; v++)
+            {
+                int64_t at = int64_t(v) * stride - int64_t(startDwords);
+                if (at < 0 || at + 3 > int64_t(dwords))
+                    return;
+                float x = data[at], y = data[at + 1], z = data[at + 2];
+                float clipX = x * c[0] + y * c[4] + z * c[8] + c[12];
+                float clipY = x * c[1] + y * c[5] + z * c[9] + c[13];
+                float clipW = x * c[3] + y * c[7] + z * c[11] + c[15];
+                if (!(fabsf(clipW) > 1e-6f))
+                    return;
+                ortho &= fabsf(clipW - 1.0f) <= 1e-5f;
+                float ndcX = clipX / clipW * system.ndcScale[0] + system.ndcOffset[0];
+                float ndcY = clipY / clipW * system.ndcScale[1] + system.ndcOffset[1];
+                float u = (ndcX + 1.0f) * 0.5f * targetWidth / float(HUD_WIDTH), w = (1.0f - ndcY) * 0.5f * targetHeight / float(HUD_HEIGHT);
+                x0 = std::min(x0, u), x1 = std::max(x1, u), y0 = std::min(y0, w), y1 = std::max(y1, w);
+            }
+            // The game's own 2D goes into the middle 16:9 area (HUD_GS); the frontend's is in place.
+            if (ortho && hud.mode && !(hud.mode & 4u))
+                x0 = 0.5f + (x0 - 0.5f) * hud.scaleX, x1 = 0.5f + (x1 - 0.5f) * hud.scaleX;
+            if (x1 > x0 && y1 > y0 && x1 > 0.0f && x0 < 1.0f && y1 > 0.0f && y0 < 1.0f)
+                g_iconSpots.push_back({ g_drawIcon, x0, y0, x1, y1 });
         }
 
         float HudCoordinate(float value, float size, float scale)
@@ -3162,6 +3201,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             rhi::TextureView textureViews[32];
             rhi::SamplerDesc samplers[32];
             g_drawIconPalette = nullptr;
+            g_drawIcon = 0;
             bool readsResolve = false;  // samples a render target (a screen-space pass, not a background)
             for (uint32_t fc = 0; fc < textureSlots; fc++)
             {
@@ -3253,6 +3293,22 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
             if (hud.video && colorTargets[0])
                 ClearVideoBars(*colorTargets[0]);
+            // A button icon: where it is, for the clickable prompts.
+            if (g_drawIcon && !sceneDraw && vs && vs->info.hash == HUD_VS)
+            {
+                for (uint32_t r = 0; r < rangeCount; r++)
+                {
+                    const VertexFetchBinding* position = nullptr;
+                    for (const VertexFetchBinding& binding : vs->info.vertexFetches)
+                        if (binding.fetchConstant == ranges[r].fetchConstant && !position)
+                            position = &binding;
+                    if (position && position->minOffsetDwords == 0 && position->strideDwords >= 3)
+                        NoteIconSpot(reinterpret_cast<const float*>(ranges[r].uploaded), ranges[r].startDwords, ranges[r].dwords,
+                                     position->strideDwords, indexData.minIndex, indexData.maxIndex, system, float(targetWidth),
+                                     float(targetHeight), hud);
+                    break;
+                }
+            }
 
             ProfileMark(3);
             // Constant buffers.
@@ -4159,12 +4215,17 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
         }
 
+        // The button icons of this frame, for clicks on the prompts.
+        settings::prompts::PublishIconSpots(g_iconSpots);
+        g_iconSpots.clear();
         // Drawn over the image at the window's resolution, through the overlay's bitmaps.
         overlay::BeginPresent(backBuffer);
         // Subtitles (subtitles/subtitle_draw.h): part of the image, so screenshots have them.
         subtitles::Draw(g_backBufferWidth, g_backBufferHeight);
         // The "hold to skip" prompt of the cutscenes and videos (skip_cinematics.h).
         cutscenes::Draw(g_backBufferWidth, g_backBufferHeight);
+        // The on-screen touch controls (Android, touch_controls.h).
+        touch_controls::Draw(g_backBufferWidth, g_backBufferHeight);
 
         // The name entry's keyboard and the slot screen's DELETE (save_screens.h), then the settings
         // screen (settings_menu.h).

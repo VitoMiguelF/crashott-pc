@@ -18,6 +18,7 @@
 #endif
 #include "../platform/text.h"
 #include "../settings/settings.h"
+#include "../settings/touch_controls.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -134,6 +135,46 @@ namespace gpu::window
             }
         }
 
+        // The touch screen: the touch controls first (touch_controls.h); a finger they don't take is
+        // the mouse (the menus), the first one only. SDL's own mouse events for a touch are dropped
+        // while the controls are on (in gameplay a tap would be a left click: X).
+        bool g_mouseFinger = false;
+        SDL_FingerID g_mouseFingerId = 0;
+
+        bool TouchMouse(SDL_MouseID which)
+        {
+            return which == SDL_TOUCH_MOUSEID && touch_controls::Enabled();
+        }
+
+        void OnFinger(const SDL_TouchFingerEvent& finger)
+        {
+            if (finger.touchID == SDL_MOUSE_TOUCHID || !touch_controls::Enabled())  // a mouse's events repeated as a touch
+                return;
+            using touch_controls::Phase;
+            Phase phase = finger.type == SDL_EVENT_FINGER_DOWN ? Phase::Down : finger.type == SDL_EVENT_FINGER_MOTION ? Phase::Move : Phase::Up;
+            float x = std::clamp(finger.x, 0.0f, 1.0f), y = std::clamp(finger.y, 0.0f, 1.0f);
+            bool taken = touch_controls::OnFinger(uint64_t(finger.fingerID), phase, x, y);
+            int px = int(x * float(g_pointWidth)), py = int(y * float(g_pointHeight));
+            if (phase == Phase::Down)
+            {
+                if (taken || g_mouseFinger)
+                    return;
+                g_mouseFinger = true, g_mouseFingerId = finger.fingerID;
+                input::pc::OnCursor(px, py, g_pointWidth, g_pointHeight);
+                if (!dev::console::IsOpen())
+                    input::pc::OnKey(VK_LBUTTON, true);
+            }
+            else if (g_mouseFinger && finger.fingerID == g_mouseFingerId)
+            {
+                input::pc::OnCursor(px, py, g_pointWidth, g_pointHeight);
+                if (phase == Phase::Up)
+                {
+                    input::pc::OnKey(VK_LBUTTON, false);
+                    g_mouseFinger = false;
+                }
+            }
+        }
+
         void OnKeyDown(SDL_Window* window, const SDL_KeyboardEvent& key)
         {
             uint32_t vk = VirtualKey(key.scancode);
@@ -181,6 +222,8 @@ namespace gpu::window
                 break;
             case SDL_EVENT_MOUSE_MOTION:
             {
+                if (TouchMouse(event.motion.which))
+                    break;
                 input::pc::OnCursor(int(event.motion.x), int(event.motion.y), g_pointWidth, g_pointHeight);
                 g_rawX += event.motion.xrel;
                 g_rawY += event.motion.yrel;
@@ -193,6 +236,8 @@ namespace gpu::window
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
             case SDL_EVENT_MOUSE_BUTTON_UP:
             {
+                if (TouchMouse(event.button.which))
+                    break;
                 bool down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
                 uint32_t key = 0;
                 switch (event.button.button)
@@ -215,6 +260,12 @@ namespace gpu::window
                     input::pc::OnWheel(notches);
                 break;
             }
+            case SDL_EVENT_FINGER_DOWN:
+            case SDL_EVENT_FINGER_MOTION:
+            case SDL_EVENT_FINGER_UP:
+            case SDL_EVENT_FINGER_CANCELED:
+                OnFinger(event.tfinger);
+                break;
             case SDL_EVENT_KEY_DOWN:
                 OnKeyDown(window, event.key);
                 break;

@@ -29,7 +29,7 @@ lifecycle.
 | M1: runtime + generated code compile and link as `libmain.so` for `aarch64-linux-android` | **done** (2026-10-26): NDK r30, `-Wl,--no-undefined`, 0 errors |
 | M2: minimal APK (SDL3's Java glue) that starts, opens a Vulkan surface and logs to logcat | **done** (2026-10-26, S20 FE) |
 | M3: boot the game with the dump in the app's storage | **done** (2026-10-26, S20 FE with Turnip): intros, title, main menu and settings screen drawn from a PC-made SPIR-V cache |
-| M4 onward: renderer on mobile GPUs, touch, audio, packaging, performance | planned below |
+| M4 onward: renderer on mobile GPUs, touch, audio, packaging, performance | audio and touch done on the S20 FE (2026-10-26); the rest planned below |
 
 ### Verified so far
 
@@ -174,8 +174,45 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     folder). Result on the S20 FE: `decoder: FFmpeg WMA Pro`, 6,936 XMA frames in 35 s, 0 decoder
     errors, an AAudio MMAP output stream active (`build\android\s20fe_audio1.log`).
 
-  - **Next on the phone:** touch controls, and the cache step in
-    `android_build.py` (record on the PC, precompile, put it in the APK or push it).
+  - **Touch controls (same day).** `settings/touch_controls.*`, Android only (`CRASH_TOUCH_CONTROLS`
+    0/1 overrides): in gameplay a floating left stick (a finger on the left 45% of the screen puts
+    its centre there; it follows a finger past full deflection), A/B/X/Y in the pad's diamond, RT
+    and a spin button (the stick going round with X tapped, as the keyboard's spin attack), START
+    and BACK at the top right, and a drag on the rest of the right half turns the camera. Drawn
+    through three overlay bitmap channels, the game's own icons on translucent discs, re-uploaded
+    only when they change. In the menus nothing is drawn: the touch is the mouse (SDL's own
+    touch-to-mouse events are dropped; `window_sdl.cpp` makes the first free finger the left
+    button), and the game's prompts are clickable (below), so every screen works by touch. A
+    pad in use hides the controls until the next touch; the prompts then show the pad's icons.
+    Checked on the S20 FE: intro videos and a cutscene skipped by holding the skip prompt, title,
+    NEW GAME, the name keyboard, difficulty, slots, LOAD, `Load successful` (tap on SELECT A),
+    the episode hub (tap on CONTINUE STORY Y), then the stick walking Crash and A in L1_E1
+    (`build\android\s20fe_touch*.png`).
+  - **Clickable prompts (PC mouse and touch).** The renderer notes where each button icon of the
+    game is drawn (its 2D vertices through `HUD_VS`, `NoteIconSpot`), `prompts::ButtonAt` turns a
+    click on the icon or on its label (towards the screen's middle; under it for a centred one)
+    into that button, pressed for 3 game reads (`pc_input.cpp` `LeftClick`). Only in the menus.
+  - **Save screens fixed on the way (PC too):** `save_screens.cpp` took every click on the slot
+    screen (`TakeMenuClick`), so a click on a slot never reached the game's menu; and a press or
+    click made before the screen (an X in a level, the click on LOAD GAME) opened the delete
+    question by itself on its first frame. Both are ignored now.
+  - **Why the menus run at ~12 fps (measured 2026-10-26):** GPU-bound. `simpleperf` (APK built with
+    `android_build.py apk --debuggable`) showed the game thread spinning in the D3D wait
+    `sub_8226D968` and the command processor 97% inside `kgsl_syncobj_wait`; `CRASH_GPU_PROFILE`
+    gave 83 ms of GPU per menu frame, 72 ms of it in the 2D draws. Those go through `HUD_GS`, the
+    wide-screen geometry shader (the phone is 20:9, wider than 16:9), which Adreno runs slowly:
+    with `CRASH_HUD_NO_GS` the main menu ran at 44 fps instead of 12, but its backdrop no longer
+    zooms to the edges (black bars at the sides). Fix to do: the per-triangle work of `HUD_GS` in
+    the vertex shader for Adreno and Mali (Mali has no geometry shaders at all). The save listings
+    the game asks for every frame are cached now too (`xam_content_imports.cpp`; each one went
+    through the shared storage's FUSE).
+  - **Seen, not fixed:** the game's menus are drawn narrower than the mouse mapping assumes on
+    screens wider than 16:9 (measured on the phone: the 640-unit frontend spans 4:3 of the height,
+    1440 px at 1080, while `CursorOnImage` maps it to the middle 16:9 area), so a slot far from
+    the middle is hit only near its inner side. PC ultrawide likely has the same.
+  - **Next on the phone:** the `HUD_GS` work above, the menus' mouse mapping on wide screens, and
+    the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
+    it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
     clears the window's `ANativeWindow`; `CreateVulkanSurface` now waits up to 10 s for it.
 
@@ -398,12 +435,11 @@ phone builds its own.
 - **Gamepads (Bluetooth / USB):** SDL's Android joystick/gamepad backend feeds the existing
   `kernel/xinput_backend_sdl.cpp` and `hid_pads_sdl.cpp` (DualSense via SDL's HIDAPI over USB;
   over Bluetooth Android exposes it as a standard gamepad). Nothing new apart from testing.
-- **Touch overlay (new, M5):** a virtual Xbox pad. The left stick is floating (left half of the
-  screen), A/B/X/Y are on the right, the triggers, bumpers and START/BACK along the edges, and the
-  layout follows the existing button icon art. SDL finger events map to an `XINPUT_STATE` in pad
-  slot 0 (`pad_slots.cpp`). The renderer's overlay pass draws it, at 50% opacity, and hides it
-  when a physical pad is used (the same "last device used" logic as the icons). Haptics: short
-  `SDL_RumbleGamepad`-like vibration through `SDL_HapticRumble` on the phone.
+- **Touch overlay (done, `settings/touch_controls.*`):** a virtual Xbox pad in gameplay only (see
+  "Touch controls" above): floating left stick, A/B/X/Y, RT, spin, START/BACK, camera drag; merged
+  into controller 0 before the keyboard (`xam_input_imports.cpp`), drawn by the overlay, hidden
+  while a physical pad is used. Menus take the touch as the mouse, with clickable prompts. Not
+  done: haptics, LB/RB/LT (finisher, modifier), a layout editor.
 - **Keyboard/mouse:** they work through SDL as on Linux (Bluetooth keyboards, DeX).
 
 ## Audio

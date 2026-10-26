@@ -247,7 +247,7 @@ def keystore():
     return password_file.read_text(encoding="ascii").strip()
 
 
-def apk():
+def apk(debuggable=False):
     libmain = CMAKE_BUILD / "libmain.so"
     libsdl = next(iter(sorted(CMAKE_BUILD.rglob("libSDL3.so"))), None)
     if not libmain.is_file() or not libsdl:
@@ -271,7 +271,9 @@ def apk():
     # Manifest -> base APK (no resources beyond the manifest yet)
     say("aapt2 link")
     run([BUILD_TOOLS / ("aapt2" + EXE), "link", "-o", OUT / "base.apk", "-I", ANDROID_JAR, "--manifest", ROOT / "android" / "AndroidManifest.xml",
-         "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK])
+         "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK] + (["--debug-mode"] if debuggable else []))
+    if debuggable:
+        say("debuggable (simpleperf / run-as can reach the app)")
 
     # classes.dex + the .so files (libmain.so without its debug sections). extractNativeLibs="true":
     # Android unpacks them into the app's native library folder, where libadrenotools loads its
@@ -310,7 +312,10 @@ def apk():
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk", "turnip", "ffmpeg"])
-    step = parser.parse_args().step
+    parser.add_argument("--debuggable", action="store_true",
+                        help="android:debuggable APK, for profiling on the phone (simpleperf record --app <package>)")
+    args = parser.parse_args()
+    step = args.step
     if step == "turnip" or (step == "all" and MESA_SOURCE.is_dir() and not TURNIP_LIB.is_file()):
         turnip()
     if step == "ffmpeg" or (step == "all" and FFMPEG_SOURCE.is_dir() and not all(f.is_file() for f in FFMPEG_LIBS)):
@@ -318,7 +323,7 @@ def main():
     if step in ("all", "build"):
         build()
     if step in ("all", "apk"):
-        apk()
+        apk(args.debuggable)
 
 
 if __name__ == "__main__":
