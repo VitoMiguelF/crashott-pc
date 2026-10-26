@@ -1396,8 +1396,16 @@ namespace gpu::rhi
             m_shaderCache = info.shaderCache;
             m_extraInstanceExtensions = info.instanceExtensions;
             m_extraDeviceExtensions = info.deviceExtensions;
+#if defined(__ANDROID__)
+            // No DXC for Android yet: the SPIR-V made on the PC (the shader cache pushed to
+            // userdata/shadercache) is all there is; a shader missing from it isn't drawn
+            // (android_port.md, "Shaders").
+            if (!vulkan::CompilerAvailable())
+                Log("[vulkan] no shader compiler: cached SPIR-V only");
+#else
             if (!vulkan::CompilerAvailable())
                 return false;
+#endif
             if (!LoadLoader())
             {
                 Log("[vulkan] vulkan-1.dll not found (no Vulkan driver installed)");

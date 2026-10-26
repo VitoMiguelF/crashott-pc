@@ -290,6 +290,11 @@ namespace plat
         return VirtualProtect(address, size, NativeAccess(access), &old) != 0;
     }
 
+    size_t HostPageSize()
+    {
+        return 0x1000;
+    }
+
     MemoryRegion QueryMemory(const void* address)
     {
         MEMORY_BASIC_INFORMATION mbi{};

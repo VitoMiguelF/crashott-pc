@@ -636,6 +636,11 @@ namespace plat
         return mprotect(address, size, NativeAccess(access)) == 0;
     }
 
+    size_t HostPageSize()
+    {
+        return HostPage();
+    }
+
     MemoryRegion QueryMemory(const void* address)
     {
         MemoryRegion region;
@@ -738,7 +743,26 @@ namespace plat
     // ARM64 Linux has no single step for user space: the MMIO traps emulate the store instead
     // (android_port.md).
     void FaultInfo::RequestSingleStep() {}
+
+    // What clang emits for the recompiled stw/sth/stb/std (PPC_STORE_*: a byte swap, then a plain
+    // store): STR/STRB/STRH with an unsigned immediate or a register offset, or STUR. Bits 31-30
+    // are the size, bit 26 = 0 (general registers), Rt in bits 4-0 (31 = the zero register).
+    bool FaultInfo::DecodeStore(uint64_t& value, uint32_t& size) const
+    {
+        uint32_t instruction;
+        memcpy(&instruction, reinterpret_cast<const void*>(InstructionPointer()), 4);
+        bool unsignedOffset = (instruction & 0x3FC00000u) == 0x39000000u;  // STR (immediate, unsigned offset)
+        bool registerOffset = (instruction & 0x3FE00C00u) == 0x38200800u;  // STR (register)
+        bool unscaled = (instruction & 0x3FE00C00u) == 0x38000000u;        // STUR
+        if (!unsignedOffset && !registerOffset && !unscaled)
+            return false;
+        uint32_t rt = instruction & 31;
+        size = 1u << (instruction >> 30);
+        value = rt == 31 ? 0 : Context(native).regs[rt];
+        return true;
+    }
 #else
+    bool FaultInfo::DecodeStore(uint64_t&, uint32_t&) const { return false; }
     uint64_t FaultInfo::InstructionPointer() const { return 0; }
     void FaultInfo::SetInstructionPointer(uint64_t) {}
     uint64_t FaultInfo::Register(unsigned) const { return 0; }

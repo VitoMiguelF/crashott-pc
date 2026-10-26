@@ -28,7 +28,7 @@ lifecycle.
 | M0: this plan | done |
 | M1: runtime + generated code compile and link as `libmain.so` for `aarch64-linux-android` | **done** (2026-10-26): NDK r30, `-Wl,--no-undefined`, 0 errors |
 | M2: minimal APK (SDL3's Java glue) that starts, opens a Vulkan surface and logs to logcat | **APK built and verified offline** (`tools/android_build.py`); not run on a phone yet |
-| M3: boot the game with the dump in the app's storage | needs M1, M2, the ARM64 runtime pieces below and a phone |
+| M3: boot the game with the dump in the app's storage | ARM64 runtime pieces written (MMIO store emulation, 16 KB pages, cache-only shaders); needs a phone, the dump pushed and a PC-made shader cache |
 | M4 onward: renderer on mobile GPUs, touch, audio, packaging, performance | planned below |
 
 ### Verified so far
@@ -96,6 +96,22 @@ The bionic side of `platform_posix.cpp`:
 - `ExecutablePath` from `CRASH_ANDROID_FILES`;
 - no restart or folder picker;
 - message boxes and `Log` go to logcat (tag `CrashRecomp`).
+
+**MMIO on ARM64 (M3, written, not run yet).**
+- `FaultInfo::DecodeStore` decodes STR/STRB/STRH (unsigned immediate or register offset) and STUR.
+  Checked against the NDK build of 10 `generated/ppc` files: it covers 14,486 of the 14,490 stores
+  in the guest-memory form (`str w8, [x20, w9, uxtw]`). The 4 it doesn't cover are `str s2`
+  (`stfs` from an FP register), which never targets a hardware register.
+- The GPU handler (`gpu.cpp`) and the XMA handler (`xma.cpp`) decode the store, do it (the GPU's
+  through a brief unprotect, as the x86 single step did), advance `pc` by 4 and report the
+  register.
+- With a 16 KB host page, stores to the neighbouring registers that now fault are done the same
+  way, without a report.
+- Only 12 stores carry the `PPC_MM_STORE_U32` tag, so the fault path is the one that matters.
+  `plat::HostPageSize()` is new (4 KB on Windows).
+
+**Shaders without DXC (M3).** On Android a missing `libdxcompiler.so` no longer stops the device.
+The renderer uses the cached SPIR-V, and logs the first 64 shaders that aren't in the cache.
 
 The non-Android paths still compile: Windows (`main.cpp`, `diagnostics.cpp`, `xenos_renderer.cpp`)
 and the glibc path of `platform_posix.cpp` (its only errors without `__ANDROID__` against bionic
