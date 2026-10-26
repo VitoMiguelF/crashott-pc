@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
+#include <deque>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -61,9 +63,31 @@ namespace settings
             }
         }
 
+#if defined(__ANDROID__)
+        std::deque<std::string> g_autoNames;  // the names of the phone's resolutions (stable addresses)
+#endif
+
         const std::vector<Resolution>& AutoResolutions()
         {
             std::call_once(g_autoOnce, [] {
+#if defined(__ANDROID__)
+                // A phone: the screen's own shape (20:9, 19.5:9...), not the nearest monitor aspect,
+                // so the picture fills it edge to edge (Hor+, gpu/widescreen.h). Its usual heights
+                // below the native one, then the native resolution.
+                int screenWidth, screenHeight;
+                MonitorSize(screenWidth, screenHeight);
+                for (int height : { 720, 900, 1080, 1440 })
+                {
+                    if (height >= screenHeight)
+                        break;
+                    int width = int(std::lround(double(height) * screenWidth / screenHeight / 2.0)) * 2;
+                    g_autoNames.push_back(std::to_string(width) + "x" + std::to_string(height));
+                    g_autoResolutions.push_back({ g_autoNames.back().c_str(), width, height });
+                }
+                g_autoNames.push_back(std::to_string(screenWidth) + "x" + std::to_string(screenHeight));
+                g_autoResolutions.push_back({ g_autoNames.back().c_str(), screenWidth, screenHeight });
+                return;
+#endif
                 g_autoResolutions = NamedResolutions(EffectiveAspect(Aspect::Auto));
                 int width, height;
                 MonitorSize(width, height);
@@ -88,6 +112,11 @@ namespace settings
 
         const std::vector<Resolution>& ResolutionList(Aspect aspect)
         {
+#if defined(__ANDROID__)
+            // Always the phone's screen shape, whatever video.aspect says.
+            (void)aspect;
+            return AutoResolutions();
+#endif
             return aspect == Aspect::Auto ? AutoResolutions() : NamedResolutions(aspect);
         }
 
@@ -523,6 +552,11 @@ namespace settings
                 int refresh = 0;
                 if (!plat::DesktopDisplayMode(cachedWidth, cachedHeight, refresh))
                     cachedWidth = 1920, cachedHeight = 1080;
+#if defined(__ANDROID__)
+                // The game is landscape only; the display may still report its portrait mode.
+                if (cachedHeight > cachedWidth)
+                    std::swap(cachedWidth, cachedHeight);
+#endif
             }
         }
         width = cachedWidth;

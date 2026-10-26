@@ -146,6 +146,14 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     Android (`ApplyMode`: SDL's immersive mode, no status or navigation bar), whatever
     `settings.toml` says. Result: the logo videos and the title at 2400x1080, upright, edge to edge
     (`build\android\s20fe_landscape3.png`).
+  - **The screen's own shape (same day).** `video.aspect = auto` picked the nearest monitor
+    aspect, 21:9 (1720x720, 2.389) for the S20 FE's 20:9 panel (2400x1080, 2.222), so the
+    picture didn't match the screen and the title had black bars. On Android the resolution list
+    is always the screen's own shape (`settings.cpp` `AutoResolutions` / `ResolutionList`), and
+    `video.aspect` is ignored: 1600x720, 1.250x as wide as 16:9, Hor+ in 3D like the ultrawide
+    path, and the title background fills the screen edge to edge
+    (`build\android\s20fe_fill1.png`). `MonitorSize` swaps a portrait report (the game is
+    landscape only). Not checked in a level yet (needs a save or `--boot` in `args.txt`).
   - **Next on the phone:** no audio decoder yet, touch controls, and the cache step in
     `android_build.py` (record on the PC, precompile, put it in the APK or push it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
