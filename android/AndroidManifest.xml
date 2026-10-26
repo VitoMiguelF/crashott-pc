@@ -7,8 +7,9 @@
     android:versionCode="1"
     android:versionName="0.1-android">
 
-    <!-- Vulkan 1.3 (0x403000): the renderer has no other path. -->
-    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x403000" android:required="true" />
+    <!-- Vulkan 1.3 (0x403000), the renderer's only path; not required: an Adreno with an older
+         driver gets Mesa's Turnip from the APK (libadrenotools). -->
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x403000" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
@@ -18,7 +19,7 @@
         android:label="Crash of the Titans DE"
         android:allowBackup="false"
         android:hasFragileUserData="true"
-        android:extractNativeLibs="false"
+        android:extractNativeLibs="true"
         android:isGame="true"
         android:appCategory="game"
         android:hardwareAccelerated="true"

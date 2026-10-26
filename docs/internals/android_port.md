@@ -27,8 +27,8 @@ lifecycle.
 |---|---|
 | M0: this plan | done |
 | M1: runtime + generated code compile and link as `libmain.so` for `aarch64-linux-android` | **done** (2026-10-26): NDK r30, `-Wl,--no-undefined`, 0 errors |
-| M2: minimal APK (SDL3's Java glue) that starts, opens a Vulkan surface and logs to logcat | **APK built and verified offline** (`tools/android_build.py`); not run on a phone yet |
-| M3: boot the game with the dump in the app's storage | ARM64 runtime pieces written (MMIO store emulation, 16 KB pages, cache-only shaders); needs a phone, the dump pushed and a PC-made shader cache |
+| M2: minimal APK (SDL3's Java glue) that starts, opens a Vulkan surface and logs to logcat | **done** (2026-10-26, S20 FE) |
+| M3: boot the game with the dump in the app's storage | **runs, draws nothing yet** (2026-10-26, S20 FE with Turnip): the game loop, threads, files and Bink run; needs a PC-made SPIR-V cache on the phone |
 | M4 onward: renderer on mobile GPUs, touch, audio, packaging, performance | planned below |
 
 ### Verified so far
@@ -90,10 +90,41 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
   - Mesa's **Turnip** driver loaded by the app with **libadrenotools** (BSD-2; what the Switch
     emulators do). Turnip gives Adreno 650 Vulkan 1.3 with the extensions above, and BC textures,
     which the hardware has and Qualcomm's driver hides. Needs a Turnip build, from the Mesa source
-    or a published build: a download to approve.
+    or a published build. **Done, see below.**
   - A Vulkan 1.1 path in the renderer (render passes, binary semaphores, static state). L.
   - Newer phones (Adreno 7xx/8xx on Android 14+) ship 1.3 drivers: the S25 Ultra is the better
     first boot target.
+- **Turnip on the S20 FE (2026-10-26, with the user's OK for the downloads and the install).**
+  - Built here from Mesa 26.2.5 (`python tools/android_build.py turnip`): Meson 1.12.1 with the NDK as
+    a cross compiler, `-Dvulkan-drivers=freedreno -Dfreedreno-kmds=kgsl -Dplatforms=android
+    -Dandroid-stub=true`, no GL/EGL. Result: `libvulkan_freedreno.so`, 16.7 MB, an Android HAL module
+    (exports only `HMI`), 16 KB-aligned. Two Windows-host fixes to the Mesa tree, applied by the
+    script: `check_xml_includes.awk` compared `/` paths, and `win_flex --wincompat` emits `<io.h>`.
+    Meson also wanted PyYAML and win_flex_bison 2.5.25 (both approved for that case).
+  - libadrenotools (commit 8fae8ce, + liblinkernsbypass aa39758) is built by our CMake when
+    `CRASH_ADRENOTOOLS_SOURCE` is set: static into `libmain.so`, plus its `libhook_impl.so` and
+    `libmain_hook.so`, which go into the APK with Turnip. The APK now has
+    `extractNativeLibs="true"` (libadrenotools loads its hooks and the driver from the native
+    library folder) and is 11.9 MB, the `.so` files compressed.
+  - `OpenVulkanLibrary` (`android_main_android.cpp`) picks the driver: on a kgsl device (an Adreno)
+    with Turnip in the APK it asks the system driver for its version and uses Turnip below 1.3;
+    `files/vulkan_driver.txt` can say `system` or `turnip`. `vulkan_loader.cpp` and the probe use
+    that handle; surfaces come from `vkCreateAndroidSurfaceKHR` on SDL's `ANativeWindow`, never from
+    SDL's own Vulkan loader (the window has no `SDL_WINDOW_VULKAN` on Android).
+  - **Result:** `system driver: Adreno (TM) 650, Vulkan 1.1.128` → `Mesa Turnip from the APK` →
+    **Turnip Adreno 650, Vulkan 1.3.354, Mesa 26.2.5, conformance 1.2.7.1**: geometry shaders, BC
+    textures (BC1/BC5 sampled), dynamic rendering, sync2, demote, timeline semaphores, push
+    descriptors, D24S8; "renderer requirements: all present". GPL is listed but the renderer used
+    whole pipelines. The orange probe ran at 120 Hz again.
+  - **The game runs on the phone:** the renderer opens (swap chain 2400x1080, 5 images, mailbox,
+    4.2 GB device-local heap), the guest's main thread starts, ~900 `VdSwap`s in 27 s, the first
+    Bink video plays 9.9 s, threads, events and files all work. Log: `build\android\s20fe_turnip1.log`.
+  - **Nothing shows yet:** there is no shader compiler on the phone and no SPIR-V cache in its
+    `userdata/shadercache`, so every shader is missing (`rect_list_gs`, `blit_vs`, `fxaa_ps`... "not
+    in the shader cache"); the screen keeps the probe's last orange frame. **Next:** a SPIR-V cache
+    made by a PC run (same HLSL, same keys) pushed to the phone, or DXC built for Android.
+  - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
+    clears the window's `ANativeWindow`; `CreateVulkanSurface` now waits up to 10 s for it.
 
 ### The Android build (M1, M2)
 
@@ -107,7 +138,8 @@ including SDL3).
 - **APK:** `javac --release 11` compiles SDL's 12 Java files + `CrashActivity`; then `d8`,
   `aapt2 link` (manifest only), the stored `.so` files, `zipalign -P 16`, and `apksigner` with a
   key made once in `build/android/keystore`.
-- **Result:** `CrashOTTDE-personal.apk` is 26.3 MB. `zipalign -c -P 16` passes, `apksigner verify`
+- **Result:** `CrashOTTDE-personal.apk` was 26.3 MB with stored `.so` files (11.9 MB since Turnip:
+  compressed, `extractNativeLibs="true"`). `zipalign -c -P 16` passes, `apksigner verify`
   passes, and `aapt2 dump` shows minSdk 30, target 35, `arm64-v8a` and Vulkan 1.3 required.
 
 The build log had one new problem: `-Wasm-operand-widths` on `ppc_context.h`'s ARM64 `setcsr`,

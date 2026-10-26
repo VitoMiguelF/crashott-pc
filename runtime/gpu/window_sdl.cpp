@@ -306,6 +306,10 @@ namespace gpu::window
 
     std::vector<const char*> VulkanSurfaceExtensions()
     {
+#if defined(__ANDROID__)
+        // SDL's list needs SDL's own Vulkan loader, which Android doesn't use (android_main.h).
+        return { VK_KHR_SURFACE_EXTENSION_NAME, "VK_KHR_android_surface" };
+#endif
         Uint32 count = 0;
         const char* const* names = SDL_Vulkan_GetInstanceExtensions(&count);
         if (!names)
@@ -316,6 +320,9 @@ namespace gpu::window
     bool CreateVulkanSurface(void* instance, void* surface)
     {
         SDL_Window* window = g_window.load();
+#if defined(__ANDROID__)
+        return window && plat::android::CreateVulkanSurface(window, instance, reinterpret_cast<void*>(vk::vkGetInstanceProcAddr), surface);
+#endif
         if (!window || !SDL_Vulkan_CreateSurface(window, VkInstance(instance), nullptr, static_cast<VkSurfaceKHR*>(surface)))
         {
             Log("[gpu] SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
@@ -362,8 +369,14 @@ namespace gpu::window
                 }
                 std::string fullTitle = plat::NarrowUtf8(title) + InstanceTitleSuffix();
                 Log("[gpu] window title: %s", fullTitle.c_str());
+#if defined(__ANDROID__)
+                // No SDL_WINDOW_VULKAN: it would load SDL's own libvulkan.so (android_main.h).
+                const SDL_WindowFlags vulkanFlag = 0;
+#else
+                const SDL_WindowFlags vulkanFlag = SDL_WINDOW_VULKAN;
+#endif
                 window = SDL_CreateWindow(fullTitle.c_str(), width, height,
-                                          SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
+                                          vulkanFlag | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
                 if (!window)
                     Log("[gpu] SDL_CreateWindow failed: %s", SDL_GetError());
             }

@@ -1,6 +1,9 @@
 #include "vulkan_loader.h"
 
 #include "../platform/platform.h"
+#if defined(__ANDROID__)
+#include "../platform/android_main.h"
+#endif
 
 #define CRASH_VK_DEFINE(name) PFN_##name name = nullptr;
 namespace gpu::vk
@@ -17,7 +20,7 @@ namespace gpu::vk
 #ifdef _WIN32
         void* library = plat::OpenLibrary("vulkan-1.dll");
 #elif defined(__ANDROID__)
-        void* library = plat::OpenLibrary("libvulkan.so");
+        void* library = plat::android::OpenVulkanLibrary();
 #else
         void* library = plat::OpenLibrary("libvulkan.so.1");
 #endif

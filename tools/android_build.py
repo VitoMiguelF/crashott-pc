@@ -4,6 +4,7 @@ Java glue, the APK assembled with aapt2 / d8 / zipalign / apksigner (no Gradle, 
     python tools/android_build.py               # configure if needed, build, assemble the APK
     python tools/android_build.py build         # only libmain.so / libSDL3.so (CMake + Ninja)
     python tools/android_build.py apk           # only the APK, from what build left
+    python tools/android_build.py turnip        # Mesa's Turnip (Adreno 6xx/7xx with an old driver)
 
 The APK holds the game recompiled from the player's own dump (generated/ppc): it is personal, for
 their phone, sideloaded; never published, never in git (build/ is not). Installing it and copying
@@ -15,6 +16,12 @@ Needs (unpacked under build/android; tools/toolchain.py will fetch them for play
   platform/android-37.2/android.jar
   sdl/SDL3-3.4.18/        the SDL source: libSDL3.so and android-project's Java glue
 and a JDK (javac, keytool, java) on PATH or in JAVA_HOME, plus the bundled toolchain's CMake/Ninja.
+
+Optional, for Adreno GPUs whose own driver is older than Vulkan 1.3 (the Galaxy S20 FE's Adreno 650):
+  turnip/mesa-26.2.5/     the Mesa source (archive.mesa3d.org), built by the `turnip` step
+  turnip/adrenotools/     libadrenotools (github.com/bylaws/libadrenotools) with lib/linkernsbypass
+  turnip/pytools/         meson, mako, markupsafe, pyyaml (pip --target); turnip/winflexbison/ on Windows
+With them the APK carries libvulkan_freedreno.so and libadrenotools' hooks (android_main_android.cpp).
 """
 import argparse
 import os
@@ -32,6 +39,11 @@ BUILD_TOOLS = WORK / "build-tools" / "android-37.0"
 ANDROID_JAR = WORK / "platform" / "android-37.2" / "android.jar"
 SDL_SOURCE = WORK / "sdl" / "SDL3-3.4.18"
 CMAKE_BUILD = WORK / "cmake"
+TURNIP = WORK / "turnip"
+MESA_SOURCE = TURNIP / "mesa-26.2.5"
+ADRENOTOOLS_SOURCE = TURNIP / "adrenotools"
+TURNIP_BUILD = TURNIP / "build-tu"
+TURNIP_LIB = TURNIP_BUILD / "src" / "freedreno" / "vulkan" / "libvulkan_freedreno.so"
 OUT = WORK / "apk"
 KEYSTORE = WORK / "keystore" / "crashrecomp.jks"  # made once; updates need the same key
 MIN_SDK = 30     # memfd_create in bionic
@@ -78,14 +90,84 @@ def build():
     if not any((ROOT / "generated" / "ppc").glob("ppc_recomp.*.cpp")):
         sys.exit("generated/ppc is empty: recompile the dump first (tools/setup.py)")
     env = build_env()
-    if not (CMAKE_BUILD / "CMakeCache.txt").is_file():
-        say("configuring (NDK, arm64-v8a, API %d)" % MIN_SDK)
-        run(["cmake", "-S", ROOT, "-B", CMAKE_BUILD, "-G", "Ninja",
-             f"-DCMAKE_TOOLCHAIN_FILE={(NDK / 'build/cmake/android.toolchain.cmake').as_posix()}",
-             "-DANDROID_ABI=arm64-v8a", f"-DANDROID_PLATFORM=android-{MIN_SDK}", "-DANDROID_STL=c++_static",
-             "-DCMAKE_BUILD_TYPE=Release", f"-DCRASH_SDL3_SOURCE={SDL_SOURCE.as_posix()}", "-Wno-dev"], env=env)
+    adrenotools = ADRENOTOOLS_SOURCE if (ADRENOTOOLS_SOURCE / "lib" / "linkernsbypass" / "CMakeLists.txt").is_file() else None
+    say("configuring (NDK, arm64-v8a, API %d%s)" % (MIN_SDK, ", libadrenotools" if adrenotools else ""))
+    run(["cmake", "-S", ROOT, "-B", CMAKE_BUILD, "-G", "Ninja",
+         f"-DCMAKE_TOOLCHAIN_FILE={(NDK / 'build/cmake/android.toolchain.cmake').as_posix()}",
+         "-DANDROID_ABI=arm64-v8a", f"-DANDROID_PLATFORM=android-{MIN_SDK}", "-DANDROID_STL=c++_static",
+         "-DCMAKE_BUILD_TYPE=Release", f"-DCRASH_SDL3_SOURCE={SDL_SOURCE.as_posix()}",
+         f"-DCRASH_ADRENOTOOLS_SOURCE={adrenotools.as_posix() if adrenotools else ''}", "-Wno-dev"], env=env, stdout=subprocess.DEVNULL)
     say("building libmain.so and libSDL3.so")
     run(["cmake", "--build", CMAKE_BUILD, "--target", "CrashRecomp"], env=env)
+
+
+def turnip():
+    """Mesa's Vulkan driver for Adreno (freedreno/Turnip, kgsl kernel interface) as an Android HAL
+    module, which libadrenotools loads in place of the system driver."""
+    for path in (MESA_SOURCE / "meson.build", TURNIP / "pytools" / "mesonbuild"):
+        if not path.exists():
+            sys.exit(f"{path.relative_to(ROOT)} not found (see this script's docstring)")
+    # Two fixes for building on Windows: the freedreno include check compares '/' paths, and
+    # win_flex's --wincompat output needs <io.h>, which only Windows targets have.
+    check = MESA_SOURCE / "src" / "freedreno" / "tests" / "check_xml_includes.awk"
+    text = check.read_text(encoding="utf-8")
+    if "gsub(" not in text:
+        backslash = "\\"
+        text = text.replace("    relpath = FILENAME\n", "    relpath = FILENAME\n    gsub(/" + backslash * 2 + "/, \"/\", relpath)\n")
+        check.write_text(text, encoding="utf-8", newline="")
+    meson_build = MESA_SOURCE / "meson.build"
+    text = meson_build.read_text(encoding="utf-8")
+    old = "    prog_flex = [prog_flex, '--wincompat']"
+    if old in text:
+        meson_build.write_text(text.replace(old, "    prog_flex = host_machine.system() == 'windows' ? [prog_flex, '--wincompat'] : [prog_flex]"),
+                               encoding="utf-8", newline="")
+
+    bin_dir = NDK / "toolchains" / "llvm" / "prebuilt" / HOST / "bin"
+    cross = TURNIP / "android-aarch64.cross"
+    cross.write_text(f"""[binaries]
+c = ['{(bin_dir / ("clang" + EXE)).as_posix()}', '--target=aarch64-linux-android{MIN_SDK}']
+cpp = ['{(bin_dir / ("clang++" + EXE)).as_posix()}', '--target=aarch64-linux-android{MIN_SDK}']
+ar = '{(bin_dir / ("llvm-ar" + EXE)).as_posix()}'
+strip = '{(bin_dir / ("llvm-strip" + EXE)).as_posix()}'
+nm = '{(bin_dir / ("llvm-nm" + EXE)).as_posix()}'
+c_ld = 'lld'
+cpp_ld = 'lld'
+
+[host_machine]
+system = 'android'
+cpu_family = 'aarch64'
+cpu = 'armv8'
+endian = 'little'
+
+[built-in options]
+cpp_link_args = ['-static-libstdc++']
+""", encoding="utf-8")
+    env = build_env()
+    env["PYTHONPATH"] = str(TURNIP / "pytools")
+    if (TURNIP / "winflexbison").is_dir():
+        env["PATH"] = os.pathsep.join([str(TURNIP / "winflexbison"), env["PATH"]])
+    meson = [sys.executable, "-c", "import sys; from mesonbuild.mesonmain import main; sys.exit(main())"]
+    command = [*meson, "setup", TURNIP_BUILD, MESA_SOURCE, "--cross-file", cross]
+    llvm_mingw = ROOT / "toolchain" / "llvm-mingw" / "bin"
+    if WINDOWS and llvm_mingw.is_dir():
+        # The build machine's compiler (Mesa wants one even when nothing runs on the host).
+        native = TURNIP / "native.ini"
+        native.write_text(f"""[binaries]
+c = '{(llvm_mingw / "clang.exe").as_posix()}'
+cpp = '{(llvm_mingw / "clang++.exe").as_posix()}'
+ar = '{(llvm_mingw / "llvm-ar.exe").as_posix()}'
+""", encoding="utf-8")
+        command += ["--native-file", native]
+    if not (TURNIP_BUILD / "build.ninja").is_file():
+        say("configuring Turnip (Mesa, kgsl, Android HAL)")
+        run(command + ["-Dbuildtype=release", "-Dplatforms=android", f"-Dplatform-sdk-version={MIN_SDK}", "-Dandroid-stub=true",
+                       "-Dandroid-libbacktrace=disabled", "-Dgallium-drivers=", "-Dvulkan-drivers=freedreno", "-Dfreedreno-kmds=kgsl",
+                       "-Dllvm=disabled", "-Dshader-cache=enabled", "-Dzlib=enabled", "-Dzstd=disabled", "-Degl=disabled",
+                       "-Dopengl=false", "-Dgles1=disabled", "-Dgles2=disabled", "-Dglx=disabled", "-Dgbm=disabled",
+                       "-Dxmlconfig=disabled", "-Dexpat=disabled", "-Dvalgrind=disabled", "-Db_ndebug=true", "-Dstrip=true"],
+            env=env, stdout=subprocess.DEVNULL)
+    say("building libvulkan_freedreno.so")
+    run(["ninja", "-C", TURNIP_BUILD, TURNIP_LIB.relative_to(TURNIP_BUILD).as_posix()], env=env, stdout=subprocess.DEVNULL)
 
 
 def keystore():
@@ -127,8 +209,9 @@ def apk():
     run([BUILD_TOOLS / ("aapt2" + EXE), "link", "-o", OUT / "base.apk", "-I", ANDROID_JAR, "--manifest", ROOT / "android" / "AndroidManifest.xml",
          "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK])
 
-    # classes.dex + the .so files (stored, not compressed: extractNativeLibs=false maps them in place;
-    # libmain.so without its debug sections)
+    # classes.dex + the .so files (libmain.so without its debug sections). extractNativeLibs="true":
+    # Android unpacks them into the app's native library folder, where libadrenotools loads its
+    # hooks and Turnip from (android_main_android.cpp); so they can be compressed.
     strip = NDK / "toolchains" / "llvm" / "prebuilt" / HOST / "bin" / ("llvm-strip" + EXE)
     stripped = OUT / "libmain.so"
     run([strip, "--strip-debug", "-o", stripped, libmain])
@@ -136,8 +219,13 @@ def apk():
     shutil.copy(OUT / "base.apk", unaligned)
     with zipfile.ZipFile(unaligned, "a") as z:
         z.write(OUT / "classes.dex", "classes.dex", compress_type=zipfile.ZIP_DEFLATED)
-        z.write(libsdl, "lib/arm64-v8a/libSDL3.so", compress_type=zipfile.ZIP_STORED)
-        z.write(stripped, "lib/arm64-v8a/libmain.so", compress_type=zipfile.ZIP_STORED)
+        z.write(libsdl, "lib/arm64-v8a/libSDL3.so", compress_type=zipfile.ZIP_DEFLATED)
+        z.write(stripped, "lib/arm64-v8a/libmain.so", compress_type=zipfile.ZIP_DEFLATED)
+        hooks = [CMAKE_BUILD / "adrenotools" / "src" / "hook" / name for name in ("libhook_impl.so", "libmain_hook.so")]
+        if all(h.is_file() for h in hooks) and TURNIP_LIB.is_file():
+            for library in hooks + [TURNIP_LIB]:
+                z.write(library, f"lib/arm64-v8a/{library.name}", compress_type=zipfile.ZIP_DEFLATED)
+            say("with Turnip (libvulkan_freedreno.so) and libadrenotools' hooks")
 
     # 16 KB alignment of the stored .so files (-P 16), 4 bytes for the rest; then the signature.
     aligned = OUT / "aligned.apk"
@@ -153,8 +241,10 @@ def apk():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk"])
+    parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk", "turnip"])
     step = parser.parse_args().step
+    if step == "turnip" or (step == "all" and MESA_SOURCE.is_dir() and not TURNIP_LIB.is_file()):
+        turnip()
     if step in ("all", "build"):
         build()
     if step in ("all", "apk"):

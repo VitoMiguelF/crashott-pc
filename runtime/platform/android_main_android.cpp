@@ -8,6 +8,11 @@
 // renderer needs (geometry shaders, BC textures, push descriptors...) and clears the screen for a
 // moment, so a first install shows whether the device can draw at all.
 //
+// Vulkan comes from OpenVulkanLibrary: the system's loader, or on an Adreno whose driver is older
+// than 1.3 (the S20 FE's Adreno 650: 1.1) Mesa's Turnip through libadrenotools, which loads a copy
+// of the system loader in a linker namespace of its own and hands it libvulkan_freedreno.so from
+// the APK. SDL's own Vulkan loader is never used: surfaces are made here (CreateVulkanSurface).
+//
 // Folders: the app's external files folder (/storage/emulated/0/Android/data/<package>/files)
 // stands for the PC's exe folder: game/, userdata/, mods/, data/, languages/. args.txt there (one
 // argument per line) gives command-line arguments (--skip-intros, --boot ...).
@@ -17,10 +22,16 @@
 #include "../diagnostics.h"
 
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan.h>
 
+#include <vulkan/vulkan_android.h>
+
+#if CRASH_ADRENOTOOLS
+#include <adrenotools/driver.h>
+#endif
+
 #include <android/log.h>
+#include <dlfcn.h>
 #include <pthread.h>
 #include <sys/system_properties.h>
 #include <unistd.h>
@@ -50,6 +61,86 @@ namespace
         char value[PROP_VALUE_MAX] = {};
         __system_property_get(name, value);
         return value;
+    }
+
+    // ---- Vulkan driver -------------------------------------------------------------------------
+    // The folder of libmain.so: the APK's native library folder (extractNativeLibs="true", which
+    // libadrenotools needs: its hooks are loaded from there).
+    std::string NativeLibraryDir()
+    {
+        Dl_info info{};
+        if (!dladdr(reinterpret_cast<void*>(&NativeLibraryDir), &info) || !info.dli_fname)
+            return {};
+        std::string path = info.dli_fname;
+        return path.substr(0, path.rfind('/') + 1);
+    }
+
+    // apiVersion of the first GPU of `library`'s loader (0 if there's none).
+    [[maybe_unused]] uint32_t DriverApiVersion(void* library)
+    {
+        auto getInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(library, "vkGetInstanceProcAddr"));
+        if (!getInstanceProcAddr)
+            return 0;
+        auto createInstance = reinterpret_cast<PFN_vkCreateInstance>(getInstanceProcAddr(nullptr, "vkCreateInstance"));
+        VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
+        app.pApplicationName = "CrashRecomp";
+        app.apiVersion = VK_API_VERSION_1_1;
+        VkInstanceCreateInfo info{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+        info.pApplicationInfo = &app;
+        VkInstance instance{};
+        if (!createInstance || createInstance(&info, nullptr, &instance) != VK_SUCCESS)
+            return 0;
+        auto get = [&](const char* name) { return getInstanceProcAddr(instance, name); };
+        uint32_t count = 1;
+        VkPhysicalDevice physical{};
+        uint32_t version = 0;
+        VkResult result = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(get("vkEnumeratePhysicalDevices"))(instance, &count, &physical);
+        if ((result == VK_SUCCESS || result == VK_INCOMPLETE) && count)
+        {
+            VkPhysicalDeviceProperties properties{};
+            reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(get("vkGetPhysicalDeviceProperties"))(physical, &properties);
+            version = properties.apiVersion;
+            Log("[android] system driver: %s, Vulkan %u.%u.%u", properties.deviceName, VK_API_VERSION_MAJOR(version),
+                VK_API_VERSION_MINOR(version), VK_API_VERSION_PATCH(version));
+        }
+        reinterpret_cast<PFN_vkDestroyInstance>(get("vkDestroyInstance"))(instance, nullptr);
+        return version;
+    }
+
+    void* OpenSelectedVulkanLibrary()
+    {
+        std::string mode = "auto";
+        if (const char* files = getenv("CRASH_ANDROID_FILES"))
+        {
+            std::ifstream choice(std::string(files) + "/vulkan_driver.txt");
+            choice >> mode;
+        }
+        void* system = nullptr;
+#if CRASH_ADRENOTOOLS
+        std::string dir = NativeLibraryDir();
+        const char* turnipName = "libvulkan_freedreno.so";
+        bool turnip = mode != "system" && access((dir + turnipName).c_str(), R_OK) == 0 && access("/dev/kgsl-3d0", F_OK) == 0;
+        if (turnip && mode != "turnip")
+        {
+            system = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+            turnip = !system || DriverApiVersion(system) < VK_API_VERSION_1_3;
+        }
+        if (turnip)
+        {
+            void* library = adrenotools_open_libvulkan(RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM, nullptr, dir.c_str(), dir.c_str(),
+                                                       turnipName, nullptr, nullptr);
+            if (library)
+            {
+                Log("[android] Vulkan driver: Mesa Turnip from the APK (libadrenotools, mode %s)", mode.c_str());
+                return library;
+            }
+            Log("[android] libadrenotools could not load Turnip (%s%s): the system driver", dir.c_str(), turnipName);
+        }
+#endif
+        if (!system)
+            system = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+        Log("[android] Vulkan driver: the system's (mode %s)", mode.c_str());
+        return system;
     }
 
     // ---- Vulkan probe --------------------------------------------------------------------------
@@ -254,25 +345,26 @@ namespace
 
     void ProbeVulkan()
     {
-        if (!SDL_Vulkan_LoadLibrary(nullptr))
+        void* library = plat::android::OpenVulkanLibrary();
+        Vk vk;
+        vk.getInstanceProcAddr = library ? reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(library, "vkGetInstanceProcAddr")) : nullptr;
+        if (!vk.getInstanceProcAddr)
         {
-            Log("[android] SDL_Vulkan_LoadLibrary failed: %s", SDL_GetError());
+            Log("[android] no Vulkan loader: %s", dlerror());
             return;
         }
-        SDL_Window* window = SDL_CreateWindow("CrashRecomp", 0, 0, SDL_WINDOW_VULKAN | SDL_WINDOW_FULLSCREEN);
+        SDL_Window* window = SDL_CreateWindow("CrashRecomp", 0, 0, SDL_WINDOW_FULLSCREEN);
         if (!window)
         {
             Log("[android] SDL_CreateWindow failed: %s", SDL_GetError());
             return;
         }
-        Vk vk;
-        vk.getInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_Vulkan_GetVkGetInstanceProcAddr());
         auto enumerateVersion = vk.Get<PFN_vkEnumerateInstanceVersion>("vkEnumerateInstanceVersion");
         uint32_t loaderVersion = VK_API_VERSION_1_0;
         if (enumerateVersion)
             enumerateVersion(&loaderVersion);
-        Uint32 extensionCount = 0;
-        const char* const* extensions = SDL_Vulkan_GetInstanceExtensions(&extensionCount);
+        const char* extensions[] = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME };
+        uint32_t extensionCount = 2;
         VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
         app.pApplicationName = "CrashRecomp";
         app.apiVersion = loaderVersion >= VK_API_VERSION_1_3 ? VK_API_VERSION_1_3 : loaderVersion;
@@ -288,8 +380,8 @@ namespace
             return;
         }
         VkSurfaceKHR surface{};
-        if (!SDL_Vulkan_CreateSurface(window, vk.instance, nullptr, &surface))
-            Log("[android] SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
+        if (!plat::android::CreateVulkanSurface(window, vk.instance, reinterpret_cast<void*>(vk.getInstanceProcAddr), &surface))
+            surface = VK_NULL_HANDLE;
         else
             Log("[android] Vulkan loader %u.%u, surface created", VK_API_VERSION_MAJOR(loaderVersion), VK_API_VERSION_MINOR(loaderVersion));
 
@@ -418,6 +510,42 @@ namespace plat::android
         std::lock_guard lock(g_jobsMutex);
         g_jobs.push_back(std::move(job));
         g_jobsChanged.notify_all();
+    }
+
+    void* OpenVulkanLibrary()
+    {
+        static void* library = OpenSelectedVulkanLibrary();
+        return library;
+    }
+
+    bool CreateVulkanSurface(SDL_Window* window, void* instance, void* getInstanceProcAddr, void* surface)
+    {
+        // SDL clears the window's ANativeWindow while Android has no surface for it (the app in the
+        // background, the screen off, a rotation): wait up to 10 s for the next one.
+        ANativeWindow* nativeWindow = nullptr;
+        for (int tries = 0; tries < 1000; tries++)
+        {
+            nativeWindow = static_cast<ANativeWindow*>(
+                SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr));
+            if (nativeWindow)
+                break;
+            if (tries == 0)
+                Log("[android] waiting for the window's surface (app in the background?)");
+            usleep(10000);
+        }
+        auto create = reinterpret_cast<PFN_vkCreateAndroidSurfaceKHR>(
+            reinterpret_cast<PFN_vkGetInstanceProcAddr>(getInstanceProcAddr)(static_cast<VkInstance>(instance), "vkCreateAndroidSurfaceKHR"));
+        if (!nativeWindow || !create)
+        {
+            Log("[android] no surface: window %p, vkCreateAndroidSurfaceKHR %p", static_cast<void*>(nativeWindow), reinterpret_cast<void*>(create));
+            return false;
+        }
+        VkAndroidSurfaceCreateInfoKHR info{ VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR };
+        info.window = nativeWindow;
+        VkResult result = create(static_cast<VkInstance>(instance), &info, nullptr, static_cast<VkSurfaceKHR*>(surface));
+        if (result != VK_SUCCESS)
+            Log("[android] vkCreateAndroidSurfaceKHR: %d", int(result));
+        return result == VK_SUCCESS;
     }
 }
 

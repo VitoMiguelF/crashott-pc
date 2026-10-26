@@ -169,6 +169,18 @@ elseif (ANDROID)
     # load time, where a missing one only shows on the phone); 16 KB pages (android_port.md).
     set_target_properties(CrashRecomp CrashPPC XexImage PROPERTIES CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden)
     target_link_options(CrashRecomp PRIVATE -Wl,--no-undefined -Wl,--exclude-libs,ALL -Wl,-z,max-page-size=16384)
+    # libadrenotools (BSD-2, CRASH_ADRENOTOOLS_SOURCE, optional): loads Mesa's Turnip in place of an
+    # Adreno's own driver when that one is older than Vulkan 1.3 (android_main_android.cpp). Its
+    # hook libraries (libhook_impl.so, libmain_hook.so) go into the APK next to libmain.so.
+    set(CRASH_ADRENOTOOLS_SOURCE "" CACHE PATH "libadrenotools source tree (Turnip on old Adreno drivers)")
+    if (EXISTS ${CRASH_ADRENOTOOLS_SOURCE}/CMakeLists.txt)
+        add_subdirectory(${CRASH_ADRENOTOOLS_SOURCE} adrenotools EXCLUDE_FROM_ALL)
+        target_link_libraries(CrashRecomp PRIVATE adrenotools)
+        target_compile_definitions(CrashRecomp PRIVATE CRASH_ADRENOTOOLS=1)
+        target_link_options(hook_impl PRIVATE -Wl,-z,max-page-size=16384)
+        target_link_options(main_hook PRIVATE -Wl,-z,max-page-size=16384)
+        add_dependencies(CrashRecomp hook_impl main_hook)
+    endif()
 else()
     # tools/linux_sdl3.py's build (every backend by dlopen, glibc 2.29) goes next to the exe; the
     # Steam Runtime's (setup.py's .debs) doesn't: it needs libraries a bare SteamOS may lack.
