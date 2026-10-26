@@ -284,8 +284,7 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     gone, in the launcher and in the game's SETTINGS (`options.cpp`): HD AI Remaster, DLSS / FSR
     and its mode and sharpness, and the window mode. Checked on the S20 FE: the launcher opens
     from the app icon, the ADVANCED tabs show, PLAY starts the game.
-  - **The dump imported on the phone (single APK, step 2; same day, built, not yet tried on a
-    device):** while the app's game folder (`game/` in the external files folder) has no dump,
+  - **The dump imported on the phone (single APK, step 2; same day):** while the app's game folder (`game/` in the external files folder) has no dump,
     the launcher opens on a question (`launcher/android_import.inc`); GAME FOLDER in SETUP and PLAY
     without a game ask again. CHOOSE FOLDER opens Android's folder picker
     (`ACTION_OPEN_DOCUMENT_TREE`: no storage permission); `LauncherActivity.java` then, on a thread
@@ -297,7 +296,17 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     thread never returns to Java), draws the progress with CANCEL, words the errors (not the game,
     incomplete, wrong version, no space, I/O) and, once done, starts itself again in a new
     `:launcher` process (`restartLauncher`: the activity started while in front, then the process
-    ends), which reads the art of the new dump.
+    ends), which reads the art of the new dump. Checked on the S20 FE from a fresh install: the
+    question on the first start, the picker (Android refuses the storage root and `Download`
+    itself, so the dump goes in a folder such as `Download/CrashDump`), 3.2 GB copied in about 8 s
+    (same SHA-256), the launcher back with the game's art. PLAY then gave an orange screen with
+    sound: a fresh install has no SPIR-V cache and the APK has no shader compiler ("dxcompiler not
+    found"), which the `dxc` step below is for.
+  - **The compilers for the phone (`android_build.py llvm` / `dxc`):** the sources in
+    `build/downloads/android` (llvm-project 21.1.8, DirectXShaderCompiler with its submodules; never
+    in git); each builds its table generators for the PC first, then clang + lld (AArch64 only) or
+    `libdxcompiler.so` with the NDK. They run with few jobs at a low priority (`CRASH_BUILD_JOBS`):
+    at full speed the clang build made the PC unusable.
   - **Next for the single APK:** XenonRecomp + clang / lld on the phone (an LLVM built for Android arm64) and DXC for Android,
     so the APK carries no game code (the game's code then lives in the app's internal storage:
     `dlopen` is refused on the external one).

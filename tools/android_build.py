@@ -6,6 +6,8 @@ Java glue, the APK assembled with aapt2 / d8 / zipalign / apksigner (no Gradle, 
     python tools/android_build.py apk           # only the APK, from what build left
     python tools/android_build.py turnip        # Mesa's Turnip (Adreno 6xx/7xx with an old driver)
     python tools/android_build.py ffmpeg        # FFmpeg's WMA Pro + Vorbis decoders (the game's audio)
+    python tools/android_build.py llvm          # clang + lld that run on the phone (the single APK)
+    python tools/android_build.py dxc           # libdxcompiler.so: the shaders compiled on the phone
 
 The APK holds the game recompiled from the player's own dump (generated/ppc): it is personal, for
 their phone, sideloaded; never published, never in git (build/ is not). Installing it and copying
@@ -29,6 +31,15 @@ Optional, the game's audio (XMA through FFmpeg's WMA Pro decoder, audio/ffmpeg.c
                           with only the WMA Pro and Vorbis decoders, as libavcodec.so / libavutil.so
   ffmpeg/bin/make.exe     GNU make (Windows: built from make-4.4.1 with build_w32.bat gcc)
 Without it the game runs silent.
+
+For the single APK (the game recompiled on the phone itself), a compiler that runs there:
+  build/downloads/android/llvm/llvm-project-21.1.8.src/   the LLVM source (github.com/llvm/llvm-project
+                          releases), built by the `llvm` step: first llvm-tblgen / clang-tblgen for
+                          this machine, then clang and lld for Android arm64 (AArch64 target only)
+  build/downloads/android/dxc/   DirectXShaderCompiler (git clone --recursive github.com/microsoft/
+                          DirectXShaderCompiler), built by the `dxc` step the same way: its own
+                          table generators here, then libdxcompiler.so (SPIR-V) for Android arm64,
+                          which the APK carries (rhi_vulkan_shaders.cpp loads it)
 """
 import argparse
 import os
@@ -57,6 +68,17 @@ FFMPEG_SOURCE = FFMPEG / "ffmpeg-8.1.3"
 FFMPEG_BUILD = FFMPEG / "build-arm64"
 FFMPEG_INSTALL = FFMPEG / "install"
 FFMPEG_LIBS = [FFMPEG_INSTALL / "lib" / name for name in ("libavcodec.so", "libavutil.so")]
+DOWNLOADS = ROOT / "build" / "downloads" / "android"
+LLVM_SOURCE = DOWNLOADS / "llvm" / "llvm-project-21.1.8.src"
+LLVM = WORK / "llvm"
+LLVM_HOST_BUILD = LLVM / "build-host"    # the table generators, for this machine
+LLVM_BUILD = LLVM / "build-arm64"        # clang and lld for the phone
+LLVM_TOOLS = [LLVM_BUILD / "bin" / name for name in ("clang", "lld")]
+DXC_SOURCE = DOWNLOADS / "dxc"
+DXC = WORK / "dxc"
+DXC_HOST_BUILD = DXC / "build-host"
+DXC_BUILD = DXC / "build-arm64"
+DXC_LIB = DXC_BUILD / "lib" / "libdxcompiler.so"
 OUT = WORK / "apk"
 KEYSTORE = WORK / "keystore" / "crashrecomp.jks"  # made once; updates need the same key
 MIN_SDK = 30     # memfd_create in bionic
@@ -319,9 +341,102 @@ def apk(debuggable=False):
     say(f"{final.relative_to(ROOT)}: {size / 2**20:.1f} MB (personal: holds your recompiled game, don't share it)")
 
 
+def llvm():
+    """clang and lld as Android arm64 programs (the phone compiles and links the recompiled game,
+    docs/internals/android_port.md, single APK). LLVM's build runs its table generators while it
+    builds, so they are built first for this machine, with the bundled llvm-mingw on Windows."""
+    if not (LLVM_SOURCE / "llvm" / "CMakeLists.txt").is_file():
+        sys.exit(f"{LLVM_SOURCE.relative_to(ROOT)} not found (see this script's docstring)")
+    env = build_env()
+    lean = ["-DCMAKE_BUILD_TYPE=Release", "-DLLVM_TARGETS_TO_BUILD=AArch64", "-DLLVM_INCLUDE_TESTS=OFF",
+            "-DLLVM_INCLUDE_EXAMPLES=OFF", "-DLLVM_INCLUDE_BENCHMARKS=OFF", "-DLLVM_INCLUDE_DOCS=OFF", "-DLLVM_ENABLE_ZLIB=OFF",
+            "-DLLVM_ENABLE_ZSTD=OFF", "-DLLVM_ENABLE_LIBXML2=OFF", "-DLLVM_ENABLE_LIBEDIT=OFF", "-DLLVM_ENABLE_LIBPFM=OFF",
+            "-DLLVM_ENABLE_BINDINGS=OFF", "-DLLVM_ENABLE_PLUGINS=OFF", "-DCLANG_ENABLE_ARCMT=OFF",
+            "-DCLANG_ENABLE_STATIC_ANALYZER=OFF", "-DCLANG_PLUGIN_SUPPORT=OFF", "-DLLVM_ENABLE_ASSERTIONS=OFF", "-Wno-dev"]
+    tablegens = ["llvm-tblgen", "clang-tblgen", "llvm-min-tblgen"]
+    host = host_compilers(env)
+    if not (LLVM_HOST_BUILD / "build.ninja").is_file():
+        say("configuring LLVM's table generators (this machine)")
+        run(["cmake", "-S", LLVM_SOURCE / "llvm", "-B", LLVM_HOST_BUILD, "-G", "Ninja", "-DLLVM_ENABLE_PROJECTS=clang", *host, *lean],
+            env=env, stdout=subprocess.DEVNULL)
+    say("building " + ", ".join(tablegens))
+    gentle = background_build(env)
+    run(["cmake", "--build", LLVM_HOST_BUILD, "--target", *tablegens], **gentle)
+    native = LLVM_HOST_BUILD / "bin"
+    if not (LLVM_BUILD / "build.ninja").is_file():
+        say("configuring clang + lld (Android arm64)")
+        run(["cmake", "-S", LLVM_SOURCE / "llvm", "-B", LLVM_BUILD, "-G", "Ninja",
+             f"-DCMAKE_TOOLCHAIN_FILE={(NDK / 'build/cmake/android.toolchain.cmake').as_posix()}",
+             "-DANDROID_ABI=arm64-v8a", f"-DANDROID_PLATFORM=android-{MIN_SDK}", "-DANDROID_STL=c++_static",
+             "-DLLVM_ENABLE_PROJECTS=clang;lld", f"-DLLVM_HOST_TRIPLE=aarch64-linux-android{MIN_SDK}",
+             f"-DLLVM_DEFAULT_TARGET_TRIPLE=aarch64-linux-android{MIN_SDK}", f"-DLLVM_NATIVE_TOOL_DIR={native.as_posix()}",
+             f"-DLLVM_TABLEGEN={(native / ('llvm-tblgen' + EXE)).as_posix()}", f"-DCLANG_TABLEGEN={(native / ('clang-tblgen' + EXE)).as_posix()}",
+             "-DLLVM_BUILD_TOOLS=OFF", "-DLLVM_BUILD_UTILS=OFF", "-DLLVM_ENABLE_TERMINFO=OFF", "-DLLVM_ENABLE_PIC=ON",
+             "-DCMAKE_EXE_LINKER_FLAGS=-Wl,-z,max-page-size=16384", *lean],
+            env=env, stdout=subprocess.DEVNULL)
+    say("building clang and lld (Android arm64)")
+    run(["cmake", "--build", LLVM_BUILD, "--target", "clang", "lld"], **gentle)
+    for tool in LLVM_TOOLS:
+        say(f"{tool.relative_to(ROOT)}: {tool.stat().st_size / 1e6:.0f} MB")
+
+
+def background_build(env):
+    """LLVM and DXC are long builds: a few jobs (CRASH_BUILD_JOBS, a quarter of the cores by default)
+    at a low priority, so the PC stays usable while they run. The `run` keywords for them."""
+    env = dict(env)
+    env["CMAKE_BUILD_PARALLEL_LEVEL"] = os.environ.get("CRASH_BUILD_JOBS") or str(max(2, (os.cpu_count() or 8) // 4))
+    say(f"{env['CMAKE_BUILD_PARALLEL_LEVEL']} jobs at a low priority (CRASH_BUILD_JOBS to change)")
+    if WINDOWS:
+        return {"env": env, "creationflags": subprocess.IDLE_PRIORITY_CLASS}
+    return {"env": env, "preexec_fn": lambda: os.nice(15)}
+
+
+def host_compilers(env):
+    """This machine's C / C++ compilers for CMake: the bundled llvm-mingw, else a clang / gcc on PATH."""
+    search = os.pathsep.join([str(ROOT / "toolchain" / "llvm-mingw" / "bin"), env["PATH"]])
+    cc, cxx = shutil.which("clang", path=search), shutil.which("clang++", path=search)
+    if not (cc and cxx):
+        cc, cxx = shutil.which("gcc", path=search), shutil.which("g++", path=search)
+    if not (cc and cxx):
+        sys.exit("no compiler for this machine (the bundled llvm-mingw, or clang / gcc on PATH)")
+    return [f"-DCMAKE_C_COMPILER={Path(cc).as_posix()}", f"-DCMAKE_CXX_COMPILER={Path(cxx).as_posix()}"]
+
+
+def dxc():
+    """DXC as an Android arm64 library with SPIR-V output, for the shaders the renderer compiles on
+    the phone (no shader cache made on a PC). DXC is an LLVM 3.7 fork: its table generators come
+    first, built for this machine."""
+    if not (DXC_SOURCE / "CMakeLists.txt").is_file() or not (DXC_SOURCE / "external" / "SPIRV-Tools" / "CMakeLists.txt").is_file():
+        sys.exit(f"{DXC_SOURCE.relative_to(ROOT)} not found or without its submodules (see this script's docstring)")
+    env = build_env()
+    cache = ["-C", DXC_SOURCE / "cmake" / "caches" / "PredefinedParams.cmake"]
+    lean = ["-DCMAKE_BUILD_TYPE=Release", "-DHLSL_INCLUDE_TESTS=OFF", "-DSPIRV_BUILD_TESTS=OFF", "-DLLVM_INCLUDE_TESTS=OFF",
+            "-DCLANG_INCLUDE_TESTS=OFF", "-DLLVM_APPEND_VC_REV=OFF", "-DHLSL_ENABLE_ANALYZE=OFF", "-DENABLE_SPIRV_CODEGEN=ON",
+            "-DSPIRV_SKIP_EXECUTABLES=ON", "-DSPIRV_SKIP_TESTS=ON", "-DLLVM_ENABLE_ASSERTIONS=OFF", "-Wno-dev"]
+    if not (DXC_HOST_BUILD / "build.ninja").is_file():
+        say("configuring DXC's table generators (this machine)")
+        run(["cmake", *cache, "-S", DXC_SOURCE, "-B", DXC_HOST_BUILD, "-G", "Ninja", *host_compilers(env), *lean],
+            env=env, stdout=subprocess.DEVNULL)
+    say("building DXC's llvm-tblgen and clang-tblgen")
+    gentle = background_build(env)
+    run(["cmake", "--build", DXC_HOST_BUILD, "--target", "llvm-tblgen", "clang-tblgen"], **gentle)
+    native = DXC_HOST_BUILD / "bin"
+    if not (DXC_BUILD / "build.ninja").is_file():
+        say("configuring libdxcompiler.so (Android arm64)")
+        run(["cmake", *cache, "-S", DXC_SOURCE, "-B", DXC_BUILD, "-G", "Ninja",
+             f"-DCMAKE_TOOLCHAIN_FILE={(NDK / 'build/cmake/android.toolchain.cmake').as_posix()}",
+             "-DANDROID_ABI=arm64-v8a", f"-DANDROID_PLATFORM=android-{MIN_SDK}", "-DANDROID_STL=c++_static",
+             f"-DLLVM_TABLEGEN={(native / ('llvm-tblgen' + EXE)).as_posix()}", f"-DCLANG_TABLEGEN={(native / ('clang-tblgen' + EXE)).as_posix()}",
+             f"-DLLVM_HOST_TRIPLE=aarch64-linux-android{MIN_SDK}", "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384", *lean],
+            env=env, stdout=subprocess.DEVNULL)
+    say("building libdxcompiler.so (Android arm64)")
+    run(["cmake", "--build", DXC_BUILD, "--target", "dxcompiler"], **gentle)
+    say(f"{DXC_LIB.relative_to(ROOT)}: {DXC_LIB.stat().st_size / 1e6:.0f} MB")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk", "turnip", "ffmpeg"])
+    parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk", "turnip", "ffmpeg", "llvm", "dxc"])
     parser.add_argument("--debuggable", action="store_true",
                         help="android:debuggable APK, for profiling on the phone (simpleperf record --app <package>)")
     args = parser.parse_args()
@@ -330,6 +445,10 @@ def main():
         turnip()
     if step == "ffmpeg" or (step == "all" and FFMPEG_SOURCE.is_dir() and not all(f.is_file() for f in FFMPEG_LIBS)):
         ffmpeg()
+    if step == "llvm":
+        llvm()
+    if step == "dxc":
+        dxc()
     if step in ("all", "build"):
         build()
     if step in ("all", "apk"):
