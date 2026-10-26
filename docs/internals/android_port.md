@@ -275,6 +275,19 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     the S20 FE by touch: a finger dragged over the five save slots selects each under it, slot 1
     loads, the opening cutscene skips by holding, and SAVE AND EXIT -> YES in the pause works;
     on a PC at 21:9 and 16:9 (`mouse_menus`, all checks pass).
+  - **The launcher first (single APK, step 1; same day):** the app opens the PC launcher
+    (`launcher/launcher.cpp`, the Linux SDL3 + Dear ImGui code) built as `libcrashlauncher.so`,
+    in `LauncherActivity`, a process of its own (`:launcher`), with the game's own art from the
+    dump. PLAY calls `LauncherActivity.startGame` by JNI, which starts `CrashActivity` (the game,
+    `libmain.so`) in the app's main process, and the launcher closes. It is full screen; touches
+    are the mouse; the text font is Android's Roboto. The rows that don't exist on Android are
+    gone, in the launcher and in the game's SETTINGS (`options.cpp`): HD AI Remaster, DLSS / FSR
+    and its mode and sharpness, and the window mode. Checked on the S20 FE: the launcher opens
+    from the app icon, the ADVANCED tabs show, PLAY starts the game.
+  - **Next for the single APK:** importing the dump from a folder the player picks (SAF), then
+    XenonRecomp + clang / lld on the phone (an LLVM built for Android arm64) and DXC for Android,
+    so the APK carries no game code (the game's code then lives in the app's internal storage:
+    `dlopen` is refused on the external one).
   - **Next on the phone:** the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
     it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
@@ -346,11 +359,12 @@ headers are the `ucontext` functions glibc has).
 
 ```
 APK (built on the player's PC, never published)
+├── lib/arm64-v8a/libcrashlauncher.so   the launcher (launcher/launcher.cpp), the app's first screen
 ├── lib/arm64-v8a/libmain.so    runtime + generated/ppc + XexImage (SDL_main), c++_static
 ├── lib/arm64-v8a/libSDL3.so    SDL 3.4.18 built with the NDK (AAudio, Android input, Vulkan)
 ├── lib/arm64-v8a/libavcodec…   FFmpeg LGPL, only the WMA Pro / XMA decoder (M6)
 ├── lib/arm64-v8a/libdxcompiler.so   DXC for Android (M4b, optional)
-├── classes.dex                 SDL's org.libsdl.app Java glue + a tiny CrashActivity
+├── classes.dex                 SDL's org.libsdl.app Java glue + LauncherActivity + CrashActivity
 ├── res/, AndroidManifest.xml   landscape, fullscreen, game controller and Vulkan features
 └── assets/                     languages/ and our own data (no game file)
 

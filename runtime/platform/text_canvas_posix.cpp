@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unistd.h>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -364,10 +365,21 @@ namespace plat
     }
 }
 #else
+#include <unistd.h>
+
 namespace plat
 {
-    std::string SystemFontFile(FontFace, bool)
+    std::string SystemFontFile(FontFace, bool bold)
     {
+#if defined(__ANDROID__)
+        // Android's own (Roboto; a variable font on newer versions, the same file for bold).
+        for (const char* file : { bold ? "/system/fonts/Roboto-Bold.ttf" : "/system/fonts/Roboto-Regular.ttf", "/system/fonts/Roboto-Regular.ttf",
+                                  "/system/fonts/DroidSans.ttf" })
+            if (access(file, R_OK) == 0)
+                return file;
+#else
+        (void)bold;
+#endif
         return {};
     }
 

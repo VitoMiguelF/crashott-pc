@@ -393,11 +393,11 @@ if (WIN32)
     target_compile_options(CrashSetup PRIVATE -Wno-deprecated-declarations -Wno-unused-function)
     target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32 uuid bcrypt winmm version)
     set(CRASH_DIST_LAUNCHER CrashLauncher)
-elseif (ANDROID)
-    # No launcher or installer on Android: the PC builds the APK (tools/android_build.py).
 else()
     # Linux: the same screens with SDL3 (window, input, dialogs) and Dear ImGui's SDL3 + SDL_Renderer
     # backends; the system font through fontconfig (platform/text_canvas_posix.cpp, dlopen'ed).
+    # Android: the launcher is libcrashlauncher.so, the APK's first screen (LauncherActivity, in a
+    # process of its own); PLAY starts CrashActivity (libmain.so). No installer there yet.
     set(CRASH_IMGUI_DIR ${CMAKE_SOURCE_DIR}/thirdparty/imgui)
     set(CRASH_LAUNCHER_LINUX_SOURCES
         ${CMAKE_SOURCE_DIR}/launcher/launcher.cpp
@@ -423,7 +423,20 @@ else()
         ${CMAKE_SOURCE_DIR}/runtime/settings/language_pack.cpp
         ${CMAKE_SOURCE_DIR}/runtime/settings/options.cpp
         ${CMAKE_SOURCE_DIR}/runtime/settings/hd_remaster.cpp)
+    if (ANDROID)
+        add_library(CrashLauncher SHARED ${CRASH_LAUNCHER_LINUX_SOURCES})
+        set_target_properties(CrashLauncher PROPERTIES OUTPUT_NAME crashlauncher CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden)
+        target_include_directories(CrashLauncher PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include
+            ${CMAKE_SOURCE_DIR}/thirdparty/stb)
+        target_compile_options(CrashLauncher PRIVATE -Wno-deprecated-declarations)
+        target_link_libraries(CrashLauncher PRIVATE SDL3::SDL3-shared Threads::Threads log android ${CMAKE_DL_LIBS})
+        # As libmain.so: only SDL_main exported, every symbol resolved at link time, 16 KB pages.
+        target_link_options(CrashLauncher PRIVATE -Wl,--no-undefined -Wl,--exclude-libs,ALL -Wl,-z,max-page-size=16384 -Wl,--gc-sections)
+    endif()
     foreach(CRASH_TARGET CrashLauncher CrashSetup)
+        if (ANDROID)
+            break()
+        endif()
         add_executable(${CRASH_TARGET} ${CRASH_LAUNCHER_LINUX_SOURCES})
         target_include_directories(${CRASH_TARGET} PRIVATE ${CRASH_IMGUI_DIR} ${CMAKE_SOURCE_DIR}/thirdparty/vulkan/include
             ${CMAKE_SOURCE_DIR}/thirdparty/stb ${CRASH_FREETYPE_INCLUDE})
@@ -437,7 +450,9 @@ else()
         target_link_options(${CRASH_TARGET} PRIVATE "-Wl,-rpath,\$ORIGIN:\$ORIGIN/../lib" -Wl,--disable-new-dtags -Wl,--gc-sections)
         set_target_properties(${CRASH_TARGET} PROPERTIES SKIP_BUILD_RPATH ON)
     endforeach()
-    target_compile_definitions(CrashSetup PRIVATE CRASH_INSTALLER)
+    if (NOT ANDROID)
+        target_compile_definitions(CrashSetup PRIVATE CRASH_INSTALLER)
+    endif()
     set(CRASH_DIST_LAUNCHER CrashLauncher)
 endif()
 

@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The app tools/android_build.py assembles (docs/internals/android_port.md). SDL3's Java glue
-     (org.libsdl.app, from the SDL source) plus CrashActivity; the game is lib/arm64-v8a/libmain.so,
-     built on the player's PC from their own dump: this APK is personal and is never published. -->
+     (org.libsdl.app, from the SDL source) plus LauncherActivity (the launcher, the app's first
+     screen, libcrashlauncher.so) and CrashActivity (the game, lib/arm64-v8a/libmain.so, built on
+     the player's PC from their own dump: this APK is personal and is never published). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.vitomiguelf.crashottde"
     android:versionCode="1"
@@ -26,17 +27,25 @@
         android:appCategory="game"
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
-        <activity android:name=".CrashActivity"
+        <!-- The launcher, in a process of its own: the game starts in a fresh one. -->
+        <activity android:name=".LauncherActivity"
             android:exported="true"
-            android:launchMode="singleInstance"
-            android:alwaysRetainTaskState="true"
+            android:process=":launcher"
+            android:launchMode="singleTask"
             android:screenOrientation="sensorLandscape"
-            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
-            android:preferMinimalPostProcessing="true">
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- The game, started by the launcher's PLAY. -->
+        <activity android:name=".CrashActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:alwaysRetainTaskState="true"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:preferMinimalPostProcessing="true" />
     </application>
 </manifest>

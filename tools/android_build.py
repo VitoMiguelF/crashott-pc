@@ -113,7 +113,7 @@ def build():
          f"-DCRASH_FFMPEG_ANDROID={FFMPEG_INSTALL.as_posix() if all(f.is_file() for f in FFMPEG_LIBS) else ''}", "-Wno-dev"],
         env=env, stdout=subprocess.DEVNULL)
     say("building libmain.so and libSDL3.so")
-    run(["cmake", "--build", CMAKE_BUILD, "--target", "CrashRecomp"], env=env)
+    run(["cmake", "--build", CMAKE_BUILD, "--target", "CrashRecomp", "CrashLauncher"], env=env)
 
 
 def ffmpeg():
@@ -249,15 +249,16 @@ def keystore():
 
 def apk(debuggable=False):
     libmain = CMAKE_BUILD / "libmain.so"
+    liblauncher = CMAKE_BUILD / "libcrashlauncher.so"
     libsdl = next(iter(sorted(CMAKE_BUILD.rglob("libSDL3.so"))), None)
-    if not libmain.is_file() or not libsdl:
-        sys.exit("libmain.so / libSDL3.so not built: run `python tools/android_build.py build` first")
+    if not libmain.is_file() or not liblauncher.is_file() or not libsdl:
+        sys.exit("libmain.so / libcrashlauncher.so / libSDL3.so not built: run `python tools/android_build.py build` first")
     if OUT.exists():
         shutil.rmtree(OUT)
     classes = OUT / "classes"
     classes.mkdir(parents=True)
 
-    # Java: SDL's glue + CrashActivity -> classes.dex
+    # Java: SDL's glue + LauncherActivity + CrashActivity -> classes.dex
     sources = sorted((SDL_SOURCE / "android-project/app/src/main/java").rglob("*.java")) + \
         sorted((ROOT / "android" / "java").rglob("*.java"))
     say(f"javac: {len(sources)} files")
@@ -287,12 +288,15 @@ def apk(debuggable=False):
     strip = NDK / "toolchains" / "llvm" / "prebuilt" / HOST / "bin" / ("llvm-strip" + EXE)
     stripped = OUT / "libmain.so"
     run([strip, "--strip-debug", "-o", stripped, libmain])
+    launcher_stripped = OUT / "libcrashlauncher.so"
+    run([strip, "--strip-debug", "-o", launcher_stripped, liblauncher])
     unaligned = OUT / "unaligned.apk"
     shutil.copy(OUT / "base.apk", unaligned)
     with zipfile.ZipFile(unaligned, "a") as z:
         z.write(OUT / "classes.dex", "classes.dex", compress_type=zipfile.ZIP_DEFLATED)
         z.write(libsdl, "lib/arm64-v8a/libSDL3.so", compress_type=zipfile.ZIP_DEFLATED)
         z.write(stripped, "lib/arm64-v8a/libmain.so", compress_type=zipfile.ZIP_DEFLATED)
+        z.write(launcher_stripped, "lib/arm64-v8a/libcrashlauncher.so", compress_type=zipfile.ZIP_DEFLATED)
         hooks = [CMAKE_BUILD / "adrenotools" / "src" / "hook" / name for name in ("libhook_impl.so", "libmain_hook.so")]
         if all(h.is_file() for h in hooks) and TURNIP_LIB.is_file():
             for library in hooks + [TURNIP_LIB]:

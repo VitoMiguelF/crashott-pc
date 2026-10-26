@@ -23,6 +23,11 @@
 // Linux (the Steam Deck first): the same screens on SDL3 (window, keyboard, mouse, pads) with
 // SDL_Renderer drawing Dear ImGui; processes by fork + exec, dialogs through zenity / kdialog
 // (plat::PickFolder) and SDL's message boxes, the system font from fontconfig. No UPDATE yet.
+//
+// Android: the same Linux code as libcrashlauncher.so, the app's first screen (LauncherActivity, in a
+// process of its own, android/java). The folders are the app's, as for the game
+// (android_main_android.cpp); PLAY asks LauncherActivity to start CrashActivity (the game, libmain.so)
+// and closes; the text is Android's Roboto; touches arrive as the mouse (SDL).
 
 #ifdef _WIN32
 #include <windows.h>
@@ -60,6 +65,9 @@
 #include "../runtime/platform/text_canvas.h"
 
 #include <SDL3/SDL.h>
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
 
 #include <cerrno>
 #include <fcntl.h>
@@ -176,7 +184,11 @@ namespace
     const int SETUP_TAB = int(TABS.size()) - 1;
     // The simple view (the default): the main options on one page; LIGHTING sets all of the
     // lighting remaster's at once (opt::LightingPreset).
+#ifdef __ANDROID__
+    const Tab SIMPLE{ { "OPTIONS", "OPÇÕES" }, { Item::Language, Item::Resolution, Item::Aspect, Item::FpsLimit, Item::Lighting } };  // no HD AI Remaster
+#else
     const Tab SIMPLE{ { "OPTIONS", "OPÇÕES" }, { Item::Language, Item::Resolution, Item::Aspect, Item::FpsLimit, Item::HdRemaster, Item::Lighting } };
+#endif
 
     // State.
     Values g_values, g_saved;
@@ -707,7 +719,36 @@ namespace
         }
         if (!(g_values == g_saved))
             Save();
-#ifndef _WIN32
+#if defined(__ANDROID__)
+        // The game is another activity of the app (CrashActivity, libmain.so): LauncherActivity.startGame.
+        JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+        jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
+        bool started = false;
+        if (env && activity)
+        {
+            jclass type = env->GetObjectClass(activity);
+            jmethodID start = type ? env->GetStaticMethodID(type, "startGame", "()V") : nullptr;
+            if (start)
+            {
+                env->CallStaticVoidMethod(type, start);
+                started = !env->ExceptionCheck();
+            }
+            env->ExceptionClear();
+            if (type)
+                env->DeleteLocalRef(type);
+            env->DeleteLocalRef(activity);
+        }
+        if (!started)
+        {
+            g_message[0] = T({ "Could not start the game", "Não foi possível abrir o jogo" });
+            g_message[1] = "(LauncherActivity.startGame)";
+            g_modal = Modal::Message;
+            return false;
+        }
+        Log("[launcher] started the game (CrashActivity)");
+        g_quit = true;
+        return true;
+#elif !defined(_WIN32)
         // CrashOTTDE in the installed layout (tools/make_dist.py --installed), else CrashRecomp.
         fs::path game = paths::ExeDir() / "CrashOTTDE";
         if (!Exists(game))
@@ -2065,8 +2106,11 @@ static int RunLauncher(int argc, char** argv)
 #else
     const char* title = "Crash of the Titans: Definitive Edition";
 #endif
-    g_window = SDL_CreateWindow(title, int(VW * scale), int(VH * scale), SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
-                                                                         (screenshot.empty() ? 0 : SDL_WINDOW_HIDDEN));
+    SDL_WindowFlags windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (screenshot.empty() ? 0 : SDL_WINDOW_HIDDEN);
+#ifdef __ANDROID__
+    windowFlags |= SDL_WINDOW_FULLSCREEN;  // immersive: no status or navigation bar, as the game
+#endif
+    g_window = SDL_CreateWindow(title, int(VW * scale), int(VH * scale), windowFlags);
     g_renderer = g_window ? SDL_CreateRenderer(g_window, nullptr) : nullptr;
     if (!g_renderer)
     {
@@ -2269,6 +2313,23 @@ static int RunLauncher(int argc, char** argv)
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
     return RunLauncher(__argc, __argv);
+}
+#elif defined(__ANDROID__)
+// LauncherActivity loads libSDL3.so and this library and calls SDL_main on SDL's thread. The folders
+// are the app's external files folder, as for the game (android_main_android.cpp).
+extern "C" __attribute__((visibility("default"))) int SDL_main(int argc, char** argv)
+{
+    if (const char* external = SDL_GetAndroidExternalStoragePath())
+    {
+        setenv("CRASH_ANDROID_FILES", external, 1);
+        std::error_code error;
+        for (const char* folder : { "game", "userdata", "mods", "data", "languages" })
+            fs::create_directories(fs::path(external) / folder, error);
+    }
+    else
+        Log("[launcher] no external files folder: %s", SDL_GetError());
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    return RunLauncher(argc, argv);
 }
 #else
 int main(int argc, char** argv)

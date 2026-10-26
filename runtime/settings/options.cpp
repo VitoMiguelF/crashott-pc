@@ -56,7 +56,7 @@ namespace settings::options
 
     const Tab* Tabs()
     {
-        static const Tab tabs[TAB_COUNT] = {
+        static Tab tabs[TAB_COUNT] = {
             { "game", { "GAME", "JOGO" }, { Item::Language, Item::CoopMode, Item::InvertAxis, Item::Autosave, Item::SkipCutscenes, Item::Storage } },
             { "audio", { "AUDIO", "ÁUDIO" },
               { Item::Master, Item::Music, Item::Effects, Item::Voice, Item::HeaderSubtitles, Item::Subtitles, Item::SubtitleSize,
@@ -72,6 +72,18 @@ namespace settings::options
                 Item::LightContactShadows, Item::LightSoftShadows, Item::HeaderCamera, Item::FreeCamera, Item::CameraSensitivity,
                 Item::CameraInvertY, Item::CameraDistance, Item::HeaderDev, Item::DevConsole } },
         };
+#if defined(__ANDROID__)
+        // Android has no HD AI Remaster (by design), no DLSS / FSR and no window mode: those rows go.
+        static const bool trimmed = [] {
+            for (Tab& tab : tabs)
+                std::erase_if(tab.items, [](Item item) {
+                    return item == Item::HdRemaster || item == Item::Upscaler || item == Item::UpscalerQuality || item == Item::Sharpness ||
+                           item == Item::Window;
+                });
+            return true;
+        }();
+        (void)trimmed;
+#endif
         return tabs;
     }
 
