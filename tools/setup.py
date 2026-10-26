@@ -437,6 +437,12 @@ def setup_xenonrecomp():
     applied = subprocess.run([git, "apply", "--reverse", "--check", "--ignore-whitespace", XENON_PATCH], cwd=XENON,
                              capture_output=True).returncode == 0
     if not applied:
+        applies = subprocess.run([git, "apply", "--check", "--ignore-whitespace", XENON_PATCH], cwd=XENON,
+                                 capture_output=True).returncode == 0
+        if not applies:
+            # An older patches/XenonRecomp.patch is applied (a pull changed it): back to the pinned commit first.
+            say("patches/XenonRecomp.patch mudou: o XenonRecomp volta ao commit fixado antes de aplicar o novo")
+            run_all([git, "checkout", "--", "."], cwd=XENON)
         run_all([git, "apply", "--ignore-whitespace", XENON_PATCH], cwd=XENON)
     say("XenonRecomp ok (" + XENON_COMMIT[:10] + " + patches/XenonRecomp.patch)")
 

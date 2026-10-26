@@ -458,6 +458,12 @@ def environment(settings, run_dir, profile=None):
         env["CRASH_LOG_IMPORTS"] = ",".join(settings["log_imports"])
     for key, value in settings.get("env", {}).items():
         env[key] = str(value)
+    # fps_limit = N: this run's frame limit (tests/userdata_base has none). The menu tests set it: at
+    # several hundred fps the menus miss the scripted button presses. A video.fps_limit in the
+    # profile's own CRASH_SETTINGS comes after it and wins.
+    if settings.get("fps_limit") is not None:
+        limit = f"video.fps_limit={int(settings['fps_limit'])}"
+        env["CRASH_SETTINGS"] = limit + (";" + env["CRASH_SETTINGS"] if env.get("CRASH_SETTINGS") else "")
     # A restart from the settings screen exits with code 4 and the runner starts the game again
     # (run_profile), instead of the game relaunching itself out of the runner's sight.
     env.setdefault("CRASH_RESTART", "exit")

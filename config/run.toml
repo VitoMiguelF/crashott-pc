@@ -44,6 +44,8 @@ timeout = 0            # segundos até o watchdog encerrar o jogo (0 = sem limit
 audio = true           # false = não abre dispositivo de áudio (CRASH_NOAUDIO)
 render = true          # false = sem janela/renderização (CRASH_NO_RENDER)
 symbols = true         # nomes de funções (RTTI) nas mensagens de crash
+# fps_limit = 60 (por perfil): limite de FPS da execução; a base de testes roda sem limite, e os
+# testes de menu travam em 60 porque, a centenas de fps, os menus perdem os botões do script.
 # "copy" (o padrão): a pasta da execução recebe uma cópia de tests/userdata_base (saves e
 # settings.toml) e do cache de shaders dos testes; o teste pode sobrescrever slots e opções sem
 # mexer na base nem nos seus saves. "shared": a sua userdata de verdade (só o perfil jogar).
@@ -107,6 +109,7 @@ expect = { exit = ["timeout"], min_frames = 480, log_absent = ['\[fatal\]', '\[c
 
 [profiles.menu]
 description = "Pula as intros (skip_intros: sem vídeos de logo e sem tela de título) e chega ao menu principal com música"
+fps_limit = 60
 test = true
 timeout = 25
 audio = false
@@ -119,6 +122,7 @@ expect = { exit = ["timeout"], events = ["main_menu"], log_absent = ['\[fatal\]'
 
 [profiles.menu_loaded]
 description = "LOAD GAME no primeiro slot até o menu do episódio (boot load:1:hub, pelas saídas do próprio frontend)"
+fps_limit = 60
 test = true
 timeout = 30
 audio = false
@@ -129,6 +133,7 @@ expect = { exit = ["timeout"], events = ["main_menu", "hub", "boot_done"], log_a
 
 [profiles.load_pelos_menus]
 description = "Ponta a ponta pela interface: LOAD GAME só com botões (DOWN, A, slot 1, CONTINUE, Y) até a fase, cada botão ancorado na tela em que cai"
+fps_limit = 60
 test = true
 timeout = 50
 audio = false
@@ -147,6 +152,7 @@ expect = { exit = ["timeout"], events = ["main_menu", "save_slots", "load_comple
 
 [profiles.primeira_fase]
 description = "Ponta a ponta pela interface: NEW GAME (nome, NORMAL, slot 1 sobrescrito) pelo piloto automático de menus, cena de abertura e a vila"
+fps_limit = 60
 test = true
 timeout = 150
 audio = false
@@ -206,6 +212,7 @@ expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent 
 
 [profiles.coop_jogadores]
 description = "Co-op local com dois controles de verdade conectados (não roda sem eles): SETTINGS > CONTROLES, JOGADOR 1 = o segundo controle e JOGADOR 2 = o primeiro pelas setas; o log mostra a troca dos jogadores"
+fps_limit = 60
 test = false
 timeout = 30
 audio = false
@@ -242,6 +249,7 @@ expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fat
 
 [profiles.iluminacao_tela]
 description = "SETTINGS > DEFINITIVE EDITION > ILUMINAÇÃO (REMASTER): liga SSAO ALTA, luz indireta 110%, sombras de contato e suaves pelo controle, salva, faz LOAD GAME, continua a história (Y no HUB) e confere a iluminação na fase"
+fps_limit = 60
 test = true
 timeout = 70
 audio = false
@@ -313,6 +321,7 @@ expect = { exit = ["timeout"], events = ["skip_prompt", "cinematic_skipped", "ci
 
 [profiles.pular_videos]
 description = "Pular os vídeos de abertura (Bink) segurando B: os logos e o teatro de sombras, até o título"
+fps_limit = 60
 test = true
 timeout = 60
 audio = false
@@ -323,6 +332,7 @@ expect = { exit = ["timeout"], events = ["skip_prompt", "video_skipped", "title"
 
 [profiles.configuracoes]
 description = "SETTINGS (antigo CALIBRATION) no menu: muda volume e anti-aliasing, passa por todas as abas (LB/RB), fecha e faz LOAD GAME"
+fps_limit = 60
 test = true
 timeout = 50
 audio = false
@@ -352,6 +362,7 @@ expect = { exit = ["timeout"], events = ["main_menu", "save_slots", "hub"], log_
 
 [profiles.compilacao_shaders_tela]
 description = "SETTINGS > GRÁFICOS > COMPILAÇÃO DE SHADERS: de ASSÍNCRONA para SINCRONIZADA pelo controle (vale na hora: o renderer troca o modo), salva e faz LOAD GAME até o HUB"
+fps_limit = 60
 test = true
 timeout = 50
 audio = false
@@ -374,6 +385,7 @@ expect = { exit = ["timeout"], events = ["main_menu", "save_slots", "hub"], log_
 
 [profiles.configuracoes_reinicio]
 description = "SETTINGS: troca o idioma para PT-BR, sai, aceita o reinício (A); o runner reabre o jogo, que pula as intros sozinho, e faz LOAD GAME"
+fps_limit = 60
 test = true
 timeout = 30
 audio = false
@@ -399,6 +411,7 @@ expect = { exit = ["timeout"], restarts = 1, events = ["main_menu#2", "hub"], lo
 
 [profiles.configuracoes_resolucao]
 description = "SETTINGS: resolução 1920x1080 e DLSS Qualidade aplicados ao fechar a tela, sem reiniciar; depois LOAD GAME até a fase"
+fps_limit = 60
 test = true
 timeout = 55
 audio = false
@@ -425,6 +438,7 @@ expect = { exit = ["timeout"], restarts = 0, events = ["gameplay_ready"], log_ab
 
 [profiles.sair_do_jogo]
 description = "SAIR DO JOGO (EXIT GAME, 5º item do menu principal): fecha o jogo com código 0"
+fps_limit = 60
 test = true
 timeout = 25
 audio = false
@@ -439,6 +453,7 @@ expect = { exit = ["ok"], log_absent = ['\[fatal\]', '\[crash\]', 'XamShowDevice
 
 [profiles.configuracoes_jogo]
 description = "Menu principal: SETTINGS > JOGO, COOPERATIVO = CAVALINHO e INVERTER EIXO ligado antes de entrar; LOAD GAME até a fase (o save traz os valores dele e o runtime volta a aplicar os da tela)"
+fps_limit = 60
 test = true
 timeout = 50
 audio = false
@@ -460,6 +475,7 @@ expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fat
 
 [profiles.configuracoes_pausa]
 description = "No jogo: pausa > OPÇÕES abre a tela (a original fica escondida); MÚSICA ao vivo, COOPERATIVO / INVERTER EIXO / SALVAMENTO AUTOMÁTICO na aba JOGO, resolução 1600x900 ao fechar; B volta à pausa, que reabre a tela; START volta a jogar"
+fps_limit = 60
 test = true
 timeout = 65
 audio = false
@@ -487,6 +503,7 @@ expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent 
 
 [profiles.teclado]
 description = "Só teclado e mouse: LOAD GAME pelos menus (setas, Enter, Tab) e na fase anda (WASD), pula, ataca (mouse), giro (R), girar + ataque (Q + mouse), ação (E), bloqueio (Shift) e pausa (Esc)"
+fps_limit = 60
 test = true
 timeout = 65
 audio = false
@@ -550,6 +567,7 @@ expect = { exit = ["timeout"], events = ["cinematic", "gameplay_ready"], log_abs
 
 [profiles.icones]
 description = "Ícones dos botões conforme o último dispositivo: teclado, PlayStation e Xbox (DEVICE_*), no menu principal, nos saves, no episódio e na pausa"
+fps_limit = 60
 test = true
 timeout = 50
 audio = false
@@ -571,6 +589,7 @@ expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent 
 
 [profiles.controles_tela]
 description = "Aba CONTROLES da tela SETTINGS só pelo teclado: troca PULAR para K (captura de tecla), fecha, faz LOAD GAME e pula com K na fase"
+fps_limit = 60
 test = true
 timeout = 55
 audio = false
@@ -595,6 +614,7 @@ expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fat
 
 [profiles.mouse_menus]
 description = "Menus pelo mouse como num jogo de PC: passar em SETTINGS vindo de NEW GAME seleciona direto (uma troca só), roda, teclado e D-pad continuam, clique abre SETTINGS; lá: clique nas abas, passar nas linhas, clique e arrasto nas estrelas, clique na linha e nas setas, roda, RB, VOLTAR; depois LOAD GAME, save e CONTINUE pelo clique, menu do episódio; na fase, pausa, passar em OPTIONS e clique em RESUME GAME"
+fps_limit = 60
 test = true
 timeout = 90
 audio = false
@@ -702,6 +722,7 @@ expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fat
 
 [profiles.nome_teclado_controle]
 description = "NEW GAME: nome AQ1Z digitado no teclado da tela com o controle (D-pad, A, X apaga, Y pronto), NORMAL e sobrescreve o slot 3; confere o nome no save"
+fps_limit = 60
 test = true
 timeout = 50
 audio = false
@@ -717,6 +738,7 @@ expect = { exit = ["timeout"], events = ["name_entry", "save_slots"], log_absent
 
 [profiles.nome_teclado_fisico]
 description = "NEW GAME: nome CRASH digitado no teclado físico (letras, uma a mais com o nome cheio, Backspace, Enter = pronto) e o resto pelo teclado (Enter, setas); sobrescreve o slot 4"
+fps_limit = 60
 test = true
 timeout = 50
 audio = false
@@ -732,6 +754,7 @@ expect = { exit = ["timeout"], events = ["name_entry", "save_slots"], log_absent
 
 [profiles.nome_teclado_mouse]
 description = "NEW GAME: nome MOUSE clicando nas teclas (passar o mouse destaca a tecla), APAGAR e PRONTO clicados; sobrescreve o slot 5"
+fps_limit = 60
 test = true
 timeout = 50
 audio = false
@@ -748,6 +771,7 @@ expect = { exit = ["timeout"], events = ["name_entry", "save_slots"], log_absent
 
 [profiles.apagar_save]
 description = "LOAD GAME: X no slot 2 abre a pergunta; B cancela, NÃO cancela (o slot fica); X, SIM apaga: a lista é lida de novo com o slot 2 vazio e os outros no lugar; LOAD do slot 1 continua funcionando"
+fps_limit = 60
 test = true
 timeout = 60
 audio = false
@@ -765,6 +789,7 @@ expect = { exit = ["timeout"], events = ["save_deleted", "save_slots#2", "load_c
 
 [profiles.apagar_save_mouse]
 description = "LOAD GAME pelo mouse e teclado: Delete no slot 3 e clique direito cancela; clique em X APAGAR no slot 4 e clique em SIM apaga"
+fps_limit = 60
 test = true
 timeout = 60
 audio = false
@@ -939,6 +964,7 @@ expect = { exit = ["timeout"], events = ["gameplay_ready", "console_cmd"], log_a
 
 [profiles.console_skin_menu]
 description = "DEV: a Crash_Hulk no menu de skins do jogo: no L1_E1 o console desbloqueia a Hulk e a Chiratta (Ratnician), sai da fase, no HUB abre o boneco RATNICIAN SKIN, direita/esquerda percorrem as skins (Ratnician -> Hulk -> Crash -> Hulk), veste a Hulk (YES) e CONTINUE STORY entra na fase com ela"
+fps_limit = 60
 test = true
 timeout = 110
 audio = false
@@ -963,6 +989,7 @@ expect = { exit = ["timeout"], events = ["hub", "gameplay_ready", "console_cmd"]
 
 [profiles.console_level_hub]
 description = "DEV: o comando level do console fora de uma fase: LOAD GAME até o HUB e 'level L1_E3' (Frontend:StartLevel + a saída SkipToLevel da árvore, como o boot direto)"
+fps_limit = 60
 test = true
 timeout = 45
 audio = false
