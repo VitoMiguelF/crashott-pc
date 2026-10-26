@@ -39,7 +39,8 @@ For the single APK (the game recompiled on the phone itself), a compiler that ru
   build/downloads/android/dxc/   DirectXShaderCompiler (git clone --recursive github.com/microsoft/
                           DirectXShaderCompiler), built by the `dxc` step the same way: its own
                           table generators here, then libdxcompiler.so (SPIR-V) for Android arm64,
-                          which the APK carries (rhi_vulkan_shaders.cpp loads it)
+                          which the APK carries (rhi_vulkan_shaders.cpp loads it); on Windows its
+                          table generators need Visual Studio's C++ tools with the C++ ATL component
 """
 import argparse
 import os
@@ -402,6 +403,27 @@ def host_compilers(env):
     return [f"-DCMAKE_C_COMPILER={Path(cc).as_posix()}", f"-DCMAKE_CXX_COMPILER={Path(cxx).as_posix()}"]
 
 
+def msvc_env(env):
+    """`env` inside Visual Studio's vcvars64 (vswhere), or None without Visual Studio."""
+    vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.is_file():
+        return None
+    found = subprocess.run([vswhere, "-latest", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                            "-property", "installationPath"], capture_output=True, text=True).stdout.strip()
+    vcvars = Path(found) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat" if found else None
+    if not vcvars or not vcvars.is_file():
+        return None
+    out = subprocess.run(f'cmd /s /c ""{vcvars}" >nul && set"', capture_output=True, text=True, env=env, shell=True).stdout
+    merged = dict(env)
+    for line in out.splitlines():
+        name, sep, value = line.partition("=")
+        if sep and name:
+            merged[name] = value
+    # The bundled CMake / Ninja first, as in build_env.
+    merged["PATH"] = os.pathsep.join([p for p in env["PATH"].split(os.pathsep) if "toolchain" in p.lower()] + [merged.get("PATH", merged.get("Path", ""))])
+    return merged
+
+
 def dxc():
     """DXC as an Android arm64 library with SPIR-V output, for the shaders the renderer compiles on
     the phone (no shader cache made on a PC). DXC is an LLVM 3.7 fork: its table generators come
@@ -413,13 +435,18 @@ def dxc():
     lean = ["-DCMAKE_BUILD_TYPE=Release", "-DHLSL_INCLUDE_TESTS=OFF", "-DSPIRV_BUILD_TESTS=OFF", "-DLLVM_INCLUDE_TESTS=OFF",
             "-DCLANG_INCLUDE_TESTS=OFF", "-DLLVM_APPEND_VC_REV=OFF", "-DHLSL_ENABLE_ANALYZE=OFF", "-DENABLE_SPIRV_CODEGEN=ON",
             "-DSPIRV_SKIP_EXECUTABLES=ON", "-DSPIRV_SKIP_TESTS=ON", "-DLLVM_ENABLE_ASSERTIONS=OFF", "-Wno-dev"]
+    # On Windows DXC's own code expects MSVC (MinGW lacks what its Windows paths use).
+    host_env, host = env, None
+    if WINDOWS:
+        host_env = msvc_env(env) or sys.exit("dxc: needs Visual Studio's C++ tools on Windows (for its table generators)")
+        host = ["-DCMAKE_C_COMPILER=cl", "-DCMAKE_CXX_COMPILER=cl"]
     if not (DXC_HOST_BUILD / "build.ninja").is_file():
         say("configuring DXC's table generators (this machine)")
-        run(["cmake", *cache, "-S", DXC_SOURCE, "-B", DXC_HOST_BUILD, "-G", "Ninja", *host_compilers(env), *lean],
-            env=env, stdout=subprocess.DEVNULL)
+        run(["cmake", *cache, "-S", DXC_SOURCE, "-B", DXC_HOST_BUILD, "-G", "Ninja", *(host or host_compilers(env)), *lean],
+            env=host_env, stdout=subprocess.DEVNULL)
     say("building DXC's llvm-tblgen and clang-tblgen")
+    run(["cmake", "--build", DXC_HOST_BUILD, "--target", "llvm-tblgen", "clang-tblgen"], **background_build(host_env))
     gentle = background_build(env)
-    run(["cmake", "--build", DXC_HOST_BUILD, "--target", "llvm-tblgen", "clang-tblgen"], **gentle)
     native = DXC_HOST_BUILD / "bin"
     if not (DXC_BUILD / "build.ninja").is_file():
         say("configuring libdxcompiler.so (Android arm64)")
