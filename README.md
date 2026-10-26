@@ -199,6 +199,15 @@ Details for developers: [docs/internals/linux_port.md](docs/internals/linux_port
 
 ### Known issues
 
+- **Windows Security flags `XenonRecomp.exe` (`Program:Win32/Contebrew.A!ml`) and the install stops at
+  the recompile step.** It is a false positive: the installer compiles `XenonRecomp.exe` on your PC from
+  [XenonRecomp](https://github.com/hedge-dev/XenonRecomp)'s open source code (the download has no
+  `XenonRecomp.exe` in it), and the `!ml` means Defender's machine-learning guess about a new, unsigned
+  program, not a known threat. In **Windows Security > Virus & threat protection > Protection history**,
+  open the item and choose **Actions > Allow** (or **Restore**), then run the installer again (finished
+  steps are skipped). If it happens again, add an exclusion for the install folder's `CrashRecomp	ools`
+  folder.
+
 - **v1.01: ASSETS FOR MODDING fails with `ModuleNotFoundError: No module named 'numpy'`.** The v1.01
   installer doesn't install the Python packages the asset export needs (fixed in v1.02). The game
   itself is installed fine. Install them and run the installer again (finished steps are skipped):
@@ -471,6 +480,15 @@ Detalhes para desenvolvedores: [docs/internals/linux_port.md](docs/internals/lin
    montado com o `tools\setup.py` joga da `dist\`: `dist\CrashLauncher.exe`, `dist\CrashRecomp.exe`.)
 
 ### Problemas conhecidos
+
+- **A Segurança do Windows acusa o `XenonRecomp.exe` (`Program:Win32/Contebrew.A!ml`) e a instalação para
+  na etapa de recompilação.** É um falso positivo: o instalador compila o `XenonRecomp.exe` no seu PC, a
+  partir do código aberto do [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) (o download não traz
+  nenhum `XenonRecomp.exe`), e o `!ml` quer dizer que é um palpite do machine learning do Defender sobre um
+  programa novo e sem assinatura, não uma ameaça conhecida. Em **Segurança do Windows > Proteção contra
+  vírus e ameaças > Histórico de proteção**, abra o item e escolha **Ações > Permitir** (ou **Restaurar**)
+  e rode o instalador de novo (as etapas prontas são puladas). Se voltar a acontecer, adicione uma exclusão
+  para a pasta `CrashRecomp	ools` dentro da pasta de instalação.
 
 - **v1.01: ASSETS PARA MODDING falha com `ModuleNotFoundError: No module named 'numpy'`.** O instalador
   da v1.01 não instala os pacotes Python que a exportação de assets usa (corrigido na v1.02). O jogo em
