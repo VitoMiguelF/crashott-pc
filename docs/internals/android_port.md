@@ -28,7 +28,7 @@ lifecycle.
 | M0: this plan | done |
 | M1: runtime + generated code compile and link as `libmain.so` for `aarch64-linux-android` | **done** (2026-10-26): NDK r30, `-Wl,--no-undefined`, 0 errors |
 | M2: minimal APK (SDL3's Java glue) that starts, opens a Vulkan surface and logs to logcat | **done** (2026-10-26, S20 FE) |
-| M3: boot the game with the dump in the app's storage | **runs, draws nothing yet** (2026-10-26, S20 FE with Turnip): the game loop, threads, files and Bink run; needs a PC-made SPIR-V cache on the phone |
+| M3: boot the game with the dump in the app's storage | **done** (2026-10-26, S20 FE with Turnip): intros, title, main menu and settings screen drawn from a PC-made SPIR-V cache |
 | M4 onward: renderer on mobile GPUs, touch, audio, packaging, performance | planned below |
 
 ### Verified so far
@@ -123,6 +123,22 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     `userdata/shadercache`, so every shader is missing (`rect_list_gs`, `blit_vs`, `fxaa_ps`... "not
     in the shader cache"); the screen keeps the probe's last orange frame. **Next:** a SPIR-V cache
     made by a PC run (same HLSL, same keys) pushed to the phone, or DXC built for Android.
+  - **The SPIR-V cache from the PC (same day):** three PC test runs on copies of
+    `tests\userdata_base` (`primeira_fase`, `vila_sem_cena`, `fase_direta`, main's exe: same
+    translator) recorded the game's shader microcode (`shadercache\ucode`); `CrashRecomp.exe
+    --precompile-shaders --userdata <folder>` turned it into 97 `.spv` (39 shaders x 2 variants +
+    the built-ins), 2 MB, pushed with `adb push` to `files/userdata/shadercache`. The HLSL has no
+    GPU-dependent part, so the PC's keys are the phone's.
+  - With it the phone **draws the game**: the renderer starts complete (SMAA, warm-up 39 x 2 with 0
+    failures), then the logo videos with the skip prompt, the title, the main menu and the
+    settings screen (a touch reached the menu as a mouse click). One run-time vertex shader was
+    still missing; the phone records its microcode too, so pulling `shadercache/ucode` back,
+    running `--precompile-shaders` again and pushing closed it: the next run had 0 misses.
+    Logs and screens: `build\android\s20fe_shaders1.*`, `s20fe_shaders2.*`.
+  - **Next on the phone:** the picture is letterboxed on a portrait screen (the activity's
+    `sensorLandscape` doesn't take effect: SDL sets the orientation from the window size), no
+    audio decoder yet, touch controls, and the cache step in `android_build.py` (record on the
+    PC, precompile, put it in the APK or push it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
     clears the window's `ANativeWindow`; `CreateVulkanSurface` now waits up to 10 s for it.
 
