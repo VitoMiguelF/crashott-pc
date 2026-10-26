@@ -11,6 +11,7 @@
 #include "../platform/platform.h"
 
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <cmath>
 #include <cstring>
@@ -20,6 +21,7 @@
 #include <utility>
 
 extern "C" PPC_FUNC(__imp__sub_820B2E98);  // CMenuAction::vf05: the frontend tree's menu action, once per frame (this+24 = the menu)
+extern "C" PPC_FUNC(__imp__sub_821D5858);  // CConfirmMessage::vf03: a YES / NO question's update, once per frame (this+16 = its menu)
 PPC_EXTERN_FUNC(sub_822F2E40);  // Menu::SetSelection(menu, index)
 PPC_EXTERN_FUNC(sub_822F2F58);  // Menu: previous selectable item (returns 1 if it moved)
 PPC_EXTERN_FUNC(sub_822F3068);  // Menu: next selectable item
@@ -39,6 +41,9 @@ namespace input::menu_mouse
         std::multimap<std::pair<int, int>, std::pair<int, int>> g_boxes;
         Menu g_live;
         uint64_t g_liveTime = 0;
+        // A YES / NO question (CConfirmMessage) was on screen at this time: the menu behind it (the
+        // pause list under "SAVE AND EXIT?") still runs, but the mouse is the question's.
+        std::atomic<uint64_t> g_confirmTime{ 0 };
 
         uint32_t LE32(const std::vector<uint8_t>& d, size_t at)
         {
@@ -234,6 +239,81 @@ namespace
             Log("[input] mouse: wheel %+d on menu 0x%08X: item %d -> %d", wheel, menu.id, before, int(int8_t(*(base + menu.id + 152))));
         }
     }
+
+    // The menu at `menu` was just updated by the game: keeps it as the live menu and lets the
+    // mouse act on it.
+    void OnMenuUpdate(PPCContext& ctx, uint8_t* base, uint32_t menu)
+    {
+        uint32_t begin = LoadBE32(menu + 112), end = LoadBE32(menu + 116);
+        if (end < begin || end - begin > 4 * 64)
+            return;
+        Menu live;
+        live.id = menu;
+        live.index = int(int8_t(*(base + menu + 152)));
+        float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f;
+        bool anyEnabled = false;
+        {
+            std::lock_guard lock(g_mutex);
+            for (uint32_t at = begin; at < end; at += 4)
+            {
+                uint32_t item = LoadBE32(at), text = item ? LoadBE32(item + 140) : 0;
+                Item box{ 0, 0, 0, 0 };
+                box.enabled = item && (*(base + item + 137) & 0x80) != 0;
+                anyEnabled |= box.enabled;
+                if (text)
+                {
+                    float fx, fy;
+                    uint32_t vx = LoadBE32(text + 92), vy = LoadBE32(text + 96);
+                    memcpy(&fx, &vx, 4);
+                    memcpy(&fy, &vy, 4);
+                    float x = fx * 640.0f, y = fy * 640.0f;
+                    if (std::isfinite(x) && std::isfinite(y) && x > -640 && x < 1280 && y > -480 && y < 960)
+                    {
+                        auto [w, h] = BoxSize(x, y);
+                        box.x0 = x, box.y0 = y, box.x1 = x + w, box.y1 = y + h;
+                        minX = std::min(minX, x), maxX = std::max(maxX, x), minY = std::min(minY, y), maxY = std::max(maxY, y);
+                    }
+                }
+                live.items.push_back(box);
+            }
+        }
+        if (!anyEnabled)
+        {
+            // A menu without the "selectable" bits (its previous / next do not look at them).
+            for (Item& item : live.items)
+                item.enabled = true;
+        }
+        live.vertical = (maxY - minY) >= (maxX - minX);
+        static const bool trace = getenv("CRASH_MOUSE_TRACE") != nullptr;
+        if (trace)
+        {
+            static std::map<uint32_t, uint64_t> s_seen;
+            static std::map<uint32_t, int> s_index;
+            uint64_t now = plat::TickCountMs();
+            auto& last = s_seen[menu];
+            if (now - last > 2000)
+            {
+                std::string boxes;
+                for (const Item& item : live.items)
+                    boxes += " [" + std::to_string(int(item.x0)) + "," + std::to_string(int(item.y0)) + " " + std::to_string(int(item.x1 - item.x0)) + "x" +
+                             std::to_string(int(item.y1 - item.y0)) + (item.enabled ? "" : " off") + "]";
+                Log("[menu] update 0x%08X (%s): %zu items, index %d:%s", menu, live.vertical ? "column" : "row", live.items.size(), live.index,
+                    boxes.c_str());
+            }
+            last = now;
+            // Every selection change, whoever made it (one line per hover; one per step for the pads).
+            auto previous = s_index.find(menu);
+            if (previous != s_index.end() && previous->second != live.index)
+                Log("[menu] 0x%08X selection %d -> %d", menu, previous->second, live.index);
+            s_index[menu] = live.index;
+        }
+        {
+            std::lock_guard lock(g_mutex);
+            g_live = live;
+            g_liveTime = plat::TickCountMs();
+        }
+        MouseOnMenu(ctx, base, live);
+    }
 }
 
 PPC_FUNC(sub_820B2E98)
@@ -241,77 +321,23 @@ PPC_FUNC(sub_820B2E98)
     uint32_t action = ctx.r3.u32;
     __imp__sub_820B2E98(ctx, base);
     uint32_t menu = LoadBE32(action + 24);
-    if (!menu)
+    if (!menu || plat::TickCountMs() - g_confirmTime.load(std::memory_order_relaxed) <= 150)
         return;
-    uint32_t begin = LoadBE32(menu + 112), end = LoadBE32(menu + 116);
-    if (end < begin || end - begin > 4 * 64)
-        return;
-    Menu live;
-    live.id = menu;
-    live.index = int(int8_t(*(base + menu + 152)));
-    float minX = 1e9f, maxX = -1e9f, minY = 1e9f, maxY = -1e9f;
-    bool anyEnabled = false;
-    {
-        std::lock_guard lock(g_mutex);
-        for (uint32_t at = begin; at < end; at += 4)
-        {
-            uint32_t item = LoadBE32(at), text = item ? LoadBE32(item + 140) : 0;
-            Item box{ 0, 0, 0, 0 };
-            box.enabled = item && (*(base + item + 137) & 0x80) != 0;
-            anyEnabled |= box.enabled;
-            if (text)
-            {
-                float fx, fy;
-                uint32_t vx = LoadBE32(text + 92), vy = LoadBE32(text + 96);
-                memcpy(&fx, &vx, 4);
-                memcpy(&fy, &vy, 4);
-                float x = fx * 640.0f, y = fy * 640.0f;
-                if (std::isfinite(x) && std::isfinite(y) && x > -640 && x < 1280 && y > -480 && y < 960)
-                {
-                    auto [w, h] = BoxSize(x, y);
-                    box.x0 = x, box.y0 = y, box.x1 = x + w, box.y1 = y + h;
-                    minX = std::min(minX, x), maxX = std::max(maxX, x), minY = std::min(minY, y), maxY = std::max(maxY, y);
-                }
-            }
-            live.items.push_back(box);
-        }
-    }
-    if (!anyEnabled)
-    {
-        // A menu without the "selectable" bits (its previous / next do not look at them).
-        for (Item& item : live.items)
-            item.enabled = true;
-    }
-    live.vertical = (maxY - minY) >= (maxX - minX);
-    static const bool trace = getenv("CRASH_MOUSE_TRACE") != nullptr;
-    if (trace)
-    {
-        static std::map<uint32_t, uint64_t> s_seen;
-        static std::map<uint32_t, int> s_index;
-        uint64_t now = plat::TickCountMs();
-        auto& last = s_seen[menu];
-        if (now - last > 2000)
-        {
-            std::string boxes;
-            for (const Item& item : live.items)
-                boxes += " [" + std::to_string(int(item.x0)) + "," + std::to_string(int(item.y0)) + " " + std::to_string(int(item.x1 - item.x0)) + "x" +
-                         std::to_string(int(item.y1 - item.y0)) + (item.enabled ? "" : " off") + "]";
-            Log("[menu] update 0x%08X (%s): %zu items, index %d:%s", menu, live.vertical ? "column" : "row", live.items.size(), live.index,
-                boxes.c_str());
-        }
-        last = now;
-        // Every selection change, whoever made it (one line per hover; one per step for the pads).
-        auto previous = s_index.find(menu);
-        if (previous != s_index.end() && previous->second != live.index)
-            Log("[menu] 0x%08X selection %d -> %d", menu, previous->second, live.index);
-        s_index[menu] = live.index;
-    }
-    {
-        std::lock_guard lock(g_mutex);
-        g_live = live;
-        g_liveTime = plat::TickCountMs();
-    }
     uint32_t result = ctx.r3.u32;
-    MouseOnMenu(ctx, base, live);
+    OnMenuUpdate(ctx, base, menu);
     ctx.r3.u64 = result;  // the action's own result
+}
+
+// A YES / NO question ("Are you sure you want to save the game and exit the level?"): its own menu
+// (this+16, the same pure3d::frontend::Menu) reads LEFT / RIGHT and A in this update while byte +4
+// has 0x80 (shown) and 0x40 (taking input); the menu action behind it keeps running.
+PPC_FUNC(sub_821D5858)
+{
+    uint32_t message = ctx.r3.u32;
+    __imp__sub_821D5858(ctx, base);
+    uint32_t menu = LoadBE32(message + 16);
+    if (!menu || (*(base + message + 4) & 0xC0) != 0xC0)
+        return;
+    g_confirmTime.store(plat::TickCountMs(), std::memory_order_relaxed);
+    OnMenuUpdate(ctx, base, menu);
 }

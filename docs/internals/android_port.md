@@ -259,6 +259,12 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     finger held anywhere on the screen now skips (it had to be on the prompt, which hides after a
     few seconds); no touch controls are drawn while a skip is possible. Checked on the Tab S10
     Ultra: the logo videos skipped by holding the middle of the screen.
+  - **YES / NO questions by touch and mouse (same day, the user couldn't press YES in SAVE AND
+    EXIT):** the pause's "Are you sure...?" is a `CConfirmMessage` with a menu of its own, which
+    the menu hook never saw (a click there fell on the pause list behind it). A hook on its
+    update (`sub_821D5858`, `settings/menu_mouse.cpp`) makes it the live menu while it is shown.
+    Checked on a PC (a click on YES saves and exits to the MOJO total) and on the Tab S10 Ultra
+    (EXIT LEVEL, a tap on YES); the S20 FE was locked.
   - **Seen, not fixed:** the game's menus are drawn narrower than the mouse mapping assumes on
     screens wider than 16:9 (measured on the phone: the 640-unit frontend spans 4:3 of the height,
     1440 px at 1080, while `CursorOnImage` maps it to the middle 16:9 area), so a slot far from

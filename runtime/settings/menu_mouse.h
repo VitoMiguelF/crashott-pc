@@ -14,6 +14,10 @@
 // (kernel/pc_input.cpp, PressMenuAccept); the wheel steps with the game's previous / next
 // (sub_822F2F58 / sub_822F3068, which skip disabled items). Nothing happens while the mouse is
 // still, so the keyboard and the pads keep the selection they set.
+//
+// A YES / NO question over a menu (CConfirmMessage, "SAVE AND EXIT?" in the pause) has a menu of
+// its own, updated by CConfirmMessage::vf03 (sub_821D5858, this+16): while it is shown, a hook
+// there makes it the live menu, and the menu behind it gets no mouse.
 
 #include <cstdint>
 #include <vector>
