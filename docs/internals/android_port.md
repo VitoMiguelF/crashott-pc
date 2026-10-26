@@ -153,7 +153,12 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     `video.aspect` is ignored: 1600x720, 1.250x as wide as 16:9, Hor+ in 3D like the ultrawide
     path, and the title background fills the screen edge to edge
     (`build\android\s20fe_fill1.png`). `MonitorSize` swaps a portrait report (the game is
-    landscape only). Not checked in a level yet (needs a save or `--boot` in `args.txt`).
+    landscape only).
+  - **In a level:** an `args.txt` with `--boot`, `level:L1_E1`, `--skip-cinematics` (one per
+    line; pushed for the test and removed after) booted straight into the village: gameplay in
+    17.7 s from launch, the 3D edge to edge at 1600x720 (Hor+), the tutorial box in the middle
+    16:9 area like the PC's ultrawide, and 0 shaders missing (the PC runs' cache covers L1_E1).
+    `build\android\s20fe_level1.png`.
   - **Next on the phone:** no audio decoder yet, touch controls, and the cache step in
     `android_build.py` (record on the PC, precompile, put it in the APK or push it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
