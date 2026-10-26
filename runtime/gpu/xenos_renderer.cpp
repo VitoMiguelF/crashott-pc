@@ -72,7 +72,11 @@
 #include <unordered_map>
 #include <vector>
 
+#if defined(__aarch64__) || defined(_M_ARM64)
+#include <arm_neon.h>
+#else
 #include <emmintrin.h>
+#endif
 
 namespace gpu::renderer
 {
@@ -168,13 +172,37 @@ namespace gpu::renderer
         uint64_t HashContent(const void* data, size_t size, uint64_t seed = 0)
         {
             const uint8_t* bytes = static_cast<const uint8_t*>(data);
+            alignas(16) uint64_t lanes[8];
+            size_t i = 0;
+#if defined(__aarch64__) || defined(_M_ARM64)
+            // The same lanes with NEON: vmull_u32 of each 64-bit lane's low and high halves is
+            // _mm_mul_epu32 against the swapped halves; vextq_u64 swaps the two 64-bit lanes.
+            uint64x2_t acc[4] = { vdupq_n_u64(seed ^ 0x243F6A8885A308D3ull), vdupq_n_u64(seed ^ 0x13198A2E03707344ull),
+                                  vdupq_n_u64(seed ^ 0xA4093822299F31D0ull), vdupq_n_u64(seed ^ 0x082EFA98EC4E6C89ull) };
+            const uint64x2_t key[4] = { vcombine_u64(vcreate_u64(0xBE4BA423396CFEB8ull), vcreate_u64(0x7C01812CF721AD1Cull)),
+                                        vcombine_u64(vcreate_u64(0x1CAD21F72C81017Cull), vcreate_u64(0xDED46DE9839097DBull)),
+                                        vcombine_u64(vcreate_u64(0x2172FFCC7DD05A82ull), vcreate_u64(0x78E5C0CC4EE679CBull)),
+                                        vcombine_u64(vcreate_u64(0x4C263A81E69035E0ull), vcreate_u64(0x8E2443F7744608B8ull)) };
+            for (; i + 64 <= size; i += 64)
+            {
+                for (int k = 0; k < 4; k++)
+                {
+                    uint64x2_t v = vreinterpretq_u64_u8(vld1q_u8(bytes + i + 16 * k));
+                    uint64x2_t x = veorq_u64(v, key[k]);
+                    uint64x2_t product = vmull_u32(vmovn_u64(x), vshrn_n_u64(x, 32));
+                    acc[k] = vaddq_u64(acc[k], vextq_u64(v, v, 1));
+                    acc[k] = vaddq_u64(acc[k], product);
+                }
+            }
+            for (int k = 0; k < 4; k++)
+                vst1q_u64(lanes + 2 * k, acc[k]);
+#else
             __m128i acc[4] = { _mm_set1_epi64x(int64_t(seed ^ 0x243F6A8885A308D3ull)), _mm_set1_epi64x(int64_t(seed ^ 0x13198A2E03707344ull)),
                                _mm_set1_epi64x(int64_t(seed ^ 0xA4093822299F31D0ull)), _mm_set1_epi64x(int64_t(seed ^ 0x082EFA98EC4E6C89ull)) };
             const __m128i key[4] = { _mm_set_epi64x(int64_t(0x7C01812CF721AD1Cull), int64_t(0xBE4BA423396CFEB8ull)),
                                      _mm_set_epi64x(int64_t(0xDED46DE9839097DBull), int64_t(0x1CAD21F72C81017Cull)),
                                      _mm_set_epi64x(int64_t(0x78E5C0CC4EE679CBull), int64_t(0x2172FFCC7DD05A82ull)),
                                      _mm_set_epi64x(int64_t(0x8E2443F7744608B8ull), int64_t(0x4C263A81E69035E0ull)) };
-            size_t i = 0;
             for (; i + 64 <= size; i += 64)
             {
                 for (int k = 0; k < 4; k++)
@@ -186,9 +214,9 @@ namespace gpu::renderer
                     acc[k] = _mm_add_epi64(acc[k], product);
                 }
             }
-            alignas(16) uint64_t lanes[8];
             for (int k = 0; k < 4; k++)
                 _mm_store_si128(reinterpret_cast<__m128i*>(lanes + 2 * k), acc[k]);
+#endif
             constexpr uint64_t P = 0x9E3779B97F4A7C15ull;
             uint64_t result = size;
             for (int k = 0; k < 8; k++)

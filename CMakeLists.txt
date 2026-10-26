@@ -27,9 +27,13 @@ if (MINGW)
 elseif (WIN32)
     set(CRASH_ARCH_FLAGS /arch:AVX)
     set(CRASH_XAUDIO2_LIB xaudio2)
+elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+    # ARM64 (Android, docs/internals/android_port.md): SIMDe maps the recompiled code's vector ops
+    # to NEON, which every ARM64 CPU has. char is unsigned there by default: keep x86's signed char.
+    set(CRASH_ARCH_FLAGS -fsigned-char)
 else()
-    # x86-64 only for now (the Steam Deck's Zen 2 has AVX2): the recompiled code's vector ops are
-    # SSE/AVX through SIMDe, and an ARM64 build needs SIMDe's NEON mapping instead.
+    # x86-64 (the Steam Deck's Zen 2 has AVX2): the recompiled code's vector ops are SSE/AVX
+    # through SIMDe.
     set(CRASH_ARCH_FLAGS -mavx)
 endif()
 
