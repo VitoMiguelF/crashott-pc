@@ -30,7 +30,6 @@ runner (it has no game file); a machine with the game may run plain python3 tool
 import argparse
 import os
 import shutil
-import struct
 import subprocess
 import sys
 import time
@@ -105,18 +104,8 @@ def download(url, digest):
 
 
 def icon_png():
-    """The 256 px PNG inside launcher/crashrecomp.ico (its entries are PNGs: tools/make_icon.py)."""
-    data = (ROOT / "launcher" / "crashrecomp.ico").read_bytes()
-    count = struct.unpack_from("<H", data, 4)[0]
-    best = None
-    for i in range(count):
-        width, _, _, _, _, _, size, offset = struct.unpack_from("<BBBBHHII", data, 6 + 16 * i)
-        width = width or 256
-        if best is None or width > best[0]:
-            best = (width, data[offset:offset + size])
-    if not best or not best[1].startswith(b"\x89PNG"):
-        raise SystemExit("launcher/crashrecomp.ico sem um PNG dentro")
-    return best[1]
+    """The icon, launcher/crashrecomp.png (256 px; tools/make_icon.py makes the Windows .ico from it)."""
+    return (ROOT / "launcher" / "crashrecomp.png").read_bytes()
 
 
 def write_payload(appdir, entries, tag):

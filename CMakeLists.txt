@@ -160,6 +160,8 @@ else()
     add_executable(CrashRecomp ${CRASH_RUNTIME_SOURCES})
 endif()
 if (WIN32)
+    enable_language(RC)  # launcher.rc: the icon (launcher/crashrecomp.png -> .ico, tools/make_icon.py)
+    target_sources(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/launcher/launcher.rc)
     target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
         hid setupapi windowscodecs)
 elseif (ANDROID)
@@ -352,7 +354,7 @@ if (WIN32)
     # Dear ImGui (thirdparty/imgui, MIT) on Direct3D 11, plus the runtime's own settings, paths, VFS
     # and the code that reads the fonts and the frontend art from the user's default.rcf.
     set(CRASH_IMGUI_DIR ${CMAKE_SOURCE_DIR}/thirdparty/imgui)
-    enable_language(RC)  # launcher.rc: the icon (launcher/crashrecomp.ico, tools/make_icon.py)
+    enable_language(RC)  # launcher.rc: the icon (launcher/crashrecomp.png -> .ico, tools/make_icon.py)
     add_executable(CrashLauncher WIN32
         ${CMAKE_SOURCE_DIR}/launcher/launcher.cpp
         ${CMAKE_SOURCE_DIR}/launcher/launcher.rc

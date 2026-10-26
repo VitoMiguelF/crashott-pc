@@ -346,6 +346,7 @@ namespace gpu::window
             windowClass.cbSize = sizeof(windowClass);
             windowClass.lpfnWndProc = WindowProc;
             windowClass.hInstance = GetModuleHandleW(nullptr);
+            windowClass.hIcon = LoadIconW(windowClass.hInstance, MAKEINTRESOURCEW(1)); // launcher/launcher.rc
             windowClass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)); // IDC_ARROW
             windowClass.hbrBackground = HBRUSH(GetStockObject(BLACK_BRUSH));
             windowClass.lpszClassName = L"CrashRecompWindow";
