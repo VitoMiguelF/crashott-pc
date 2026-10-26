@@ -202,15 +202,27 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     gave 83 ms of GPU per menu frame, 72 ms of it in the 2D draws. Those go through `HUD_GS`, the
     wide-screen geometry shader (the phone is 20:9, wider than 16:9), which Adreno runs slowly:
     with `CRASH_HUD_NO_GS` the main menu ran at 44 fps instead of 12, but its backdrop no longer
-    zooms to the edges (black bars at the sides). Fix to do: the per-triangle work of `HUD_GS` in
-    the vertex shader for Adreno and Mali (Mali has no geometry shaders at all). The save listings
+    zooms to the edges (black bars at the sides). The save listings
     the game asks for every frame are cached now too (`xam_content_imports.cpp`; each one went
     through the shared storage's FUSE).
+  - **Menus at 43 fps (same day): `HUD_GS` folded into the 2D's matrix.** `HudFoldDraw`
+    (`xenos_renderer.cpp`) runs HUD_GS's per-triangle rules on the CPU for draws of the game's 2D
+    vertex shader (`aecab5202246c470`, position = vertex * c4..c7): when every triangle of a draw
+    gets the same scale and offset per axis (almost always: a quad's two triangles have the same
+    box), they go into that draw's copy of c4..c7 (`ApplyHudFold`) and the draw has no geometry
+    shader; the rest keep HUD_GS. No shader changes, so the phone's SPIR-V cache still matches.
+    S20 FE: main menu 23.1 ms per frame (43 fps, was 12; 40 of 49 2D draws folded), save slots 40
+    fps, backdrop still filling the 20:9 screen (`build\android\s20fe_fold_*.png`). PC at 21:9:
+    main menu, slots, HUB, gameplay HUD and pause look the same with `CRASH_HUD_FOLD=0` (HUD_GS)
+    and with the fold (`build\hud_fold\`). `CRASH_HUD_FOLD_TRACE=N` logs the draws left to HUD_GS
+    (quads whose two triangles differ). The CP log's work line counts them per frame.
+  - **Tab S10 Ultra (Mali-G720, Vulkan 1.3.247), first try:** the APK stops at the Vulkan probe:
+    `textureCompressionBC 0` and no `VK_KHR_push_descriptor`. It does expose `geometryShader`.
   - **Seen, not fixed:** the game's menus are drawn narrower than the mouse mapping assumes on
     screens wider than 16:9 (measured on the phone: the 640-unit frontend spans 4:3 of the height,
     1440 px at 1080, while `CursorOnImage` maps it to the middle 16:9 area), so a slot far from
     the middle is hit only near its inner side. PC ultrawide likely has the same.
-  - **Next on the phone:** the `HUD_GS` work above, the menus' mouse mapping on wide screens, and
+  - **Next on the phone:** the menus' mouse mapping on wide screens, and
     the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
     it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
@@ -380,7 +392,7 @@ The renderer needs Vulkan 1.3 with dynamic rendering, synchronization2, timeline
 | Requirement | Adreno (Qualcomm, 6xx/7xx/8xx) | Mali (Arm, Valhall / 5th gen) | Plan |
 |---|---|---|---|
 | Vulkan 1.3 | yes on recent drivers (Android 13+) | yes on recent drivers | keep; log and refuse below |
-| `geometryShader` | yes | **no** (Mali has never exposed it) | GS-free path: rect lists (`RECT_LIST_GS`) expanded to two triangles in the vertex shader (vertex pulling from the storage ring, already used) or on the CPU; `HUD_GS` (Hor+ 2D) moved into the VS. Needed for Mali, optional on Adreno |
+| `geometryShader` | yes | older Mali: **no**; Mali-G720 (Tab S10 Ultra): yes | GS-free path: rect lists (`RECT_LIST_GS`) expanded to two triangles in the vertex shader (vertex pulling from the storage ring, already used) or on the CPU; `HUD_GS` (Hor+ 2D): most draws now folded into c4..c7 on the CPU (`HudFoldDraw`, done 2026-10-26). Needed for older Mali |
 | BC1–BC5 textures (`textureCompressionBC`) | mostly yes on 7xx; check per device | **no** (ASTC/ETC2 only) | when the format reports no `SAMPLED_IMAGE` support: decode to RGBA8 on upload (CPU `bcdec`, public domain, or a compute shader). That costs 4–8× the memory for those textures. Transcoding to ASTC is an option for later |
 | `VK_KHR_push_descriptor` | recent drivers | recent drivers | already only for draws (passes use regular sets): a fallback to per-draw sets from a pool if missing |
 | D24S8 sampled | yes | yes | the renderer already falls back to D32S8 |
@@ -547,7 +559,8 @@ is needed.
 
 ## Risks
 
-- **Mali** (no geometry shaders, no BC) needs both fallbacks before anything draws correctly.
+- **Mali** (no BC, no push descriptors on the G720; no geometry shaders on older ones) needs those
+  fallbacks before anything draws.
   Adreno is the easier first target.
 - **CPU speed:** the PC's bottleneck is one thread (the GPU command processor, ~500 fps in the
   village unlimited on a desktop core). A phone big core is roughly 2–3× slower per thread, so

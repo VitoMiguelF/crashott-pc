@@ -356,6 +356,8 @@ namespace gpu::renderer
             uint64_t textureUploads = 0;
             uint64_t textureWatched = 0;   // checks skipped: pages unwritten since protected (texture_watch.h)
             uint64_t textureProtects = 0;
+            uint64_t hudDraws = 0;         // 2D of the game's vertex shader on a wide screen
+            uint64_t hudFolded = 0;        // of those, done in c4..c7 (HudFoldDraw) instead of HUD_GS
         } g_work;
 
         // Skip reasons (CRASH_GPU_TRACE=N also logs the first N draws in detail).
@@ -1763,6 +1765,141 @@ float4 main(float4 position : SV_Position) : SV_Target
                 x0 = 0.5f + (x0 - 0.5f) * hud.scaleX, x1 = 0.5f + (x1 - 0.5f) * hud.scaleX;
             if (x1 > x0 && y1 > y0 && x1 > 0.0f && x0 < 1.0f && y1 > 0.0f && y0 < 1.0f)
                 g_iconSpots.push_back({ g_drawIcon, x0, y0, x1, y1 });
+        }
+
+        // HUD_GS worked out on the CPU for the game's 2D vertex shader: per triangle, HUD_GS moves
+        // each axis by one scale and offset (or leaves it). When every triangle of the draw gets the
+        // same ones, they are folded into the draw's copy of c4..c7, so the 2D needs no geometry
+        // shader: on Adreno (Turnip) HUD_GS took 72 of the 83 ms of a menu frame, and Mali has no
+        // geometry shaders. The draw's triangles treated differently (or a draw it can't read):
+        // HUD_GS as before. CRASH_HUD_FOLD=0 turns it off (comparisons).
+        struct HudFold
+        {
+            float scale[2] = { 1.0f, 1.0f }, offset[2] = { 0.0f, 0.0f };  // NDC' = NDC * scale + offset
+        };
+
+        bool HudFoldDraw(const float* data, uint32_t startDwords, uint32_t dwords, uint32_t stride, const std::vector<uint32_t>& indices,
+                         uint32_t minIndex, uint32_t maxIndex, rhi::Topology topology, const SystemConstants& system, float targetWidth, float targetHeight,
+                         const HudDraw& hud, HudFold& fold)
+        {
+            constexpr uint32_t CUT = 0xFFFFFFFF;
+            if (!data || maxIndex < minIndex || maxIndex - minIndex > 4096 || indices.size() > 16384 ||
+                (system.flags & (FLAG_XY_DIVIDED_BY_W | FLAG_W_NOT_RECIPROCAL)) != FLAG_W_NOT_RECIPROCAL ||
+                system.ndcScale[0] == 0.0f || system.ndcScale[1] == 0.0f)
+                return false;
+            float c[16];
+            LoadHudMatrix(c);
+            // Each vertex as HUD_GS sees it: guest pixels of the target and W.
+            struct Vertex { float x, y, w; };
+            static std::vector<Vertex> vertices;
+            vertices.resize(maxIndex - minIndex + 1);
+            for (uint32_t v = minIndex; v <= maxIndex; v++)
+            {
+                int64_t at = int64_t(v) * stride - int64_t(startDwords);
+                if (at < 0 || at + 3 > int64_t(dwords))
+                    return false;
+                float x = data[at], y = data[at + 1], z = data[at + 2];
+                float clipX = x * c[0] + y * c[4] + z * c[8] + c[12];
+                float clipY = x * c[1] + y * c[5] + z * c[9] + c[13];
+                float clipW = x * c[3] + y * c[7] + z * c[11] + c[15];
+                if (!(fabsf(clipW) > 1e-6f))
+                    return false;
+                float ndcX = clipX / clipW * system.ndcScale[0] + system.ndcOffset[0];
+                float ndcY = clipY / clipW * system.ndcScale[1] + system.ndcOffset[1];
+                vertices[v - minIndex] = { (ndcX + 1.0f) * 0.5f * targetWidth, (1.0f - ndcY) * 0.5f * targetHeight, clipW };
+            }
+
+            const float sx = hud.scaleX, sy = hud.scaleY, cx = float(HUD_WIDTH) * 0.5f, cy = float(HUD_HEIGHT) * 0.5f;
+            const uint32_t mode = hud.mode;
+            bool first = true;
+            float k[2] = {}, m[2] = {};  // result = px * k + m, guest pixels
+            auto triangle = [&](uint32_t i0, uint32_t i1, uint32_t i2) -> bool {
+                if (i0 == CUT || i1 == CUT || i2 == CUT || i0 == i1 || i1 == i2 || i0 == i2)
+                    return true;  // draws nothing
+                const Vertex& a = vertices[i0 - minIndex];
+                const Vertex& b = vertices[i1 - minIndex];
+                const Vertex& d = vertices[i2 - minIndex];
+                if ((b.x - a.x) * (d.y - a.y) - (b.y - a.y) * (d.x - a.x) == 0.0f)
+                    return true;
+                float tk[2] = { 1.0f, 1.0f }, tm[2] = { 0.0f, 0.0f };
+                float w = a.w;
+                bool flat = w > 0.0f && fabsf(b.w - w) <= 1e-5f * w && fabsf(d.w - w) <= 1e-5f * w;
+                if (flat)
+                {
+                    bool projected = fabsf(w - 1.0f) > 1e-5f;
+                    float halfX = projected ? cx * std::min(sx, 1.0f) : cx, halfY = projected ? cy * std::min(sy, 1.0f) : cy;
+                    float loX = std::min({ a.x, b.x, d.x }), hiX = std::max({ a.x, b.x, d.x });
+                    float loY = std::min({ a.y, b.y, d.y }), hiY = std::max({ a.y, b.y, d.y });
+                    bool fullX = loX <= cx - halfX + 2.0f && hiX >= cx + halfX - 2.0f;
+                    bool fullY = loY <= cy - halfY + 2.0f && hiY >= cy + halfY - 2.0f;
+                    if (projected)
+                    {
+                        bool past = loX < cx - halfX - 2.0f || loY < cy - halfY - 2.0f || hiX > cx + halfX + 2.0f || hiY > cy + halfY + 2.0f;
+                        bool background = (fullX && fullY) || (past && hiX - loX > halfX * 0.5f && hiY - loY > halfY * 0.5f);
+                        if ((mode & 2u) && !(mode & 4u) && background)
+                            tk[0] = tk[1] = 1.0f / std::min(sx, sy);
+                    }
+                    else
+                    {
+                        tk[0] = sx, tk[1] = sy;
+                        if (!(mode & 4u))
+                        {
+                            if ((mode & 8u) && !fullX)
+                                tm[0] = hud.shift;
+                            if (fullX) tk[0] = 1.0f, tm[0] = 0.0f;
+                            if (fullY) tk[1] = 1.0f, tm[1] = 0.0f;
+                            if ((mode & 2u) && fullX && fullY)
+                                tk[0] = 1.0f / sy, tk[1] = 1.0f / sx, tm[0] = tm[1] = 0.0f;
+                        }
+                    }
+                    // Scaled around the centre.
+                    tm[0] += (1.0f - tk[0]) * cx;
+                    tm[1] += (1.0f - tk[1]) * cy;
+                }
+                if (first)
+                {
+                    first = false;
+                    k[0] = tk[0], k[1] = tk[1], m[0] = tm[0], m[1] = tm[1];
+                    return true;
+                }
+                return tk[0] == k[0] && tk[1] == k[1] && tm[0] == m[0] && tm[1] == m[1];
+            };
+            if (topology == rhi::Topology::TriangleList)
+            {
+                for (size_t i = 0; i + 2 < indices.size(); i += 3)
+                    if (!triangle(indices[i], indices[i + 1], indices[i + 2]))
+                        return false;
+            }
+            else if (topology == rhi::Topology::TriangleStrip)
+            {
+                for (size_t i = 0; i + 2 < indices.size(); i++)
+                    if (!triangle(indices[i], indices[i + 1], indices[i + 2]))
+                        return false;
+            }
+            else
+                return false;
+            if (first)
+                return false;
+            // Guest pixels -> NDC of the target.
+            fold.scale[0] = k[0];
+            fold.offset[0] = k[0] - 1.0f + 2.0f * m[0] / targetWidth;
+            fold.scale[1] = k[1];
+            fold.offset[1] = 1.0f - k[1] - 2.0f * m[1] / targetHeight;
+            return true;
+        }
+
+        // The fold in the vertex shader's copy of c4..c7 (rows; `constants` from c0): NDC = clip / W *
+        // ndcScale + ndcOffset, so clip' = clip * scale + W * ((scale - 1) * ndcOffset + offset) / ndcScale.
+        void ApplyHudFold(float* constants, const HudFold& fold, const SystemConstants& system)
+        {
+            float* c = constants + 16;
+            for (int axis = 0; axis < 2; axis++)
+            {
+                float a = fold.scale[axis];
+                float b = ((a - 1.0f) * system.ndcOffset[axis] + fold.offset[axis]) / system.ndcScale[axis];
+                for (int row = 0; row < 4; row++)
+                    c[row * 4 + axis] = c[row * 4 + axis] * a + c[row * 4 + 3] * b;
+            }
         }
 
         float HudCoordinate(float value, float size, float scale)
@@ -3309,6 +3446,34 @@ float4 main(float4 position : SV_Position) : SV_Target
                     break;
                 }
             }
+            // The 2D's HUD_GS work folded into c4..c7 when the draw allows it (HudFoldDraw).
+            static const bool hudFoldOn = []() { const char* v = getenv("CRASH_HUD_FOLD"); return !v || strcmp(v, "0") != 0; }();
+            HudFold hudFold;
+            bool hudFolded = false;
+            if (hudFoldOn && hud.mode && !rectList && polygonal && vs->info.hash == HUD_VS)
+            {
+                for (uint32_t r = 0; r < rangeCount; r++)
+                {
+                    const VertexFetchBinding* position = nullptr;
+                    for (const VertexFetchBinding& binding : vs->info.vertexFetches)
+                        if (binding.fetchConstant == ranges[r].fetchConstant && !position)
+                            position = &binding;
+                    if (position && position->minOffsetDwords == 0 && position->strideDwords >= 3)
+                        hudFolded = HudFoldDraw(reinterpret_cast<const float*>(ranges[r].uploaded), ranges[r].startDwords, ranges[r].dwords,
+                                                position->strideDwords, indexData.indices, indexData.minIndex, indexData.maxIndex, topology,
+                                                system, float(targetWidth), float(targetHeight), hud, hudFold);
+                    break;
+                }
+                g_work.hudFolded += hudFolded;
+                g_work.hudDraws++;
+                static int s_traceLeft = []() { const char* v = getenv("CRASH_HUD_FOLD_TRACE"); return v ? atoi(v) : 0; }();
+                if (!hudFolded && s_traceLeft > 0)
+                {
+                    s_traceLeft--;
+                    Log("[gpu] 2D draw left to HUD_GS: %zu indices (%u..%u), topology %d, flags 0x%X, mode %u",
+                        indexData.indices.size(), indexData.minIndex, indexData.maxIndex, int(topology), system.flags, hud.mode);
+                }
+            }
 
             ProfileMark(3);
             // Constant buffers.
@@ -3332,6 +3497,13 @@ float4 main(float4 position : SV_Position) : SV_Target
                     destination[i] = 0;
                 if (stage == 0 && sceneDraw && ScenePassActive() && available >= 1024)
                     NoteSceneCamera(vs->info.hash, source, system.ndcScale[2], system.ndcOffset[2]);
+                if (stage == 0 && hudFolded)
+                {
+                    if (available >= 32)
+                        ApplyHudFold(reinterpret_cast<float*>(destination), hudFold, system);
+                    else
+                        hudFolded = false;
+                }
                 if (trace)
                 {
                     // Non-zero shader constants of a traced draw (vertex shader: c0-c31 only).
@@ -3356,7 +3528,9 @@ float4 main(float4 position : SV_Position) : SV_Target
             key.ps = ps ? ps->shader : nullptr;
             key.gs = rectList ? g_rectListGs : nullptr;
             static const bool noHudGs = getenv("CRASH_HUD_NO_GS") != nullptr;  // debug: 2D placed per vertex
-            if (hud.mode && !rectList && polygonal && g_hudGs && !noHudGs)
+            if (hudFolded)
+                hud.mode |= 32u;  // in c4..c7 already, not the vertex shader
+            else if (hud.mode && !rectList && polygonal && g_hudGs && !noHudGs)
             {
                 key.gs = g_hudGs;
                 hud.mode |= 32u;  // the geometry shader does it, not the vertex shader
@@ -4335,10 +4509,11 @@ float4 main(float4 position : SV_Position) : SV_Target
                     Log("[gpu] CP thread ms/frame: %s", profile.c_str());
                     static uint64_t s_faults;
                     uint64_t faults = watch::Faults();
-                    Log("[gpu] CP work/frame: %.0f draws, %.0f indices, %.0f texture lookups, %.0f textures hashed (%.2f MB), %.0f unchanged by write watch, %.1f protected, %.1f write faults, %.1f texture uploads, %.2f MB of PM4",
+                    Log("[gpu] CP work/frame: %.0f draws, %.0f indices, %.0f texture lookups, %.0f textures hashed (%.2f MB), %.0f unchanged by write watch, %.1f protected, %.1f write faults, %.1f texture uploads, %.2f MB of PM4, %.1f of %.1f 2D draws without HUD_GS",
                         g_work.draws / 300.0, g_work.indices / 300.0, g_work.textureLookups / 300.0, g_work.textureChecks / 300.0,
                         g_work.textureBytes / 300.0 / 1048576.0, g_work.textureWatched / 300.0, g_work.textureProtects / 300.0,
-                        double(faults - s_faults) / 300.0, g_work.textureUploads / 300.0, double(gpu::TakeCommandDwords()) * 4.0 / 300.0 / 1048576.0);
+                        double(faults - s_faults) / 300.0, g_work.textureUploads / 300.0, double(gpu::TakeCommandDwords()) * 4.0 / 300.0 / 1048576.0,
+                        g_work.hudFolded / 300.0, g_work.hudDraws / 300.0);
                     s_faults = faults;
                     g_work = {};
                     s_sum = s_max = 0.0;
