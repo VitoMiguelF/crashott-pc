@@ -33,6 +33,40 @@ else()
     set(CRASH_ARCH_FLAGS -mavx)
 endif()
 
+# Only the installer and the launcher (CrashSetup, CrashLauncher): no recompiled code, so a machine
+# without the game builds them (tools/setup.py --installer-only: the CI that makes the Linux AppImage).
+option(CRASH_INSTALLER_ONLY "Build only CrashSetup and CrashLauncher (no generated/ppc needed)" OFF)
+
+if (NOT WIN32)
+    # SDL3: thirdparty/sdl3 (setup.py: the Steam Runtime 3's headers and library, what a Steam Deck
+    # builds with, having no SDL headers), else the system's.
+    set(CRASH_SDL3_DIR ${CMAKE_SOURCE_DIR}/thirdparty/sdl3)
+    if (EXISTS ${CRASH_SDL3_DIR}/include/SDL3/SDL.h AND EXISTS ${CRASH_SDL3_DIR}/lib/libSDL3.so.0)
+        add_library(SDL3::SDL3 SHARED IMPORTED)
+        set_target_properties(SDL3::SDL3 PROPERTIES IMPORTED_LOCATION ${CRASH_SDL3_DIR}/lib/libSDL3.so.0
+            IMPORTED_SONAME libSDL3.so.0 INTERFACE_INCLUDE_DIRECTORIES ${CRASH_SDL3_DIR}/include)
+    else()
+        find_package(SDL3 REQUIRED CONFIG)
+    endif()
+    find_package(Threads REQUIRED)
+    # Text of the developer console and the subtitles (platform/text_canvas_posix.cpp), and the
+    # launcher's: FreeType's headers only (libfreetype / libfontconfig are loaded at run time):
+    # thirdparty/freetype (setup.py, what a Steam Deck builds with), else the system's.
+    set(CRASH_FREETYPE_INCLUDE "")
+    if (EXISTS ${CMAKE_SOURCE_DIR}/thirdparty/freetype/include/ft2build.h)
+        set(CRASH_FREETYPE_INCLUDE ${CMAKE_SOURCE_DIR}/thirdparty/freetype/include)
+    else()
+        find_package(PkgConfig)
+        if (PkgConfig_FOUND)
+            pkg_check_modules(CRASH_SYSTEM_FREETYPE freetype2)
+            set(CRASH_FREETYPE_INCLUDE ${CRASH_SYSTEM_FREETYPE_INCLUDE_DIRS})
+        endif()
+    endif()
+endif()
+
+# The game: CrashRecomp and everything it links, down to the launcher's section.
+if (NOT CRASH_INSTALLER_ONLY)
+
 set(XENON_RECOMP_DIR ${CMAKE_SOURCE_DIR}/tools/XenonRecomp)
 
 # Output of XenonRecomp (config/Crash.toml -> generated/ppc/). Regenerate before configuring.
@@ -99,23 +133,12 @@ if (WIN32)
     target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
         hid setupapi windowscodecs)
 else()
-    # SDL3: thirdparty/sdl3 (setup.py: the Steam Runtime 3's headers and library, what a Steam Deck
-    # builds with, having no SDL headers), else the system's.
-    set(CRASH_SDL3_DIR ${CMAKE_SOURCE_DIR}/thirdparty/sdl3)
-    if (EXISTS ${CRASH_SDL3_DIR}/include/SDL3/SDL.h AND EXISTS ${CRASH_SDL3_DIR}/lib/libSDL3.so.0)
-        add_library(SDL3::SDL3 SHARED IMPORTED)
-        set_target_properties(SDL3::SDL3 PROPERTIES IMPORTED_LOCATION ${CRASH_SDL3_DIR}/lib/libSDL3.so.0
-            IMPORTED_SONAME libSDL3.so.0 INTERFACE_INCLUDE_DIRECTORIES ${CRASH_SDL3_DIR}/include)
-        # tools/linux_sdl3.py's build (every backend by dlopen, glibc 2.29) goes next to the exe; the
-        # Steam Runtime's (setup.py's .debs) doesn't: it needs libraries a bare SteamOS may lack.
-        if (EXISTS ${CRASH_SDL3_DIR}/.portable)
-            add_custom_command(TARGET CrashRecomp POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_SDL3_DIR}/lib/libSDL3.so.0 $<TARGET_FILE_DIR:CrashRecomp>)
-        endif()
-    else()
-        find_package(SDL3 REQUIRED CONFIG)
+    # tools/linux_sdl3.py's build (every backend by dlopen, glibc 2.29) goes next to the exe; the
+    # Steam Runtime's (setup.py's .debs) doesn't: it needs libraries a bare SteamOS may lack.
+    if (EXISTS ${CRASH_SDL3_DIR}/.portable AND EXISTS ${CRASH_SDL3_DIR}/lib/libSDL3.so.0)
+        add_custom_command(TARGET CrashRecomp POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CRASH_SDL3_DIR}/lib/libSDL3.so.0 $<TARGET_FILE_DIR:CrashRecomp>)
     endif()
-    find_package(Threads REQUIRED)
     target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage SDL3::SDL3 Threads::Threads ${CMAKE_DL_LIBS})
     # The .so files next to the exe (FFmpeg's, DXC, an SDL3 shipped with the game): $ORIGIN. DT_RPATH
     # where the linker honours --disable-new-dtags; zig's writes RUNPATH, which comes after the
@@ -126,19 +149,7 @@ else()
     target_link_options(CrashRecomp PRIVATE "-Wl,-rpath,\$ORIGIN" -Wl,--disable-new-dtags)
     set_target_properties(CrashRecomp PROPERTIES SKIP_BUILD_RPATH ON)
     target_include_directories(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/thirdparty/stb)  # PNG (platform/image_posix.cpp)
-    # Text of the developer console and the subtitles (platform/text_canvas_posix.cpp): FreeType's
-    # headers only (libfreetype / libfontconfig are loaded at run time): thirdparty/freetype (setup.py,
-    # what a Steam Deck builds with), else the system's. Without them those overlays are not drawn.
-    set(CRASH_FREETYPE_INCLUDE "")
-    if (EXISTS ${CMAKE_SOURCE_DIR}/thirdparty/freetype/include/ft2build.h)
-        set(CRASH_FREETYPE_INCLUDE ${CMAKE_SOURCE_DIR}/thirdparty/freetype/include)
-    else()
-        find_package(PkgConfig)
-        if (PkgConfig_FOUND)
-            pkg_check_modules(CRASH_SYSTEM_FREETYPE freetype2)
-            set(CRASH_FREETYPE_INCLUDE ${CRASH_SYSTEM_FREETYPE_INCLUDE_DIRS})
-        endif()
-    endif()
+    # FreeType (found above): without its headers those overlays are not drawn.
     if (CRASH_FREETYPE_INCLUDE)
         target_include_directories(CrashRecomp PRIVATE ${CRASH_FREETYPE_INCLUDE})
         target_compile_definitions(CrashRecomp PRIVATE CRASH_HAVE_FREETYPE=1)
@@ -278,6 +289,8 @@ else()
     message(STATUS "${CRASH_DXC_NAME} not found (thirdparty/dxc/bin or the Vulkan SDK): the Vulkan renderer can only use cached shaders")
 endif()
 
+endif()  # NOT CRASH_INSTALLER_ONLY: the game
+
 # The launcher and the installer: Win32 + Direct3D 11 on Windows, SDL3 + SDL_Renderer elsewhere (the
 # same launcher/ sources; docs/internals/linux_port.md).
 if (WIN32)
@@ -374,7 +387,7 @@ endif()
 # user's game), and mods\ / userdata\ / game\ kept as they are. `cmake --build build --target dist`
 # or `python tools\make_dist.py` (see its --help).
 find_package(Python3 COMPONENTS Interpreter)
-if (Python3_FOUND)
+if (Python3_FOUND AND NOT CRASH_INSTALLER_ONLY)
     add_custom_target(dist
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_dist.py --exe $<TARGET_FILE:CrashRecomp>
         DEPENDS CrashRecomp ${CRASH_DIST_LAUNCHER}

@@ -22,8 +22,10 @@ display, AppRun runs tools/appimage_install.py with the bundled Python instead (
 terminal). appimagetool 1.9.1 (it carries mksquashfs; run extracted, so FUSE isn't needed here) packs it
 with the type2 runtime 20251108, both pinned by SHA-256 and kept in build/downloads/appimage.
 
-Build first (the release machine): python3 tools/linux_sdl3.py, then python3 tools/setup.py (the
-toolchain, thirdparty/, build/CrashSetup).
+Build first: python3 tools/toolchain.py fetch, python3 tools/linux_sdl3.py, python3 tools/linux_dlss.py,
+then python3 tools/setup.py --installer-only (XenonRecomp, thirdparty/, build/CrashSetup; no game
+needed). The release's AppImage is built so by .github/workflows/appimage.yml on a v* tag, on GitHub's
+runner (it has no game file); a machine with the game may run plain python3 tools/setup.py instead.
 """
 import argparse
 import os
@@ -172,7 +174,7 @@ def main():
     # The graphical installer (our code, built by setup.py's CMake run) and the portable SDL3 it runs with.
     setup_exe, sdl = ROOT / "build" / "CrashSetup", ROOT / "thirdparty" / "sdl3" / "lib" / "libSDL3.so.0"
     if not setup_exe.is_file():
-        raise SystemExit("build/CrashSetup não existe: rode python3 tools/setup.py (ou cmake --build build --target CrashSetup)")
+        raise SystemExit("build/CrashSetup não existe: rode python3 tools/setup.py --installer-only")
     if not (ROOT / "thirdparty" / "sdl3" / ".portable").is_file():
         raise SystemExit("thirdparty/sdl3 não é o SDL3 portátil: rode python3 tools/linux_sdl3.py")
     (appdir / "usr" / "bin").mkdir(parents=True)

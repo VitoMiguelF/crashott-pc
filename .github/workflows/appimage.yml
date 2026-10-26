@@ -1,0 +1,226 @@
+# The Linux installer, CrashSetup-<tag>-x86_64.AppImage (tools/make_appimage.py), built on GitHub's runner,
+# which has no game file and never gets one: setup.py --installer-only builds CrashSetup alone (no dump,
+# no generated/ppc), and the AppImage carries our source, the toolchain and third-party files only.
+#
+# - a v* tag: builds it and attaches it to that tag's release, adding its line to SHA256SUMS.txt (the
+#   other lines kept). A release that doesn't exist yet is waited for (gh release create pushes the
+#   tag before it uploads the other assets); after 30 min a draft release is made with it instead.
+# - by hand (Actions > Linux AppImage > Run workflow, or gh workflow run appimage.yml --ref <branch>):
+#   builds it from that branch as a workflow artifact; with "release" checked, on a tag's ref, it is
+#   attached to that release as above (if the tag's run didn't do it).
+#
+# glibc: the runner's own (Ubuntu 24.04, 2.39) doesn't matter. CrashSetup is built by the bundled zig for
+# glibc 2.35 (tools/toolchain.py ZIG_TARGET), libSDL3.so.0 and libCrashDlss.so against the Steam Runtime 3
+# "sniper" sysroot (glibc 2.31, tools/linux_sdl3.py), the rest is downloaded prebuilt (pinned by SHA-256):
+# the same bytes as on the release machine. The "glibc" step checks it.
+name: Linux AppImage
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Versão gravada no AppImage (CrashSetup-<tag>-x86_64.AppImage)"
+        default: "test"
+        required: true
+      release:
+        description: "Anexar também à release <tag> (só rodando no ref do próprio tag)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appimage-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  # The newest glibc our own binaries may need: zig's target (tools/toolchain.py ZIG_TARGET).
+  GLIBC_MAX: "2.35"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Tag
+        run: |
+          if ! [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::tag inválido: $TAG"; exit 1
+          fi
+          echo "AppImage: CrashSetup-$TAG-x86_64.AppImage"
+
+      - uses: actions/checkout@v4
+
+      - name: Host tools (clang + lld for SDL3 and DLSS, against the Steam Runtime sysroot)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends clang lld ninja-build
+
+      - name: Downloads cache (pinned archives, checked by SHA-256 anyway)
+        uses: actions/cache@v4
+        with:
+          path: build/downloads
+          key: downloads-${{ hashFiles('tools/toolchain.py', 'tools/setup.py', 'tools/linux_sdl3.py', 'tools/linux_dlss.py', 'tools/make_appimage.py') }}
+          restore-keys: downloads-
+
+      - name: Toolchain (zig, CMake, Ninja, Python)
+        run: python3 tools/toolchain.py fetch
+
+      - name: Portable SDL3
+        run: python3 tools/linux_sdl3.py
+
+      - name: DLSS (libCrashDlss.so)
+        run: python3 tools/linux_dlss.py
+
+      - name: XenonRecomp, thirdparty/, build/CrashSetup (no game)
+        run: python3 tools/setup.py --installer-only
+
+      - name: AppImage
+        run: python3 tools/make_appimage.py "$TAG"
+
+      - name: No game files
+        run: |
+          python3 tools/check_game_files.py --all
+          for folder in generated private dist; do
+            if [ -e "$folder" ]; then echo "::error::$folder/ existe no runner"; exit 1; fi
+          done
+          python3 - <<'EOF'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "tools")
+          import check_game_files
+          payload = Path("build/appimage/AppDir/payload")
+          files = [p for p in payload.rglob("*") if p.is_file()]
+          bad = [p for p in files if check_game_files.extension(p.name) in check_game_files.GAME_EXTENSIONS
+                 or p.relative_to(payload).parts[0] in ("generated", "private", "dist")]
+          for p in bad:
+              print(f"::error::{p}: arquivo do jogo no AppImage")
+          if not bad:
+              print(f"payload: {len(files)} arquivos, nenhum do jogo")
+          sys.exit(1 if bad else 0)
+          EOF
+
+      - name: glibc
+        run: |
+          max_of() { objdump -T "$1" 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -1 || true; }
+          is_elf() { [ "$(od -An -c -N4 "$1" | tr -d ' ')" = '177ELF' ]; }
+          appdir=build/appimage/AppDir
+          status=0
+          # Ours: at or below GLIBC_MAX.
+          for f in "$appdir/usr/bin/CrashSetup" "$appdir/usr/lib/libSDL3.so.0" "$appdir/payload/thirdparty/dlss/bin/libCrashDlss.so"; do
+            v=$(max_of "$f")
+            v=${v:-nenhuma}
+            if [ "$v" != nenhuma ] && [ "$(printf '%s\n%s\n' "$v" "$GLIBC_MAX" | sort -V | tail -1)" != "$GLIBC_MAX" ]; then
+              echo "::error::$f precisa da glibc $v (> $GLIBC_MAX)"
+              status=1
+            fi
+            echo "nosso    glibc $v  ${f#"$appdir"/}"
+          done
+          # The prebuilt downloads (the same bytes as on the release machine), the newest first, for the record.
+          : > downloaded.txt
+          while IFS= read -r -d '' f; do
+            if is_elf "$f"; then
+              v=$(max_of "$f")
+              echo "baixado  glibc ${v:-nenhuma}  ${f#"$appdir"/}" >> downloaded.txt
+            fi
+          done < <(find "$appdir/payload" -type f \( -name '*.so*' -o -perm -u+x \) -print0)
+          echo "$(wc -l < downloaded.txt) ELFs baixados; os 15 de glibc mais nova:"
+          sort -k3,3Vr downloaded.txt | head -15
+          exit $status
+
+      - name: Smoke test
+        run: |
+          image="release/$TAG/CrashSetup-$TAG-x86_64.AppImage"
+          ls -l "$image"
+          sha256sum "$image"
+          # No FUSE on the runner: the AppImage runtime unpacks itself instead.
+          APPIMAGE_EXTRACT_AND_RUN=1 "$image" --text --help
+          libs=$(ldd build/appimage/AppDir/usr/bin/CrashSetup)
+          echo "$libs"
+          if grep -q 'not found' <<<"$libs"; then
+            echo "::error::CrashSetup tem bibliotecas não resolvidas"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CrashSetup-${{ env.TAG }}-x86_64.AppImage
+          path: release/${{ env.TAG }}/CrashSetup-${{ env.TAG }}-x86_64.AppImage
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  release:
+    needs: build
+    if: github.event_name == 'push' || inputs.release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Only on the tag's own ref
+        run: |
+          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+            echo "::error::anexar à release $TAG só a partir do ref do tag (está em $GITHUB_REF)"; exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: CrashSetup-${{ env.TAG }}-x86_64.AppImage
+
+      - name: Attach to the release, add to SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          file="CrashSetup-$TAG-x86_64.AppImage"
+          line="$(sha256sum "$file" | cut -d' ' -f1)  $file"
+          # The release (and its SHA256SUMS.txt, uploaded after the other assets) may come after the tag.
+          deadline=$((SECONDS + 1800))
+          while :; do
+            if assets=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null); then
+              grep -qx 'SHA256SUMS.txt' <<<"$assets" && break
+              state="sem SHA256SUMS.txt"
+            else
+              state="não existe"
+            fi
+            if [ $SECONDS -ge $deadline ]; then break; fi
+            echo "release $TAG $state; esperando..."
+            sleep 30
+          done
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$line" > SHA256SUMS.txt
+            gh release create "$TAG" "$file" SHA256SUMS.txt --draft --verify-tag --title "CrashRecomp $TAG" \
+              --notes "Rascunho criado pelo workflow Linux AppImage: a release $TAG não existia. Anexe os outros assets e regenere o SHA256SUMS.txt (as linhas do AppImage ficam) antes de publicar."
+            echo "::warning::a release $TAG não apareceu em 30 min: criei um rascunho com o AppImage"
+            exit 0
+          fi
+
+          mkdir old
+          if gh release download "$TAG" -p SHA256SUMS.txt -D old 2>/dev/null; then
+            # Every line but an older one of this AppImage (a rerun).
+            tr -d '\r' < old/SHA256SUMS.txt | awk -v f="$file" 'NF { n = $2; sub(/^\*/, "", n); if (n != f) print }' > kept.txt
+          else
+            echo "::warning::a release $TAG não tem SHA256SUMS.txt: crio um só com o AppImage"
+            : > kept.txt
+          fi
+          { cat kept.txt; echo "$line"; } | LC_ALL=C sort -k2 > SHA256SUMS.txt
+          echo "--- SHA256SUMS.txt"; cat SHA256SUMS.txt
+
+          gh release upload "$TAG" "$file" --clobber
+          gh release upload "$TAG" SHA256SUMS.txt --clobber
+
+          # Check what the release has now: every old line kept, the AppImage's added, its bytes the same.
+          mkdir check
+          gh release download "$TAG" -p SHA256SUMS.txt -p "$file" -D check
+          tr -d '\r' < check/SHA256SUMS.txt > check/sums
+          while IFS= read -r old; do grep -qxF "$old" check/sums || { echo "::error::linha perdida: $old"; exit 1; }; done < kept.txt
+          grep -qxF "$line" check/sums
+          (cd check && sha256sum -c --ignore-missing sums)
+          echo "release $TAG: $file anexado, SHA256SUMS.txt com $(wc -l < check/sums) linhas"

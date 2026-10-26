@@ -9,6 +9,7 @@
     python tools/setup.py --game ... --toolchain msvc             # build with Visual Studio + clang-cl
     python tools/setup.py --game ... --no-dlss                    # without DLSS (no NVIDIA RTX GPU)
     python tools/setup.py --game ... --copy-game --play-dir ..    # the installer's layout (make_dist --installed)
+    python tools/setup.py --installer-only                        # no game: what the installer carries (CI)
 
 Run it with the Python of the release (toolchain\\python\\python.exe, what CrashSetup.exe uses) or any
 Python 3.11+. The single-file installer (CrashSetup-<tag>.exe, tools/make_installer.py) unpacks this
@@ -610,19 +611,33 @@ def dlss_files():
                                               ("nvngx", dlss / "bin" / "nvngx_dlss.dll")) if path.is_file()) or "none"
 
 
-def compile_project(jobs=None):
+def installer_only_cached(build):
+    """CRASH_INSTALLER_ONLY as build/'s CMake cache has it (OFF, the default, when it isn't there)."""
+    cache = build / "CMakeCache.txt"
+    text = cache.read_text(encoding="utf-8", errors="replace") if cache.is_file() else ""
+    match = re.search(r"^CRASH_INSTALLER_ONLY:\w+=(.*)$", text, re.MULTILINE)
+    return bool(match) and match.group(1).strip().upper() in ("ON", "1", "TRUE", "YES")
+
+
+def compile_project(jobs=None, installer_only=False):
+    """installer_only (--installer-only): only CrashSetup, with no generated/ppc (CMakeLists.txt's
+    CRASH_INSTALLER_ONLY)."""
     env = build_env()
     build = ROOT / "build"
-    configure = buildenv.configure_build(ROOT, build)
+    option = f"-DCRASH_INSTALLER_ONLY={'ON' if installer_only else 'OFF'}"
+    configure = buildenv.configure_build(ROOT, build, [option])
     if configure:
         run_all(configure, env=env)
     # CMake looks for the DLSS files when it configures: configure again when they changed (a new
-    # GPU, a reinstall with or without DLSS), or the build would copy a DLL that is gone.
+    # GPU, a reinstall with or without DLSS), or the build would copy a DLL that is gone; and when
+    # this folder was configured for the other mode (--installer-only or not).
     stamp = build / ".crashrecomp_dlss"
-    if stamp.is_file() and stamp.read_text().strip() != dlss_files() and not configure:
-        run_all(["cmake", "-S", ROOT, "-B", build], env=env)
+    if not configure and ((stamp.is_file() and stamp.read_text().strip() != dlss_files())
+                          or installer_only_cached(build) != installer_only):
+        run_all(["cmake", "-S", ROOT, "-B", build, option], env=env)
     stamp.write_text(dlss_files() + "\n")
-    args = ["cmake", "--build", build] + (["--parallel", str(jobs)] if jobs else [])
+    args = ["cmake", "--build", build] + (["--target", "CrashSetup"] if installer_only else []) + \
+        (["--parallel", str(jobs)] if jobs else [])
     for line in run(args, env=env):
         # Ninja: "[123/456] Building CXX ..."
         if line.startswith("[") and "/" in line[:16]:
@@ -781,6 +796,8 @@ def main():
     p.add_argument("--check-packages", action="store_true", help="só confere os pacotes Python (tools/requirements.txt)")
     p.add_argument("--no-dlss", action="store_true", help="sem DLSS (PC sem placa NVIDIA RTX): não baixa nem instala os arquivos dele")
     p.add_argument("--play-dir", help="a pasta do jogo no layout do instalador (exe, game\\, userdata\\; o projeto fica nela em CrashRecomp\\)")
+    p.add_argument("--installer-only", action="store_true",
+                   help="sem o jogo: só o XenonRecomp, o thirdparty/ e o build/CrashSetup que o instalador leva (máquina de release, CI)")
     args = p.parse_args()
     if args.check_packages:
         return 1 if check_python_packages() else 0
@@ -802,6 +819,18 @@ def main():
                  "num clone do repositório, rode: python3 tools/toolchain.py fetch")
         fail("falta instalar: " + ", ".join(missing) + " (README, \"Requisitos\")")
     if args.check:
+        say("@@done")
+        return 0
+    if args.installer_only:
+        # No dump, no recompiled code: XenonRecomp's source and the third-party files go into the
+        # installer as they are (make_installer.py / make_appimage.py), and CMake builds CrashSetup alone.
+        step(2)
+        setup_xenonrecomp()
+        step(3)
+        fetch_thirdparty(dlss=not args.no_dlss)
+        step(5, "só o instalador")
+        compile_project(args.jobs, installer_only=True)
+        say(f"@@finished {ROOT / 'build'}")
         say("@@done")
         return 0
     if args.extract_assets and missing_packages:

@@ -223,8 +223,8 @@ window, plays through PipeWire and sees a DualSense.
 
 ## The installer: `CrashSetup-<tag>-x86_64.AppImage`
 
-`python3 tools/make_appimage.py <tag>` (on Linux, after `toolchain.py fetch` and a `setup.py` run that
-left thirdparty/'s Linux files) builds `release/<tag>/CrashSetup-<tag>-x86_64.AppImage`, the
+`python3 tools/make_appimage.py <tag>` (on Linux, after `toolchain.py fetch` and a `setup.py` run, or
+`setup.py --installer-only` with no game, that left thirdparty/'s Linux files) builds `release/<tag>/CrashSetup-<tag>-x86_64.AppImage`, the
 counterpart of CrashSetup.exe: ~176 MB (zstd squashfs), 30,000 files, of which toolchain/ is ~560 MB
 and thirdparty/ ~140 MB unpacked. The payload is `make_installer.collect()` with the Linux
 third-party list (no launcher, DLSS or FSR) plus `tools/appimage_install.py`; no game file, no
@@ -250,6 +250,17 @@ Measured here (16 threads): the whole install, with the 3.1 GB copy of the dump 
 10 screens saved, the same as Windows' in Portuguese), then the installed CrashLauncher's PLAY started
 CrashOTTDE to the menu. Inside the AppImage a restart (`Relaunch`) runs `$APPIMAGE` again, not the
 exe in the mount, which goes away with this process. Not tried yet: the dialogs by hand, a Steam Deck.
+
+The release's AppImage is built by `.github/workflows/appimage.yml` on GitHub's Ubuntu 24.04 runner,
+which has no game file: `toolchain.py fetch`, `linux_sdl3.py`, `linux_dlss.py`, then
+`setup.py --installer-only` (XenonRecomp's source, thirdparty/ and `cmake --build build --target
+CrashSetup` with `-DCRASH_INSTALLER_ONLY=ON`, which leaves out the game targets and so needs no
+generated/ppc) and `make_appimage.py <tag>`. The runner's glibc doesn't reach the result: CrashSetup is
+zig's (glibc 2.35 target), libSDL3 and libCrashDlss are built against the sniper sysroot (2.31), the
+rest is the pinned downloads; a step checks our three binaries against 2.35 and lists the downloads'.
+On a `v*` tag it attaches the AppImage to that release (waiting up to 30 min for it, else making a
+draft) and adds its line to the release's SHA256SUMS.txt, keeping the others; run by hand
+(workflow_dispatch) it leaves the AppImage as a workflow artifact.
 
 ## x86-only code (for an ARM64 / Android build)
 
