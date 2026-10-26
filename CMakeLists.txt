@@ -235,7 +235,12 @@ target_compile_definitions(CrashRecomp PRIVATE
 # build in thirdparty/ffmpeg (include/, bin/). Without it the runtime builds and XMA decodes to silence.
 set(CRASH_FFMPEG_DIR ${CMAKE_SOURCE_DIR}/thirdparty/ffmpeg)
 set(CRASH_FFMPEG_INCLUDE ${CRASH_FFMPEG_DIR}/include)
-if (NOT WIN32 AND NOT EXISTS ${CRASH_FFMPEG_DIR}/lib)
+if (ANDROID)
+    # Android: an FFmpeg built with the NDK (tools/android_build.py ffmpeg, only the WMA Pro and
+    # Vorbis decoders); its libavcodec.so / libavutil.so go into the APK next to libmain.so.
+    set(CRASH_FFMPEG_ANDROID "" CACHE PATH "FFmpeg built for Android (its install prefix: include/, lib/)")
+    set(CRASH_FFMPEG_INCLUDE ${CRASH_FFMPEG_ANDROID}/include)
+elseif (NOT WIN32 AND NOT EXISTS ${CRASH_FFMPEG_DIR}/lib)
     # No bundled .so files: the system's libavcodec is loaded, so build against its headers (the
     # structures are used directly and the major version must match; thirdparty/ffmpeg's are FFmpeg 8).
     find_path(CRASH_SYSTEM_FFMPEG_INCLUDE libavcodec/avcodec.h)

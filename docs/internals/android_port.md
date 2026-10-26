@@ -159,7 +159,22 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     17.7 s from launch, the 3D edge to edge at 1600x720 (Hor+), the tutorial box in the middle
     16:9 area like the PC's ultrawide, and 0 shaders missing (the PC runs' cache covers L1_E1).
     `build\android\s20fe_level1.png`.
-  - **Next on the phone:** no audio decoder yet, touch controls, and the cache step in
+  - **Audio (same day, with the user's OK for the downloads).** The output already worked (SDL3 on
+    AAudio, 2 ch 48 kHz); the XMA decoder needs FFmpeg 8 (avcodec 62) with WMA Pro (and Vorbis
+    for audio mods), which Android lacks. `python tools/android_build.py ffmpeg` builds FFmpeg
+    8.1.3 (ffmpeg.org, signature checked with FFmpeg's release key) with the NDK:
+    `--target-os=android --disable-everything --enable-decoder=wmapro,vorbis`, only avcodec +
+    avutil, shared: `libavcodec.so` 427 KB + `libavutil.so` 677 KB, soname without a version, 16 KB
+    pages, in the APK (12.4 MB now). FFmpeg's configure runs in Git Bash; GNU make 4.4.1 (from
+    ftp.gnu.org, built here with `build_w32.bat gcc` and the llvm-mingw toolchain) runs the
+    Makefiles, after the script rewrites configure's `/c/...` paths to `C:/`; `make install` on
+    Windows left libavutil's headers out, so the script copies them. The host compiler check
+    needs a gcc (llvm-mingw; `CRASH_HOST_CC` in a worktree without `toolchain\`). From scratch:
+    1 min 51 s. `audio/ffmpeg.cpp` loads `libavcodec.so` by name on Android (the APK's library
+    folder). Result on the S20 FE: `decoder: FFmpeg WMA Pro`, 6,936 XMA frames in 35 s, 0 decoder
+    errors, an AAudio MMAP output stream active (`build\android\s20fe_audio1.log`).
+
+  - **Next on the phone:** touch controls, and the cache step in
     `android_build.py` (record on the PC, precompile, put it in the APK or push it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
     clears the window's `ANativeWindow`; `CreateVulkanSurface` now waits up to 10 s for it.

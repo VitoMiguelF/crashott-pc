@@ -5,6 +5,7 @@ Java glue, the APK assembled with aapt2 / d8 / zipalign / apksigner (no Gradle, 
     python tools/android_build.py build         # only libmain.so / libSDL3.so (CMake + Ninja)
     python tools/android_build.py apk           # only the APK, from what build left
     python tools/android_build.py turnip        # Mesa's Turnip (Adreno 6xx/7xx with an old driver)
+    python tools/android_build.py ffmpeg        # FFmpeg's WMA Pro + Vorbis decoders (the game's audio)
 
 The APK holds the game recompiled from the player's own dump (generated/ppc): it is personal, for
 their phone, sideloaded; never published, never in git (build/ is not). Installing it and copying
@@ -22,9 +23,16 @@ Optional, for Adreno GPUs whose own driver is older than Vulkan 1.3 (the Galaxy 
   turnip/adrenotools/     libadrenotools (github.com/bylaws/libadrenotools) with lib/linkernsbypass
   turnip/pytools/         meson, mako, markupsafe, pyyaml (pip --target); turnip/winflexbison/ on Windows
 With them the APK carries libvulkan_freedreno.so and libadrenotools' hooks (android_main_android.cpp).
+
+Optional, the game's audio (XMA through FFmpeg's WMA Pro decoder, audio/ffmpeg.cpp):
+  ffmpeg/ffmpeg-8.1.3/    the FFmpeg source (ffmpeg.org), built by the `ffmpeg` step: avcodec + avutil
+                          with only the WMA Pro and Vorbis decoders, as libavcodec.so / libavutil.so
+  ffmpeg/bin/make.exe     GNU make (Windows: built from make-4.4.1 with build_w32.bat gcc)
+Without it the game runs silent.
 """
 import argparse
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -44,6 +52,11 @@ MESA_SOURCE = TURNIP / "mesa-26.2.5"
 ADRENOTOOLS_SOURCE = TURNIP / "adrenotools"
 TURNIP_BUILD = TURNIP / "build-tu"
 TURNIP_LIB = TURNIP_BUILD / "src" / "freedreno" / "vulkan" / "libvulkan_freedreno.so"
+FFMPEG = WORK / "ffmpeg"
+FFMPEG_SOURCE = FFMPEG / "ffmpeg-8.1.3"
+FFMPEG_BUILD = FFMPEG / "build-arm64"
+FFMPEG_INSTALL = FFMPEG / "install"
+FFMPEG_LIBS = [FFMPEG_INSTALL / "lib" / name for name in ("libavcodec.so", "libavutil.so")]
 OUT = WORK / "apk"
 KEYSTORE = WORK / "keystore" / "crashrecomp.jks"  # made once; updates need the same key
 MIN_SDK = 30     # memfd_create in bionic
@@ -96,9 +109,60 @@ def build():
          f"-DCMAKE_TOOLCHAIN_FILE={(NDK / 'build/cmake/android.toolchain.cmake').as_posix()}",
          "-DANDROID_ABI=arm64-v8a", f"-DANDROID_PLATFORM=android-{MIN_SDK}", "-DANDROID_STL=c++_static",
          "-DCMAKE_BUILD_TYPE=Release", f"-DCRASH_SDL3_SOURCE={SDL_SOURCE.as_posix()}",
-         f"-DCRASH_ADRENOTOOLS_SOURCE={adrenotools.as_posix() if adrenotools else ''}", "-Wno-dev"], env=env, stdout=subprocess.DEVNULL)
+         f"-DCRASH_ADRENOTOOLS_SOURCE={adrenotools.as_posix() if adrenotools else ''}",
+         f"-DCRASH_FFMPEG_ANDROID={FFMPEG_INSTALL.as_posix() if all(f.is_file() for f in FFMPEG_LIBS) else ''}", "-Wno-dev"],
+        env=env, stdout=subprocess.DEVNULL)
     say("building libmain.so and libSDL3.so")
     run(["cmake", "--build", CMAKE_BUILD, "--target", "CrashRecomp"], env=env)
+
+
+def ffmpeg():
+    """FFmpeg for the game's audio: libavcodec.so + libavutil.so for arm64, only the WMA Pro (XMA)
+    and Vorbis (audio mods) decoders. Its configure needs a POSIX shell (Git Bash on Windows) and
+    GNU make; the paths it writes are rewritten to C:/ form for a native Windows make."""
+    if not (FFMPEG_SOURCE / "configure").is_file():
+        sys.exit(f"{FFMPEG_SOURCE.relative_to(ROOT)} not found (see this script's docstring)")
+    bash = shutil.which("bash") or sys.exit("ffmpeg: needs bash (Git Bash on Windows)")
+    env = build_env()
+    tmp = FFMPEG / "tmp"  # configure's test programs (the system temp folder may refuse to run them)
+    tmp.mkdir(parents=True, exist_ok=True)
+    env.update(TMPDIR=str(tmp), TMP=str(tmp), TEMP=str(tmp))
+    extra = [FFMPEG / "bin", ROOT / "toolchain" / "llvm-mingw" / "bin"]  # make.exe; gcc as the host compiler
+    env["PATH"] = os.pathsep.join([str(p) for p in extra if p.is_dir()] + [env["PATH"]])
+    # configure checks a host compiler even with nothing to run on the host (CRASH_HOST_CC overrides).
+    host_cc = os.environ.get("CRASH_HOST_CC") or shutil.which("gcc", path=env["PATH"]) or shutil.which("cc", path=env["PATH"])
+    if not host_cc:
+        sys.exit("ffmpeg: no host C compiler (the bundled toolchain's llvm-mingw, or set CRASH_HOST_CC)")
+    FFMPEG_BUILD.mkdir(parents=True, exist_ok=True)
+    bin_dir = NDK / "toolchains" / "llvm" / "prebuilt" / HOST / "bin"
+    tool = lambda name: (bin_dir / (name + EXE)).as_posix()
+    target = f"--target=aarch64-linux-android{MIN_SDK}"
+    if not (FFMPEG_BUILD / "ffbuild" / "config.mak").is_file():
+        say("configuring FFmpeg (arm64, WMA Pro + Vorbis decoders)")
+        run([bash, (FFMPEG_SOURCE / "configure").as_posix(), f"--prefix={FFMPEG_INSTALL.as_posix()}", "--target-os=android",
+             "--arch=aarch64", "--cpu=armv8-a", "--enable-cross-compile", f"--cc={tool('clang')}", f"--cxx={tool('clang++')}",
+             f"--ar={tool('llvm-ar')}", f"--nm={tool('llvm-nm')}", f"--ranlib={tool('llvm-ranlib')}", f"--strip={tool('llvm-strip')}",
+             f"--extra-cflags={target} -O2 -fPIC", f"--extra-ldflags={target} -Wl,-z,max-page-size=16384", f"--host-cc={Path(host_cc).as_posix()}",
+             "--disable-everything", "--enable-decoder=wmapro,vorbis", "--disable-programs", "--disable-doc", "--disable-avdevice",
+             "--disable-avformat", "--disable-avfilter", "--disable-swscale", "--disable-swresample", "--disable-network",
+             "--disable-autodetect", "--enable-shared", "--disable-static", "--enable-pic"],
+            cwd=FFMPEG_BUILD, env=env, stdout=subprocess.DEVNULL)
+        if WINDOWS:
+            # configure writes MSYS paths (/c/...), which a native Windows make can't open.
+            for name in ("Makefile", "ffbuild/config.mak"):
+                path = FFMPEG_BUILD / name
+                text = path.read_text(encoding="utf-8")
+                path.write_text(re.sub(r"(?<![\w/])/([a-zA-Z])/", lambda m: m.group(1).upper() + ":/", text), encoding="utf-8", newline="")
+    say("building libavcodec.so and libavutil.so")
+    make = shutil.which("make", path=env["PATH"]) or sys.exit("ffmpeg: GNU make not found (see this script's docstring)")
+    run([make, f"-j{os.cpu_count() or 4}"], cwd=FFMPEG_BUILD, env=env, stdout=subprocess.DEVNULL)
+    run([make, "install"], cwd=FFMPEG_BUILD, env=env, stdout=subprocess.DEVNULL)
+    # `make install` may leave libavutil's headers out on Windows (a long command line): copy them.
+    headers = FFMPEG_INSTALL / "include" / "libavutil"
+    headers.mkdir(parents=True, exist_ok=True)
+    for header in list((FFMPEG_SOURCE / "libavutil").glob("*.h")) + [FFMPEG_BUILD / "libavutil" / n for n in ("avconfig.h", "ffversion.h")]:
+        if header.is_file() and not (headers / header.name).is_file():
+            shutil.copy(header, headers / header.name)
 
 
 def turnip():
@@ -226,6 +290,10 @@ def apk():
             for library in hooks + [TURNIP_LIB]:
                 z.write(library, f"lib/arm64-v8a/{library.name}", compress_type=zipfile.ZIP_DEFLATED)
             say("with Turnip (libvulkan_freedreno.so) and libadrenotools' hooks")
+        if all(f.is_file() for f in FFMPEG_LIBS):
+            for library in FFMPEG_LIBS:
+                z.write(library, f"lib/arm64-v8a/{library.name}", compress_type=zipfile.ZIP_DEFLATED)
+            say("with FFmpeg (libavcodec.so, libavutil.so): audio")
 
     # 16 KB alignment of the stored .so files (-P 16), 4 bytes for the rest; then the signature.
     aligned = OUT / "aligned.apk"
@@ -241,10 +309,12 @@ def apk():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk", "turnip"])
+    parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk", "turnip", "ffmpeg"])
     step = parser.parse_args().step
     if step == "turnip" or (step == "all" and MESA_SOURCE.is_dir() and not TURNIP_LIB.is_file()):
         turnip()
+    if step == "ffmpeg" or (step == "all" and FFMPEG_SOURCE.is_dir() and not all(f.is_file() for f in FFMPEG_LIBS)):
+        ffmpeg()
     if step in ("all", "build"):
         build()
     if step in ("all", "apk"):
