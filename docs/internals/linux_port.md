@@ -264,6 +264,9 @@ draft) and adds its line to the release's SHA256SUMS.txt, keeping the others; ru
 
 ## x86-only code (for an ARM64 / Android build)
 
+The full, current list and the Android plan are in [android_port.md](android_port.md); this
+table is where it started.
+
 | Where | What | ARM64 replacement |
 |---|---|---|
 | `CMakeLists.txt` (`CRASH_ARCH_FLAGS`) | `-mavx` / `/arch:AVX` for the recompiled code and the runtime | drop it. SIMDe maps the SSE/AVX intrinsics to NEON (check the hot ones for speed: `vperm`, `vmsum`, `vcfsx`) |

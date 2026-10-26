@@ -52,7 +52,12 @@
 #include <cstring>
 #include <filesystem>
 
+#if defined(__ANDROID__)
+// Android: libmain.so's SDL_main (android_main_android.cpp) runs this on a thread of its own.
+int CrashMain(int argc, char** argv)
+#else
 int main(int argc, char** argv)
+#endif
 {
     // Every folder, relative to the exe unless given on the command line (paths.h).
     if (!paths::Init(argc, argv))

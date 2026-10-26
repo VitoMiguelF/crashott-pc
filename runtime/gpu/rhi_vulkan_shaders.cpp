@@ -40,6 +40,7 @@ __CRT_UUID_DECL(IDxcResult, 0x58346CDA, 0xDDE7, 0x4497, 0x94, 0x61, 0x6F, 0x87, 
 __CRT_UUID_DECL(IDxcCompiler3, 0x228B4687, 0x5A6A, 0x4730, 0x90, 0x0C, 0x97, 0x02, 0xB2, 0x20, 0x3F, 0x54)
 #endif
 
+#include <atomic>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -157,7 +158,16 @@ namespace gpu::rhi::vulkan
             return true;
         }
         if (!LoadCompiler())
+        {
+            // Android (cached SPIR-V only): which shaders the PC's cache lacked.
+            static std::atomic<uint32_t> misses;
+            if (misses.fetch_add(1) < 64)
+                Log("[vulkan] %s (spv %016llx) is not in the shader cache and there is no compiler", name ? name : "?",
+                    (unsigned long long)hash);
+            if (failures)
+                (*failures)++;
             return false;
+        }
 
         std::vector<std::wstring> args = Arguments(stage, layout);
         std::vector<const wchar_t*> argPointers;

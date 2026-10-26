@@ -36,6 +36,19 @@ namespace settings::prompts
     bool DrawPalettized(char32_t icon, uint32_t style, int w, int h, const int box[4], std::vector<uint8_t>& indices,
                         std::vector<uint32_t>& palette);
 
+    // Clickable prompts: where the game drew its button icons in the last frame (the renderer, at
+    // each present), each box 0..1 of the picture (top row first).
+    struct IconSpot
+    {
+        char32_t icon;
+        float x0, y0, x1, y1;
+    };
+    void PublishIconSpots(const std::vector<IconSpot>& spots);
+    // The pad button a click at (x, y) (0..1 of the picture, `aspect` its width / height) means: on
+    // a prompt's icon or its label beside it (towards the middle of the screen; under it for one
+    // in the middle). 0 for none. Any thread.
+    uint16_t ButtonAt(float x, float y, float aspect);
+
     // --prompt-preview <dir>: a sheet of the game's icons and ours (PlayStation, keyboard in
     // gameplay and in menus) at a few sizes, as PNG, without starting the game. Returns the exit code.
     int Preview(const std::filesystem::path& directory);

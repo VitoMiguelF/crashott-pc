@@ -59,6 +59,7 @@ namespace gpu::rhi
         constexpr VkDeviceSize BLOCK_SIZE = 64ull << 20;
         constexpr uint32_t ACQUIRE_SEMAPHORES = 4;
         constexpr uint32_t PASS_SETS = 4096;  // descriptor sets of the passes per command buffer
+        constexpr uint32_t TEXTURE_SETS = 4096;  // without push descriptors: the draws' texture sets per command buffer
 
         const char* ResultName(VkResult result)
         {
@@ -381,6 +382,8 @@ namespace gpu::rhi
             void Draw(const DrawCall& draw) override;
             void DrawPass(const PassDraw& pass) override;
 
+            bool SupportsBlockCompression() const override { return m_blockCompression; }
+            bool SupportsGeometryShaders() const override { return m_geometryShaders; }
             DXGI_FORMAT BackBufferFormat() const override { return m_backBufferFormat; }
             void BackBufferSize(uint32_t& width, uint32_t& height) const override
             {
@@ -496,6 +499,15 @@ namespace gpu::rhi
             uint32_t m_queueFamily = 0;
             VkQueue m_queue = VK_NULL_HANDLE;
             bool m_depthClipExtension = false, m_depthBiasControl = false, m_maintenance5 = false, m_memoryBudget = false;
+            // VK_KHR_push_descriptor (desktop drivers, Turnip); without it (Mali) the draws' textures
+            // go through descriptor sets of the command buffer's pool.
+            bool m_pushDescriptors = false;
+            // BC1-5 sampled (desktop GPUs, Turnip); without them (Mali) texture_decode turns the
+            // game's DXT textures into plain texels on the CPU.
+            bool m_blockCompression = true;
+            // Geometry shaders: off where the driver has none, and on Mali, whose compiler (G720,
+            // r44p1) crashes on the renderer's (RECT_LIST_GS, HUD_GS); CRASH_VULKAN_NO_EXT=gs on others.
+            bool m_geometryShaders = true;
             bool m_gplExtension = false;  // VK_EXT_graphics_pipeline_library + VK_KHR_pipeline_library listed
             std::vector<std::string> m_enabledDeviceExtensions;
             std::unordered_map<uint32_t, VkFormatFeatureFlags> m_formatFeatures;  // (format, usage) pairs checked by CreateTexture
@@ -522,6 +534,7 @@ namespace gpu::rhi
                 VkCommandPool pool = VK_NULL_HANDLE;
                 VkCommandBuffer buffer = VK_NULL_HANDLE;
                 VkDescriptorPool descriptors = VK_NULL_HANDLE;  // the passes' sets, reset with the pool
+                VkDescriptorPool textureSets = VK_NULL_HANDLE;  // the draws' texture sets (no push descriptors)
                 uint64_t value = 0;
             };
             std::deque<Context> m_pendingContexts;
@@ -854,9 +867,9 @@ namespace gpu::rhi
                 auto has = [&](const char* name) {
                     return std::any_of(extensions.begin(), extensions.end(), [&](const VkExtensionProperties& e) { return strcmp(e.extensionName, name) == 0; });
                 };
-                if (!has(VK_KHR_SWAPCHAIN_EXTENSION_NAME) || !has(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME))
+                if (!has(VK_KHR_SWAPCHAIN_EXTENSION_NAME))
                 {
-                    Log("[vulkan] %s: no swap chain or push descriptors", properties.deviceName);
+                    Log("[vulkan] %s: no swap chain", properties.deviceName);
                     continue;
                 }
                 uint32_t familyCount = 0;
@@ -891,10 +904,21 @@ namespace gpu::rhi
                     m_maintenance5 = has(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
                     m_memoryBudget = has(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
                     m_gplExtension = has(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME) && has(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
-                    // CRASH_VULKAN_NO_EXT=depth_clip,depth_bias_control,maintenance5,gpl (debug): the
-                    // paths of a GPU without them (another vendor's driver) on this one.
+                    m_pushDescriptors = has(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+                    m_blockCompression = true;
+                    for (VkFormat format : { VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_BC2_UNORM_BLOCK, VK_FORMAT_BC3_UNORM_BLOCK,
+                                             VK_FORMAT_BC4_UNORM_BLOCK, VK_FORMAT_BC5_UNORM_BLOCK })
+                    {
+                        VkFormatProperties formatProperties{};
+                        vkGetPhysicalDeviceFormatProperties(device, format, &formatProperties);
+                        m_blockCompression = m_blockCompression && (formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+                    }
+                    // CRASH_VULKAN_NO_EXT=depth_clip,depth_bias_control,maintenance5,gpl,push_descriptor,bc
+                    // (debug): the paths of a GPU without them (another vendor's driver) on this one.
                     if (const char* off = getenv("CRASH_VULKAN_NO_EXT"))
                     {
+                        m_pushDescriptors = m_pushDescriptors && !strstr(off, "push_descriptor");
+                        m_blockCompression = m_blockCompression && !strstr(off, "bc");
                         m_depthClipExtension = m_depthClipExtension && !strstr(off, "depth_clip");
                         m_depthBiasControl = m_depthBiasControl && !strstr(off, "depth_bias_control");
                         m_maintenance5 = m_maintenance5 && !strstr(off, "maintenance5");
@@ -938,13 +962,17 @@ namespace gpu::rhi
             VkPhysicalDeviceVulkan11Features available11{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &available12 };
             VkPhysicalDeviceFeatures2 available{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &available11 };
             vkGetPhysicalDeviceFeatures2(m_physical, &available);
-            if (!available13.dynamicRendering || !available13.synchronization2 || !available12.timelineSemaphore || !available.features.geometryShader ||
+            if (!available13.dynamicRendering || !available13.synchronization2 || !available12.timelineSemaphore ||
                 !available13.shaderDemoteToHelperInvocation)
             {
-                Log("[vulkan] %s lacks dynamic rendering, synchronization2, timeline semaphores, demote to helper invocation or geometry shaders",
+                Log("[vulkan] %s lacks dynamic rendering, synchronization2, timeline semaphores or demote to helper invocation",
                     m_adapterName.c_str());
                 return false;
             }
+            const char* extensionsOff = getenv("CRASH_VULKAN_NO_EXT");
+            m_geometryShaders = available.features.geometryShader && m_properties.vendorID != 0x13B5 && !(extensionsOff && strstr(extensionsOff, "gs"));
+            if (!m_geometryShaders)
+                Log("[vulkan] geometry shaders not used%s: rectangle lists drawn as triangles", m_properties.vendorID == 0x13B5 ? " (Mali)" : "");
             VkPhysicalDeviceVulkan13Features features13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
             features13.dynamicRendering = VK_TRUE;
             features13.synchronization2 = VK_TRUE;
@@ -973,7 +1001,7 @@ namespace gpu::rhi
             features.features.shaderStorageImageReadWithoutFormat = available.features.shaderStorageImageReadWithoutFormat;
             features.features.shaderStorageImageWriteWithoutFormat = available.features.shaderStorageImageWriteWithoutFormat;
             features.features.fragmentStoresAndAtomics = available.features.fragmentStoresAndAtomics;
-            features.features.geometryShader = VK_TRUE;
+            features.features.geometryShader = available.features.geometryShader;
             features.features.independentBlend = available.features.independentBlend;
             features.features.samplerAnisotropy = available.features.samplerAnisotropy;
             features.features.depthClamp = available.features.depthClamp;
@@ -982,7 +1010,9 @@ namespace gpu::rhi
             m_depthClamp = available.features.depthClamp;
             m_maxAnisotropy = m_anisotropy ? m_properties.limits.maxSamplerAnisotropy : 1.0f;
 
-            std::vector<const char*> extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME };
+            std::vector<const char*> extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+            if (m_pushDescriptors)
+                extensions.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
             void** chain = &features13.pNext;
             VkPhysicalDeviceDepthClipEnableFeaturesEXT depthClip{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT };
             if (m_depthClipExtension)
@@ -1163,6 +1193,15 @@ namespace gpu::rhi
             }
             create.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
             create.preTransform = capabilities.currentTransform;
+#if defined(__ANDROID__)
+            // A phone in landscape reports ROTATE_90/270 (its panel is portrait). The frames are drawn
+            // unrotated, so the compositor turns them (identity); drawing them pre-rotated would save
+            // it that pass (docs/internals/android_port.md).
+            if (capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+                create.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+            if (capabilities.currentTransform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+                Log("[vulkan] surface transform 0x%X (the compositor rotates)", unsigned(capabilities.currentTransform));
+#endif
             create.compositeAlpha = (capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
                                                                                                                 : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
             create.presentMode = m_presentMode;
@@ -1229,14 +1268,15 @@ namespace gpu::rhi
                 constants[i].binding = i;
                 constants[i].descriptorType = i < 4 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
                 constants[i].descriptorCount = 1;
-                constants[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+                constants[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | (m_geometryShaders ? VK_SHADER_STAGE_GEOMETRY_BIT : 0) | VK_SHADER_STAGE_FRAGMENT_BIT;
             }
             VkDescriptorSetLayoutCreateInfo layout{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
             layout.bindingCount = 5;
             layout.pBindings = constants;
             if (!Check(vkCreateDescriptorSetLayout(m_device, &layout, nullptr, &m_constantsLayout), "vkCreateDescriptorSetLayout"))
                 return false;
-            // Textures set: sampled images t0-t31 (push descriptors). Samplers set: s0-s31.
+            // Textures set: sampled images t0-t31 (push descriptors, or sets of the command buffer's
+            // pool without them). Samplers set: s0-s31.
             VkDescriptorSetLayoutBinding textures[32]{}, samplers[32]{};
             for (uint32_t i = 0; i < 32; i++)
             {
@@ -1245,7 +1285,7 @@ namespace gpu::rhi
             }
             layout.bindingCount = 32;
             layout.pBindings = textures;
-            layout.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+            layout.flags = m_pushDescriptors ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0;
             if (!Check(vkCreateDescriptorSetLayout(m_device, &layout, nullptr, &m_texturesLayout), "vkCreateDescriptorSetLayout"))
                 return false;
             layout.pBindings = samplers;
@@ -1311,7 +1351,7 @@ namespace gpu::rhi
         void VulkanDevice::LogDiagnostics()
         {
             VkPhysicalDevicePushDescriptorPropertiesKHR push{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR };
-            VkPhysicalDeviceDriverProperties driver{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES, &push };
+            VkPhysicalDeviceDriverProperties driver{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES, m_pushDescriptors ? &push : nullptr };
             VkPhysicalDeviceProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver };
             vkGetPhysicalDeviceProperties2(m_physical, &properties);
             const VkPhysicalDeviceLimits& limits = m_properties.limits;
@@ -1335,8 +1375,12 @@ namespace gpu::rhi
                 limits.maxImageDimension2D, push.maxPushDescriptors, limits.maxPerStageDescriptorSampledImages, limits.maxStorageBufferRange >> 20,
                 limits.maxUniformBufferRange, (unsigned long long)limits.minUniformBufferOffsetAlignment, (unsigned long long)limits.bufferImageGranularity,
                 limits.timestampPeriod);
-            if (push.maxPushDescriptors < 32)
+            if (m_pushDescriptors && push.maxPushDescriptors < 32)
                 Log("[vulkan] warning: %u push descriptors, the draws bind 32 textures", push.maxPushDescriptors);
+            if (!m_pushDescriptors)
+                Log("[vulkan] no push descriptors: the draws' textures go through descriptor sets");
+            if (!m_blockCompression)
+                Log("[vulkan] no BC textures: the game's DXT textures are decoded on the CPU");
             if (!m_diagnostics)
                 return;
 
@@ -1396,8 +1440,16 @@ namespace gpu::rhi
             m_shaderCache = info.shaderCache;
             m_extraInstanceExtensions = info.instanceExtensions;
             m_extraDeviceExtensions = info.deviceExtensions;
+#if defined(__ANDROID__)
+            // No DXC for Android yet: the SPIR-V made on the PC (the shader cache pushed to
+            // userdata/shadercache) is all there is; a shader missing from it isn't drawn
+            // (android_port.md, "Shaders").
+            if (!vulkan::CompilerAvailable())
+                Log("[vulkan] no shader compiler: cached SPIR-V only");
+#else
             if (!vulkan::CompilerAvailable())
                 return false;
+#endif
             if (!LoadLoader())
             {
                 Log("[vulkan] vulkan-1.dll not found (no Vulkan driver installed)");
@@ -1557,6 +1609,8 @@ float4 main(float4 position : SV_Position) : SV_Target
                 m_freeContexts.pop_back();
                 vkResetCommandPool(m_device, m_context.pool, 0);
                 vkResetDescriptorPool(m_device, m_context.descriptors, 0);
+                if (m_context.textureSets)
+                    vkResetDescriptorPool(m_device, m_context.textureSets, 0);
             }
             else
             {
@@ -1577,6 +1631,14 @@ float4 main(float4 position : SV_Position) : SV_Target
                 descriptorPool.poolSizeCount = 4;
                 descriptorPool.pPoolSizes = sizes;
                 Check(vkCreateDescriptorPool(m_device, &descriptorPool, nullptr, &m_context.descriptors), "vkCreateDescriptorPool (passes)");
+                if (!m_pushDescriptors)
+                {
+                    VkDescriptorPoolSize textureSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, TEXTURE_SETS * 32 };
+                    descriptorPool.maxSets = TEXTURE_SETS;
+                    descriptorPool.poolSizeCount = 1;
+                    descriptorPool.pPoolSizes = &textureSize;
+                    Check(vkCreateDescriptorPool(m_device, &descriptorPool, nullptr, &m_context.textureSets), "vkCreateDescriptorPool (textures)");
+                }
             }
             m_cmd = m_context.buffer;
             VkCommandBufferBeginInfo begin{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
@@ -2861,6 +2923,12 @@ float4 main(float4 position : SV_Position) : SV_Target
             create.pDynamicState = &dynamic;
             if (!preRasterization && !fragmentShader)
                 create.layout = VK_NULL_HANDLE;  // the interface parts have no shaders
+            // CRASH_VULKAN_PIPELINE_LOG=1 (debug): each pipeline before the driver compiles it, so the
+            // last line names the shaders of a driver crash (Mali's compiler).
+            static const bool s_pipelineLog = getenv("CRASH_VULKAN_PIPELINE_LOG") != nullptr;
+            if (s_pipelineLog)
+                Log("[vulkan] creating pipeline: vs %016llx gs %016llx ps %016llx, parts 0x%X", (unsigned long long)key.vs, (unsigned long long)key.gs,
+                    (unsigned long long)key.ps, parts);
             VkResult result = vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &create, nullptr, &pipeline);
             if (result != VK_SUCCESS)
             {
@@ -3044,6 +3112,10 @@ float4 main(float4 position : SV_Position) : SV_Target
             ProgramKey key;
             while (file.read(reinterpret_cast<char*>(&key), sizeof(key)))
                 records.push_back(key);
+            // Without geometry shaders (Mali), the records of a GPU with them (a cache made elsewhere)
+            // that use one are never drawn here.
+            if (!m_geometryShaders)
+                records.erase(std::remove_if(records.begin(), records.end(), [](const ProgramKey& record) { return record.gs != 0; }), records.end());
             if (records.size() > MAX_PRECOMPILE)
                 records.erase(records.begin(), records.end() - MAX_PRECOMPILE);
             std::vector<Program*> programs;
@@ -3307,6 +3379,26 @@ float4 main(uint id : SV_VertexID) : SV_Position
                 m_drawState.effectsOffset = upload.offset;
                 m_drawState.effectsValid = true;
             }
+            // Without push descriptors: a set of the command buffer's pool for the textures when they
+            // differ from the last draw's, taken before the rendering instance (a full pool submits).
+            DrawState& state = m_drawState;
+            bool sameTextures = state.texturesValid && state.textureCount == draw.textureCount &&
+                                memcmp(state.textures, draw.textures, sizeof(TextureView) * draw.textureCount) == 0;
+            VkDescriptorSet textureSet = VK_NULL_HANDLE;
+            if (!m_pushDescriptors && !sameTextures && draw.textureCount)
+            {
+                VkDescriptorSetAllocateInfo allocate{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+                allocate.descriptorPool = m_context.textureSets;
+                allocate.descriptorSetCount = 1;
+                allocate.pSetLayouts = &m_texturesLayout;
+                if (vkAllocateDescriptorSets(m_device, &allocate, &textureSet) != VK_SUCCESS)
+                {
+                    SubmitInternal(false);
+                    allocate.descriptorPool = m_context.textureSets;
+                    if (!Check(vkAllocateDescriptorSets(m_device, &allocate, &textureSet), "vkAllocateDescriptorSets (textures)"))
+                        return;
+                }
+            }
             // Textures first (their barriers end the rendering instance), then the attachments.
             VulkanTexture* textures[32];
             for (uint32_t i = 0; i < draw.textureCount; i++)
@@ -3323,7 +3415,6 @@ float4 main(uint id : SV_VertexID) : SV_Position
             else
                 BeginRendering(colors, draw.colorCount, depthTarget);
 
-            DrawState& state = m_drawState;
             if (!m_systemRange)
             {
                 // The constant buffers' sizes are known from the first draw.
@@ -3352,24 +3443,32 @@ float4 main(uint id : SV_VertexID) : SV_Position
             uint32_t offsets[4] = { uint32_t(draw.systemConstants), uint32_t(draw.vertexConstants), uint32_t(draw.pixelConstants), uint32_t(state.effectsOffset) };
             vkCmdBindDescriptorSets(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_drawLayout, vulkan::DRAW_SET_CONSTANTS, 1, &m_constantsSet, 4, offsets);
 
-            // Sampled images (push descriptors), when they differ from the last draw's.
-            bool sameTextures = state.texturesValid && state.textureCount == draw.textureCount &&
-                                memcmp(state.textures, draw.textures, sizeof(TextureView) * draw.textureCount) == 0;
+            // Sampled images (push descriptors or the set above), when they differ from the last draw's.
             if (!sameTextures && draw.textureCount)
             {
                 VkDescriptorImageInfo images[32];
                 VkWriteDescriptorSet writes[32];
-                for (uint32_t i = 0; i < draw.textureCount; i++)
+                // A set gets every binding (the null texture past the draw's); pushed, only the draw's.
+                uint32_t writeCount = textureSet ? 32u : draw.textureCount;
+                for (uint32_t i = 0; i < writeCount; i++)
                 {
-                    images[i] = { VK_NULL_HANDLE, ImageView(textures[i], draw.textures[i].texture ? draw.textures[i].view : View::Default),
-                                  AccessOf(Access::ShaderRead, textures[i]->depth).layout };
+                    VulkanTexture* texture = i < draw.textureCount ? textures[i] : m_nullTexture;
+                    View view = i < draw.textureCount && draw.textures[i].texture ? draw.textures[i].view : View::Default;
+                    images[i] = { VK_NULL_HANDLE, ImageView(texture, view), AccessOf(Access::ShaderRead, texture->depth).layout };
                     writes[i] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+                    writes[i].dstSet = textureSet;
                     writes[i].dstBinding = i;
                     writes[i].descriptorCount = 1;
                     writes[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
                     writes[i].pImageInfo = &images[i];
                 }
-                vkCmdPushDescriptorSetKHR(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_drawLayout, vulkan::DRAW_SET_TEXTURES, draw.textureCount, writes);
+                if (textureSet)
+                {
+                    vkUpdateDescriptorSets(m_device, writeCount, writes, 0, nullptr);
+                    vkCmdBindDescriptorSets(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_drawLayout, vulkan::DRAW_SET_TEXTURES, 1, &textureSet, 0, nullptr);
+                }
+                else
+                    vkCmdPushDescriptorSetKHR(m_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_drawLayout, vulkan::DRAW_SET_TEXTURES, draw.textureCount, writes);
                 memcpy(state.textures, draw.textures, sizeof(TextureView) * draw.textureCount);
                 state.textureCount = draw.textureCount;
                 state.texturesValid = true;

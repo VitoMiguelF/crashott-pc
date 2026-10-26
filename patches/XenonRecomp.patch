@@ -28,7 +28,7 @@ index 12c6d8c..e8d2506 100644
          auto entry = recompiler.image.symbols.find(recompiler.image.entry_point);
          if (entry != recompiler.image.symbols.end())
 diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
-index fa91527..7e921f5 100644
+index fa91527..9ad4d46 100644
 --- a/XenonRecomp/recompiler.cpp
 +++ b/XenonRecomp/recompiler.cpp
 @@ -202,6 +202,7 @@ void Recompiler::Analyse()
@@ -90,6 +90,15 @@ index fa91527..7e921f5 100644
      case PPC_INST_DCBF:
          // no op
          break;
+@@ -849,7 +866,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_EIEIO:
+-        // no op
++        println("\tPPC_EIEIO();");
+         break;
+ 
+     case PPC_INST_EXTSB:
 @@ -890,6 +907,7 @@ bool Recompiler::Recompile(
          println("\t{}.f64 = double({}.s64);", f(insn.operands[0]), f(insn.operands[1]));
          break;
@@ -147,6 +156,15 @@ index fa91527..7e921f5 100644
          print("\t{}.u32 = ", temp());
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
+@@ -1209,7 +1248,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_LWSYNC:
+-        // no op
++        println("\tPPC_LWSYNC();");
+         break;
+ 
+     case PPC_INST_LWZ:
 @@ -1609,6 +1648,8 @@ bool Recompiler::Recompile(
  
      case PPC_INST_STVLX:
@@ -174,6 +192,15 @@ index fa91527..7e921f5 100644
          print("\tsimde_mm_store_si128((simde__m128i*)(base + ((");
          if (insn.operands[1] != 0)
              print("{}.u32 + ", r(insn.operands[1]));
+@@ -1711,7 +1756,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_SYNC:
+-        // no op
++        println("\tPPC_SYNC();");
+         break;
+ 
+     case PPC_INST_TDLGEI:
 @@ -1769,6 +1814,7 @@ bool Recompiler::Recompile(
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
          break;
@@ -182,6 +209,68 @@ index fa91527..7e921f5 100644
      case PPC_INST_VANDC128:
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
          break;
+diff --git a/XenonUtils/ppc_context.h b/XenonUtils/ppc_context.h
+index 31a86cd..baefc40 100644
+--- a/XenonUtils/ppc_context.h
++++ b/XenonUtils/ppc_context.h
+@@ -101,6 +101,21 @@
+ #define PPC_MM_STORE_U64(x, y)  PPC_STORE_U64(x, y)
+ #endif
+ 
++// Memory barriers (sync, lwsync, eieio). x86's total store order already gives what the game's
++// barriers ask for, so they compile to nothing there (as before); ARM64 is weakly ordered like
++// PowerPC and needs the fence.
++#ifndef PPC_SYNC
++#if defined(__aarch64__) || defined(_M_ARM64)
++#define PPC_SYNC() __atomic_thread_fence(__ATOMIC_SEQ_CST)
++#define PPC_LWSYNC() __atomic_thread_fence(__ATOMIC_ACQ_REL)
++#define PPC_EIEIO() __atomic_thread_fence(__ATOMIC_RELEASE)
++#else
++#define PPC_SYNC() ((void)0)
++#define PPC_LWSYNC() ((void)0)
++#define PPC_EIEIO() ((void)0)
++#endif
++#endif
++
+ #ifndef PPC_CALL_FUNC
+ #define PPC_CALL_FUNC(x) x(ctx, base)
+ #endif
+@@ -215,14 +230,14 @@ struct PPCFPSCRRegister
+ {
+     uint32_t csr;
+ 
+-    static constexpr size_t HostToGuest[] = { PPC_ROUND_NEAREST, PPC_ROUND_DOWN, PPC_ROUND_UP, PPC_ROUND_TOWARD_ZERO };
+-
+     // simde does not handle denormal flags, so we need to implement per-arch.
+ #if defined(__x86_64__) || defined(_M_X64)
+     static constexpr size_t RoundShift = 13;
+     static constexpr size_t RoundMask = SIMDE_MM_ROUND_MASK;
+     static constexpr size_t FlushMask = SIMDE_MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK;
+     static constexpr size_t GuestToHost[] = { SIMDE_MM_ROUND_NEAREST, SIMDE_MM_ROUND_TOWARD_ZERO, SIMDE_MM_ROUND_UP, SIMDE_MM_ROUND_DOWN };
++    // MXCSR RC: nearest, down, up, toward zero
++    static constexpr size_t HostToGuest[] = { PPC_ROUND_NEAREST, PPC_ROUND_DOWN, PPC_ROUND_UP, PPC_ROUND_TOWARD_ZERO };
+ 
+     inline uint32_t getcsr() noexcept
+     {
+@@ -241,6 +256,8 @@ struct PPCFPSCRRegister
+     static constexpr size_t FlushMask = (1 << 19) | (1 << 24);
+     // Nearest, Zero, -Infinity, -Infinity
+     static constexpr size_t GuestToHost[] = { 0 << RoundShift, 3 << RoundShift, 1 << RoundShift, 2 << RoundShift };
++    // FPCR RMode: nearest, +infinity (up), -infinity (down), toward zero
++    static constexpr size_t HostToGuest[] = { PPC_ROUND_NEAREST, PPC_ROUND_UP, PPC_ROUND_DOWN, PPC_ROUND_TOWARD_ZERO };
+ 
+     inline uint32_t getcsr() noexcept
+     {
+@@ -251,7 +268,8 @@ struct PPCFPSCRRegister
+ 
+     inline void setcsr(uint32_t csr) noexcept
+     {
+-        __asm__ __volatile__("msr fpcr, %0" : : "r"(csr));
++        // FPCR is 64 bits wide: a 32-bit operand would leave the register's upper half undefined.
++        __asm__ __volatile__("msr fpcr, %0" : : "r"(uint64_t(csr)));
+     }
+ #else
+ #   error "Missing implementation for FPSCR."
 diff --git a/XenonUtils/xex.cpp b/XenonUtils/xex.cpp
 index 4e79042..d74aaf7 100644
 --- a/XenonUtils/xex.cpp

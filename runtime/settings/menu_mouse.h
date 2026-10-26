@@ -14,6 +14,10 @@
 // (kernel/pc_input.cpp, PressMenuAccept); the wheel steps with the game's previous / next
 // (sub_822F2F58 / sub_822F3068, which skip disabled items). Nothing happens while the mouse is
 // still, so the keyboard and the pads keep the selection they set.
+//
+// A YES / NO question over a menu (CConfirmMessage, "SAVE AND EXIT?" in the pause) has a menu of
+// its own, updated by CConfirmMessage::vf03 (sub_821D5858, this+16): while it is shown, a hook
+// there makes it the live menu, and the menu behind it gets no mouse.
 
 #include <cstdint>
 #include <vector>
@@ -37,6 +41,14 @@ namespace input::menu_mouse
     };
     // The menu the game updated last, if it did so in the last 150 ms.
     bool Live(Menu& menu);
+    // The renderer drew the frontend's page through its pure3d camera (gpu/xenos_renderer.cpp
+    // NotePage, at each present): a frontend screen (main menu, save slots...), not the pause in a
+    // level. On a picture that is not 16:9 (Hor+ widened the camera), those screens lay their
+    // menus out 4:3 in the game's 1280 x 720 instead of stretching the 640-wide page over it, and
+    // then the 2D goes into the middle 16:9 area like the rest: measured 960 px of a 1720x720
+    // 21:9 picture, 1440 of a 2400x1080 phone, 864 of 1152x720 16:10. The pause keeps the page
+    // stretched over the 16:9 area.
+    void NoteFrontendPage();
     // The item under page point (x, y) (y up), or -1.
     int HitTest(const Menu& menu, float x, float y);
 }

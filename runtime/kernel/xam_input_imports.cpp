@@ -14,6 +14,7 @@
 #include "../settings/settings.h"
 #include "../settings/save_screens.h"
 #include "../settings/skip_cinematics.h"
+#include "../settings/touch_controls.h"
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
 #include "../platform/platform.h"
@@ -339,6 +340,8 @@ namespace
         {
             // Player 1's controller always exists (the keyboard stands in for it).
             uint64_t now = ClockNow();
+            // The touch controls (Android) first: what the pad alone did hides them.
+            touch_controls::Apply(state.Gamepad, poll);
             input::pc::Apply(state, poll, ScriptedKeys(now));
             static uint16_t s_lastPlayer, s_lastScript;
             NotePresses(state.Gamepad.wButtons, s_lastPlayer, false, now);

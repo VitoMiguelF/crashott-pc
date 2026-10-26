@@ -26,6 +26,7 @@
 #include "menu_art.h"
 #include "prompt_icons.h"
 #include "settings.h"
+#include "touch_controls.h"
 #include "../gpu/overlay.h"
 #include "../kernel/input.h"
 #include "../kernel/kernel.h"
@@ -132,6 +133,9 @@ namespace
             return false;
         if (input::pc::KeyHeld(VK_RETURN))
             return true;
+        // A touch screen: a finger held anywhere (it is the left button while the prompt is up).
+        if (touch_controls::Enabled() && input::pc::LeftHeld())
+            return true;
         float u, v;
         if (input::pc::LeftHeld() && input::pc::CursorInClient(u, v))
             return u >= g_hitX0.load() && u <= g_hitX1.load() && v >= g_hitY0.load() && v <= g_hitY1.load() && g_hitX1.load() > 0.0f;
@@ -153,6 +157,11 @@ namespace cutscenes
     bool VideoPlaying()
     {
         return g_movie.load(std::memory_order_relaxed) >= 0;
+    }
+
+    bool SkipPossible()
+    {
+        return g_kind.load(std::memory_order_relaxed) != int(Kind::None);
     }
 
     void NoteMovie(int index)

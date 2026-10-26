@@ -27,9 +27,13 @@ if (MINGW)
 elseif (WIN32)
     set(CRASH_ARCH_FLAGS /arch:AVX)
     set(CRASH_XAUDIO2_LIB xaudio2)
+elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+    # ARM64 (Android, docs/internals/android_port.md): SIMDe maps the recompiled code's vector ops
+    # to NEON, which every ARM64 CPU has. char is unsigned there by default: keep x86's signed char.
+    set(CRASH_ARCH_FLAGS -fsigned-char)
 else()
-    # x86-64 only for now (the Steam Deck's Zen 2 has AVX2): the recompiled code's vector ops are
-    # SSE/AVX through SIMDe, and an ARM64 build needs SIMDe's NEON mapping instead.
+    # x86-64 (the Steam Deck's Zen 2 has AVX2): the recompiled code's vector ops are SSE/AVX
+    # through SIMDe.
     set(CRASH_ARCH_FLAGS -mavx)
 endif()
 
@@ -37,7 +41,24 @@ endif()
 # without the game builds them (tools/setup.py --installer-only: the CI that makes the Linux AppImage).
 option(CRASH_INSTALLER_ONLY "Build only CrashSetup and CrashLauncher (no generated/ppc needed)" OFF)
 
-if (NOT WIN32)
+if (ANDROID)
+    # Android (tools/android_build.py, docs/internals/android_port.md): the game is libmain.so,
+    # loaded by SDL3's Java glue, with libSDL3.so built here from the SDL source (CRASH_SDL3_SOURCE).
+    # Static libraries go into a shared one: position-independent code.
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(CRASH_SDL3_SOURCE "" CACHE PATH "SDL3 source tree (Android builds libSDL3.so from it)")
+    if (NOT EXISTS ${CRASH_SDL3_SOURCE}/CMakeLists.txt)
+        message(FATAL_ERROR "Android: set CRASH_SDL3_SOURCE to the SDL 3 source tree")
+    endif()
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${CRASH_SDL3_SOURCE} sdl3 EXCLUDE_FROM_ALL)
+    find_package(Threads REQUIRED)
+    set(CRASH_FREETYPE_INCLUDE "")  # no FreeType on Android yet: no console / subtitle text
+elseif (NOT WIN32)
     # SDL3: thirdparty/sdl3 (setup.py: the Steam Runtime 3's headers and library, what a Steam Deck
     # builds with, having no SDL headers), else the system's.
     set(CRASH_SDL3_DIR ${CMAKE_SOURCE_DIR}/thirdparty/sdl3)
@@ -128,12 +149,40 @@ if (WIN32)
 else()
     list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "_win32\\.cpp$")
 endif()
-add_executable(CrashRecomp ${CRASH_RUNTIME_SOURCES})
+# *_android.cpp: Android only (the SDL_main entry).
+if (NOT ANDROID)
+    list(FILTER CRASH_RUNTIME_SOURCES EXCLUDE REGEX "_android\\.cpp$")
+endif()
+if (ANDROID)
+    add_library(CrashRecomp SHARED ${CRASH_RUNTIME_SOURCES})
+    set_target_properties(CrashRecomp PROPERTIES OUTPUT_NAME main)  # libmain.so, what SDLActivity loads
+else()
+    add_executable(CrashRecomp ${CRASH_RUNTIME_SOURCES})
+endif()
 if (WIN32)
     enable_language(RC)  # launcher.rc: the icon (launcher/crashrecomp.png -> .ico, tools/make_icon.py)
     target_sources(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/launcher/launcher.rc)
     target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
         hid setupapi windowscodecs)
+elseif (ANDROID)
+    target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage SDL3::SDL3-shared Threads::Threads log android ${CMAKE_DL_LIBS})
+    target_include_directories(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/thirdparty/stb)
+    # Only SDL_main is exported; every symbol must resolve at link time (a .so would defer it to
+    # load time, where a missing one only shows on the phone); 16 KB pages (android_port.md).
+    set_target_properties(CrashRecomp CrashPPC XexImage PROPERTIES CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden)
+    target_link_options(CrashRecomp PRIVATE -Wl,--no-undefined -Wl,--exclude-libs,ALL -Wl,-z,max-page-size=16384)
+    # libadrenotools (BSD-2, CRASH_ADRENOTOOLS_SOURCE, optional): loads Mesa's Turnip in place of an
+    # Adreno's own driver when that one is older than Vulkan 1.3 (android_main_android.cpp). Its
+    # hook libraries (libhook_impl.so, libmain_hook.so) go into the APK next to libmain.so.
+    set(CRASH_ADRENOTOOLS_SOURCE "" CACHE PATH "libadrenotools source tree (Turnip on old Adreno drivers)")
+    if (EXISTS ${CRASH_ADRENOTOOLS_SOURCE}/CMakeLists.txt)
+        add_subdirectory(${CRASH_ADRENOTOOLS_SOURCE} adrenotools EXCLUDE_FROM_ALL)
+        target_link_libraries(CrashRecomp PRIVATE adrenotools)
+        target_compile_definitions(CrashRecomp PRIVATE CRASH_ADRENOTOOLS=1)
+        target_link_options(hook_impl PRIVATE -Wl,-z,max-page-size=16384)
+        target_link_options(main_hook PRIVATE -Wl,-z,max-page-size=16384)
+        add_dependencies(CrashRecomp hook_impl main_hook)
+    endif()
 else()
     # tools/linux_sdl3.py's build (every backend by dlopen, glibc 2.29) goes next to the exe; the
     # Steam Runtime's (setup.py's .debs) doesn't: it needs libraries a bare SteamOS may lack.
@@ -188,7 +237,12 @@ target_compile_definitions(CrashRecomp PRIVATE
 # build in thirdparty/ffmpeg (include/, bin/). Without it the runtime builds and XMA decodes to silence.
 set(CRASH_FFMPEG_DIR ${CMAKE_SOURCE_DIR}/thirdparty/ffmpeg)
 set(CRASH_FFMPEG_INCLUDE ${CRASH_FFMPEG_DIR}/include)
-if (NOT WIN32 AND NOT EXISTS ${CRASH_FFMPEG_DIR}/lib)
+if (ANDROID)
+    # Android: an FFmpeg built with the NDK (tools/android_build.py ffmpeg, only the WMA Pro and
+    # Vorbis decoders); its libavcodec.so / libavutil.so go into the APK next to libmain.so.
+    set(CRASH_FFMPEG_ANDROID "" CACHE PATH "FFmpeg built for Android (its install prefix: include/, lib/)")
+    set(CRASH_FFMPEG_INCLUDE ${CRASH_FFMPEG_ANDROID}/include)
+elseif (NOT WIN32 AND NOT EXISTS ${CRASH_FFMPEG_DIR}/lib)
     # No bundled .so files: the system's libavcodec is loaded, so build against its headers (the
     # structures are used directly and the major version must match; thirdparty/ffmpeg's are FFmpeg 8).
     find_path(CRASH_SYSTEM_FFMPEG_INCLUDE libavcodec/avcodec.h)
@@ -339,6 +393,8 @@ if (WIN32)
     target_compile_options(CrashSetup PRIVATE -Wno-deprecated-declarations -Wno-unused-function)
     target_link_libraries(CrashSetup PRIVATE d3d11 dxgi d3dcompiler windowscodecs ole32 shell32 dwmapi advapi32 uuid bcrypt winmm version)
     set(CRASH_DIST_LAUNCHER CrashLauncher)
+elseif (ANDROID)
+    # No launcher or installer on Android: the PC builds the APK (tools/android_build.py).
 else()
     # Linux: the same screens with SDL3 (window, input, dialogs) and Dear ImGui's SDL3 + SDL_Renderer
     # backends; the system font through fontconfig (platform/text_canvas_posix.cpp, dlopen'ed).
@@ -389,7 +445,7 @@ endif()
 # user's game), and mods\ / userdata\ / game\ kept as they are. `cmake --build build --target dist`
 # or `python tools\make_dist.py` (see its --help).
 find_package(Python3 COMPONENTS Interpreter)
-if (Python3_FOUND AND NOT CRASH_INSTALLER_ONLY)
+if (Python3_FOUND AND NOT CRASH_INSTALLER_ONLY AND NOT ANDROID)
     add_custom_target(dist
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/make_dist.py --exe $<TARGET_FILE:CrashRecomp>
         DEPENDS CrashRecomp ${CRASH_DIST_LAUNCHER}

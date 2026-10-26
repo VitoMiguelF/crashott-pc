@@ -11,11 +11,16 @@
 
 namespace
 {
-    // FFmpeg's file names: avcodec-62.dll on Windows, libavcodec.so.62 elsewhere.
+    // FFmpeg's file names: avcodec-62.dll on Windows, libavcodec.so in an Android APK (its build
+    // for Android has no version suffix; found in the app's library folder by name), libavcodec.so.62
+    // elsewhere.
     std::string LibraryName(const char* name, int major)
     {
 #ifdef _WIN32
         return std::string(name) + "-" + std::to_string(major) + ".dll";
+#elif defined(__ANDROID__)
+        (void)major;
+        return "lib" + std::string(name) + ".so";
 #else
         return "lib" + std::string(name) + ".so." + std::to_string(major);
 #endif

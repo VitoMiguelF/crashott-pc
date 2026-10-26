@@ -196,6 +196,7 @@ namespace settings::save_screens
         uint16_t g_heldDir = 0;
         uint64_t g_heldSince = 0, g_lastRepeat = 0;
         uint32_t g_mouseMoves = 0, g_mouseClicks = 0;
+        uint64_t g_mouseReadTime = 0;  // the last ReadMouse (a screen's frames call it every frame)
         std::atomic<uint32_t> g_drive{ 0 };
         int g_choice = 0;
         int g_confirmSlot = 0;
@@ -257,6 +258,12 @@ namespace settings::save_screens
             constexpr uint64_t REPEAT_DELAY_MS = 380, REPEAT_MS = 100;
             uint16_t pressed = g_pressed.exchange(0), held = g_held.load();
             uint64_t now = plat::TickCountMs();
+            // The first frame of a screen: presses from before it (X attacking in a level, then
+            // the slots) are not for it; they opened the delete question by themselves.
+            static uint64_t s_lastTake = 0;
+            if (now - s_lastTake >= 250)
+                pressed = 0;
+            s_lastTake = now;
             if (pressed & DIRECTIONS)
             {
                 g_heldDir = pressed & DIRECTIONS;
@@ -275,21 +282,29 @@ namespace settings::save_screens
             return pressed;
         }
 
-        // The mouse on the image (virtual units) and what changed since the last call.
+        // The mouse on the image (virtual units) and what changed since the last call. `takeClick`:
+        // a click is this screen's, never the game's A (the name keyboard); else the caller takes the
+        // ones it uses (the slot screen: a click on a slot is the game's, its menu accepts it).
         struct MouseInput
         {
             bool on = false;      // over the image, mouse menus enabled
             bool moved = false, clicked = false;
             float x = 0, y = 0;
         };
-        MouseInput ReadMouse()
+        MouseInput ReadMouse(bool takeClick)
         {
             MouseInput m;
             uint32_t moves = input::pc::CursorMoves(), clicks = input::pc::LeftClicks();
-            m.moved = moves != g_mouseMoves;
-            m.clicked = clicks != g_mouseClicks;
+            // The first frame of a screen: what the mouse did before it (the click on LOAD GAME
+            // that opened the slots) is not for it; it opened the delete question by itself.
+            uint64_t now = plat::TickCountMs();
+            bool fresh = now - g_mouseReadTime < 250;
+            g_mouseReadTime = now;
+            m.moved = fresh && moves != g_mouseMoves;
+            m.clicked = fresh && clicks != g_mouseClicks;
             g_mouseMoves = moves, g_mouseClicks = clicks;
-            input::pc::TakeMenuClick();  // a click here is not the game's A
+            if (takeClick)
+                input::pc::TakeMenuClick();
             ReadOptions();
             m.on = g_mouseMenus && input::pc::CursorOnImage(m.x, m.y);
             if (!m.on)
@@ -533,7 +548,7 @@ namespace settings::save_screens
 
             uint16_t pressed = TakePressed();
             std::u32string typed = input::pc::TakeTypedText();
-            MouseInput mouse = ReadMouse();
+            MouseInput mouse = ReadMouse(true);
             if (!g_done)
             {
                 HitZone zone;
@@ -663,9 +678,11 @@ namespace settings::save_screens
             std::string display;
             bool exists = slot && !g_refreshPending && xam::content::SavedGameExists(SlotFile(slot), &display);
             uint16_t pressed = TakePressed();
-            MouseInput mouse = ReadMouse();
+            MouseInput mouse = ReadMouse(false);
             HitZone zone{};
             bool onZone = mouse.on && ZoneAt(mouse.x, mouse.y, zone);
+            if (g_confirmOn || (mouse.clicked && onZone))
+                input::pc::TakeMenuClick();  // the delete prompt's (DELETE, YES / NO), not the game's A
 
             if (!g_confirmOn)
             {

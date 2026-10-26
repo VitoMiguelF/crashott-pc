@@ -37,6 +37,71 @@ namespace gpu
             uint32_t max = (1u << bits) - 1;
             return uint8_t((value * 255 + max / 2) / max);
         }
+
+        bool g_hostBlockCompression = true;
+
+        // BC1 colour block (also the colour half of BC2 / BC3, always 4 colours there) -> RGBA.
+        void DecodeColorBlock(const uint8_t* block, uint8_t texels[16][4], bool bc1)
+        {
+            uint32_t c0 = uint32_t(block[0]) | (uint32_t(block[1]) << 8), c1 = uint32_t(block[2]) | (uint32_t(block[3]) << 8);
+            uint8_t palette[4][4];
+            auto rgb = [](uint32_t c, uint8_t* out) {
+                out[0] = Expand((c >> 11) & 0x1F, 5);
+                out[1] = Expand((c >> 5) & 0x3F, 6);
+                out[2] = Expand(c & 0x1F, 5);
+                out[3] = 255;
+            };
+            rgb(c0, palette[0]);
+            rgb(c1, palette[1]);
+            for (uint32_t k = 0; k < 3; k++)
+            {
+                if (!bc1 || c0 > c1)
+                {
+                    palette[2][k] = uint8_t((2 * palette[0][k] + palette[1][k] + 1) / 3);
+                    palette[3][k] = uint8_t((palette[0][k] + 2 * palette[1][k] + 1) / 3);
+                }
+                else
+                {
+                    palette[2][k] = uint8_t((palette[0][k] + palette[1][k] + 1) / 2);
+                    palette[3][k] = 0;
+                }
+            }
+            palette[2][3] = 255;
+            palette[3][3] = (!bc1 || c0 > c1) ? 255 : 0;  // BC1's 3-colour mode: index 3 is transparent black
+            uint32_t indices = uint32_t(block[4]) | (uint32_t(block[5]) << 8) | (uint32_t(block[6]) << 16) | (uint32_t(block[7]) << 24);
+            for (uint32_t i = 0; i < 16; i++)
+                memcpy(texels[i], palette[(indices >> (i * 2)) & 3], 4);
+        }
+
+        // BC4 block (BC3's alpha, each half of BC5) -> one channel, unsigned or signed bytes.
+        void DecodeSingleBlock(const uint8_t* block, uint8_t texels[16][4], uint32_t channel, bool isSigned)
+        {
+            int a0 = isSigned ? std::max(int(int8_t(block[0])), -127) : int(block[0]);
+            int a1 = isSigned ? std::max(int(int8_t(block[1])), -127) : int(block[1]);
+            int palette[8] = { a0, a1 };
+            if (a0 > a1)
+            {
+                for (int i = 1; i <= 6; i++)
+                    palette[i + 1] = ((7 - i) * a0 + i * a1) / 7;
+            }
+            else
+            {
+                for (int i = 1; i <= 4; i++)
+                    palette[i + 1] = ((5 - i) * a0 + i * a1) / 5;
+                palette[6] = isSigned ? -127 : 0;
+                palette[7] = isSigned ? 127 : 255;
+            }
+            uint64_t indices = 0;
+            for (uint32_t i = 0; i < 6; i++)
+                indices |= uint64_t(block[2 + i]) << (i * 8);
+            for (uint32_t i = 0; i < 16; i++)
+                texels[i][channel] = uint8_t(palette[(indices >> (i * 3)) & 7]);
+        }
+    }
+
+    void SetHostBlockCompression(bool supported)
+    {
+        g_hostBlockCompression = supported;
     }
 
     bool DescribeTextureFormat(const xenos::TextureFetch& fetch, GuestTextureFormat& out)
@@ -65,6 +130,17 @@ namespace gpu
             out.hostBytesPerUnit = bytes;
             out.hostIsBlockCompressed = true;
         };
+        // A DXT format: its BC blocks as they are, or decoded where the GPU can't sample BC.
+        auto dxt = [&](uint32_t bytes, DXGI_FORMAT format, TextureConversion conversion, DXGI_FORMAT decodedFormat, uint32_t decodedBytes) {
+            if (g_hostBlockCompression)
+            {
+                compressed(bytes, format);
+                return;
+            }
+            out.blockWidth = out.blockHeight = 4;
+            converted(bytes, conversion, decodedFormat, decodedBytes);
+        };
+        DXGI_FORMAT rgba8 = isGamma ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
 
         switch (TextureFormat(fetch.Format()))
         {
@@ -107,21 +183,23 @@ namespace gpu
             return true;
         case TextureFormat::k_DXT1:
         case TextureFormat::k_DXT1_AS_16_16_16_16:
-            compressed(8, isGamma ? DXGI_FORMAT_BC1_UNORM_SRGB : DXGI_FORMAT_BC1_UNORM);
+            dxt(8, isGamma ? DXGI_FORMAT_BC1_UNORM_SRGB : DXGI_FORMAT_BC1_UNORM, TextureConversion::BC1, rgba8, 4);
             return true;
         case TextureFormat::k_DXT2_3:
         case TextureFormat::k_DXT2_3_AS_16_16_16_16:
-            compressed(16, isGamma ? DXGI_FORMAT_BC2_UNORM_SRGB : DXGI_FORMAT_BC2_UNORM);
+            dxt(16, isGamma ? DXGI_FORMAT_BC2_UNORM_SRGB : DXGI_FORMAT_BC2_UNORM, TextureConversion::BC2, rgba8, 4);
             return true;
         case TextureFormat::k_DXT4_5:
         case TextureFormat::k_DXT4_5_AS_16_16_16_16:
-            compressed(16, isGamma ? DXGI_FORMAT_BC3_UNORM_SRGB : DXGI_FORMAT_BC3_UNORM);
+            dxt(16, isGamma ? DXGI_FORMAT_BC3_UNORM_SRGB : DXGI_FORMAT_BC3_UNORM, TextureConversion::BC3, rgba8, 4);
             return true;
         case TextureFormat::k_DXN:
-            compressed(16, isSigned ? DXGI_FORMAT_BC5_SNORM : DXGI_FORMAT_BC5_UNORM);
+            dxt(16, isSigned ? DXGI_FORMAT_BC5_SNORM : DXGI_FORMAT_BC5_UNORM, TextureConversion::BC5,
+                isSigned ? DXGI_FORMAT_R8G8_SNORM : DXGI_FORMAT_R8G8_UNORM, 2);
             return true;
         case TextureFormat::k_DXT5A:
-            compressed(8, isSigned ? DXGI_FORMAT_BC4_SNORM : DXGI_FORMAT_BC4_UNORM);
+            dxt(8, isSigned ? DXGI_FORMAT_BC4_SNORM : DXGI_FORMAT_BC4_UNORM, TextureConversion::BC4,
+                isSigned ? DXGI_FORMAT_R8_SNORM : DXGI_FORMAT_R8_UNORM, 1);
             return true;
         case TextureFormat::k_CTX1:
             out.blockWidth = out.blockHeight = 4;
@@ -391,9 +469,35 @@ namespace gpu
                 }
                 case TextureConversion::CTX1:
                 case TextureConversion::DXT3A:
+                case TextureConversion::BC1:
+                case TextureConversion::BC2:
+                case TextureConversion::BC3:
+                case TextureConversion::BC4:
+                case TextureConversion::BC5:
                 {
-                    uint8_t texels[16][2] = {};
-                    if (block)
+                    uint8_t texels[16][4] = {};
+                    bool isSigned = format.hostFormat == DXGI_FORMAT_R8_SNORM || format.hostFormat == DXGI_FORMAT_R8G8_SNORM;
+                    if (block && format.conversion == TextureConversion::BC1)
+                        DecodeColorBlock(block, texels, true);
+                    else if (block && format.conversion == TextureConversion::BC2)
+                    {
+                        DecodeColorBlock(block + 8, texels, false);
+                        for (uint32_t i = 0; i < 16; i++)
+                            texels[i][3] = uint8_t(((block[i / 2] >> ((i & 1) * 4)) & 0xF) * 17);
+                    }
+                    else if (block && format.conversion == TextureConversion::BC3)
+                    {
+                        DecodeColorBlock(block + 8, texels, false);
+                        DecodeSingleBlock(block, texels, 3, false);
+                    }
+                    else if (block && format.conversion == TextureConversion::BC4)
+                        DecodeSingleBlock(block, texels, 0, isSigned);
+                    else if (block && format.conversion == TextureConversion::BC5)
+                    {
+                        DecodeSingleBlock(block, texels, 0, isSigned);
+                        DecodeSingleBlock(block + 8, texels, 1, isSigned);
+                    }
+                    else if (block)
                     {
                         if (format.conversion == TextureConversion::DXT3A)
                         {

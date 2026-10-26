@@ -789,10 +789,19 @@ namespace
     // The recompiled stw/stwbrx to the register page compile to a 32-bit `mov [mem], r32` or
     // `mov [mem], imm32`. Decoding it gives the value without ever making the page writable, so
     // stores from other threads can't slip through. Anything else falls back to single-stepping.
+    // ARM64: a 32-bit STR/STUR (the platform's decoder); there is no single step to fall back on.
     bool DecodeStore(const plat::FaultInfo& fault, uint32_t& value, uint32_t& length)
     {
-#if !defined(__x86_64__) && !defined(_M_X64)
-        return false; // ARM64 hosts need their own store decoder (linux_port.md)
+#if defined(__aarch64__)
+        uint64_t stored;
+        uint32_t size;
+        if (!fault.DecodeStore(stored, size) || size != 4)
+            return false;
+        value = uint32_t(stored);
+        length = 4;
+        return true;
+#elif !defined(__x86_64__) && !defined(_M_X64)
+        return false;
 #endif
         const auto* code = reinterpret_cast<const uint8_t*>(fault.InstructionPointer());
         uint32_t i = 0;
@@ -846,6 +855,26 @@ namespace
             if (!g_memory.IsInGuestRange(fault.address))
                 return false;
             uint32_t guest = g_memory.MapVirtual(fault.address);
+#if defined(__aarch64__)
+            // A 16 KB host page protects the trapped page's neighbours too (registers 0-0x3FF and
+            // the rest of the window): do their stores, without a register write.
+            uint32_t hostPage = uint32_t(plat::HostPageSize());
+            uint32_t span = TRAPPED_PAGE & ~(hostPage - 1);
+            if (guest >= span && guest < span + hostPage && (guest < TRAPPED_PAGE || guest >= TRAPPED_PAGE + 0x1000))
+            {
+                uint64_t stored;
+                uint32_t size;
+                if (!fault.DecodeStore(stored, size))
+                    return false;
+                static std::mutex storeMutex;
+                std::lock_guard lock(storeMutex);
+                plat::ProtectMemory(g_memory.Translate(TRAPPED_PAGE), 0x1000, plat::PageAccess::ReadWrite);
+                memcpy(fault.address, &stored, size);
+                plat::ProtectMemory(g_memory.Translate(TRAPPED_PAGE), 0x1000, plat::PageAccess::ReadOnly);
+                fault.SetInstructionPointer(fault.InstructionPointer() + 4);
+                return true;
+            }
+#endif
             if (guest < TRAPPED_PAGE || guest >= TRAPPED_PAGE + 0x1000)
                 return false;
 
@@ -857,6 +886,9 @@ namespace
                 OnRegisterWrite((guest - XMA_MMIO_BEGIN) / 4, value);
                 return true;
             }
+#if defined(__aarch64__)
+            return false;  // no single step on ARM64: the crash report names the instruction
+#endif
 
             t_pendingWrite = guest;
             plat::ProtectMemory(g_memory.Translate(TRAPPED_PAGE), 0x1000, plat::PageAccess::ReadWrite);

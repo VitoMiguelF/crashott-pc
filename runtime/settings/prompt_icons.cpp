@@ -5,12 +5,15 @@
 #include "menu_art.h"
 #include "settings.h"
 #include "../kernel/pc_input.h"
+#include "../kernel/xinput_types.h"
+#include "../platform/platform.h"
 #include "../diagnostics.h"
 #include "../gpu/png_writer.h"
 
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <climits>
@@ -338,6 +341,62 @@ namespace settings::prompts
         {
             canvas.Export(out);
         }
+    }
+
+    namespace
+    {
+        std::mutex g_spotsMutex;
+        std::vector<IconSpot> g_spots;
+        uint64_t g_spotsTime = 0;
+    }
+
+    void PublishIconSpots(const std::vector<IconSpot>& spots)
+    {
+        std::lock_guard lock(g_spotsMutex);
+        g_spots = spots;
+        g_spotsTime = plat::TickCountMs();
+    }
+
+    uint16_t ButtonAt(float x, float y, float aspect)
+    {
+        std::lock_guard lock(g_spotsMutex);
+        if (plat::TickCountMs() - g_spotsTime > 250)
+            return 0;
+        uint16_t best = 0;
+        float bestDistance = 1e30f;
+        for (const IconSpot& spot : g_spots)
+        {
+            uint16_t button = 0;
+            switch (spot.icon)
+            {
+            case menu_art::ICON_A: button = XINPUT_GAMEPAD_A; break;
+            case menu_art::ICON_B: button = XINPUT_GAMEPAD_B; break;
+            case menu_art::ICON_X: button = XINPUT_GAMEPAD_X; break;
+            case menu_art::ICON_Y: button = XINPUT_GAMEPAD_Y; break;
+            case menu_art::ICON_BACK: button = XINPUT_GAMEPAD_BACK; break;
+            case menu_art::ICON_START: button = XINPUT_GAMEPAD_START; break;
+            case menu_art::ICON_RB: button = XINPUT_GAMEPAD_RIGHT_SHOULDER; break;
+            case menu_art::ICON_LB: button = XINPUT_GAMEPAD_LEFT_SHOULDER; break;
+            default: continue;  // the triggers, the stick and the arrows
+            }
+            // In picture heights: the icon, a margin, and the label's side.
+            float x0 = spot.x0 * aspect, x1 = spot.x1 * aspect, px = x * aspect;
+            float h = spot.y1 - spot.y0, cx = (x0 + x1) * 0.5f, cy = (spot.y0 + spot.y1) * 0.5f;
+            float left = x0 - h * 0.4f, right = x1 + h * 0.4f, top = spot.y0 - h * 0.35f, bottom = spot.y1 + h * 0.35f;
+            float middle = cx / aspect;
+            if (middle < 0.4f)
+                right = x1 + h * 7.0f;   // "(B) BACK"
+            else if (middle > 0.6f)
+                left = x0 - h * 7.0f;    // "CONTINUE STORY (Y)"
+            else
+                left = x0 - h * 3.5f, right = x1 + h * 3.5f, bottom = spot.y1 + h * 1.6f;  // the label under it
+            if (px < left || px > right || y < top || y > bottom)
+                continue;
+            float distance = std::hypot(px - cx, y - cy);
+            if (distance < bestDistance)
+                bestDistance = distance, best = button;
+        }
+        return best;
     }
 
     char32_t IconOfTexture(uint64_t key, int box[4])

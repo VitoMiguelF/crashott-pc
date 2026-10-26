@@ -7,7 +7,9 @@
 #include "../fs/rcf_overlay.h"
 #include "../settings/settings.h"
 #include "../settings/menu_mouse.h"
+#include "../settings/prompt_icons.h"
 #include "../settings/settings_menu.h"
+#include "../settings/touch_controls.h"
 #include "../dev/dev_console.h"
 #include "../gpu/widescreen.h"
 #include "../gpu/window.h"
@@ -41,6 +43,7 @@ namespace input::pc
         std::atomic<bool> g_menuClick{ false };       // a left click the game's menus have not used (TakeMenuClick)
         std::atomic<uint64_t> g_menuClickTime{ 0 };
         std::atomic<int> g_pressAccept{ 0 };          // game reads left with A down (PressMenuAccept)
+        std::atomic<uint16_t> g_promptButtons{ 0 };   // clicked prompts of the menus not yet pressed ("(B) BACK")
         std::atomic<int> g_menuWheel{ 0 }, g_settingsWheel{ 0 };  // notches not yet used (+ = up)
         std::atomic<uint32_t> g_settingsRight{ 0 };                // right clicks on the settings screen
         // A test script moves the mouse (ScriptMouse): the real one is ignored over the window.
@@ -243,6 +246,43 @@ namespace input::pc
         }
     }
 
+    namespace
+    {
+        // The cursor on the whole picture (the game's image fitted into the window, HudRect), 0..1.
+        bool CursorOnPicture(float& u, float& v, float& aspect)
+        {
+            int cx = g_cursorX, cy = g_cursorY, w = g_clientW, h = g_clientH;
+            if (cx < 0 || w <= 0 || h <= 0)
+                return false;
+            aspect = gpu::widescreen::Aspect();
+            float iw = float(w), ih = float(h);
+            if (iw > ih * aspect)
+                iw = ih * aspect;
+            else
+                ih = iw / aspect;
+            u = (cx + 0.5f - (float(w) - iw) * 0.5f) / iw, v = (cy + 0.5f - (float(h) - ih) * 0.5f) / ih;
+            return u >= 0 && u <= 1 && v >= 0 && v <= 1;
+        }
+
+        // A left click: on a prompt of the menus ("(B) BACK", "CONTINUE STORY (Y)") it is that
+        // button (prompt_icons.h ButtonAt), else a click for the menu under it.
+        void LeftClick()
+        {
+            g_leftClicks++;
+            float u, v, aspect;
+            uint16_t prompt = 0;
+            if (InMenus() && !settings::menu::IsOpen() && !dev::console::IsOpen() && Controls().mouseMenus && CursorOnPicture(u, v, aspect))
+                prompt = settings::prompts::ButtonAt(u, v, aspect);
+            if (prompt)
+            {
+                g_promptButtons |= prompt;
+                return;
+            }
+            g_menuClickTime = plat::TickCountMs();
+            g_menuClick = true;
+        }
+    }
+
     bool KeyHeld(uint32_t key)
     {
         return key < 256 && (g_keys[key].load() & HELD) != 0;
@@ -282,11 +322,7 @@ namespace input::pc
         {
             g_leftHeld = down;
             if (down)
-            {
-                g_leftClicks++;
-                g_menuClickTime = plat::TickCountMs();
-                g_menuClick = true;
-            }
+                LeftClick();
         }
         if (down && key == VK_RBUTTON)
         {
@@ -490,9 +526,7 @@ namespace input::pc
         SetCursor(int(ix + x / 1280.0f * iw), int(iy + y / 720.0f * ih), w, h);
         if (click == 1 || click == 3)
         {
-            g_leftClicks++;
-            g_menuClickTime = plat::TickCountMs();
-            g_menuClick = true;
+            LeftClick();
             g_leftHeld = click == 3;
             NoteDevice(Device::Keyboard);
         }
@@ -608,11 +642,24 @@ namespace input::pc
                 s_holdB = 3;
                 NoteDevice(Device::Keyboard);
             }
+            static uint16_t s_prompt = 0;
+            static int s_holdPrompt = 0;
+            if (uint16_t prompt = g_promptButtons.exchange(0))
+            {
+                s_prompt = prompt, s_holdPrompt = 3;
+                Log("[input] mouse: click on the prompt of button 0x%04X", prompt);
+                NoteDevice(Device::Keyboard);
+            }
             int accept = g_pressAccept.load();
             if (accept > 0)
             {
                 g_pressAccept = accept - 1;
                 s_out = XINPUT_GAMEPAD_A;
+            }
+            else if (s_holdPrompt > 0)
+            {
+                s_holdPrompt--;
+                s_out = s_prompt;
             }
             else if (s_holdB > 0)
             {
@@ -743,6 +790,10 @@ namespace input::pc
 
     void NoteDevice(Device device)
     {
+        // With the touch controls (Android) the "mouse" is the touch screen, and the controls show
+        // the pad's buttons: so do the prompts.
+        if (device == Device::Keyboard && touch_controls::Enabled())
+            device = Device::Xbox;
         uint8_t previous = g_device.exchange(uint8_t(device));
         if (previous != uint8_t(device))
         {

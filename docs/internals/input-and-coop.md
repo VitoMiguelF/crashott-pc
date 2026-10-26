@@ -15,6 +15,7 @@ Full write-ups: `runtime/NOTES.md` "Controles de PC" (with "Co-op local" and "Mo
 | `settings/controls.*` | `[controls]` in settings.toml |
 | `settings/prompt_icons.*` | Our own PlayStation / keyboard button icons |
 | `settings/menu_mouse.*` | Mouse in the game's Scrooby menus |
+| `settings/touch_controls.*` | On-screen touch pad (Android): gameplay only, the menus take the touch as the mouse |
 
 ## Facts
 
@@ -28,6 +29,11 @@ Full write-ups: `runtime/NOTES.md` "Controles de PC" (with "Co-op local" and "Mo
 - Mouse menus behave like a PC game (hover selects): hover calls the game's `Menu::SetSelection`
   sub_822F2E40(menu, i) + the move sound sub_821DB260 / 280 on player sub_821FA440(sub_821FB4F0(), 6);
   prev/next sub_822F2F58 / 3068. The settings screen has hit zones (`g_zones`) built in `Rasterize`.
+- The game's button prompts are clickable in the menus ("(B) BACK", "CONTINUE STORY (Y)"): the renderer notes
+  where each icon is drawn (`NoteIconSpot`, through `HUD_VS`), `settings::prompts::ButtonAt` maps a click on
+  the icon or its label to the button, `pc_input.cpp` `LeftClick` presses it for 3 game reads.
+- The save screens ignore presses and clicks made before their first frame (they used to open the delete
+  question by themselves) and leave clicks off their own zones to the game's menu (a slot click is the game's).
 - Test scripts: `KEY_*`, `MOUSE`, `CLICK`, `RCLICK`, `LDOWN`, `LUP`, `WHEEL`, `DEVICE_*`. With scripted mouse
   entries the real mouse over the window is ignored (otherwise your own mouse moves the test cursor).
 - DSX / HidHide can hold a Bluetooth DualSense's HID path (access denied); USB reads fine.

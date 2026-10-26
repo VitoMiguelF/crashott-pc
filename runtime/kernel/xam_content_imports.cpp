@@ -20,6 +20,7 @@
 #include "xam_content.h"
 #include "xex_loader.h"
 #include "../fs/vfs.h"
+#include "../platform/platform.h"
 
 #include <algorithm>
 #include <cstring>
@@ -96,6 +97,21 @@ namespace
             return result;
         CompleteXOverlapped(base, overlapped, result);
         return X_ERROR_IO_PENDING;
+    }
+
+    // The packages of each content type and the saved games looked up by the save screens, read
+    // again only after a change made here (create, close, delete): the game enumerates its saves
+    // every frame of its menus, and on Android each listing goes through the slow shared storage
+    // (FUSE).
+    std::mutex g_listsMutex;
+    std::map<uint32_t, std::vector<std::vector<uint8_t>>> g_lists;      // content type -> XCONTENT_DATA items
+    std::map<std::string, std::optional<std::string>> g_savedGames;    // file name -> display name, or none
+
+    void ContentChanged()
+    {
+        std::lock_guard lock(g_listsMutex);
+        g_lists.clear();
+        g_savedGames.clear();
     }
 
     fs::path TypeFolder(uint32_t contentType)
@@ -331,6 +347,7 @@ PPC_FUNC(__imp__XamContentCreateEx)
         root.c_str(), Describe(base, contentData).c_str(), flags, overlapped, GuestLR(ctx), result,
         disposition == 1 ? " (created)" : disposition == 2 ? " (opened)" : "",
         package && result == X_ERROR_SUCCESS ? (" at " + package->folder.string()).c_str() : "");
+    ContentChanged();
     ctx.r3.u64 = Finish(base, overlapped, result);
 }
 
@@ -348,6 +365,7 @@ PPC_FUNC(__imp__XamContentClose)
     if (result == X_ERROR_SUCCESS)
         vfs::UnmountContent(root);
     Log("[xam] XamContentClose(\"%s:\") lr=0x%08X -> 0x%X", root.c_str(), GuestLR(ctx), result);
+    ContentChanged();
     ctx.r3.u64 = Finish(base, ctx.r4.u32, result);
 }
 
@@ -373,6 +391,7 @@ PPC_FUNC(__imp__XamContentDelete)
         fs::remove(package->header, error);
         fs::remove(package->thumbnail, error);
     }
+    ContentChanged();
     Log("[xam] XamContentDelete(user %u, %s) lr=0x%08X -> 0x%X", ctx.r3.u32, Describe(base, ctx.r4.u32).c_str(), GuestLR(ctx), result);
     ctx.r3.u64 = Finish(base, ctx.r5.u32, result);
 }
@@ -420,7 +439,7 @@ PPC_FUNC(__imp__XamContentSetThumbnail)
 PPC_FUNC(__imp__XamContentCreateEnumerator)
 {
     KERNEL_IMPORT_ENTER(XamContentCreateEnumerator);
-    uint32_t deviceId = ctx.r4.u32, contentType = ctx.r5.u32, itemsPerEnumerate = ctx.r7.u32;
+    uint32_t userIndex = ctx.r3.u32, deviceId = ctx.r4.u32, contentType = ctx.r5.u32, itemsPerEnumerate = ctx.r7.u32;
     uint32_t bufferSizePtr = ctx.r8.u32, handlePtr = ctx.r9.u32;
     if (!handlePtr || (deviceId && deviceId != DEVICE_ID))
     {
@@ -436,10 +455,17 @@ PPC_FUNC(__imp__XamContentCreateEnumerator)
     enumerator->itemsPerEnumerate = itemsPerEnumerate ? itemsPerEnumerate : 1;
 
     // Packages of this type: every folder, with the XCONTENT_DATA from its header (or one made
-    // up from the folder name if the header is missing).
-    std::error_code error;
+    // up from the folder name if the header is missing); the last listing while nothing changed.
     fs::path type = TypeFolder(contentType);
-    if (fs::is_directory(type, error))
+    bool listed = false;
+    {
+        std::lock_guard lock(g_listsMutex);
+        if (auto cached = g_lists.find(contentType); cached != g_lists.end())
+            enumerator->items = cached->second, listed = true;
+    }
+    uint64_t started = plat::TickCountMs();
+    std::error_code error;
+    if (!listed && fs::is_directory(type, error))
     {
         for (auto& entry : fs::directory_iterator(type, error))
         {
@@ -462,14 +488,24 @@ PPC_FUNC(__imp__XamContentCreateEnumerator)
         }
     }
 
+    if (!listed)
+    {
+        std::lock_guard lock(g_listsMutex);
+        g_lists[contentType] = enumerator->items;
+    }
+
     RegisterObject(enumerator);
     uint32_t handle = CreateHandle(enumerator);
     PPC_STORE_U32(handlePtr, handle);
     if (bufferSizePtr)
         PPC_STORE_U32(bufferSizePtr, enumerator->itemsPerEnumerate * XCONTENT_DATA_SIZE);
-    Log("[xam] XamContentCreateEnumerator(user %u, device %u, type %u, %u per call) lr=0x%08X -> handle 0x%08X, %zu package(s) in %s",
-        ctx.r3.u32, deviceId, contentType, itemsPerEnumerate, GuestLR(ctx), handle, enumerator->items.size(), type.string().c_str());
     ctx.r3.u64 = X_ERROR_SUCCESS;
+    if (listed)
+        return;  // logged when it was read
+    Log("[xam] XamContentCreateEnumerator(user %u, device %u, type %u, %u per call) lr=0x%08X -> handle 0x%08X, %zu package(s) in %s "
+        "(read in %llu ms; again only after a change)",
+        userIndex, deviceId, contentType, itemsPerEnumerate, GuestLR(ctx), handle, enumerator->items.size(), type.string().c_str(),
+        (unsigned long long)(plat::TickCountMs() - started));
 }
 
 // u32 XamEnumerate(HANDLE Enumerator, u32 Flags, void* Buffer, u32 BufferSize, u32* ItemsReturned,
@@ -518,15 +554,24 @@ namespace xam::content
 {
     bool SavedGameExists(const std::string& fileName, std::string* displayName)
     {
+        // Asked every frame of the slot screen: cached until a change (ContentChanged).
+        {
+            std::lock_guard lock(g_listsMutex);
+            if (auto cached = g_savedGames.find(fileName); cached != g_savedGames.end())
+            {
+                if (cached->second && displayName)
+                    *displayName = *cached->second;
+                return cached->second.has_value();
+            }
+        }
         std::string safe = SafeFileName(fileName);
         fs::path type = TypeFolder(CONTENT_TYPE_SAVED_GAME);
         std::error_code error;
-        if (!fs::is_directory(type / safe, error))
-            return false;
-        if (displayName)
+        std::optional<std::string> found;
+        if (fs::is_directory(type / safe, error))
         {
             // XCONTENT_DATA as the game passed it: the display name is UTF-16 big-endian.
-            displayName->clear();
+            found.emplace();
             std::ifstream in(type / (safe + ".header"), std::ios::binary);
             std::vector<char> header(XCONTENT_DATA_SIZE);
             if (in.read(header.data(), header.size()))
@@ -536,11 +581,17 @@ namespace xam::content
                     uint16_t c = uint16_t(uint8_t(header[i]) << 8 | uint8_t(header[i + 1]));
                     if (!c)
                         break;
-                    *displayName += c < 0x80 ? char(c) : '?';
+                    *found += c < 0x80 ? char(c) : '?';
                 }
             }
         }
-        return true;
+        {
+            std::lock_guard lock(g_listsMutex);
+            g_savedGames[fileName] = found;
+        }
+        if (found && displayName)
+            *displayName = *found;
+        return found.has_value();
     }
 
     bool DeleteSavedGame(const std::string& fileName)
@@ -552,6 +603,7 @@ namespace xam::content
         fs::remove(type / (safe + ".header"), error);
         fs::remove(type / (safe + ".thumbnail"), error);
         bool gone = !fs::exists(type / safe, error);
+        ContentChanged();
         Log("[xam] saved game \"%s\" deleted by the runtime -> %s", fileName.c_str(), gone ? "gone" : "still there");
         return gone;
     }

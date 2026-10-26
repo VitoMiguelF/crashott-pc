@@ -197,7 +197,12 @@ Full write-up: `runtime/NOTES.md` "Ultrawide". Settings `[video] aspect` (auto /
   projection: built from the widened aspect, its y offset scaled with the aspect (HUD 124 px lower at
   21:9, off the screen at 32:9).
 - 2D: draws into a 1280-wide 1x target (not scene, not MSAA) get `xe_hud` (b3): triangles go through
-  HUD_GS (points / lines: `xe_hud_transform` in the VS). Rectangle lists are D3D's clears and are
+  HUD_GS (points / lines: `xe_hud_transform` in the VS). Draws of the 2D VS aecab5202246c470 whose
+  triangles all get the same treatment (almost all) skip HUD_GS: `HudFoldDraw` applies its rules on
+  the CPU and folds the result into the draw's c4..c7 (`CRASH_HUD_FOLD=0` turns that off; Adreno ran
+  HUD_GS at 12 fps in the menus). Without geometry shaders (Mali, whose compiler crashes on them;
+  `CRASH_VULKAN_NO_EXT=gs`) rectangle lists are two triangles with a 4th vertex made on the CPU
+  (`ExpandRectList`), and the 2D left over by the fold goes per vertex (docs/internals/android_port.md). Rectangle lists are D3D's clears and are
   never transformed (squeezed, they left the HUB's depth uncleared in strips: titan dolls cut). W = 1 triangles (the game's 2D, 640x480
   virtual through c4-c7) scale around the centre unless they span the width; full-screen ones zoom when
   they read no render target. Triangles with the same W != 1 on the three vertices are the frontend's

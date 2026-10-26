@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The app tools/android_build.py assembles (docs/internals/android_port.md). SDL3's Java glue
+     (org.libsdl.app, from the SDL source) plus CrashActivity; the game is lib/arm64-v8a/libmain.so,
+     built on the player's PC from their own dump: this APK is personal and is never published. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.vitomiguelf.crashottde"
+    android:versionCode="1"
+    android:versionName="0.1-android">
+
+    <!-- Vulkan 1.3 (0x403000), the renderer's only path; not required: an Adreno with an older
+         driver gets Mesa's Turnip from the APK (libadrenotools). -->
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x403000" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <application
+        android:label="Crash of the Titans DE"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:hasFragileUserData="true"
+        android:extractNativeLibs="true"
+        android:isGame="true"
+        android:appCategory="game"
+        android:hardwareAccelerated="true"
+        android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+        <activity android:name=".CrashActivity"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:alwaysRetainTaskState="true"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:preferMinimalPostProcessing="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

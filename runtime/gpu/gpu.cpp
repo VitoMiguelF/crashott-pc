@@ -95,6 +95,9 @@ namespace
     // single-steps the store, then protects the page again and reports the value written. Another
     // thread writing while the page is briefly writable isn't seen; the command processor also
     // polls CP_RB_WPTR, so that only delays it.
+    // ARM64 has no single step: the handler decodes the store and does it itself. There the host
+    // page can be 16 KB, so the protection also covers the registers after the trapped 4 KB:
+    // their stores are done the same way, without a report.
     bool MmioHandler(plat::FaultInfo& fault)
     {
         if (fault.kind == plat::FaultKind::AccessViolation && fault.write)
@@ -103,9 +106,26 @@ namespace
                 return false;
 
             uint32_t guest = g_memory.MapVirtual(fault.address);
-            if (guest < GPU_MMIO_BEGIN || guest >= GPU_MMIO_BEGIN + 0x1000)
+            if (guest < GPU_MMIO_BEGIN || guest >= GPU_MMIO_BEGIN + std::max<uint32_t>(0x1000, uint32_t(plat::HostPageSize())))
                 return false;
 
+#if defined(__aarch64__)
+            uint64_t value;
+            uint32_t size;
+            if (!fault.DecodeStore(value, size))
+                return false;  // the crash report names the instruction
+            {
+                static std::mutex storeMutex;
+                std::lock_guard lock(storeMutex);
+                plat::ProtectMemory(TrappedPage(), 0x1000, plat::PageAccess::ReadWrite);
+                memcpy(fault.address, &value, size);
+                plat::ProtectMemory(TrappedPage(), 0x1000, plat::PageAccess::ReadOnly);
+            }
+            fault.SetInstructionPointer(fault.InstructionPointer() + 4);
+            if (guest < GPU_MMIO_BEGIN + 0x1000)
+                OnGuestRegisterWrite(((guest & ~3u) - GPU_MMIO_BEGIN) / 4, LoadBE32(guest & ~3u));
+            return true;
+#endif
             t_pendingWrite = guest;
             plat::ProtectMemory(TrappedPage(), 0x1000, plat::PageAccess::ReadWrite);
             fault.RequestSingleStep(); // single-step the store

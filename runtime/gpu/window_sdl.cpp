@@ -13,8 +13,12 @@
 #include "../platform/keys.h"
 #include "../platform/keys_sdl.h"
 #include "../platform/platform.h"
+#if defined(__ANDROID__)
+#include "../platform/android_main.h"
+#endif
 #include "../platform/text.h"
 #include "../settings/settings.h"
+#include "../settings/touch_controls.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
@@ -80,6 +84,11 @@ namespace gpu::window
 
         void ApplyMode(SDL_Window* window, settings::WindowMode mode)
         {
+#if defined(__ANDROID__)
+            // A phone has no windows: always the whole screen (SDL's immersive mode, without the
+            // status and navigation bars).
+            mode = settings::WindowMode::Borderless;
+#endif
             bool full = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
             if (mode == settings::WindowMode::Windowed)
             {
@@ -123,6 +132,46 @@ namespace gpu::window
                 else
                     SDL_StopTextInput(window);
                 g_textInput = text;
+            }
+        }
+
+        // The touch screen: the touch controls first (touch_controls.h); a finger they don't take is
+        // the mouse (the menus), the first one only. SDL's own mouse events for a touch are dropped
+        // while the controls are on (in gameplay a tap would be a left click: X).
+        bool g_mouseFinger = false;
+        SDL_FingerID g_mouseFingerId = 0;
+
+        bool TouchMouse(SDL_MouseID which)
+        {
+            return which == SDL_TOUCH_MOUSEID && touch_controls::Enabled();
+        }
+
+        void OnFinger(const SDL_TouchFingerEvent& finger)
+        {
+            if (finger.touchID == SDL_MOUSE_TOUCHID || !touch_controls::Enabled())  // a mouse's events repeated as a touch
+                return;
+            using touch_controls::Phase;
+            Phase phase = finger.type == SDL_EVENT_FINGER_DOWN ? Phase::Down : finger.type == SDL_EVENT_FINGER_MOTION ? Phase::Move : Phase::Up;
+            float x = std::clamp(finger.x, 0.0f, 1.0f), y = std::clamp(finger.y, 0.0f, 1.0f);
+            bool taken = touch_controls::OnFinger(uint64_t(finger.fingerID), phase, x, y);
+            int px = int(x * float(g_pointWidth)), py = int(y * float(g_pointHeight));
+            if (phase == Phase::Down)
+            {
+                if (taken || g_mouseFinger)
+                    return;
+                g_mouseFinger = true, g_mouseFingerId = finger.fingerID;
+                input::pc::OnCursor(px, py, g_pointWidth, g_pointHeight);
+                if (!dev::console::IsOpen())
+                    input::pc::OnKey(VK_LBUTTON, true);
+            }
+            else if (g_mouseFinger && finger.fingerID == g_mouseFingerId)
+            {
+                input::pc::OnCursor(px, py, g_pointWidth, g_pointHeight);
+                if (phase == Phase::Up)
+                {
+                    input::pc::OnKey(VK_LBUTTON, false);
+                    g_mouseFinger = false;
+                }
             }
         }
 
@@ -173,6 +222,8 @@ namespace gpu::window
                 break;
             case SDL_EVENT_MOUSE_MOTION:
             {
+                if (TouchMouse(event.motion.which))
+                    break;
                 input::pc::OnCursor(int(event.motion.x), int(event.motion.y), g_pointWidth, g_pointHeight);
                 g_rawX += event.motion.xrel;
                 g_rawY += event.motion.yrel;
@@ -185,6 +236,8 @@ namespace gpu::window
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
             case SDL_EVENT_MOUSE_BUTTON_UP:
             {
+                if (TouchMouse(event.button.which))
+                    break;
                 bool down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
                 uint32_t key = 0;
                 switch (event.button.button)
@@ -207,6 +260,12 @@ namespace gpu::window
                     input::pc::OnWheel(notches);
                 break;
             }
+            case SDL_EVENT_FINGER_DOWN:
+            case SDL_EVENT_FINGER_MOTION:
+            case SDL_EVENT_FINGER_UP:
+            case SDL_EVENT_FINGER_CANCELED:
+                OnFinger(event.tfinger);
+                break;
             case SDL_EVENT_KEY_DOWN:
                 OnKeyDown(window, event.key);
                 break;
@@ -303,6 +362,10 @@ namespace gpu::window
 
     std::vector<const char*> VulkanSurfaceExtensions()
     {
+#if defined(__ANDROID__)
+        // SDL's list needs SDL's own Vulkan loader, which Android doesn't use (android_main.h).
+        return { VK_KHR_SURFACE_EXTENSION_NAME, "VK_KHR_android_surface" };
+#endif
         Uint32 count = 0;
         const char* const* names = SDL_Vulkan_GetInstanceExtensions(&count);
         if (!names)
@@ -313,6 +376,9 @@ namespace gpu::window
     bool CreateVulkanSurface(void* instance, void* surface)
     {
         SDL_Window* window = g_window.load();
+#if defined(__ANDROID__)
+        return window && plat::android::CreateVulkanSurface(window, instance, reinterpret_cast<void*>(vk::vkGetInstanceProcAddr), surface);
+#endif
         if (!window || !SDL_Vulkan_CreateSurface(window, VkInstance(instance), nullptr, static_cast<VkSurfaceKHR*>(surface)))
         {
             Log("[gpu] SDL_Vulkan_CreateSurface failed: %s", SDL_GetError());
@@ -328,8 +394,9 @@ namespace gpu::window
         bool done = false;
 
         // The window lives on its own thread like on Windows, which SDL allows on X11 and Wayland
-        // (all video calls stay on that one thread). Android needs it on the main thread instead.
-        std::thread([&, clientWidth, clientHeight, title] {
+        // (all video calls stay on that one thread). Android needs it on the thread that runs
+        // SDL_main instead, which runs the game on a thread of its own (android_main_android.cpp).
+        auto windowThread = [&, clientWidth, clientHeight, title] {
             SDL_Window* window = nullptr;
             if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
                 Log("[gpu] SDL_Init failed: %s", SDL_GetError());
@@ -358,8 +425,14 @@ namespace gpu::window
                 }
                 std::string fullTitle = plat::NarrowUtf8(title) + InstanceTitleSuffix();
                 Log("[gpu] window title: %s", fullTitle.c_str());
+#if defined(__ANDROID__)
+                // No SDL_WINDOW_VULKAN: it would load SDL's own libvulkan.so (android_main.h).
+                const SDL_WindowFlags vulkanFlag = 0;
+#else
+                const SDL_WindowFlags vulkanFlag = SDL_WINDOW_VULKAN;
+#endif
                 window = SDL_CreateWindow(fullTitle.c_str(), width, height,
-                                          SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
+                                          vulkanFlag | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
                 if (!window)
                     Log("[gpu] SDL_CreateWindow failed: %s", SDL_GetError());
             }
@@ -391,8 +464,12 @@ namespace gpu::window
                 Log("[gpu] window: content scale %.2f, density %.2f, client %ux%u", SDL_GetWindowDisplayScale(window), density,
                     g_clientWidth.load(), g_clientHeight.load());
                 SDL_StopTextInput(window);
+#if defined(__ANDROID__)
+                ApplyMode(window, g_mode);
+#else
                 if (g_mode != settings::WindowMode::Windowed)
                     ApplyMode(window, g_mode);
+#endif
             }
             {
                 std::lock_guard lock(mutex);
@@ -420,7 +497,12 @@ namespace gpu::window
                     nextCursor = now + 100;
                 }
             }
-        }).detach();
+        };
+#if defined(__ANDROID__)
+        plat::android::RunOnMainThread(windowThread);
+#else
+        std::thread(windowThread).detach();
+#endif
 
         std::unique_lock lock(mutex);
         ready.wait(lock, [&] { return done; });

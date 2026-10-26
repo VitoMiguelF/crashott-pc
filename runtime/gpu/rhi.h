@@ -354,6 +354,11 @@ namespace gpu::rhi
 
         virtual void Draw(const DrawCall& draw) = 0;
         virtual void DrawPass(const PassDraw& pass) = 0;
+        // BC1-5 textures can be sampled (false on Mali: texture_decode decodes them on the CPU).
+        virtual bool SupportsBlockCompression() const { return true; }
+        // Geometry shaders usable (false on Mali: the renderer's rectangle lists and wide-screen 2D
+        // then go without them).
+        virtual bool SupportsGeometryShaders() const { return true; }
 
         // Presentation. BeginPresent returns the back buffer (DXGI BackBufferFormat()) to draw the
         // frame into; Present submits and shows it, keeping at most two frames in flight.

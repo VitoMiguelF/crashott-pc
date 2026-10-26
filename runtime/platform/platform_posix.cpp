@@ -14,6 +14,12 @@
 #include <time.h>
 #include <ucontext.h>
 #include <unistd.h>
+#if defined(__aarch64__)
+#include <asm/sigcontext.h> // esr_context: the write bit of a data abort
+#endif
+#if defined(__ANDROID__)
+#include <android/log.h>
+#endif
 
 #include <array>
 #include <atomic>
@@ -25,6 +31,17 @@
 
 #if defined(__x86_64__)
 #define CRASH_FAULT_X86_64 1
+#elif defined(__aarch64__)
+#define CRASH_FAULT_ARM64 1
+#endif
+
+// Android's bionic has no ucontext switching (getcontext/makecontext/swapcontext): fibers use the
+// small AArch64 switch below there.
+#if defined(__ANDROID__)
+#define CRASH_FIBER_ASM 1
+#if !defined(__aarch64__)
+#error "Android builds are ARM64 only (docs/internals/android_port.md)"
+#endif
 #endif
 
 namespace plat
@@ -205,9 +222,144 @@ namespace plat
     }
 
     // ---- Fibers -----------------------------------------------------------------------------
-    // ucontext: glibc (x86-64, aarch64) has it; Android's bionic does not, so Android needs a
-    // small assembly switch instead (see linux_port.md). swapcontext saves the FPU control words,
-    // like FIBER_FLAG_FLOAT_SWITCH.
+    // ucontext: glibc (x86-64, aarch64) has it; Android's bionic does not, so Android uses a
+    // small assembly switch instead. Both keep the floating-point control register with the fiber
+    // (swapcontext the FPU control words, the switch FPCR), like FIBER_FLAG_FLOAT_SWITCH: the
+    // guest's rounding / flush-to-zero mode is per fiber.
+#if CRASH_FIBER_ASM
+    namespace
+    {
+        // What crash_fiber_switch saves: the AAPCS64 callee-saved registers, sp and FPCR.
+        struct FiberRegisters
+        {
+            uint64_t x19_x30[12]; // x19..x28, x29 (frame pointer), x30 (where the switch returns)
+            uint64_t sp;
+            uint64_t d8_d15[8];
+            uint64_t fpcr;
+        };
+        static_assert(sizeof(FiberRegisters) == 176);
+
+        struct PosixFiber
+        {
+            FiberRegisters registers{};
+            void* stack{};
+            size_t stackSize{};
+            void (*entry)(void*){};
+            void* param{};
+        };
+
+        thread_local PosixFiber* t_currentFiber;
+
+        [[noreturn]] void FiberMain(PosixFiber* fiber)
+        {
+            fiber->entry(fiber->param);
+            std::abort(); // fiber routines never return (kernel/fibers.cpp)
+        }
+    }
+}
+
+// crash_fiber_switch(from, to): saves the callee-saved state in `from` and returns into `to`.
+// crash_fiber_start: the first return into a new fiber lands here, with x19 = the fiber and x20 =
+// FiberMain (set by CreateFiber).
+extern "C" void crash_fiber_switch(void* from, void* to); // FiberRegisters*
+__asm__(
+    ".text\n"
+    ".p2align 2\n"
+    ".hidden crash_fiber_switch\n"
+    ".type crash_fiber_switch, %function\n"
+    "crash_fiber_switch:\n"
+    "    stp x19, x20, [x0, #0]\n"
+    "    stp x21, x22, [x0, #16]\n"
+    "    stp x23, x24, [x0, #32]\n"
+    "    stp x25, x26, [x0, #48]\n"
+    "    stp x27, x28, [x0, #64]\n"
+    "    stp x29, x30, [x0, #80]\n"
+    "    mov x9, sp\n"
+    "    str x9, [x0, #96]\n"
+    "    stp d8, d9, [x0, #104]\n"
+    "    stp d10, d11, [x0, #120]\n"
+    "    stp d12, d13, [x0, #136]\n"
+    "    stp d14, d15, [x0, #152]\n"
+    "    mrs x9, fpcr\n"
+    "    str x9, [x0, #168]\n"
+    "    ldp x19, x20, [x1, #0]\n"
+    "    ldp x21, x22, [x1, #16]\n"
+    "    ldp x23, x24, [x1, #32]\n"
+    "    ldp x25, x26, [x1, #48]\n"
+    "    ldp x27, x28, [x1, #64]\n"
+    "    ldp x29, x30, [x1, #80]\n"
+    "    ldr x9, [x1, #96]\n"
+    "    mov sp, x9\n"
+    "    ldp d8, d9, [x1, #104]\n"
+    "    ldp d10, d11, [x1, #120]\n"
+    "    ldp d12, d13, [x1, #136]\n"
+    "    ldp d14, d15, [x1, #152]\n"
+    "    ldr x9, [x1, #168]\n"
+    "    msr fpcr, x9\n"
+    "    ret\n"
+    ".size crash_fiber_switch, . - crash_fiber_switch\n"
+    ".p2align 2\n"
+    ".hidden crash_fiber_start\n"
+    ".type crash_fiber_start, %function\n"
+    "crash_fiber_start:\n"
+    "    mov x0, x19\n"
+    "    mov x29, #0\n"
+    "    blr x20\n"
+    "    brk #0\n"
+    ".size crash_fiber_start, . - crash_fiber_start\n");
+extern "C" void crash_fiber_start();
+
+namespace plat
+{
+    FiberHandle CurrentThreadFiber()
+    {
+        if (!t_currentFiber)
+            t_currentFiber = new PosixFiber(); // its registers are filled by the first switch away
+        return t_currentFiber;
+    }
+
+    FiberHandle CreateFiber(size_t stackSize, void (*entry)(void* param), void* param)
+    {
+        auto* fiber = new PosixFiber();
+        fiber->entry = entry;
+        fiber->param = param;
+        fiber->stackSize = stackSize;
+        // Reserved, not committed: Linux maps stack pages on first touch.
+        fiber->stack = mmap(nullptr, stackSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (fiber->stack == MAP_FAILED)
+        {
+            delete fiber;
+            return nullptr;
+        }
+        FiberRegisters& r = fiber->registers;
+        r.x19_x30[0] = reinterpret_cast<uint64_t>(fiber);                   // x19
+        r.x19_x30[1] = reinterpret_cast<uint64_t>(&FiberMain);              // x20
+        r.x19_x30[11] = reinterpret_cast<uint64_t>(&crash_fiber_start);     // x30
+        r.sp = (reinterpret_cast<uint64_t>(fiber->stack) + stackSize) & ~uint64_t(15);
+        uint64_t fpcr;
+        __asm__ __volatile__("mrs %0, fpcr" : "=r"(fpcr));
+        r.fpcr = fpcr;
+        return fiber;
+    }
+
+    void SwitchToFiber(FiberHandle handle)
+    {
+        PosixFiber* from = static_cast<PosixFiber*>(CurrentThreadFiber());
+        auto* to = static_cast<PosixFiber*>(handle);
+        t_currentFiber = to;
+        crash_fiber_switch(&from->registers, &to->registers);
+        // Back on `from`, maybe on another thread: that thread's t_currentFiber was set by the
+        // switch that resumed us.
+    }
+
+    void DeleteFiber(FiberHandle handle)
+    {
+        auto* fiber = static_cast<PosixFiber*>(handle);
+        if (fiber->stack)
+            munmap(fiber->stack, fiber->stackSize);
+        delete fiber;
+    }
+#else
     namespace
     {
         struct PosixFiber
@@ -276,12 +428,25 @@ namespace plat
         delete fiber;
     }
 
+#endif
+
     // ---- Virtual memory ---------------------------------------------------------------------
     // Linux has no reserved/committed distinction to query, so the reservations made here keep a
-    // committed-page bitmap (1 bit per 4 KB page) for QueryMemory.
+    // committed-page bitmap (1 bit per 4 KB page) for QueryMemory. The host page can be bigger
+    // (16 KB on some Android devices): mprotect and madvise work in host pages, the bitmap and the
+    // callers in the guest's 4 KB pages.
     namespace
     {
         constexpr size_t PAGE = 0x1000;
+
+        size_t HostPage()
+        {
+            static const size_t size = [] {
+                long page = sysconf(_SC_PAGESIZE);
+                return page > 0 ? size_t(page) : PAGE;
+            }();
+            return size;
+        }
 
         struct Reservation
         {
@@ -368,12 +533,24 @@ namespace plat
 
         // VirtualAlloc/VirtualProtect round [address, address + size) out to whole pages; mprotect
         // wants a page-aligned start (the kernel heap hands out 16-byte aligned blocks).
-        void PageAlign(void*& address, size_t& size)
+        void PageAlign(void*& address, size_t& size, size_t page = PAGE)
         {
-            uintptr_t first = uintptr_t(address) & ~uintptr_t(PAGE - 1);
-            uintptr_t end = (uintptr_t(address) + size + PAGE - 1) & ~uintptr_t(PAGE - 1);
+            uintptr_t first = uintptr_t(address) & ~uintptr_t(page - 1);
+            uintptr_t end = (uintptr_t(address) + size + page - 1) & ~uintptr_t(page - 1);
             address = reinterpret_cast<void*>(first);
             size = end - first;
+        }
+
+        // Zeroes the committed 4 KB pages of [from, to) (guest-page aligned): what a decommit of
+        // part of a bigger host page leaves behind.
+        void ZeroCommitted(uintptr_t from, uintptr_t to)
+        {
+            Reservation* r = FindReservation(reinterpret_cast<void*>(from));
+            for (uintptr_t page = from; r && page < to; page += PAGE)
+            {
+                if (IsCommitted(*r, (page - uintptr_t(r->base)) / PAGE))
+                    memset(reinterpret_cast<void*>(page), 0, PAGE);
+            }
         }
     }
 
@@ -417,7 +594,12 @@ namespace plat
     bool CommitMemory(void* address, size_t size)
     {
         PageAlign(address, size);
-        if (mprotect(address, size, PROT_READ | PROT_WRITE) != 0)
+        // A bigger host page also makes its neighbours readable: harmless, nothing relies on a
+        // reserved guest page faulting (demand commit does it anyway).
+        void* host = address;
+        size_t hostSize = size;
+        PageAlign(host, hostSize, HostPage());
+        if (mprotect(host, hostSize, PROT_READ | PROT_WRITE) != 0)
             return false;
         MarkCommitted(address, size, true);
         return true;
@@ -426,18 +608,37 @@ namespace plat
     bool DecommitMemory(void* address, size_t size)
     {
         PageAlign(address, size);
-        // Drop the pages (the next touch reads zeros) and make them inaccessible again.
-        madvise(address, size, MADV_DONTNEED);
-        if (mprotect(address, size, PROT_NONE) != 0)
-            return false;
+        // Drop the pages (the next touch reads zeros) and make them inaccessible again. Only host
+        // pages that lie wholly inside the range: a 16 KB page may still hold committed guest
+        // pages, so the decommitted part of a partial one is zeroed and stays accessible.
+        uintptr_t begin = uintptr_t(address), end = begin + size;
+        uintptr_t inner = (begin + HostPage() - 1) & ~uintptr_t(HostPage() - 1);
+        uintptr_t innerEnd = end & ~uintptr_t(HostPage() - 1);
+        if (innerEnd <= inner)
+        {
+            ZeroCommitted(begin, end);
+        }
+        else
+        {
+            ZeroCommitted(begin, inner);
+            ZeroCommitted(innerEnd, end);
+            madvise(reinterpret_cast<void*>(inner), innerEnd - inner, MADV_DONTNEED);
+            if (mprotect(reinterpret_cast<void*>(inner), innerEnd - inner, PROT_NONE) != 0)
+                return false;
+        }
         MarkCommitted(address, size, false);
         return true;
     }
 
     bool ProtectMemory(void* address, size_t size, PageAccess access)
     {
-        PageAlign(address, size);
+        PageAlign(address, size, HostPage());
         return mprotect(address, size, NativeAccess(access)) == 0;
+    }
+
+    size_t HostPageSize()
+    {
+        return HostPage();
     }
 
     MemoryRegion QueryMemory(const void* address)
@@ -497,9 +698,71 @@ namespace plat
     {
         Gregs(native)[REG_EFL] |= 0x100; // trap flag: SIGTRAP after the next instruction
     }
+#elif CRASH_FAULT_ARM64
+    namespace
+    {
+        mcontext_t& Context(void* native)
+        {
+            return static_cast<ucontext_t*>(native)->uc_mcontext;
+        }
+
+        // The write bit (WnR, bit 6 of ESR_EL1) of a data abort, from the kernel's esr_context
+        // record among the signal frame's extra records.
+        bool FaultWasWrite(void* native)
+        {
+            const uint8_t* records = reinterpret_cast<const uint8_t*>(Context(native).__reserved);
+            size_t space = sizeof(Context(native).__reserved);
+            for (size_t offset = 0; offset + sizeof(_aarch64_ctx) <= space;)
+            {
+                const auto* head = reinterpret_cast<const _aarch64_ctx*>(records + offset);
+                if (head->magic == 0 || head->size == 0)
+                    break;
+                if (head->magic == ESR_MAGIC)
+                    return (reinterpret_cast<const esr_context*>(head)->esr >> 6) & 1;
+                offset += head->size;
+            }
+            return false;
+        }
+    }
+
+    uint64_t FaultInfo::InstructionPointer() const
+    {
+        return Context(native).pc;
+    }
+
+    void FaultInfo::SetInstructionPointer(uint64_t ip)
+    {
+        Context(native).pc = ip;
+    }
+
+    uint64_t FaultInfo::Register(unsigned index) const
+    {
+        return index < 31 ? Context(native).regs[index] : Context(native).sp; // x0..x30, 31 = sp
+    }
+
+    // ARM64 Linux has no single step for user space: the MMIO traps emulate the store instead
+    // (android_port.md).
+    void FaultInfo::RequestSingleStep() {}
+
+    // What clang emits for the recompiled stw/sth/stb/std (PPC_STORE_*: a byte swap, then a plain
+    // store): STR/STRB/STRH with an unsigned immediate or a register offset, or STUR. Bits 31-30
+    // are the size, bit 26 = 0 (general registers), Rt in bits 4-0 (31 = the zero register).
+    bool FaultInfo::DecodeStore(uint64_t& value, uint32_t& size) const
+    {
+        uint32_t instruction;
+        memcpy(&instruction, reinterpret_cast<const void*>(InstructionPointer()), 4);
+        bool unsignedOffset = (instruction & 0x3FC00000u) == 0x39000000u;  // STR (immediate, unsigned offset)
+        bool registerOffset = (instruction & 0x3FE00C00u) == 0x38200800u;  // STR (register)
+        bool unscaled = (instruction & 0x3FE00C00u) == 0x38000000u;        // STUR
+        if (!unsignedOffset && !registerOffset && !unscaled)
+            return false;
+        uint32_t rt = instruction & 31;
+        size = 1u << (instruction >> 30);
+        value = rt == 31 ? 0 : Context(native).regs[rt];
+        return true;
+    }
 #else
-    // ARM64 (Android): no single-step from user space and a different store decoder; the MMIO
-    // traps need another design there (linux_port.md).
+    bool FaultInfo::DecodeStore(uint64_t&, uint32_t&) const { return false; }
     uint64_t FaultInfo::InstructionPointer() const { return 0; }
     void FaultInfo::SetInstructionPointer(uint64_t) {}
     uint64_t FaultInfo::Register(unsigned) const { return 0; }
@@ -548,6 +811,8 @@ namespace plat
                 fault.address = info->si_addr;
 #if CRASH_FAULT_X86_64
                 fault.write = (Gregs(context)[REG_ERR] & 2) != 0; // page-fault error code: W bit
+#elif CRASH_FAULT_ARM64
+                fault.write = FaultWasWrite(context);
 #endif
             }
 
@@ -657,6 +922,13 @@ namespace plat
     // ---- Process ----------------------------------------------------------------------------
     std::filesystem::path ExecutablePath()
     {
+#if defined(__ANDROID__)
+        // The process is the app's zygote fork (app_process64): the folders the PC build finds
+        // next to the exe (game/, userdata/, mods/...) are in the app's external files folder,
+        // which android_main_android.cpp puts here before anything runs.
+        if (const char* files = getenv("CRASH_ANDROID_FILES"); files && *files)
+            return std::filesystem::path(files) / "CrashRecomp";
+#endif
         std::error_code error;
         return std::filesystem::read_symlink("/proc/self/exe", error);
     }
@@ -692,6 +964,10 @@ namespace plat
 
     uint32_t StartSelf(const std::vector<std::string>& arguments)
     {
+#if defined(__ANDROID__)
+        (void)arguments;
+        return 0; // an app can't exec itself: no restart from the settings screen yet
+#endif
         std::string exe = ExecutablePath().string();
         std::vector<char*> argv;
         argv.push_back(exe.data());
@@ -759,6 +1035,11 @@ namespace plat
     {
         fprintf(stderr, "[%s] %s: %s\n", kind == MessageKind::Error ? "error" : kind == MessageKind::Warning ? "warning" : "info",
                 title ? title : "", text ? text : "");
+#if defined(__ANDROID__)
+        __android_log_print(kind == MessageKind::Error ? ANDROID_LOG_ERROR : kind == MessageKind::Warning ? ANDROID_LOG_WARN : ANDROID_LOG_INFO,
+                            "CrashRecomp", "%s: %s", title ? title : "", text ? text : "");
+        return; // no zenity / kdialog: the SDL message box comes from android_main_android.cpp
+#endif
         std::string command;
         if (HasTool("zenity"))
             command = std::string("zenity ") + (kind == MessageKind::Error ? "--error" : kind == MessageKind::Warning ? "--warning" : "--info") +
@@ -772,6 +1053,10 @@ namespace plat
 
     std::filesystem::path PickFolder(const char* title, void*)
     {
+#if defined(__ANDROID__)
+        (void)title;
+        return {}; // the game goes to the app's files folder (android_port.md, storage)
+#endif
         std::string command;
         if (HasTool("zenity"))
             command = "zenity --file-selection --directory --title=" + ShellQuote(title) + " 2>/dev/null";
