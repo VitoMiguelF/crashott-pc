@@ -197,7 +197,10 @@ namespace
     bool g_capturing = false;          // CONTROLS: waiting for a key
     uint16_t g_captured = 0;           // set by the window procedure
     bool g_captureCancelled = false;
-    enum class Modal { None, Exit, Message, Update } g_modal = Modal::None;
+    enum class Modal { None, Exit, Message, Update, Import } g_modal = Modal::None;
+#ifdef __ANDROID__
+    void OpenImport();  // android_import.inc: the dump's folder asked for and copied into the app
+#endif
     std::string g_message[2];
     bool g_quit = false;
     bool g_artLoaded = false, g_haveFonts = false;
@@ -465,6 +468,14 @@ namespace
         return count;
     }
 
+#if defined(CRASH_INSTALLER) || defined(__ANDROID__)
+    // A compatible dump: the files the install reads and the one default.xex the port is made for
+    // (the same check as tools/setup.py: XEX_SHA256 and GAME_FILES there). installer.inc,
+    // android_import.inc.
+    constexpr const char* DUMP_XEX_SHA256 = "e76824b242c6c628738c373bdf052d456945d8e343eb934100617fd423e86373";
+    constexpr const wchar_t* DUMP_FILES[] = { L"default.xex", L"default.rcf", L"english.rcf", L"sound1.rcf", L"sound2.rcf" };
+#endif
+
 #include "gpu_probe.inc"
 
     // While NGX's check runs, an NVIDIA GPU counts as able (most are RTX); then its answer.
@@ -665,7 +676,11 @@ namespace
         }
         switch (item)
         {
+#ifdef __ANDROID__
+        case Item::GameFolder: OpenImport(); break;  // no folder to point at: the dump is copied into the app
+#else
         case Item::GameFolder: ChooseGameFolder(); break;
+#endif
         case Item::ModsFolder: OpenFolder(paths::Mods()); break;
         case Item::SavesFolder: OpenFolder(paths::UserData()); break;
         default: Change(item, +1); break;
@@ -709,6 +724,10 @@ namespace
     {
         if (!paths::IsGameFolder(GameFolder()))
         {
+#ifdef __ANDROID__
+            OpenImport();
+            return false;
+#endif
             g_message[0] = T({ "Choose the game folder first", "Escolha a pasta do jogo primeiro" });
             g_message[1] = T({ "(SETUP tab, GAME FOLDER).", "(aba INSTALAÇÃO, PASTA DO JOGO)." });
             g_modal = Modal::Message;
@@ -1626,9 +1645,17 @@ namespace
         }
     }
 
+#ifdef __ANDROID__
+#include "android_import.inc"
+#endif
+
     void DrawModal()
     {
         g_draw->AddRectFilled(ImVec2(0, 0), ImGui::GetIO().DisplaySize, IM_COL32(10, 4, 0, 150));
+#ifdef __ANDROID__
+        if (g_modal == Modal::Import)
+            return DrawImportModal();
+#endif
         float l = 300.0f, r = 980.0f, t = 250.0f, b = 470.0f, cx = VW * 0.5f;
         DrawFrame(l, t, r, b);
         if (g_modal == Modal::Exit)
@@ -2162,6 +2189,10 @@ static int RunLauncher(int argc, char** argv)
         Log("[launcher] no game art (game folder %s)", paths::Game().empty() ? "not found" : "without the fonts");
     if (paths::Game().empty())  // SETUP first (shown in the advanced view; not saved)
         g_tab = SETUP_TAB, g_values.launcherAdvanced = g_saved.launcherAdvanced = true;
+#ifdef __ANDROID__
+    if (!paths::IsGameFolder(GameFolder()))
+        OpenImport();  // the first start: the dump is asked for at once
+#endif
 #ifdef CRASH_INSTALLER
     InitInstaller();
 #endif

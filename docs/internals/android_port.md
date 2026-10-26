@@ -284,8 +284,21 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     gone, in the launcher and in the game's SETTINGS (`options.cpp`): HD AI Remaster, DLSS / FSR
     and its mode and sharpness, and the window mode. Checked on the S20 FE: the launcher opens
     from the app icon, the ADVANCED tabs show, PLAY starts the game.
-  - **Next for the single APK:** importing the dump from a folder the player picks (SAF), then
-    XenonRecomp + clang / lld on the phone (an LLVM built for Android arm64) and DXC for Android,
+  - **The dump imported on the phone (single APK, step 2; same day, built, not yet tried on a
+    device):** while the app's game folder (`game/` in the external files folder) has no dump,
+    the launcher opens on a question (`launcher/android_import.inc`); GAME FOLDER in SETUP and PLAY
+    without a game ask again. CHOOSE FOLDER opens Android's folder picker
+    (`ACTION_OPEN_DOCUMENT_TREE`: no storage permission); `LauncherActivity.java` then, on a thread
+    of its own: takes the picked folder or the one inside it with `default.xex`, checks the
+    installer's list (`DUMP_FILES` + `shaders/`, now in `launcher.cpp` for both), the free space,
+    copies `default.xex` first and compares its SHA-256 (`DUMP_XEX_SHA256`) before the rest, then
+    copies everything (`.part` then rename; files of the same size already there are kept, so a
+    stopped import goes on). The launcher polls its state by JNI (a local frame per call: the
+    thread never returns to Java), draws the progress with CANCEL, words the errors (not the game,
+    incomplete, wrong version, no space, I/O) and, once done, starts itself again in a new
+    `:launcher` process (`restartLauncher`: the activity started while in front, then the process
+    ends), which reads the art of the new dump.
+  - **Next for the single APK:** XenonRecomp + clang / lld on the phone (an LLVM built for Android arm64) and DXC for Android,
     so the APK carries no game code (the game's code then lives in the app's internal storage:
     `dlopen` is refused on the external one).
   - **Next on the phone:** the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
