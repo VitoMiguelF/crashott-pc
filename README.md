@@ -6,6 +6,17 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 
 **[Português do Brasil abaixo](#português-do-brasil)**
 
+> ### v1.07: Linux / Steam Deck installer, colour subtitles and a reviewed PT-BR
+>
+> - **Linux and Steam Deck** (in testing): **`CrashSetup-v1.07-x86_64.AppImage`**, the same installer
+>   screens as on Windows, built from your own copy of the game (see "Linux and Steam Deck" below).
+> - **Subtitles**: the speaker's name in their own colour, overlapping lines shown together, more reading
+>   time for short lines, and subtitles on the voice clips that share their audio with another. The Brazilian Portuguese texts were
+>   reviewed (enemy and titan names, titles, jokes and moves).
+>
+> Already on v1.05 or v1.06? Click **UPDATE** in the launcher: your saves and settings stay, and the new
+> subtitles are installed.
+
 > ### v1.06: Intel integrated GPUs fixed, and much faster on them
 >
 > - **No more black flicker on Intel integrated GPUs** ([issue #3](https://github.com/VitoMiguelF/crashott-pc/issues/3)):
@@ -135,12 +146,13 @@ Edition`), then right click the launcher in the applications menu: **Add to Stea
 - **FSR 3.1 is not available on Linux for now**: AMD ships no Linux library and it isn't built from
   AMD's source yet. On the Steam Deck (AMD) and other non-RTX GPUs the game runs without an upscaler.
 - Not on Linux yet: the launcher's UPDATE (run the new AppImage over the install instead).
+- It needs **glibc 2.38 or newer**: SteamOS 3.8, Arch, Fedora 39, Ubuntu 24.04 or later.
 
 Details for developers: [docs/internals/linux_port.md](docs/internals/linux_port.md).
 
 ## Install
 
-1. Download **`CrashSetup-v1.06.exe`** (the latest, ~210 MB, one file) from the
+1. Download **`CrashSetup-v1.07.exe`** (the latest, ~210 MB, one file) from the
    [releases](https://github.com/VitoMiguelF/crashott-pc/releases). (Up to v1.04 it was a zip with
    `CrashSetup.exe` inside; a `git clone` of this repository: see [CONTRIBUTING.md](CONTRIBUTING.md).)
 2. Run it. It first asks for your **game folder** and checks it is the supported Xbox 360 dump. Choose **where to install** (default `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive
@@ -275,6 +287,17 @@ código PowerPC do jogo para x86-64 com o [XenonRecomp](https://github.com/hedge
 um runtime que faz o papel do Xbox 360 (gráficos, áudio, controles, arquivos, saves) e várias melhorias
 de PC.
 
+> ### v1.07: instalador para Linux / Steam Deck, legendas coloridas e PT-BR revisado
+>
+> - **Linux e Steam Deck** (em teste): **`CrashSetup-v1.07-x86_64.AppImage`**, com as mesmas telas do
+>   instalador do Windows, montando o jogo a partir da sua cópia (veja "Linux e Steam Deck" abaixo).
+> - **Legendas**: o nome de quem fala com a cor do personagem, falas sobrepostas aparecendo juntas, mais
+>   tempo de leitura nas falas curtas e legenda nas falas que dividem o áudio com outra. Os textos em português do
+>   Brasil foram revisados (nomes de inimigos e titãs, títulos, piadas e golpes).
+>
+> Já está na v1.05 ou na v1.06? Clique em **ATUALIZAR** no launcher: seus saves e configurações ficam, e as
+> legendas novas são instaladas.
+
 > ### v1.06: GPUs Intel integradas corrigidas, e bem mais rápidas
 >
 > - **Acabou a tela preta piscando nas GPUs Intel integradas** ([issue #3](https://github.com/VitoMiguelF/crashott-pc/issues/3)):
@@ -398,12 +421,13 @@ clique com o botão direito no launcher no menu de aplicativos: **Adicionar à S
   ela ainda não é compilada a partir do código da AMD. No Steam Deck (AMD) e nas placas que não são RTX, o
   jogo roda sem upscaler.
 - Ainda não existe no Linux: o ATUALIZAR do launcher (rode o AppImage novo por cima da instalação).
+- Precisa da **glibc 2.38 ou mais nova**: SteamOS 3.8, Arch, Fedora 39, Ubuntu 24.04 ou mais recentes.
 
 Detalhes para desenvolvedores: [docs/internals/linux_port.md](docs/internals/linux_port.md).
 
 ## Instalação
 
-1. Baixe o **`CrashSetup-v1.06.exe`** (o mais recente, ~210 MB, um arquivo só) nas
+1. Baixe o **`CrashSetup-v1.07.exe`** (o mais recente, ~210 MB, um arquivo só) nas
    [releases](https://github.com/VitoMiguelF/crashott-pc/releases). (Até a v1.04 era um zip com o
    `CrashSetup.exe` dentro; para um `git clone` deste repositório, veja o [CONTRIBUTING.md](CONTRIBUTING.md).)
 2. Abra. Primeiro ele pede a **pasta do jogo** e confere se é o dump de Xbox 360 suportado. Escolha **onde instalar** (padrão `%LOCALAPPDATA%\Programs\Crash of the Titans Definitive Edition`;
