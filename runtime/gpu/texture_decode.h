@@ -23,6 +23,12 @@ namespace gpu
         R11G11B10,  // -> RGBA8
         CTX1,       // 4x4 block -> R8G8 texels
         DXT3A,      // 4x4 block -> R8 texels
+        // A GPU without BC textures (Mali; SetHostBlockCompression(false)): the DXT blocks decoded.
+        BC1,        // 4x4 block -> RGBA8 texels
+        BC2,        // 4x4 block -> RGBA8 texels
+        BC3,        // 4x4 block -> RGBA8 texels
+        BC4,        // 4x4 block -> R8 texels (unsigned or signed, as the host format)
+        BC5,        // 4x4 block -> R8G8 texels
         D24S8,      // -> R32_FLOAT depth
         D24FS8,     // -> R32_FLOAT depth
     };
@@ -38,6 +44,10 @@ namespace gpu
         uint32_t hostBytesPerUnit = 4;
         bool hostIsBlockCompressed = false;
     };
+
+    // Whether the host samples BC1-5 (default true); false makes DescribeTextureFormat decode the
+    // DXT formats into plain texels. Set once the device is known.
+    void SetHostBlockCompression(bool supported);
 
     // False if the format isn't supported (the texture is then bound as black).
     bool DescribeTextureFormat(const xenos::TextureFetch& fetch, GuestTextureFormat& out);

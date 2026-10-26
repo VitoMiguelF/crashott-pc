@@ -8,6 +8,7 @@
 #include "platform/platform.h"
 
 #include <dlfcn.h>
+#include <sys/prctl.h>
 #include <unistd.h>
 
 #include <cstdio>
@@ -22,7 +23,9 @@ namespace
         uintptr_t rip = fault.InstructionPointer();
         char location[1024];
         diag::DescribeHostAddress(rip, location, sizeof(location));
-        Log("[crash] access violation at host rip %p, %s", reinterpret_cast<void*>(rip), location);
+        char thread[17] = {};
+        prctl(PR_GET_NAME, thread, 0, 0, 0);
+        Log("[crash] access violation at host rip %p, %s, thread %s", reinterpret_cast<void*>(rip), location, thread);
         void* host = reinterpret_cast<void*>(fault.address);
         const char* op = fault.write ? "write" : "read";
         if (g_memory.IsInGuestRange(host))
@@ -35,7 +38,14 @@ namespace
             Log("[crash] %s of host address %p (outside guest memory)", op, host);
         diag::ReportGuestState("crash");
         fflush(stdout);
+#if defined(__ANDROID__)
+        // Android's own report next (debuggerd: the host backtrace in logcat, tag DEBUG, and a
+        // tombstone), which the driver crashes need: the fault goes on to its handler.
+        Log("[crash] Android's crash report follows (logcat DEBUG)");
+        return false;
+#else
         diag::Terminate(3);
+#endif
     }
 }
 

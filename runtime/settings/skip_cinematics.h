@@ -7,7 +7,8 @@
 //   small prompt fades in at the bottom right when a cutscene (NIS) or one of the intro videos
 //   (Bink: the logos and the shadow-theatre intro; the attract video keeps the game's own
 //   any-button exit) starts, hides after a few seconds and comes back on any input. Holding B / START / A on a pad (Circle / Options / Cross),
-//   Esc / Space / Enter on the keyboard, or the left mouse button on the prompt for HOLD_MS skips
+//   Esc / Space / Enter on the keyboard, the left mouse button on the prompt, or a finger anywhere on
+//   a touch screen (touch_controls.h: no touch controls while the prompt is up) for HOLD_MS skips
 //   it; a ring around the button fills meanwhile. Those buttons are hidden from the game while a
 //   cutscene or a video plays (nothing in the game uses them then; the videos' own one-press skip
 //   becomes the hold) and until they are released after a skip.
@@ -36,6 +37,8 @@ namespace cutscenes
     void NoteFrontendNode(uint32_t node);
     // A video (Bink) is playing (any of them): the renderer shows it at 16:9 (gpu/widescreen.h).
     bool VideoPlaying();
+    // A cutscene or a video that can be skipped is on (the prompt's, even while it is hidden).
+    bool SkipPossible();
 
     // Render thread, once per presented frame, over the back buffer (RENDER_TARGET state).
     void Draw(uint32_t width, uint32_t height);

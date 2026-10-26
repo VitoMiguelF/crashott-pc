@@ -117,8 +117,9 @@ namespace
     {
         if (!touch_controls::Enabled() || settings::menu::IsOpen() || dev::console::IsOpen())
             return Mode::Mouse;
-        // The intro videos play before the frontend runs: their skip prompt takes the touch.
-        return input::pc::InMenus() || cutscenes::VideoPlaying() ? Mode::Mouse : Mode::Game;
+        // The intro videos play before the frontend runs, and nothing is played in a cutscene: a
+        // finger held anywhere skips them (skip_cinematics.cpp), no controls drawn.
+        return input::pc::InMenus() || cutscenes::VideoPlaying() || cutscenes::SkipPossible() ? Mode::Mouse : Mode::Game;
     }
 
     // The button of `set` under (x, y), within 1.3 x its radius (the nearest one), or -1.

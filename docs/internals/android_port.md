@@ -21,6 +21,20 @@ lifecycle.
   inside the APK, built for that one player. It still can't be published.
 - **Recompiling on the phone is a later option** (see the end of this page).
 
+**The product the user wants (2026-10-26), which replaces path C as the goal:**
+
+1. One APK, the same for every phone, installed by sideload.
+2. On first start it asks for the dump (a folder the player picks).
+3. It does what the PC installer (`CrashSetup`) does, on the phone: checks the dump, recompiles
+   it and installs into a folder the player chose.
+4. From then on the same APK always opens a **launcher** first, and the game starts from there.
+
+So everything is decided at run time inside that one APK (the GPU: Turnip on Adreno, the Mali
+fallbacks below; the screen; the storage), never by building per device. That needs a compiler
+and XenonRecomp running on the phone, and the shaders compiled there (no PC-made SPIR-V cache).
+The Android version has **no HD models and no HD textures** (the AI remaster), by design.
+Path C stays the development route until then.
+
 ## Status
 
 | Milestone | State |
@@ -216,8 +230,35 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     main menu, slots, HUB, gameplay HUD and pause look the same with `CRASH_HUD_FOLD=0` (HUD_GS)
     and with the fold (`build\hud_fold\`). `CRASH_HUD_FOLD_TRACE=N` logs the draws left to HUD_GS
     (quads whose two triangles differ). The CP log's work line counts them per frame.
-  - **Tab S10 Ultra (Mali-G720, Vulkan 1.3.247), first try:** the APK stops at the Vulkan probe:
-    `textureCompressionBC 0` and no `VK_KHR_push_descriptor`. It does expose `geometryShader`.
+  - **Tab S10 Ultra (Mali-G720 MC12, driver r44p1, Vulkan 1.3.247), same day: the game runs**, the
+    opening cutscene at a steady 60 fps (16.67 ms per frame, the limit) at 1154x720 on its
+    2960x1848 screen, with the dump pushed (3.0 GB over adb Wi-Fi in 66 s) and the S20 FE's SPIR-V
+    cache copied. What the Mali lacks and how the renderer goes without it, all decided at run
+    time from the device (`CRASH_VULKAN_NO_EXT=push_descriptor,bc,gs` forces the same on a PC):
+    - **No `VK_KHR_push_descriptor`:** the draws' textures go through descriptor sets of a pool per
+      command buffer (`rhi_vulkan.cpp`, `TEXTURE_SETS`), all 32 bindings written (the null texture
+      past the draw's).
+    - **No BC textures** (`textureCompressionBC 0`): `texture_decode.cpp` decodes the game's DXT1 / 3
+      / 5 / 5A / DXN blocks on the CPU into RGBA8 / R8 / RG8 (`SetHostBlockCompression`). On a PC
+      the decoded texels came out identical to the GPU's BC in the frames compared.
+    - **Geometry shaders that crash the driver:** the G720 reports `geometryShader`, but its compiler
+      (`cmpbe_v2_compile_multiple_shaders`) dereferences null on RECT_LIST_GS and on HUD_GS. On Mali
+      (vendor 0x13B5) the renderer uses none: a rectangle list becomes two triangles whose 4th
+      corner is a vertex made on the CPU (`ExpandRectList` / `FillRectCorners`: a + b - c of each
+      dword, as RECT_LIST_GS combines the outputs; the right angle from the first fetch's x / y),
+      and the 2D goes through the HUD_GS fold (`HudFoldDraw`), the rest per vertex. The pipelines of
+      earlier runs that use a GS are not precompiled there. RECT_LIST_GS itself was rewritten
+      with constant indices into its input (another SPIR-V: caches need `2308fb89d2233a3b.spv`).
+    - **Finding a driver crash:** the crash report now gives the thread's name and, on Android,
+      passes the fault on to debuggerd, so logcat (tag DEBUG) has the native backtrace; and
+      `env.txt` in the files folder (KEY=VALUE per line) sets the PC's debug variables, here
+      `CRASH_VULKAN_PIPELINE_LOG=1` (each pipeline's shaders before the driver compiles it).
+    - A locked screen gives the app no window: the game waits for it (black, no log) until the
+      device is unlocked.
+  - **Skipping videos and cutscenes by touch (same day, the user couldn't on the S20 FE):** a
+    finger held anywhere on the screen now skips (it had to be on the prompt, which hides after a
+    few seconds); no touch controls are drawn while a skip is possible. Checked on the Tab S10
+    Ultra: the logo videos skipped by holding the middle of the screen.
   - **Seen, not fixed:** the game's menus are drawn narrower than the mouse mapping assumes on
     screens wider than 16:9 (measured on the phone: the 640-unit frontend spans 4:3 of the height,
     1440 px at 1080, while `CursorOnImage` maps it to the middle 16:9 area), so a slot far from

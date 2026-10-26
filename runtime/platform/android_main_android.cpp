@@ -15,7 +15,9 @@
 //
 // Folders: the app's external files folder (/storage/emulated/0/Android/data/<package>/files)
 // stands for the PC's exe folder: game/, userdata/, mods/, data/, languages/. args.txt there (one
-// argument per line) gives command-line arguments (--skip-intros, --boot ...).
+// argument per line) gives command-line arguments (--skip-intros, --boot ...); env.txt (KEY=VALUE
+// per line) the environment variables of the PC's debug options (CRASH_GPU_PROFILE ...), which
+// Android has no other way to set. Both are for development: the player never needs them.
 
 #include "android_main.h"
 #include "platform.h"
@@ -453,10 +455,6 @@ namespace
                 missing += " core1.3-features";
             if (!f.features.geometryShader)
                 missing += " geometryShader";
-            if (!HasExtension(ext, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME))
-                missing += " push_descriptor";
-            if (!(bc1.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
-                missing += " BC-textures";
             Log("[android]   renderer requirements: %s%s", missing.empty() ? "all present" : "missing", missing.c_str());
 
             if (!surface)
@@ -586,6 +584,20 @@ extern "C" __attribute__((visibility("default"))) int SDL_main(int argc, char* a
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "CrashRecomp", text.c_str(), nullptr);
         SDL_Quit();
         return 0;
+    }
+
+    // Environment: env.txt in the files folder, KEY=VALUE per line (options read once they're
+    // first used; not those read while the library loads).
+    std::ifstream envFile(files / "env.txt");
+    for (std::string line; std::getline(envFile, line);)
+    {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+            line.pop_back();
+        size_t equals = line.find('=');
+        if (line.empty() || line[0] == '#' || equals == std::string::npos || equals == 0)
+            continue;
+        setenv(line.substr(0, equals).c_str(), line.substr(equals + 1).c_str(), 1);
+        Log("[android] env.txt: %s", line.c_str());
     }
 
     // Arguments: args.txt in the files folder, one per line.

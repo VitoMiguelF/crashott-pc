@@ -10,8 +10,9 @@
 //   A finger may slide from one button to the next.
 // - In the menus (the frontend's screens, the pause menu, the intro videos) nothing is drawn and
 //   the touch is the mouse: a tap selects and accepts, as a left click does on PC, and a tap on a
-//   prompt ("(B) BACK", "CONTINUE STORY (Y)") presses its button (prompt_icons.h ButtonAt); a
-//   finger held on the skip prompt skips a video. So do the settings screen and the console.
+//   prompt ("(B) BACK", "CONTINUE STORY (Y)") presses its button (prompt_icons.h ButtonAt). So do
+//   the settings screen and the console.
+// - In a cutscene or an intro video: no controls either; a finger held anywhere skips it.
 // - A pad in use hides the controls until the next touch.
 //
 // CRASH_TOUCH_CONTROLS=0 turns them off on Android, =1 on elsewhere (a touch screen on SDL).

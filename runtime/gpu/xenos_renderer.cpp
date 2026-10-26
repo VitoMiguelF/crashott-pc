@@ -597,7 +597,8 @@ XeVertexOutput Combine(XeVertexOutput a, XeVertexOutput b, XeVertexOutput c)
     return d;
 }
 
-// Rectangle list: 3 vertices per rectangle; the 4th corner is opposite the right angle.
+// Rectangle list: 3 vertices per rectangle; the 4th corner is opposite the right angle. Constant
+// indices into `input` only: Mali's compiler (G720, r44p1) crashes on a GS input indexed at run time.
 [maxvertexcount(4)]
 void main(triangle XeVertexOutput input[3], inout TriangleStream<XeVertexOutput> stream)
 {
@@ -605,12 +606,27 @@ void main(triangle XeVertexOutput input[3], inout TriangleStream<XeVertexOutput>
     float2 p1 = input[1].position.xy / input[1].position.w;
     float2 p2 = input[2].position.xy / input[2].position.w;
     float d01 = dot(p1 - p0, p1 - p0), d12 = dot(p2 - p1, p2 - p1), d20 = dot(p0 - p2, p0 - p2);
-    uint c = (d12 >= d01 && d12 >= d20) ? 0u : ((d20 >= d01) ? 1u : 2u);
-    uint a = (c + 1u) % 3u, b = (c + 2u) % 3u;
-    stream.Append(input[c]);
-    stream.Append(input[a]);
-    stream.Append(input[b]);
-    stream.Append(Combine(input[a], input[b], input[c]));
+    if (d12 >= d01 && d12 >= d20)
+    {
+        stream.Append(input[0]);
+        stream.Append(input[1]);
+        stream.Append(input[2]);
+        stream.Append(Combine(input[1], input[2], input[0]));
+    }
+    else if (d20 >= d01)
+    {
+        stream.Append(input[1]);
+        stream.Append(input[2]);
+        stream.Append(input[0]);
+        stream.Append(Combine(input[2], input[0], input[1]));
+    }
+    else
+    {
+        stream.Append(input[2]);
+        stream.Append(input[0]);
+        stream.Append(input[1]);
+        stream.Append(Combine(input[0], input[1], input[2]));
+    }
 }
 )";
 
@@ -2793,6 +2809,14 @@ float4 main(float4 position : SV_Position) : SV_Target
             bool hasCut = false;
         };
 
+        // Rectangle lists without a geometry shader (RECT_LIST_GS; Mali): each rectangle (3 indices)
+        // becomes two triangles whose 4th corner is a vertex made for it, numbered from `cornerBase`
+        // (the draw's highest index + 1): `corners` gets a, b, c per rectangle (c at the right
+        // angle, picked from the first fetch's x / y as RECT_LIST_GS does from the positions) for
+        // the vertex upload, which writes a + b - c (FillRectCorners). False: no position to read.
+        struct IndexData;
+        bool ExpandRectList(const ShaderEntry* vs, IndexData& indexData, std::vector<uint32_t>& corners, uint32_t& cornerBase);
+
         // Expands the guest indices (DMA, immediate or auto) to final 32-bit vertex indices with
         // the offset/clamp/reset rules applied, then converts the primitive type for the host API.
         bool BuildIndices(const DrawPacket& packet, uint32_t primitive, uint32_t sourceSelect, bool index32, uint32_t count,
@@ -2964,6 +2988,94 @@ float4 main(float4 position : SV_Position) : SV_Target
             return !indices.empty() && out.minIndex <= out.maxIndex;
         }
 
+        bool ExpandRectList(const ShaderEntry* vs, IndexData& indexData, std::vector<uint32_t>& corners, uint32_t& cornerBase)
+        {
+            const VertexFetchBinding* position = nullptr;
+            for (const VertexFetchBinding& binding : vs->info.vertexFetches)
+                if (!position && binding.indexedByVertexIndex && binding.strideDwords >= 2 && binding.minOffsetDwords >= 0)
+                    position = &binding;
+            std::vector<uint32_t>& indices = indexData.indices;
+            if (!position || indices.size() < 3)
+            {
+                static int logged;
+                if (logged++ < 4)
+                    Log("[gpu] rectangle list without a position to read (%zu indices): skipped", indices.size());
+                return false;
+            }
+            uint32_t fc = position->fetchConstant;
+            xenos::VertexFetch fetch{ { Reg(xenos::REG_SHADER_CONSTANT_FETCH_00_0 + fc * 2), Reg(xenos::REG_SHADER_CONSTANT_FETCH_00_0 + fc * 2 + 1) } };
+            if (fetch.Type() != 3 || uint64_t(fetch.Address() & 0x1FFFFFFF) + uint64_t(fetch.SizeDwords()) * 4 > PHYSICAL_SIZE)
+                return false;
+            const uint32_t* data = reinterpret_cast<const uint32_t*>(g_memory.Translate(gpu::GuestFromGpuAddress(fetch.Address())));
+            uint32_t size = fetch.SizeDwords(), endian = fetch.Endianness();
+            auto xy = [&](uint32_t index, float& x, float& y) {
+                uint64_t at = uint64_t(index) * position->strideDwords + uint32_t(position->minOffsetDwords);
+                if (at + 2 > size)
+                    return false;
+                uint32_t bx = xenos::GpuSwap(data[at], endian), by = xenos::GpuSwap(data[at + 1], endian);
+                memcpy(&x, &bx, 4);
+                memcpy(&y, &by, 4);
+                return true;
+            };
+            constexpr uint32_t CUT = 0xFFFFFFFF;
+            static std::vector<uint32_t> expanded;
+            expanded.clear();
+            cornerBase = indexData.maxIndex + 1;
+            uint32_t made = 0;
+            for (size_t i = 0; i + 2 < indices.size(); i += 3)
+            {
+                uint32_t v[3] = { indices[i], indices[i + 1], indices[i + 2] };
+                float x[3], y[3];
+                if (v[0] == CUT || v[1] == CUT || v[2] == CUT || !xy(v[0], x[0], y[0]) || !xy(v[1], x[1], y[1]) || !xy(v[2], x[2], y[2]))
+                    continue;
+                auto distance = [&](int a, int b) { return (x[b] - x[a]) * (x[b] - x[a]) + (y[b] - y[a]) * (y[b] - y[a]); };
+                float d01 = distance(0, 1), d12 = distance(1, 2), d20 = distance(2, 0);
+                int c = (d12 >= d01 && d12 >= d20) ? 0 : (d20 >= d01 ? 1 : 2);
+                uint32_t a = v[(c + 1) % 3], b = v[(c + 2) % 3], corner = cornerBase + made++;
+                expanded.insert(expanded.end(), { v[c], a, b, b, a, corner });
+                corners.insert(corners.end(), { a, b, v[c] });
+            }
+            if (!made)
+                return false;
+            indices.swap(expanded);
+            indexData.maxIndex = cornerBase + made - 1;
+            return true;
+        }
+
+        // The made corners of ExpandRectList in one vertex fetch's upload (`data`: dwords from
+        // `startDwords`, the guest's first `copyDwords`): per dword a + b - c as floats (positions,
+        // coordinates), the value itself where the three agree (colours, any bits).
+        void FillRectCorners(uint32_t* data, uint32_t startDwords, uint32_t copyDwords, uint32_t dwords, const VertexFetchBinding& binding,
+                             const std::vector<uint32_t>& corners, uint32_t cornerBase)
+        {
+            uint32_t stride = binding.strideDwords;
+            for (size_t r = 0; r * 3 + 2 < corners.size(); r++)
+            {
+                for (int32_t k = binding.minOffsetDwords; k < binding.maxEndDwords; k++)
+                {
+                    int64_t at[4];
+                    uint32_t index[4] = { corners[r * 3], corners[r * 3 + 1], corners[r * 3 + 2], cornerBase + uint32_t(r) };
+                    for (int j = 0; j < 4; j++)
+                        at[j] = int64_t(index[j]) * stride + k - startDwords;
+                    if (at[0] < 0 || at[1] < 0 || at[2] < 0 || at[0] >= copyDwords || at[1] >= copyDwords || at[2] >= copyDwords ||
+                        at[3] < int64_t(copyDwords) || at[3] >= dwords)
+                        continue;
+                    uint32_t a = data[at[0]], b = data[at[1]], c = data[at[2]];
+                    if (a == b && b == c)
+                    {
+                        data[at[3]] = a;
+                        continue;
+                    }
+                    float fa, fb, fc;
+                    memcpy(&fa, &a, 4);
+                    memcpy(&fb, &b, 4);
+                    memcpy(&fc, &c, 4);
+                    float fd = fa + fb - fc;
+                    memcpy(&data[at[3]], &fd, 4);
+                }
+            }
+        }
+
         // Coarse CPU profile of the command processor thread (CRASH_GPU_PROFILE): QPC ticks per
         // section of DrawImpl/Resolve, logged with the pacing stats.
         const char* const PROFILE_NAMES[] = { "state/shaders/index build", "vertex upload", "system constants", "textures", "constant buffers",
@@ -3096,6 +3208,15 @@ float4 main(float4 position : SV_Position) : SV_Target
                 Skip(SKIP_CULL);
                 return;
             }
+            // No geometry shader for rectangle lists (Mali): two triangles each (ExpandRectList).
+            static std::vector<uint32_t> rectCorners;
+            rectCorners.clear();
+            uint32_t rectCornerBase = 0;
+            if (rectList && !g_rectListGs && !ExpandRectList(vs, indexData, rectCorners, rectCornerBase))
+            {
+                Skip(SKIP_PRIMITIVE);
+                return;
+            }
 
             // Render targets.
             uint32_t surfaceInfo = Reg(xenos::REG_RB_SURFACE_INFO);
@@ -3204,6 +3325,8 @@ float4 main(float4 position : SV_Position) : SV_Target
                 uint32_t dwords;
                 uint32_t endian;
                 const uint8_t* uploaded;  // host copy (traces)
+                uint32_t copyDwords;      // read from guest memory; the rest: made rectangle corners
+                const VertexFetchBinding* binding;
             };
             Range ranges[96];
             uint32_t rangeCount = 0;
@@ -3215,11 +3338,15 @@ float4 main(float4 position : SV_Position) : SV_Target
                 if (fetch.Type() != 3 || !fetch.SizeDwords())
                     continue;
                 uint32_t size = fetch.SizeDwords();
-                int64_t start = 0, end = size;
+                int64_t start = 0, end = size, made = 0;
                 if (binding.indexedByVertexIndex && binding.minOffsetDwords <= binding.maxEndDwords)
                 {
+                    // The guest's vertices; made rectangle corners (rectCorners) after them.
+                    uint32_t guestMax = rectCorners.empty() ? indexData.maxIndex : rectCornerBase - 1;
                     start = int64_t(indexData.minIndex) * binding.strideDwords + binding.minOffsetDwords;
-                    end = int64_t(indexData.maxIndex) * binding.strideDwords + binding.maxEndDwords;
+                    end = int64_t(guestMax) * binding.strideDwords + binding.maxEndDwords;
+                    if (!rectCorners.empty())
+                        made = int64_t(indexData.maxIndex) * binding.strideDwords + binding.maxEndDwords;
                 }
                 start = std::clamp<int64_t>(start, 0, size);
                 end = std::clamp<int64_t>(end, start, size);
@@ -3228,7 +3355,8 @@ float4 main(float4 position : SV_Position) : SV_Target
                 if (uint64_t(fetch.Address() & 0x1FFFFFFF) + uint64_t(end) * 4 > PHYSICAL_SIZE)
                     continue;
                 Range& range = ranges[rangeCount++];
-                range = { fc, guestAddress, uint32_t(start), uint32_t(end - start), fetch.Endianness(), nullptr };
+                uint32_t total = uint32_t(std::max(end, std::min<int64_t>(made, start + MAX_VERTEX_RANGE_BYTES / 4)) - start);
+                range = { fc, guestAddress, uint32_t(start), total, fetch.Endianness(), nullptr, uint32_t(end - start), &binding };
                 vertexBytes += AlignUp64(range.dwords * 4, 16);
             }
             uint64_t vertexOffset = 0;
@@ -3248,10 +3376,15 @@ float4 main(float4 position : SV_Position) : SV_Target
                     // One loop per swap mode, so each vectorizes (GpuSwap switches per dword).
                     switch (range.endian & 3)
                     {
-                    case 0: memcpy(destination, source, size_t(range.dwords) * 4); break;
-                    case 1: for (uint32_t i = 0; i < range.dwords; i++) destination[i] = xenos::GpuSwap(source[i], 1); break;
-                    case 2: for (uint32_t i = 0; i < range.dwords; i++) destination[i] = __builtin_bswap32(source[i]); break;
-                    default: for (uint32_t i = 0; i < range.dwords; i++) destination[i] = xenos::GpuSwap(source[i], 3); break;
+                    case 0: memcpy(destination, source, size_t(range.copyDwords) * 4); break;
+                    case 1: for (uint32_t i = 0; i < range.copyDwords; i++) destination[i] = xenos::GpuSwap(source[i], 1); break;
+                    case 2: for (uint32_t i = 0; i < range.copyDwords; i++) destination[i] = __builtin_bswap32(source[i]); break;
+                    default: for (uint32_t i = 0; i < range.copyDwords; i++) destination[i] = xenos::GpuSwap(source[i], 3); break;
+                    }
+                    if (range.dwords > range.copyDwords)
+                    {
+                        memset(destination + range.copyDwords, 0, size_t(range.dwords - range.copyDwords) * 4);
+                        FillRectCorners(destination, range.startDwords, range.copyDwords, range.dwords, *range.binding, rectCorners, rectCornerBase);
                     }
                     // Byte offset in the upload ring (one SRV over all of it, VERTEX_DATA_DESCRIPTOR).
                     system.vbBases[range.fetchConstant] = int32_t(vertexOffset + cursor) - int32_t(range.startDwords * 4);
@@ -3781,13 +3914,17 @@ float4 main(float4 position : SV_Position) : SV_Target
 
         bool CreatePassPipelines()
         {
-            g_rectListGs = g_rhi->CreateShader(rhi::Stage::Geometry, RECT_LIST_GS, "rect_list_gs", rhi::Layout::Draw);
-            g_hudGs = g_rhi->CreateShader(rhi::Stage::Geometry, HUD_GS, "hud_gs", rhi::Layout::Draw);
-            if (!g_hudGs)
-                Log("[gpu] the wide-screen HUD geometry shader did not compile: 2D is placed per vertex");
+            bool geometryShaders = g_rhi->SupportsGeometryShaders();
+            if (geometryShaders)
+            {
+                g_rectListGs = g_rhi->CreateShader(rhi::Stage::Geometry, RECT_LIST_GS, "rect_list_gs", rhi::Layout::Draw);
+                g_hudGs = g_rhi->CreateShader(rhi::Stage::Geometry, HUD_GS, "hud_gs", rhi::Layout::Draw);
+                if (!g_hudGs)
+                    Log("[gpu] the wide-screen HUD geometry shader did not compile: 2D is placed per vertex");
+            }
             g_depthAliasPs = g_rhi->CreateShader(rhi::Stage::Pixel, DEPTH_ALIAS_PS, "depth_alias_ps", rhi::Layout::Draw);
             g_fxaaPipeline = CreateBlitPipeline("fxaa", FXAA_PS, DXGI_FORMAT_R8G8B8A8_UNORM);
-            return g_rectListGs && g_depthAliasPs && g_fxaaPipeline && GetResolvePipeline(DXGI_FORMAT_R8G8B8A8_UNORM) &&
+            return (g_rectListGs || !geometryShaders) && g_depthAliasPs && g_fxaaPipeline && GetResolvePipeline(DXGI_FORMAT_R8G8B8A8_UNORM) &&
                    GetResolveDepthPackedPipeline() && GetPresentPipeline(g_rhi->BackBufferFormat()) && GetPresentPipeline(DXGI_FORMAT_R8G8B8A8_UNORM);
         }
         // The settings screen changed the internal resolution or the upscaler (RequestReconfigure):
@@ -4020,6 +4157,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             plat::ExitProcess(3);
         }
         g_rhi->BackBufferSize(g_backBufferWidth, g_backBufferHeight);
+        gpu::SetHostBlockCompression(g_rhi->SupportsBlockCompression());
 
         // Temporal upscaler: probed on this device; the scene scale depends on it.
         upscaler::Init(g_rhi, settings::AtStartup().upscaler, (vfs::UserDataDir() / "ngx").wstring());
