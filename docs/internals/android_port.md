@@ -312,7 +312,9 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     translated MSVC, CMake's rc.exe wrapper breaks on the localized "Note: including file:" prefix
     (`CMAKE_NINJA_CMCLDEPS_RC=OFF`). `libdxcompiler.so` builds (446 MB, 26 MB stripped; libc / libm
     / libdl only, `DxcCreateInstance` exported, 16 KB pages) and the `apk` step packs it, so a
-    fresh install compiles its own shaders (not yet seen on a device: the S20 FE was locked).
+    fresh install compiles its own shaders. Checked on the S20 FE after the fresh install (no
+    SPIR-V cache): the logo videos and the frontend draw, 31 shaders compiled on the phone, none
+    failed (it was the orange screen before).
   - **Next for the single APK:** XenonRecomp + clang / lld on the phone (an LLVM built for Android arm64) and DXC for Android,
     so the APK carries no game code (the game's code then lives in the app's internal storage:
     `dlopen` is refused on the external one).
