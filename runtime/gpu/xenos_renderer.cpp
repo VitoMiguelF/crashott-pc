@@ -49,6 +49,7 @@
 #include "../settings/options.h"
 #include "../settings/settings.h"
 #include "../settings/save_screens.h"
+#include "../settings/menu_mouse.h"
 #include "../settings/skip_cinematics.h"
 #include "../settings/touch_controls.h"
 #include "../settings/settings_menu.h"
@@ -470,6 +471,7 @@ namespace gpu::renderer
         rhi::Texture* g_drawIconPalette = nullptr;
         char32_t g_drawIcon = 0;  // the button icon the draw samples (prompt_icons.h), 0 none
         std::vector<settings::prompts::IconSpot> g_iconSpots;  // this frame's (clickable prompts)
+        bool g_pageNoted = false;  // this frame drew the frontend's page through its camera (NotePage)
         // CRASH_NO_PROMPT_ICONS=1 keeps the game's Xbox icons (and skips keying every texture).
         const bool g_promptIcons = getenv("CRASH_NO_PROMPT_ICONS") == nullptr;
         std::vector<uint8_t> g_hdKeyScratch;                    // decoded base level of the texture being uploaded
@@ -1781,6 +1783,33 @@ float4 main(float4 position : SV_Position) : SV_Target
                 x0 = 0.5f + (x0 - 0.5f) * hud.scaleX, x1 = 0.5f + (x1 - 0.5f) * hud.scaleX;
             if (x1 > x0 && y1 > y0 && x1 > 0.0f && x0 < 1.0f && y1 > 0.0f && y0 < 1.0f)
                 g_iconSpots.push_back({ g_drawIcon, x0, y0, x1, y1 });
+        }
+
+        // The frontend's page (640 x 480) drawn through a pure3d camera this frame: the 2D vertex
+        // shader with W from z (W = z c11 + c15) the same, and not 1, at every vertex (0.5 for the
+        // page). Only the frontend's screens draw it (not the pause in a level): for the menus'
+        // mouse (menu_mouse.h NoteFrontendPage).
+        void NotePage(const float* data, uint32_t startDwords, uint32_t dwords, uint32_t stride, uint32_t minIndex, uint32_t maxIndex)
+        {
+            if (g_pageNoted || !data || maxIndex < minIndex || maxIndex - minIndex > 4096)
+                return;
+            float c[16];
+            LoadHudMatrix(c);
+            if (c[3] != 0.0f || c[7] != 0.0f)
+                return;
+            float w = 0.0f;
+            for (uint32_t v = minIndex; v <= maxIndex; v++)
+            {
+                int64_t at = int64_t(v) * stride - int64_t(startDwords);
+                if (at < 0 || at + 3 > int64_t(dwords))
+                    return;
+                float vw = data[at + 2] * c[11] + c[15];
+                if (v == minIndex)
+                    w = vw;
+                else if (fabsf(vw - w) > 1e-5f)
+                    return;
+            }
+            g_pageNoted = w > 1e-4f && fabsf(w - 1.0f) > 1e-5f;
         }
 
         // HUD_GS worked out on the CPU for the game's 2D vertex shader: per triangle, HUD_GS moves
@@ -3563,6 +3592,21 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
             if (hud.video && colorTargets[0])
                 ClearVideoBars(*colorTargets[0]);
+            // The frontend's page through its camera: a frontend screen, for the menus' mouse.
+            if (!g_pageNoted && !sceneDraw && vs && vs->info.hash == HUD_VS && uint32_t(targetWidth) == HUD_WIDTH)
+            {
+                for (uint32_t r = 0; r < rangeCount; r++)
+                {
+                    const VertexFetchBinding* position = nullptr;
+                    for (const VertexFetchBinding& binding : vs->info.vertexFetches)
+                        if (binding.fetchConstant == ranges[r].fetchConstant && !position)
+                            position = &binding;
+                    if (position && position->minOffsetDwords == 0 && position->strideDwords >= 3)
+                        NotePage(reinterpret_cast<const float*>(ranges[r].uploaded), ranges[r].startDwords, ranges[r].dwords, position->strideDwords,
+                                 indexData.minIndex, indexData.maxIndex);
+                    break;
+                }
+            }
             // A button icon: where it is, for the clickable prompts.
             if (g_drawIcon && !sceneDraw && vs && vs->info.hash == HUD_VS)
             {
@@ -4530,6 +4574,10 @@ float4 main(float4 position : SV_Position) : SV_Target
         // The button icons of this frame, for clicks on the prompts.
         settings::prompts::PublishIconSpots(g_iconSpots);
         g_iconSpots.clear();
+        // A frontend screen, for the menus' mouse.
+        if (g_pageNoted)
+            input::menu_mouse::NoteFrontendPage();
+        g_pageNoted = false;
         // Drawn over the image at the window's resolution, through the overlay's bitmaps.
         overlay::BeginPresent(backBuffer);
         // Subtitles (subtitles/subtitle_draw.h): part of the image, so screenshots have them.

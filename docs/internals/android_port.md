@@ -265,12 +265,17 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     update (`sub_821D5858`, `settings/menu_mouse.cpp`) makes it the live menu while it is shown.
     Checked on a PC (a click on YES saves and exits to the MOJO total) and on the Tab S10 Ultra
     (EXIT LEVEL, a tap on YES); the S20 FE was locked.
-  - **Seen, not fixed:** the game's menus are drawn narrower than the mouse mapping assumes on
-    screens wider than 16:9 (measured on the phone: the 640-unit frontend spans 4:3 of the height,
-    1440 px at 1080, while `CursorOnImage` maps it to the middle 16:9 area), so a slot far from
-    the middle is hit only near its inner side. PC ultrawide likely has the same.
-  - **Next on the phone:** the menus' mouse mapping on wide screens, and
-    the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
+  - **Menus by touch on screens that are not 16:9 (same day, fixed):** the frontend's screens
+    (main menu, save slots, episode menu) lay their menus out 4:3 when the picture is not 16:9, so
+    the mouse mapping (the page stretched over the 16:9 area) missed the slots far from the
+    middle. Measured on the phone (1440 of 2400 px), a PC at 21:9 (960 of 1720) and 16:10 (864 of
+    1152): the page is 0.75 of the 16:9 area's width there. The renderer notes the frames that
+    draw the frontend's page through its camera (W = 0.5; the pause in a level draws none) and
+    the mouse uses the 4:3 layout on them (`settings/menu_mouse.cpp` CursorOnPage). Checked on
+    the S20 FE by touch: a finger dragged over the five save slots selects each under it, slot 1
+    loads, the opening cutscene skips by holding, and SAVE AND EXIT -> YES in the pause works;
+    on a PC at 21:9 and 16:9 (`mouse_menus`, all checks pass).
+  - **Next on the phone:** the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
     it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
     clears the window's `ANativeWindow`; `CreateVulkanSurface` now waits up to 10 s for it.

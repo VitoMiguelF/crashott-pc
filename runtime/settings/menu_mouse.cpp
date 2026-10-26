@@ -9,6 +9,7 @@
 #include "settings_menu.h"
 #include "save_screens.h"
 #include "../platform/platform.h"
+#include "../gpu/widescreen.h"
 
 #include <algorithm>
 #include <atomic>
@@ -44,6 +45,8 @@ namespace input::menu_mouse
         // A YES / NO question (CConfirmMessage) was on screen at this time: the menu behind it (the
         // pause list under "SAVE AND EXIT?") still runs, but the mouse is the question's.
         std::atomic<uint64_t> g_confirmTime{ 0 };
+        // The last frame with the frontend's page drawn through its camera (NoteFrontendPage).
+        std::atomic<uint64_t> g_pageTime{ 0 };
 
         uint32_t LE32(const std::vector<uint8_t>& d, size_t at)
         {
@@ -109,6 +112,11 @@ namespace input::menu_mouse
                                      "aabeaa37", "ad83ca09", "7a83cb8b", "97597d1b" })
             rcf_overlay::RegisterBuiltinPatch("default", std::string("package\\") + package + ".p3d", "caixas dos menus para o mouse (so leitura)",
                                               ReadBoxes);
+    }
+
+    void NoteFrontendPage()
+    {
+        g_pageTime.store(plat::TickCountMs(), std::memory_order_relaxed);
     }
 
     bool Live(Menu& menu)
@@ -183,6 +191,22 @@ namespace
         ctx = saved;
     }
 
+    // The cursor in page units (640 x 480, y up): the page stretched over the picture's 16:9 area
+    // (1280 x 720), or on a frontend screen of a picture that is not 16:9, 4:3 in it
+    // (NoteFrontendPage).
+    bool CursorOnPage(float& x, float& y)
+    {
+        float u, v;
+        if (!input::pc::CursorOnImage(u, v))
+            return false;
+        float page = 2.0f;  // image pixels per page unit across
+        uint64_t frontend = g_pageTime.load(std::memory_order_relaxed);
+        if (frontend && plat::TickCountMs() - frontend <= 250 && fabsf(gpu::widescreen::Aspect() - gpu::widescreen::BASE_ASPECT) >= 0.001f)
+            page = 1.5f;
+        x = 320.0f + (u - 640.0f) / page, y = (720.0f - v) * (480.0f / 720.0f);
+        return true;
+    }
+
     // Hover, click and wheel on the live menu (game thread, once per frame, after the menu action
     // read the pads and the keyboard).
     void MouseOnMenu(PPCContext& ctx, uint8_t* base, const Menu& menu)
@@ -208,8 +232,8 @@ namespace
         }
         float x = -1, y = -1;
         int hit = -1;
-        if (input::pc::CursorOnImage(x, y))
-            hit = HitTest(menu, x * 0.5f, (720.0f - y) * (480.0f / 720.0f));
+        if (CursorOnPage(x, y))
+            hit = HitTest(menu, x, y);
         bool usable = hit >= 0 && menu.items[size_t(hit)].enabled;
         static const bool trace = getenv("CRASH_MOUSE_TRACE") != nullptr;
         if (moved && usable && hit != menu.index)
@@ -227,7 +251,7 @@ namespace
                 input::pc::PressMenuAccept();
             }
             else if (trace)
-                Log("[input] mouse: click menu 0x%08X outside the items (%.0f,%.0f)", menu.id, x, y);
+                Log("[input] mouse: click menu 0x%08X outside the items (page %.0f,%.0f)", menu.id, x, y);
         }
         int wheel = input::pc::TakeMenuWheel();
         if (wheel)
