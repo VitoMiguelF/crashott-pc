@@ -268,10 +268,16 @@ def apk(debuggable=False):
     run([jdk_tool("java"), "-cp", BUILD_TOOLS / "lib" / "d8.jar", "com.android.tools.r8.D8", "--release", "--min-api", MIN_SDK,
          "--lib", ANDROID_JAR, "--output", OUT, *class_files])
 
-    # Manifest -> base APK (no resources beyond the manifest yet)
-    say("aapt2 link")
+    # Resources: android/res (the launcher icon) plus launcher/crashrecomp.png, the project's icon, as
+    # @drawable/crashrecomp_icon. Manifest + resources -> base APK.
+    res = OUT / "res"
+    shutil.copytree(ROOT / "android" / "res", res)
+    (res / "drawable-nodpi").mkdir(exist_ok=True)
+    shutil.copy(ROOT / "launcher" / "crashrecomp.png", res / "drawable-nodpi" / "crashrecomp_icon.png")
+    say("aapt2 compile + link")
+    run([BUILD_TOOLS / ("aapt2" + EXE), "compile", "--dir", res, "-o", OUT / "res.zip"])
     run([BUILD_TOOLS / ("aapt2" + EXE), "link", "-o", OUT / "base.apk", "-I", ANDROID_JAR, "--manifest", ROOT / "android" / "AndroidManifest.xml",
-         "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK] + (["--debug-mode"] if debuggable else []))
+         "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK, OUT / "res.zip"] + (["--debug-mode"] if debuggable else []))
     if debuggable:
         say("debuggable (simpleperf / run-as can reach the app)")
 

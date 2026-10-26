@@ -290,8 +290,11 @@ including SDL3).
   are only `libSDL3.so liblog.so libandroid.so libdl.so libm.so libc.so`. The LOAD segments are
   aligned to 16 KB, only `SDL_main` is exported, and there are 29 `dmb`.
 - **APK:** `javac --release 11` compiles SDL's 12 Java files + `CrashActivity`; then `d8`,
-  `aapt2 link` (manifest only), the stored `.so` files, `zipalign -P 16`, and `apksigner` with a
-  key made once in `build/android/keystore`.
+  `aapt2 compile` + `aapt2 link` (the manifest and the launcher icon), the stored `.so` files,
+  `zipalign -P 16`, and `apksigner` with a key made once in `build/android/keystore`. The icon is the
+  project's (`launcher/crashrecomp.png`, copied in as `@drawable/crashrecomp_icon`): an adaptive
+  icon (`android/res/mipmap-anydpi/ic_launcher.xml`) with the whole picture inside the 72 dp the
+  launcher's mask shows.
 - **Result:** `CrashOTTDE-personal.apk` was 26.3 MB with stored `.so` files (11.9 MB since Turnip:
   compressed, `extractNativeLibs="true"`). `zipalign -c -P 16` passes, `apksigner verify`
   passes, and `aapt2 dump` shows minSdk 30, target 35, `arm64-v8a` and Vulkan 1.3 required.

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher icon: launcher/crashrecomp.png (tools/android_build.py copies it in as
+     @drawable/crashrecomp_icon) whole inside the 72 dp the launcher's mask shows of the 108 dp layers;
+     the same picture stretched behind it for the parallax and zoom effects. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/crashrecomp_icon" />
+    <foreground>
+        <inset android:drawable="@drawable/crashrecomp_icon" android:inset="18dp" />
+    </foreground>
+</adaptive-icon>

@@ -17,6 +17,8 @@
 
     <application
         android:label="Crash of the Titans DE"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:hasFragileUserData="true"
         android:extractNativeLibs="true"
