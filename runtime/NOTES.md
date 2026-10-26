@@ -1904,6 +1904,7 @@ Pedido: mandar comandos com o jogo aberto (unlock all, mojo, trocar de skin...).
 
 - O que entrou: pular cenas e vídeos de abertura segurando B/Esc, com aviso no canto (commit 54a73bd, seção "Pular as cenas") e o console de desenvolvedor com troca de skin e a Crash_Hulk (67767a1, seção "Console de desenvolvedor e troca de skin").
 - A release publica só `CrashRecomp-v1.01.zip` (código + `CrashSetup.exe`) e o seu `SHA256SUMS.txt` (`tools/make_release.py v1.01 --only source`). As legendas e o HD AI Remaster são os mesmos da v1.0 e continuam lá: o `tools/setup.py` baixa os dados da release em `RELEASE_TAG` (`v1.0`), que só muda quando esses assets forem refeitos.
+- v1.07: as legendas refeitas (tags de cor, PT-BR revisado) viram o asset `CrashRecomp-v1.07-legendas.zip`; o `tools/setup.py` tem uma tag por asset (`SUBTITLES_TAG = "v1.07"`, `REMASTER_TAG = "v1.0"`), e o `unpack` troca um arquivo quando o CRC muda (antes só pelo tamanho), então quem atualiza pelo ATUALIZAR recebe as legendas novas.
 
 ## v1.02 (2026-10-22): co-op local e o instalador instala os pacotes Python da exportação de assets
 

@@ -152,7 +152,9 @@ def main():
                       extra={"private/remaster_full/LEIA-README.txt": REMASTER_README} if i == 1 else None)
 
     sums = out / "SHA256SUMS.txt"
-    lines = [f"{sha256(f)}  {f.name}" for f in sorted([*out.glob("*.zip"), *out.glob("*.exe")])]
+    # The Linux installer (CrashSetup-<tag>-x86_64.AppImage, tools/make_appimage.py) is built on Linux
+    # and copied here before this runs, so its checksum is listed too.
+    lines = [f"{sha256(f)}  {f.name}" for f in sorted([*out.glob("*.zip"), *out.glob("*.exe"), *out.glob("*.AppImage")])]
     sums.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(sums.read_text(encoding="utf-8"))
     return 0

@@ -64,6 +64,7 @@ import sys
 import time
 import urllib.request
 import zipfile
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -85,15 +86,15 @@ REQUIREMENTS = ROOT / "tools" / "requirements.txt"
 XEX_SHA256 = "e76824b242c6c628738c373bdf052d456945d8e343eb934100617fd423e86373"
 GAME_FILES = ["default.xex", "default.rcf", "english.rcf", "sound1.rcf", "sound2.rcf"]
 
-# The release that holds the data assets (subtitles, HD AI Remaster) and their SHA256SUMS.txt.
-# They haven't changed since v1.0: later releases only publish the source + installer zip (v1.01 to
-# v1.04) or the single-file installer (v1.05 on), and setup keeps downloading the data from v1.0.
-# Bump it only when the data assets are rebuilt.
-RELEASE_TAG = "v1.0"
-RELEASE_URL = f"https://github.com/VitoMiguelF/crashott-pc/releases/download/{RELEASE_TAG}/"
+# The releases that hold the data assets and their SHA256SUMS.txt, one tag per asset: the HD AI
+# Remaster is still the one of v1.0, the subtitles were rebuilt for v1.07 (colour tags, the reviewed
+# PT-BR). Bump a tag only when its asset is rebuilt (tools/make_release.py <tag> --only subtitles or
+# remaster): an update (the launcher's UPDATE runs this script again) then replaces the installed files.
+SUBTITLES_TAG = "v1.07"
+REMASTER_TAG = "v1.0"
 RELEASE_SUMS = "SHA256SUMS.txt"
-SUBTITLES_ASSET = "CrashRecomp-v1.0-legendas.zip"
-REMASTER_PREFIX = "CrashRecomp-v1.0-HD-AI-Remaster.part"
+SUBTITLES_ASSET = f"CrashRecomp-{SUBTITLES_TAG}-legendas.zip"
+REMASTER_PREFIX = f"CrashRecomp-{REMASTER_TAG}-HD-AI-Remaster.part"
 
 DLSS = "https://github.com/NVIDIA/DLSS/raw/v310.9.16/"
 # FSR 3.1 for Vulkan: FidelityFX SDK 1.1.4 (the SDK 2.x only ships DX12 DLLs).
@@ -641,32 +642,45 @@ def read_sums(path):
     return sums
 
 
-def release_sums(assets_dir, subtitles, remaster):
-    """{name: sha256} of the data release: SHA256SUMS.txt from --assets-dir when it lists the assets
-    wanted, else the GitHub release's. The installer passes its own folder as --assets-dir, and a
-    newer release's SHA256SUMS.txt saved next to CrashSetup-<tag>.exe lists only that exe."""
+def release_url(tag):
+    return f"https://github.com/VitoMiguelF/crashott-pc/releases/download/{tag}/"
+
+
+def release_sums(assets_dir, tag, wanted):
+    """{name: sha256} of the data release `tag`: SHA256SUMS.txt from --assets-dir when it lists an asset
+    starting with `wanted`, else the GitHub release's. The installer passes its own folder as
+    --assets-dir, and the SHA256SUMS.txt saved next to a CrashSetup-<tag>.exe lists that release's files."""
     local = Path(assets_dir) / RELEASE_SUMS if assets_dir else None
     if local and local.is_file():
         sums = read_sums(local)
-        if (not subtitles or SUBTITLES_ASSET in sums) and (not remaster or any(n.startswith(REMASTER_PREFIX) for n in sums)):
+        if any(n.startswith(wanted) for n in sums):
             return sums
-    return read_sums(download(RELEASE_URL + RELEASE_SUMS, ROOT / "build" / "downloads" / RELEASE_SUMS))
+    return read_sums(download(release_url(tag) + RELEASE_SUMS, ROOT / "build" / "downloads" / tag / RELEASE_SUMS))
 
 
-def fetch_asset(name, sums, assets_dir):
+def fetch_asset(name, tag, sums, assets_dir):
     """A release asset: from --assets-dir when it has it (checked), else downloaded."""
     if name not in sums:
-        fail(f"{name} não está no {RELEASE_SUMS} da release")
+        fail(f"{name} não está no {RELEASE_SUMS} da release {tag}")
     if assets_dir and (Path(assets_dir) / name).is_file():
         path = Path(assets_dir) / name
         if sha256(path) != sums[name]:
             fail(f"{path} não confere com o {RELEASE_SUMS}")
         return path
-    return download(RELEASE_URL + name, ROOT / "build" / "downloads" / name, sums[name])
+    return download(release_url(tag) + name, ROOT / "build" / "downloads" / name, sums[name])
+
+
+def crc32(path, chunk=1 << 22):
+    crc = 0
+    with open(path, "rb") as f:
+        while block := f.read(chunk):
+            crc = zlib.crc32(block, crc)
+    return crc
 
 
 def unpack(archive):
-    """Unpacks a release zip into the project (its paths are relative to the project root)."""
+    """Unpacks a release zip into the project (its paths are relative to the project root). A file
+    already there with the same content is kept; a different one (an older version) is replaced."""
     with zipfile.ZipFile(archive) as z:
         for info in z.infolist():
             target = (ROOT / info.filename).resolve()
@@ -674,7 +688,7 @@ def unpack(archive):
                 fail(f"{archive.name}: caminho inválido {info.filename}")
             if info.is_dir():
                 continue
-            if target.is_file() and target.stat().st_size == info.file_size:
+            if target.is_file() and target.stat().st_size == info.file_size and crc32(target) == info.CRC:
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             with z.open(info) as src, open(target, "wb") as out:
@@ -685,12 +699,15 @@ def install_extras(subtitles, remaster, assets_dir):
     if not (subtitles or remaster):
         say("sem extras (legendas e HD AI Remaster são opcionais)")
         return
-    sums = release_sums(assets_dir, subtitles, remaster)
-    names = ([SUBTITLES_ASSET] if subtitles else []) + \
-            (sorted(n for n in sums if n.startswith(REMASTER_PREFIX)) if remaster else [])
-    for i, name in enumerate(names):
-        unpack(fetch_asset(name, sums, assets_dir))
-        progress((i + 1) / len(names))
+    assets = []  # (name, tag, sums)
+    if subtitles:
+        assets.append((SUBTITLES_ASSET, SUBTITLES_TAG, release_sums(assets_dir, SUBTITLES_TAG, SUBTITLES_ASSET)))
+    if remaster:
+        sums = release_sums(assets_dir, REMASTER_TAG, REMASTER_PREFIX)
+        assets += [(n, REMASTER_TAG, sums) for n in sorted(sums) if n.startswith(REMASTER_PREFIX)]
+    for i, (name, tag, sums) in enumerate(assets):
+        unpack(fetch_asset(name, tag, sums, assets_dir))
+        progress((i + 1) / len(assets))
         say(f"instalado: {name}")
 
 
