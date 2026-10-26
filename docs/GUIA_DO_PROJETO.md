@@ -31,7 +31,7 @@ Nenhum arquivo do jogo é distribuído: tudo é gerado a partir da sua própria 
 | `launcher/installer.inc`, `launcher/installer_payload.inc`, `launcher/gpu_probe.inc` | O instalador gráfico (`CrashSetup.exe`): a cara do launcher na frente do `tools\setup.py`; os arquivos embutidos no EXE único e a extração; a placa de vídeo e o teste do DLSS (também no launcher) |
 | `tools/setup.py`, `tools/buildenv.py`, `tools/toolchain.py`, `tools/make_installer.py`, `tools/make_release.py` | O instalador (do dump ao `dist\`), a escolha do toolchain (o de `toolchain\` ou Visual Studio + clang-cl), o download fixado do toolchain portátil, o EXE único do instalador e os assets da release |
 | `runtime/gpu/dlss_module/` | O `CrashDlss.dll`: o DLSS (NGX) atrás de uma interface C, carregado pelo jogo, pelo launcher e pelo instalador |
-| `tools/make_icon.py`, `launcher/crashrecomp.ico` | O ícone do launcher e do instalador (desenho nosso, nada do jogo) |
+| `launcher/crashrecomp.png`, `launcher/crashrecomp.ico`, `tools/make_icon.py` | O ícone do jogo, do launcher e do instalador (Windows, AppImage e atalhos do Linux); o `.ico` sai do `.png` pelo `make_icon.py` |
 | `tools/perf/` | Benchmark e perfil de CPU: `bench.py`, `walk_window.py`, `report.py`, o amostrador `sampler.cpp` e `profile.py` (veja "Desempenho") |
 | `tools/find_swallowed.py`, `tools/rtti_scan.py` e afins | Funções "engolidas" pelo config e nomes de classes/métodos pelo RTTI (veja "Lendo o código do jogo") |
 | `tools/rcf.py`, `texts.py`, `assets.py`, `audio.py`, `textures.py`, `models.py`, `p3d.py`, `hd_textures.py`, `subtitles.py`, `assettool/` | Extraem os `.rcf`, textos, sons, vídeos, texturas e modelos para formatos abertos e geram mods (veja "Extraindo e modificando assets") |

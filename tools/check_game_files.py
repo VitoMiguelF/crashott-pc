@@ -67,6 +67,7 @@ BLOCKED_PATTERNS = {
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp", ".gif"}
 IMAGE_FOLDERS = ("docs/screenshots/",)
+IMAGE_FILES = ("launcher/crashrecomp.png",)  # our icon (tools/make_icon.py)
 
 # Fixed test saves (tests/userdata_*) and the saves recorded profiles start from (config/recorded/<name>/userdata):
 # the only Xbox 360 save containers and userdata folders allowed in git
@@ -102,7 +103,7 @@ def reason(path):
     for pattern, why in BLOCKED_PATTERNS.items():
         if fnmatch.fnmatch(lower, pattern):
             return why
-    if ext in IMAGE_EXTENSIONS and not lower.startswith(IMAGE_FOLDERS):
+    if ext in IMAGE_EXTENSIONS and not lower.startswith(IMAGE_FOLDERS) and lower not in IMAGE_FILES:
         return "image outside docs/screenshots/ (game captures and textures stay out of git)"
     if "/565507e4/" in lower and not lower.startswith(SAVE_FOLDERS):
         return "game save outside the fixed test saves"
