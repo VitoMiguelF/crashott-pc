@@ -83,6 +83,11 @@ namespace gpu::window
 
         void ApplyMode(SDL_Window* window, settings::WindowMode mode)
         {
+#if defined(__ANDROID__)
+            // A phone has no windows: always the whole screen (SDL's immersive mode, without the
+            // status and navigation bars).
+            mode = settings::WindowMode::Borderless;
+#endif
             bool full = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
             if (mode == settings::WindowMode::Windowed)
             {
@@ -408,8 +413,12 @@ namespace gpu::window
                 Log("[gpu] window: content scale %.2f, density %.2f, client %ux%u", SDL_GetWindowDisplayScale(window), density,
                     g_clientWidth.load(), g_clientHeight.load());
                 SDL_StopTextInput(window);
+#if defined(__ANDROID__)
+                ApplyMode(window, g_mode);
+#else
                 if (g_mode != settings::WindowMode::Windowed)
                     ApplyMode(window, g_mode);
+#endif
             }
             {
                 std::lock_guard lock(mutex);

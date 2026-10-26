@@ -135,10 +135,19 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     still missing; the phone records its microcode too, so pulling `shadercache/ucode` back,
     running `--precompile-shaders` again and pushing closed it: the next run had 0 misses.
     Logs and screens: `build\android\s20fe_shaders1.*`, `s20fe_shaders2.*`.
-  - **Next on the phone:** the picture is letterboxed on a portrait screen (the activity's
-    `sensorLandscape` doesn't take effect: SDL sets the orientation from the window size), no
-    audio decoder yet, touch controls, and the cache step in `android_build.py` (record on the
-    PC, precompile, put it in the APK or push it).
+  - **Landscape, full screen (same day).** The picture first came up letterboxed on a portrait
+    screen: with no `SDL_HINT_ORIENTATIONS`, SDL asks Android for `FULL_USER` for a resizable
+    window, which follows the phone's rotation lock (portrait), and the manifest's
+    `sensorLandscape` is overridden. Now `SDL_main` sets the hint to `LandscapeLeft
+    LandscapeRight` (`USER_LANDSCAPE`). In landscape the surface reports `currentTransform`
+    ROTATE_90; the swap chain used to pass that as `preTransform`, which asks the app to draw
+    pre-rotated, so on Android it now asks for IDENTITY and the compositor rotates (pre-rotating in
+    the renderer would save that pass: a later optimization). The window is always fullscreen on
+    Android (`ApplyMode`: SDL's immersive mode, no status or navigation bar), whatever
+    `settings.toml` says. Result: the logo videos and the title at 2400x1080, upright, edge to edge
+    (`build\android\s20fe_landscape3.png`).
+  - **Next on the phone:** no audio decoder yet, touch controls, and the cache step in
+    `android_build.py` (record on the PC, precompile, put it in the APK or push it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
     clears the window's `ANativeWindow`; `CreateVulkanSurface` now waits up to 10 s for it.
 

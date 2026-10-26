@@ -1163,6 +1163,15 @@ namespace gpu::rhi
             }
             create.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
             create.preTransform = capabilities.currentTransform;
+#if defined(__ANDROID__)
+            // A phone in landscape reports ROTATE_90/270 (its panel is portrait). The frames are drawn
+            // unrotated, so the compositor turns them (identity); drawing them pre-rotated would save
+            // it that pass (docs/internals/android_port.md).
+            if (capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+                create.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+            if (capabilities.currentTransform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+                Log("[vulkan] surface transform 0x%X (the compositor rotates)", unsigned(capabilities.currentTransform));
+#endif
             create.compositeAlpha = (capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
                                                                                                                 : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
             create.presentMode = m_presentMode;

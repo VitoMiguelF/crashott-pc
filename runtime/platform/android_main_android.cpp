@@ -571,6 +571,9 @@ extern "C" __attribute__((visibility("default"))) int SDL_main(int argc, char* a
         sysconf(_SC_NPROCESSORS_CONF));
     Log("[android] files folder: %s", external);
 
+    // Landscape only, either way round. Without the hint SDL lets a resizable window follow the
+    // phone's rotation setting, and with rotation locked that is portrait (the game letterboxed).
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO))
         Log("[android] SDL_Init failed: %s", SDL_GetError());
     ProbeVulkan();
