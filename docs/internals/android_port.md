@@ -26,8 +26,8 @@ lifecycle.
 | Milestone | State |
 |---|---|
 | M0: this plan | done |
-| M1: runtime + generated code compile and link as `libmain.so` for `aarch64-linux-android` | **the generated code compiles for ARM64**, with the fence/rounding patch; the shared runtime code is ARM64-clean (see "Verified"); the bionic build needs the NDK (download pending the user's OK) |
-| M2: minimal APK (SDL3's Java glue) that starts, opens a Vulkan surface and logs to logcat | needs the NDK, build-tools, android.jar and the SDL3 source |
+| M1: runtime + generated code compile and link as `libmain.so` for `aarch64-linux-android` | **done** (2026-10-26): NDK r30, `-Wl,--no-undefined`, 0 errors |
+| M2: minimal APK (SDL3's Java glue) that starts, opens a Vulkan surface and logs to logcat | **APK built and verified offline** (`tools/android_build.py`); not run on a phone yet |
 | M3: boot the game with the dump in the app's storage | needs M1, M2, the ARM64 runtime pieces below and a phone |
 | M4 onward: renderer on mobile GPUs, touch, audio, packaging, performance | planned below |
 
@@ -58,6 +58,48 @@ lifecycle.
   `diagnostics_watch_win32.cpp`), which Android doesn't build.
 - The NEON `HashContent` gives the same value as the SSE2 one: 30 of 30 sizes and seeds, run on
   x86 through SIMDe's NEON emulation.
+
+### The Android build (M1, M2)
+
+`python tools/android_build.py` does the whole build in ~40 s here (16 threads; 446 objects,
+including SDL3).
+- **Configure:** CMake with the NDK r30 toolchain file, `arm64-v8a`, API 30, `c++_static`; SDL 3.4.18
+  is built from its source as a subproject.
+- **Libraries:** `libmain.so` is 60 MB with line tables and 10.7 MB stripped in the APK. Its NEEDED
+  are only `libSDL3.so liblog.so libandroid.so libdl.so libm.so libc.so`. The LOAD segments are
+  aligned to 16 KB, only `SDL_main` is exported, and there are 29 `dmb`.
+- **APK:** `javac --release 11` compiles SDL's 12 Java files + `CrashActivity`; then `d8`,
+  `aapt2 link` (manifest only), the stored `.so` files, `zipalign -P 16`, and `apksigner` with a
+  key made once in `build/android/keystore`.
+- **Result:** `CrashOTTDE-personal.apk` is 26.3 MB. `zipalign -c -P 16` passes, `apksigner verify`
+  passes, and `aapt2 dump` shows minSdk 30, target 35, `arm64-v8a` and Vulkan 1.3 required.
+
+The build log had one new problem: `-Wasm-operand-widths` on `ppc_context.h`'s ARM64 `setcsr`,
+which passed a `uint32_t` to `msr fpcr`. That left FPCR's upper half undefined. It now passes a
+`uint64_t` (in the patch).
+
+What `libmain.so` does on the phone (`runtime/platform/android_main_android.cpp`):
+1. It logs the device (model, SoC, Android/API, page size).
+2. It points the "exe folder" at the app's external files folder (`CRASH_ANDROID_FILES`).
+3. It runs a **Vulkan probe**: window + surface. It logs geometry shaders, BC/ETC2/ASTC, the 1.3
+   features, push descriptors, GPL, depth clip/bias, D24S8, and a "renderer requirements" verdict.
+   Then it clears the screen orange for 3 s through a swapchain.
+4. If `game/default.xex` is there, it starts the game (`CrashMain`) on a 64 MB thread, with
+   `args.txt` lines as arguments, and keeps the SDL thread for the window loop
+   (`plat::android::RunOnMainThread`). Without a game it shows a message and stops after the probe.
+
+The bionic side of `platform_posix.cpp`:
+- fibers through an AArch64 switch (`crash_fiber_switch`: x19–x30, sp, d8–d15, FPCR);
+- `HostPage()` from `sysconf`, so commit and protect use host pages, and decommit is 16 KB-safe
+  (`ZeroCommitted`);
+- the ARM64 `FaultInfo` (`regs`/`pc`/`sp`, WnR from `esr_context`);
+- `ExecutablePath` from `CRASH_ANDROID_FILES`;
+- no restart or folder picker;
+- message boxes and `Log` go to logcat (tag `CrashRecomp`).
+
+The non-Android paths still compile: Windows (`main.cpp`, `diagnostics.cpp`, `xenos_renderer.cpp`)
+and the glibc path of `platform_posix.cpp` (its only errors without `__ANDROID__` against bionic
+headers are the `ucontext` functions glibc has).
 
 ## Architecture on Android
 
@@ -309,20 +351,11 @@ is needed.
 
 ## Milestones
 
-1. **M1, link.** Done in this branch so far: `CRASH_ARCH_FLAGS` per CPU, `-fsigned-char`, the
-   NEON `HashContent`, the XenonRecomp fence + rounding patch. Remaining:
-   - NDK CMake configure;
-   - `platform_posix.cpp` on bionic: the fiber asm switch, the page size, an ARM64 `FaultInfo`
-     (stubbed first), and `#ifdef __ANDROID__` paths for exe/args/restart/dialogs;
-   - FreeType off;
-   - `SDL_main` in a `SHARED` library.
-   
-   Done when `libmain.so` links with no undefined symbol except `libSDL3.so`, `libvulkan` (by
-   dlopen), `libc`, `libm`, `libdl`, `liblog`.
-2. **M2, hello APK.** `android_build.py` assembles the APK. The app opens an SDL window, creates
-   a Vulkan instance + surface and logs `[vulkan] <GPU>, Vulkan x.y` to logcat (`__android_log_print`
-   behind the runtime's `Log`). Then `adb install` and `adb logcat -s CrashRecomp`, with the
-   user's OK.
+1. **M1, link. Done** (see "The Android build").
+2. **M2, hello APK. Built**; the run on a phone is left: `adb install` and
+   `adb logcat -s CrashRecomp`, with the user's OK. Devices: Galaxy S25 Ultra (Adreno 830), Galaxy
+   S20 FE 5G SM-G781B (Adreno 650), Galaxy Tab S10 Ultra (Mali-G720 Immortalis). The GPUs are
+   inferred from the models: the probe confirms them.
 3. **M3, boot.** Push the dump to `Android/data/<pkg>/files/game` (with the user's OK). Needs:
    - `PPC_MM_STORE_*` routed to the register hooks, and the ARM64 store decoder and fault info
      as the fallback for the GPU/XMA traps;

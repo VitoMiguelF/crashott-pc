@@ -13,6 +13,9 @@
 #include "../platform/keys.h"
 #include "../platform/keys_sdl.h"
 #include "../platform/platform.h"
+#if defined(__ANDROID__)
+#include "../platform/android_main.h"
+#endif
 #include "../platform/text.h"
 #include "../settings/settings.h"
 
@@ -328,8 +331,9 @@ namespace gpu::window
         bool done = false;
 
         // The window lives on its own thread like on Windows, which SDL allows on X11 and Wayland
-        // (all video calls stay on that one thread). Android needs it on the main thread instead.
-        std::thread([&, clientWidth, clientHeight, title] {
+        // (all video calls stay on that one thread). Android needs it on the thread that runs
+        // SDL_main instead, which runs the game on a thread of its own (android_main_android.cpp).
+        auto windowThread = [&, clientWidth, clientHeight, title] {
             SDL_Window* window = nullptr;
             if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
                 Log("[gpu] SDL_Init failed: %s", SDL_GetError());
@@ -420,7 +424,12 @@ namespace gpu::window
                     nextCursor = now + 100;
                 }
             }
-        }).detach();
+        };
+#if defined(__ANDROID__)
+        plat::android::RunOnMainThread(windowThread);
+#else
+        std::thread(windowThread).detach();
+#endif
 
         std::unique_lock lock(mutex);
         ready.wait(lock, [&] { return done; });

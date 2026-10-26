@@ -21,6 +21,9 @@
 #include <utility>
 #include <vector>
 
+#if defined(__ANDROID__)
+#include <android/log.h>  // stdout goes nowhere in an app: the log is logcat's (tag CrashRecomp)
+#endif
 
 namespace
 {
@@ -67,6 +70,15 @@ namespace
                 fflush(g_logFile);
                 va_end(copy);
             }
+#if defined(__ANDROID__)
+            va_list copy;
+            va_copy(copy, args);
+            char text[1024];
+            size_t length = size_t(snprintf(text, sizeof(text), "%s", prefix));
+            vsnprintf(text + length, sizeof(text) - length, format, copy);
+            va_end(copy);
+            __android_log_write(ANDROID_LOG_INFO, "CrashRecomp", text);
+#endif
             fputs(prefix, stdout);
             vfprintf(stdout, format, args);
             fputc('\n', stdout);

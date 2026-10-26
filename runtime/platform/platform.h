@@ -110,11 +110,12 @@ namespace plat
         uint32_t code{};   // OS exception code / signal number, for reports
         void* native{};    // CONTEXT* (Windows) or ucontext_t* (POSIX)
 
-        // x86-64 only for now (ARM64 needs its own decoder; see linux_port.md):
+        // x86-64 and ARM64 (POSIX); see android_port.md for the ARM64 store emulation:
         uint64_t InstructionPointer() const;
         void SetInstructionPointer(uint64_t ip);
-        uint64_t Register(unsigned x86Index) const; // rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8..r15
-        void RequestSingleStep();                   // trap after the faulting instruction runs
+        // x86-64: rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8..r15. ARM64: x0..x30, 31 = sp.
+        uint64_t Register(unsigned index) const;
+        void RequestSingleStep();                   // trap after the faulting instruction runs (x86 only)
     };
     using FaultHandler = bool (*)(FaultInfo& fault);
     // Handlers run newest first; the first that returns true resumes the thread.

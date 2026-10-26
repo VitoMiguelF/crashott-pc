@@ -210,7 +210,7 @@ index fa91527..9ad4d46 100644
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
          break;
 diff --git a/XenonUtils/ppc_context.h b/XenonUtils/ppc_context.h
-index 31a86cd..b08a049 100644
+index 31a86cd..baefc40 100644
 --- a/XenonUtils/ppc_context.h
 +++ b/XenonUtils/ppc_context.h
 @@ -101,6 +101,21 @@
@@ -261,6 +261,16 @@ index 31a86cd..b08a049 100644
  
      inline uint32_t getcsr() noexcept
      {
+@@ -251,7 +268,8 @@ struct PPCFPSCRRegister
+ 
+     inline void setcsr(uint32_t csr) noexcept
+     {
+-        __asm__ __volatile__("msr fpcr, %0" : : "r"(csr));
++        // FPCR is 64 bits wide: a 32-bit operand would leave the register's upper half undefined.
++        __asm__ __volatile__("msr fpcr, %0" : : "r"(uint64_t(csr)));
+     }
+ #else
+ #   error "Missing implementation for FPSCR."
 diff --git a/XenonUtils/xex.cpp b/XenonUtils/xex.cpp
 index 4e79042..d74aaf7 100644
 --- a/XenonUtils/xex.cpp
