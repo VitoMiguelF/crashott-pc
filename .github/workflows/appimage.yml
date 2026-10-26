@@ -18,15 +18,11 @@ name: Linux AppImage
 on:
   push:
     tags: ["v*"]
-    # GitHub runs workflow_dispatch only for workflows already on the default branch: until this one is
-    # on main, a push to this branch builds it (as "test", an artifact only).
-    branches: [ci-appimage]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Versão gravada no AppImage (CrashSetup-<tag>-x86_64.AppImage)"
-        default: "test"
-        required: true
+        description: "Versão gravada no AppImage (CrashSetup-<tag>-x86_64.AppImage); num ref de tag, o próprio tag"
+        required: false
       release:
         description: "Anexar também à release <tag> (só rodando no ref do próprio tag)"
         type: boolean
@@ -40,7 +36,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag || 'test' }}
+  # A tag's ref always names the AppImage after the tag (CrashSetup-v1.07-x86_64.AppImage); a run by hand
+  # on a branch needs the version typed in (the "Tag" step stops without one).
+  TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
   # The newest glibc our own binaries may need: zig's target (tools/toolchain.py ZIG_TARGET).
   GLIBC_MAX: "2.35"
 
