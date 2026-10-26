@@ -74,6 +74,18 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     demote, extended dynamic state or GPL, not even as extensions.
   - The probe's first version read no features on a pre-1.3 driver (fixed: the 1.0 features
     always, the 1.2/1.3 structures only where they exist).
+- **The game with the dump on the phone** (3.2 GB `adb push` to `files/game` in 74 s, with the
+  user's OK; the old probe APK):
+  - It runs on the phone up to the renderer: paths from the app folder, the 4 GB guest reservation
+    at 0x100000000 (memfd views), and `default.xex` decrypted in 0.2 s. The loader then sets up
+    118 + 34 imports, 10 variable imports and the 20,296-function table.
+  - After that come the VFS on `game/`, `settings.toml` created in `userdata/`, and the settings
+    screen's fonts and art read from `default.rcf` in 61 ms on a thread.
+  - The SDL window is created on the SDL thread through `RunOnMainThread`: client 2400x1080, the
+    internal resolution follows the 2.39:1 screen (1720x720, Hor+).
+  - It stops at `[vulkan] Adreno (TM) 650: Vulkan 1.1, 1.3 is needed`, then shows the "Vulkan 1.3
+    needed" message, logged only (no SDL box from the game thread yet), and exits with code 3.
+    No crash before that.
 - **Ways forward for Adreno 6xx with old drivers:**
   - Mesa's **Turnip** driver loaded by the app with **libadrenotools** (BSD-2; what the Switch
     emulators do). Turnip gives Adreno 650 Vulkan 1.3 with the extensions above, and BC textures,
