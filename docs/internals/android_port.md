@@ -335,6 +335,12 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     80 files compiled, built in 140 s from the launcher, then PLAY runs the game into the village.
     The `build` step still compiles the runtime here against a local `generated/ppc` (only its
     `ppc_config.h` / `ppc_context.h`): a machine without the dump (CI) can't make the APK yet.
+  - **Crash's shadow on the action buttons (same day):** the touch buttons A / B / X / Y / RT /
+    spin no longer show the pad's letters but Crash doing the action, a dark shadow on a
+    see-through fire plate (the frontend's shadow play): a jump over his dust, a punch, a flying
+    kick, a hand reaching for a mutant (B interacts and jacks), a guard behind a shield, a spin.
+    Drawn by `touch_controls.cpp` from ellipses, round strokes and polygons joined by their
+    distance field (one shape, one transparency: no darker overlaps); no game file.
   - **The PC installer's options on the phone (same day):** the dump's screen has SUBTITLES: YES
     (Y or a touch switches it, on by default as in CrashSetup): `Subtitles.java` downloads the
     release asset `CrashRecomp-v1.07-legendas.zip` (the tag of `setup.py` `SUBTITLES_TAG`, bumped

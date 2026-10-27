@@ -9,6 +9,8 @@
 //   left stick going round with X tapped, like the keyboard's spin attack) beside it, START and
 //   BACK at the top right. A drag on the rest of the right half turns the camera (right stick).
 //   A finger may slide from one button to the next.
+//   The action buttons show Crash's shadow doing the action on a see-through fire plate (A jump,
+//   X punch, Y flying kick, B reaching for a mutant, RT guard, spin), drawn from shapes here.
 // - In the menus (the frontend's screens, the pause menu, the intro videos) nothing is drawn and
 //   the touch is the mouse: a tap selects and accepts, as a left click does on PC, and a tap on a
 //   prompt ("(B) BACK", "CONTINUE STORY (Y)") presses its button (prompt_icons.h ButtonAt). So do
