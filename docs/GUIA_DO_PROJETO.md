@@ -33,7 +33,7 @@ Nenhum arquivo do jogo é distribuído: tudo é gerado a partir da sua própria 
 | `runtime/gpu/dlss_module/` | O `CrashDlss.dll`: o DLSS (NGX) atrás de uma interface C, carregado pelo jogo, pelo launcher e pelo instalador |
 | `launcher/crashrecomp.png`, `launcher/crashrecomp.ico`, `tools/make_icon.py` | O ícone do jogo, do launcher e do instalador (Windows, AppImage e atalhos do Linux); o `.ico` sai do `.png` pelo `make_icon.py` |
 | `tools/perf/` | Benchmark e perfil de CPU: `bench.py`, `walk_window.py`, `report.py`, o amostrador `sampler.cpp` e `profile.py` (veja "Desempenho") |
-| `tools/find_swallowed.py`, `tools/rtti_scan.py` e afins | Funções "engolidas" pelo config e nomes de classes/métodos pelo RTTI (veja "Lendo o código do jogo") |
+| `tools/find_swallowed.py`, `tools/rtti_scan.py`, `tools/name_functions.py` e afins | Funções "engolidas" pelo config e nomes de funções: RTTI, `config/function_names.csv` (à mão) e propagação (veja "Lendo o código do jogo") |
 | `tools/rcf.py`, `texts.py`, `assets.py`, `audio.py`, `textures.py`, `models.py`, `p3d.py`, `hd_textures.py`, `subtitles.py`, `assettool/` | Extraem os `.rcf`, textos, sons, vídeos, texturas e modelos para formatos abertos e geram mods (veja "Extraindo e modificando assets") |
 | `build/` | Saída do CMake (`build\CrashRecomp.exe`) e `runs\` (uma pasta por execução do `run_game.py`) |
 
@@ -1206,12 +1206,14 @@ As 20 144 funções geradas se chamam `sub_XXXXXXXX`. O primeiro passo para ler 
 python tools\rtti_scan.py
 ```
 
-Roda em ~1 s e escreve, em `private\symbols\` (são dados derivados do jogo: não publique):
+Roda em ~7 s e escreve, em `private\symbols\` (são dados derivados do jogo: não publique):
 
 - `rtti.json`: as classes (nome, nome decorado, `TypeDescriptor`, bases diretas e todas as bases com deslocamentos), as vtables de cada classe (endereço, COL, deslocamento do subobjeto) com cada slot, e, por função, a lista de classes/vtables/slots que a usam;
-- `functions.csv`: `address,name,source,note`, uma linha por função com nome.
+- `functions.csv`: `address,name,source,confidence,note`, uma linha por função com nome.
 
-Como os nomes são formados:
+Depois do RTTI, o mesmo comando aplica os nomes escritos à mão e propaga nomes pelo binário (`tools/name_functions.py`; `--rtti-only` pula essa parte). Cada linha diz de onde veio o nome (`source`) e quanto confiar nele (`confidence`: `high`, `medium` ou `low`), para os palpites não se misturarem com os fatos.
+
+Como os nomes do RTTI são formados:
 
 | `source` | Nome | Quando |
 |---|---|---|
@@ -1224,13 +1226,32 @@ Como os nomes são formados:
 
 Quando dois endereços terminariam com o mesmo nome, o que é dono do slot (ou o mais usado) fica com ele e os outros ganham o endereço no fim (`CFrontendElement::vf06_821E2F08`). A desdecoração usa `llvm-undname` se existir, senão o `undname.exe` do Visual Studio (o LLVM instalado aqui não traz o `llvm-undname`); sem nenhum dos dois, só os nomes sem template saem legíveis.
 
-Cobertura atual: 2 300 `TypeDescriptor`s (2 186 classes com vtable, 40 com herança múltipla, nenhuma com herança virtual), 2 247 vtables com 15 686 entradas e 5 007 funções distintas. Com nome: **5 608 das 20 144 funções recompiladas (27,8%)** mais os 152 imports, sendo 3 324 `rtti`, 512 `rtti-inherited`, 1 088 `rtti-dtor`, 83 `rtti-shared` e 601 `heuristic`. Os namespaces com mais classes são `script` (698), global (626), `pure3d` (302), `fight` (223), `audio` (138), `om` (123), `core` (71) e `content` (62). As funções que não são virtuais (código chamado só com `bl`) continuam `sub_XXXXXXXX`; os próximos passos são propagar nomes por chamadas e strings e decompilar no Ghidra.
+O RTTI cobre 2 300 `TypeDescriptor`s (2 186 classes com vtable, 40 com herança múltipla, nenhuma com herança virtual), 2 247 vtables com 15 686 entradas e 5 007 funções distintas: sozinho, ele nomeia **5 608 das 20 144 funções recompiladas (27,8%)** mais os 152 imports. Os namespaces com mais classes são `script` (698), global (626), `pure3d` (302), `fight` (223), `audio` (138), `om` (123), `core` (71) e `content` (62).
+
+Os nomes à mão e os propagados:
+
+| `source` | Nome | Quando | Confiança |
+|---|---|---|---|
+| `manual` | `frontend::EvaluateExitConditions`, `CNameEntryScreenAction::Update` | `config/function_names.csv` (versionado: só endereço, nome, confiança e nota, nada do jogo), escrito a partir do que os ganchos do runtime e os docs descobriram. Passa por cima de qualquer outro nome; o nome antigo vai para a nota | a da linha |
+| `lua-table` | `lua::str_format`, `lua::luaB_print`, `lua::vector_normalize` | tabelas `luaL_reg` (`{nome, função}` terminadas em `{0, 0}`); a biblioteca é a string montada ao lado da tabela no `luaL_openlib`, ou o `luaopen_*` que a abre | high |
+| `lua-string` | `lua::luaG_typeerror`, `crt::__RTDynamicCast` | funções do Lua 5.1-work e do CRT reconhecidas por uma mensagem de erro que só elas usam (tabela `LIBRARY_STRINGS`) | medium |
+| `script-binding` | `CPhysicsBehaviour::Teleport`, `Frontend::StartLevel` | os registros dos bindings de script: o endereço da função C++ seguido do nome Lua; a classe é a primeira string da função que registra. Dos 17 nomes à mão que também caem aqui, o método bate em 16 (o outro era sinônimo) | medium |
+| `ctor` | `CActionUnlockLevel::CActionUnlockLevel` | grava a vtable primária da classe em `0(this)`, faz chamadas e devolve `this` (destrutores sem chamadas ficam de fora: são iguais). `medium` quando um chamador acabou de chamar `operator new`, `low` sem isso | medium / low |
+| `static-init` | `static_init::sub_8242A058`, `static_init::atexit_82421960` | as tabelas de inicializadores do CRT em `.data` (uma função percorre `[lo, hi)`): o construtor de uma variável global, e o destrutor que ele registra com `atexit` | medium |
+| `thunk` | `CActor::GetBehaviour_thunk` | só `b alvo` (com `addi r3,r3,N` antes, ajuste de `this`) | medium |
+| `callers` | `CFrontendManager::sub_821D3E68` | todos os chamadores diretos (e quem pega o endereço no código) são da mesma classe ou namespace e nenhum dado aponta para ela: diz o sistema, não o que faz. Repete até parar, então os auxiliares dos auxiliares também entram | low |
+
+Quando dois endereços terminariam com o mesmo nome, o segundo ganha o endereço no fim.
+
+Cobertura com tudo (2026-10-27): **10 557 das 20 144 funções recompiladas (52,4%)**, antes 5 608 (27,8%). Por origem: 3 284 `rtti`, 1 460 `static-init`, 1 120 `callers`, 1 088 `rtti-dtor`, 1 020 `ctor`, 974 `script-binding`, 601 `heuristic`, 505 `rtti-inherited`, 234 `manual`, 131 `lua-table`, 82 `rtti-shared`, 30 `thunk`, 28 `lua-string`; por confiança, 5 167 `high`, 4 053 `medium` e 1 337 `low`. Por sistema (antes → depois): classes `C*` do jogo 2 370 → 4 459, `pure3d` 1 290 → 1 512, `static_init` 0 → 1 464, `script` 244 → 771, `fight` 573 → 596, `audio` 321 → 386, `core` 337 → 374, `om` 191 → 217, `lua` 0 → 186, `Frontend` 7 → 48, `d3d` 0 → 29, `kernel` 0 → 20, `input` 0 → 17. O `rtti_scan.py` imprime essa tabela no fim.
+
+Para acrescentar um nome: uma linha em `config/function_names.csv` (`Classe::Metodo` quando a classe é conhecida, senão `sistema::Funcao`: `frontend`, `d3d`, `lua`, `crt`, `input`...) e `python tools\rtti_scan.py` de novo. Os nomes à mão também alimentam a propagação (os `callers` e `thunk` deles entram na rodada seguinte).
 
 Onde os nomes aparecem:
 
-- **Runtime**: `runtime/symbols.cpp` carrega `<data>\symbols\functions.csv` ao iniciar (`dist\data\symbols`, ou `private\symbols` no exe do build) (`[symbols] 5760 function names ...`) e os relatórios `[fatal]`, `[crash]` e `[watchdog]` passam a mostrar `CLifeDisplay::vf03+0x1C (sub_821E2C78+0x1C)`, com um backtrace guest simbolizado (`guest lr in ...`, `#0 ...`). Sem o arquivo tudo continua funcionando, só com `sub_`. `CRASH_SYMBOLS=<arquivo>` usa outro CSV e `CRASH_SYMBOLS=0` desliga.
-- **Cópia anotada do código gerado**: `python tools\annotate_ppc.py` copia `generated\ppc` para `private\ppc_annotated` com `// CLifeDisplay::vf03  [rtti]` acima de cada `PPC_FUNC_IMPL` com nome e `// Nome` no fim de cada chamada direta `sub_XXXXXXXX(ctx, base);`. O `generated\ppc` compilado não muda.
-- **Ghidra** (XEX aberto com o [XEXLoaderWV](https://github.com/zeroKilo/XEXLoaderWV), base `0x82000000`): depois da análise automática, rode `tools\ghidra_apply_symbols.py` no Script Manager e escolha `private\symbols\functions.csv`. Ele cria a função se faltar, põe cada método no namespace/classe da sua classe, adiciona um comentário com a origem do nome e, com o `rtti.json` ao lado, rotula vtables, COLs e `TypeDescriptor`s. Nomes que você deu à mão são mantidos. Headless: `analyzeHeadless <projeto> <nome> -process default.xex -postScript ghidra_apply_symbols.py <caminho\functions.csv>`.
+- **Runtime**: `runtime/symbols.cpp` carrega `<data>\symbols\functions.csv` ao iniciar (`dist\data\symbols`, ou `private\symbols` no exe do build) (`[symbols] 10709 function names ...`) e os relatórios `[fatal]`, `[crash]` e `[watchdog]` passam a mostrar `CLifeDisplay::vf03+0x1C (sub_821E2C78+0x1C)`, com um backtrace guest simbolizado (`guest lr in ...`, `#0 ...`). Sem o arquivo tudo continua funcionando, só com `sub_`. `CRASH_SYMBOLS=<arquivo>` usa outro CSV e `CRASH_SYMBOLS=0` desliga.
+- **Cópia anotada do código gerado**: `python tools\annotate_ppc.py` copia `generated\ppc` para `private\ppc_annotated` com `// CLifeDisplay::vf03  [rtti, high]` acima de cada `PPC_FUNC_IMPL` com nome e `// Nome` no fim de cada chamada direta `sub_XXXXXXXX(ctx, base);`. O `generated\ppc` compilado não muda.
+- **Ghidra** (XEX aberto com o [XEXLoaderWV](https://github.com/zeroKilo/XEXLoaderWV), base `0x82000000`): depois da análise automática, rode `tools\ghidra_apply_symbols.py` no Script Manager e escolha `private\symbols\functions.csv`. Ele cria a função se faltar, põe cada método na classe dele (escopos que são classes do RTTI viram classes; `frontend::`, `d3d::`, `static_init::` viram namespaces), adiciona um comentário com a origem e a confiança do nome e, com o `rtti.json` ao lado, rotula vtables, COLs e `TypeDescriptor`s. Nomes que você deu à mão são mantidos. Headless: `analyzeHeadless <projeto> <nome> -process default.xex -postScript ghidra_apply_symbols.py <caminho\functions.csv>`.
 - **IDA**: `File > Script file...` → `tools\ida_apply_symbols.py` (IDAPython), mesmo CSV. O IDA troca os caracteres inválidos por `_`; o nome original vai no comentário da função.
 
 Depois de regenerar o código (config novo, XenonRecomp atualizado) rode `rtti_scan.py` de novo: ele usa `generated\ppc\ppc_func_mapping.cpp` para saber onde cada função termina e avisa se alguma entrada de vtable não tem função gerada (função engolida, veja a seção anterior).

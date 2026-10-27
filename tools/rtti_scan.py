@@ -30,16 +30,20 @@ class that owns the slot:
                   flags test), operator delete, _purecall, _amsg_exit
   import          import thunks from private/symbols.txt
 
+Then tools/name_functions.py adds the hand-curated names of config/function_names.csv (source
+manual) and the names it propagates through the binary (lua-table, script-binding, ctor,
+static-init, thunk, callers...); --rtti-only skips that.
+
 Outputs (derived from your copy of the game: keep them in private/, do not publish):
   private/symbols/rtti.json      classes, bases, vtables, methods, per-function users
-  private/symbols/functions.csv  address,name,source,note (one row per named function)
+  private/symbols/functions.csv  address,name,source,confidence,note (one row per named function)
 
 The runtime loads functions.csv to print names in [fatal]/[crash]/[watchdog] reports
 (runtime/symbols.cpp). tools/annotate_ppc.py, tools/ghidra_apply_symbols.py and
 tools/ida_apply_symbols.py consume it.
 
 Usage (from the repository root):
-  python tools/rtti_scan.py [--image private/image.bin] [--out private/symbols]
+  python tools/rtti_scan.py [--image private/image.bin] [--out private/symbols] [--rtti-only]
 """
 import argparse
 import bisect
@@ -53,6 +57,9 @@ import shutil
 import struct
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import name_functions
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IMAGE_BASE = 0x82000000
@@ -581,7 +588,7 @@ def scan(image, funcs, imports):
     }
 
 
-def write_outputs(result, out_dir, generated):
+def write_outputs(result, out_dir, generated, confidence=None):
     os.makedirs(out_dir, exist_ok=True)
     classes = sorted(result['classes'].values(), key=lambda c: c['name'])
     hexify = lambda v: '0x%08X' % v
@@ -632,10 +639,10 @@ def write_outputs(result, out_dir, generated):
 
     with open(os.path.join(out_dir, 'functions.csv'), 'w', newline='', encoding='utf-8') as fp:
         writer = csv.writer(fp)
-        writer.writerow(['address', 'name', 'source', 'note'])
+        writer.writerow(['address', 'name', 'source', 'confidence', 'note'])
         for f in sorted(functions):
             name, source, note = functions[f]
-            writer.writerow([hexify(f), name, source, note])
+            writer.writerow([hexify(f), name, source, (confidence or {}).get(f, ''), note])
     return stats
 
 
@@ -645,6 +652,9 @@ def main():
     parser.add_argument('--symbols', default=os.path.join(ROOT, 'private', 'symbols.txt'))
     parser.add_argument('--ppc', default=os.path.join(ROOT, 'generated', 'ppc'))
     parser.add_argument('--out', default=os.path.join(ROOT, 'private', 'symbols'))
+    parser.add_argument('--names', default=os.path.join(ROOT, 'config', 'function_names.csv'),
+                        help='hand-curated names (tools/name_functions.py)')
+    parser.add_argument('--rtti-only', action='store_true', help='skip the manual names and the propagation passes')
     args = parser.parse_args()
 
     image = Image(args.image)
@@ -653,7 +663,10 @@ def main():
         print('warning: %s has no ppc_func_mapping.cpp; function bodies end at 0x200 bytes' % args.ppc, file=sys.stderr)
     funcs = Functions(image, generated)
     result = scan(image, funcs, load_imports(args.symbols))
-    stats = write_outputs(result, args.out, generated)
+    confidence = None
+    if not args.rtti_only and generated:
+        confidence = name_functions.extend(result['functions'], image, generated, result['classes'], args.names)
+    stats = write_outputs(result, args.out, generated, confidence)
 
     print('type descriptors      %d (type_info vtable 0x%08X)' % (stats['type_descriptors'], result['type_info_vtable']))
     print('object locators       %d' % stats['complete_object_locators'])
@@ -666,6 +679,11 @@ def main():
             stats['named_recompiled_functions'], stats['recompiled_functions'],
             100.0 * stats['named_recompiled_functions'] / max(1, stats['recompiled_functions']),
             stats['named_by_source'].get('import', 0)))
+    if generated:
+        by_system, named, total = name_functions.coverage(result['functions'], generated)
+        print('by system (top 25):')
+        for system, count in by_system.most_common(25):
+            print('  %-28s %5d' % (system, count))
     if stats['vtable_entries_without_generated_function']:
         print('warning: vtable entries with no generated function (swallowed? see find_swallowed.py): %s'
               % ', '.join(stats['vtable_entries_without_generated_function'][:20]))

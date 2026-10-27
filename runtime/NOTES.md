@@ -1007,16 +1007,17 @@ e nas threads de trabalho `om::TaskThread::vf00`, `audio::hal::sw::RendererImpl:
 | Arquivo | Função |
 |---|---|
 | `tools/rtti_scan.py` | Varre o RTTI e escreve `private/symbols/rtti.json` e `functions.csv` |
+| `tools/name_functions.py` | Chamado pelo `rtti_scan.py`: nomes à mão de `config/function_names.csv` e propagação (tabelas Lua, bindings de script, construtores, inicializadores globais, thunks, chamadores), com `source` e `confidence` por linha |
 | `tools/annotate_ppc.py` | Cópia de leitura de `generated/ppc` em `private/ppc_annotated` com os nomes em comentários (função e chamadas diretas) |
 | `tools/ghidra_apply_symbols.py` | Script do Ghidra (Jython/PyGhidra): nomes, namespaces/classes, comentários, rótulos de vtable/COL/`TypeDescriptor` |
 | `tools/ida_apply_symbols.py` | O mesmo para o IDA (IDAPython) |
 
-Os scripts do Ghidra e do IDA não foram testados aqui (nenhum dos dois está instalado nesta máquina).
+Os scripts do Ghidra e do IDA não foram testados num Ghidra/IDA de verdade (nenhum dos dois está instalado nesta máquina); em 2026-10-27 rodaram com as APIs simuladas sobre o CSV novo (10 709 linhas, sem erro).
 
 ### Próximos passos
 
-- Propagar nomes: chamadas feitas só por um método com nome (`Classe::vf03` → `Classe::vf03_helper`), funções com strings de log/assert, construtores (gravam o endereço da vtable em `0(r3)`: dão o nome `Classe::Classe` e ligam cada classe ao código que a cria).
-- Ler os slots no Ghidra para dar nomes de verdade aos `vfNN` (por exemplo, os métodos de `core::IRefCount`, `pure3d::Entity` e `om::Entity`, que se repetem em centenas de classes) e guardar esses nomes num arquivo versionável de "nomes manuais" que o `rtti_scan.py` aplica por cima.
+- Feito em 2026-10-27 (branch `symbols-names`): `config/function_names.csv` (234 nomes à mão tirados dos ganchos e dos docs) e a propagação do `tools/name_functions.py` levaram a cobertura de 27,8% para 52,4% (10 557 funções). Detalhes e tabela por origem/sistema no `docs/GUIA_DO_PROJETO.md`, "Lendo o código do jogo". O executável retail quase não tem strings de assert (16 caminhos de `.cpp`), por isso a propagação por strings rende pouco; o que rendeu foram os bindings de script, os construtores e as tabelas do CRT.
+- Ler os slots no Ghidra para dar nomes de verdade aos `vfNN` (por exemplo, os métodos de `core::IRefCount`, `pure3d::Entity` e `om::Entity`, que se repetem em centenas de classes) e acrescentá-los em `config/function_names.csv`.
 
 ## Passo 18: overlay de desempenho, marcas e gravação de botões
 

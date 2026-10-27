@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Copy generated/ppc to a reading copy with the recovered function names as comments.
 
-For every function with a name in private/symbols/functions.csv (tools/rtti_scan.py):
-  - a `// Class::vfNN  [source] note` line above its PPC_FUNC_IMPL(__imp__sub_XXXXXXXX);
+For every function with a name in private/symbols/functions.csv (tools/rtti_scan.py and
+tools/name_functions.py):
+  - a `// Class::vfNN  [source, confidence] note` line above its PPC_FUNC_IMPL(__imp__sub_XXXXXXXX);
   - a trailing `// Class::vfNN` on each direct call `sub_XXXXXXXX(ctx, base);`.
 
 The compiled generated/ppc is never touched (it only changes by regenerating with XenonRecomp);
@@ -28,7 +29,8 @@ def load_symbols(path):
     names = {}
     with open(path, newline='', encoding='utf-8') as fp:
         for row in csv.DictReader(fp):
-            names[int(row['address'], 16)] = (row['name'], row['source'], row.get('note', ''))
+            tag = row['source'] + (', ' + row['confidence'] if row.get('confidence') else '')
+            names[int(row['address'], 16)] = (row['name'], tag, row.get('note', ''))
     return names
 
 

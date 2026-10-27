@@ -10,8 +10,9 @@
 # What it does:
 #   - functions.csv: creates the function if Ghidra has none there, names it, puts it in the
 #     namespace of its class (CLifeDisplay::vf03 -> class CLifeDisplay, function vf03) and adds a
-#     plate comment with the source (rtti / rtti-inherited / rtti-shared / rtti-dtor / heuristic /
-#     import) and the note;
+#     plate comment with the source (rtti*, heuristic, import, manual or one of the propagation
+#     passes of tools/name_functions.py), its confidence and the note; a scope that is an RTTI
+#     class becomes a Ghidra class, other scopes (frontend::, d3d::, static_init::) namespaces;
 #   - rtti.json: labels each vtable (Class::vftable, Class::vftable{for_Base}), its
 #     CompleteObjectLocator and the TypeDescriptor, and turns the namespaces into classes.
 # Names already set by hand (SourceType.USER_DEFINED) are kept.
@@ -107,6 +108,15 @@ def run():
     else:
         csv_path = askFile('functions.csv (tools/rtti_scan.py)', 'Apply').getAbsolutePath()
 
+    rtti = None
+    rtti_path = os.path.join(os.path.dirname(csv_path), 'rtti.json')
+    if os.path.exists(rtti_path):
+        with open(rtti_path) as fp:
+            rtti = json.load(fp)
+    # A scope that is an RTTI class becomes a Ghidra class; the others (frontend::, d3d::,
+    # static_init::...) stay plain namespaces.
+    class_names = set(cls['name'] for cls in rtti['classes']) if rtti else set()
+
     named = skipped = 0
     with open(csv_path) as fp:
         rows = list(csv.DictReader(fp))
@@ -115,8 +125,12 @@ def run():
         monitor.checkCanceled()
         monitor.incrementProgress(1)
         address = toAddr(int(row['address'], 16))
-        comment = '%s [%s]%s' % (row['name'], row['source'], (' ' + row['note']) if row.get('note') else '')
-        is_method = row['source'].startswith('rtti') or row['source'] == 'heuristic'
+        tag = row['source'] + (', ' + row['confidence'] if row.get('confidence') else '')
+        comment = '%s [%s]%s' % (row['name'], tag, (' ' + row['note']) if row.get('note') else '')
+        parts = split_scope(row['name'])
+        is_method = len(parts) > 1 and '::'.join(parts[:-1]) in class_names
+        if not class_names:
+            is_method = row['source'].startswith('rtti') or row['source'] == 'heuristic'
         try:
             if apply_name(address, row['name'], comment, is_method and '::' in row['name']):
                 named += 1
@@ -126,10 +140,7 @@ def run():
             printerr('%s %s: %s' % (row['address'], row['name'], e))
 
     vtables = 0
-    rtti_path = os.path.join(os.path.dirname(csv_path), 'rtti.json')
-    if os.path.exists(rtti_path):
-        with open(rtti_path) as fp:
-            rtti = json.load(fp)
+    if rtti:
         for cls in rtti['classes']:
             name = cls['name']
             try:
