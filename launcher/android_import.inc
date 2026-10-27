@@ -13,6 +13,10 @@
 // Galaxy S20 FE): the APK carries no game code. A dump already in place without a game built from
 // it (a new APK, a dump imported again) opens on that step. Once built, the launcher starts again
 // in a new process (the game's art and fonts are read at startup).
+//
+// The PC installer's SUBTITLES option is on the dump's screen too (on by default): the subtitles
+// are downloaded from the project's releases while the dump is copied and the game built
+// (Subtitles.java); SETUP > EXTRA DATA downloads them later (Modal::Subtitles).
 
 enum class ImportState { Idle, Picking, Checking, Copying, Done, Failed, Cancelled };  // LauncherActivity.IMPORT_*
 enum ImportError { IMPORT_NOT_GAME = 1, IMPORT_INCOMPLETE, IMPORT_VERSION, IMPORT_SPACE, IMPORT_IO, IMPORT_PICKER };  // ERROR_*
@@ -35,6 +39,17 @@ struct BuildStatus
 };
 BuildStatus g_build;
 int g_restart = 0;  // frames left before the launcher starts again
+
+enum class SubtitlesState { Idle, Downloading, Done, Failed };  // Subtitles.java's states
+struct SubtitlesStatus
+{
+    SubtitlesState state = SubtitlesState::Idle;
+    int64_t done = 0, total = 0;
+    std::string error;
+};
+SubtitlesStatus g_subtitles;
+bool g_wantSubtitles = true;      // the dump's screen's SUBTITLES (the PC installer's default)
+bool g_subtitlesNoticed = false;  // a failed download was shown before the launcher starts again
 
 // LauncherActivity's static methods from the launcher's thread, in a local frame of their own (the
 // thread never goes back to Java, so local references would pile up).
@@ -158,6 +173,48 @@ void PollImport()
         Log("[launcher] import: state %d (error %d %s)", int(g_import.state), g_import.error, g_import.detail.c_str());
 }
 
+bool SubtitlesInstalled()
+{
+    LauncherJava java;
+    jmethodID method = java ? java.Method("subtitlesInstalled", "()Z") : nullptr;
+    bool installed = method && java.env->CallStaticBooleanMethod(java.type, method);
+    return !java.Threw() && installed;
+}
+
+void StartSubtitles()
+{
+    Log("[launcher] subtitles: downloading");
+    g_subtitles = {};
+    g_subtitles.state = LauncherJava().Void("downloadSubtitles") ? SubtitlesState::Downloading : SubtitlesState::Failed;
+    if (g_subtitles.state == SubtitlesState::Failed)
+        g_subtitles.error = "LauncherActivity.downloadSubtitles";
+}
+
+void PollSubtitles()
+{
+    if (g_subtitles.state != SubtitlesState::Downloading)
+        return;
+    LauncherJava java;
+    if (!java)
+        return;
+    g_subtitles.state = SubtitlesState(java.Int("subtitlesState"));
+    g_subtitles.done = java.Long("subtitlesDone");
+    g_subtitles.total = java.Long("subtitlesTotal");
+    if (g_subtitles.state == SubtitlesState::Idle)
+        g_subtitles.state = SubtitlesState::Downloading;  // the thread has not begun yet
+    if (g_subtitles.state == SubtitlesState::Failed)
+        g_subtitles.error = java.String("subtitlesError");
+    if (g_subtitles.state != SubtitlesState::Downloading)
+        Log("[launcher] subtitles: state %d %s", int(g_subtitles.state), g_subtitles.error.c_str());
+}
+
+void OpenSubtitles()
+{
+    if (g_subtitles.state != SubtitlesState::Downloading)
+        g_subtitles = {};
+    g_modal = Modal::Subtitles;
+}
+
 bool GameBuilt()
 {
     LauncherJava java;
@@ -206,14 +263,41 @@ void PollBuild()
         g_restart = 45;
 }
 
+// A progress bar of the dialogs.
+void DrawBar(float x0, float x1, float y, float fraction)
+{
+    g_draw->AddRectFilled(g_view.P(x0, y), g_view.P(x1, y + 24.0f), IM_COL32(60, 28, 4, 255), 6.0f * g_view.s);
+    if (fraction > 0.0f)
+        g_draw->AddRectFilled(g_view.P(x0, y), g_view.P(x0 + (x1 - x0) * std::min(fraction, 1.0f), y + 24.0f), IM_COL32(236, 150, 20, 255), 6.0f * g_view.s);
+}
+
+// "SUBTITLES: YES" with the pad's Y, centred at `y`; a touch on it or Y switches it.
+void DrawSubtitlesToggle(float cx, float y)
+{
+    if (SubtitlesInstalled())
+    {
+        Draw(0, T({ "SUBTITLES: INSTALLED", "LEGENDAS: INSTALADAS" }), cx, y, 24.0f, HELP, 0.5f);
+        return;
+    }
+    std::string text = std::string(T({ "SUBTITLES: ", "LEGENDAS: " })) + (g_wantSubtitles ? T({ "YES", "SIM" }) : T({ "NO", "NÃO" })) +
+                       T({ "  (English + PT-BR, about 1 MB, from the internet)", "  (inglês + PT-BR, cerca de 1 MB, pela internet)" });
+    float iconWidth = TextWidth(1, IconText(ma::ICON_Y), 26.0f) + 8.0f;
+    float x0 = cx - (iconWidth + TextWidth(0, text, 22.0f)) * 0.5f;
+    float x = Icon(ma::ICON_Y, x0, y - 2.0f, 26.0f) + 8.0f;
+    x = Draw(0, text, x, y, 22.0f, g_wantSubtitles ? SELECTED : NORMAL);
+    if (Clicked(x0 - 20.0f, y - 14.0f, x + 20.0f, y + 40.0f) || KeyPressed({ ImGuiKey_GamepadFaceUp }, false))
+        g_wantSubtitles = !g_wantSubtitles;
+}
+
 void DrawImportModal()
 {
     PollImport();
-    float l = 220.0f, r = 1060.0f, t = 210.0f, b = 510.0f, cx = VW * 0.5f, width = r - l - 80.0f;
+    PollSubtitles();
+    float l = 220.0f, r = 1060.0f, t = 200.0f, b = 530.0f, cx = VW * 0.5f, width = r - l - 80.0f;
     DrawFrame(l, t, r, b);
     // A button of the dialog: the pad's icon (with the game's fonts) and the word, which a touch
     // or a click on it (generously) presses.
-    float bx = 0.0f, by = t + 210.0f;
+    float bx = 0.0f, by = t + 245.0f;
     auto button = [&](char32_t icon, const Text& text, bool selected) {
         float x0 = bx;
         bx = Icon(icon, bx, by, 32.0f) + 8.0f;
@@ -279,11 +363,17 @@ void DrawImportModal()
         Draw(0, T({ "THE GAME FILES", "OS ARQUIVOS DO JOGO" }), cx, t + 40.0f, 34.0f, TITLE, 0.5f, width);
         Draw(0, line[0], cx, t + 100.0f, 26.0f, HELP, 0.5f, width);
         DrawUi(line[1], cx, t + 145.0f, 20.0f, IM_COL32(255, 245, 220, 235), 0.5f, width);
+        DrawSubtitlesToggle(cx, t + 188.0f);
         bx = cx - 250.0f;
         bool choose = button(ma::ICON_A, g_import.state == ImportState::Failed ? Text{ "CHOOSE ANOTHER", "ESCOLHER OUTRA" } : Text{ "CHOOSE FOLDER", "ESCOLHER PASTA" }, true);
         bool later = button(ma::ICON_B, { "LATER", "DEPOIS" }, false);
         if (choose || accept)
+        {
             StartImport();
+            // Downloaded while the dump is copied and the game built.
+            if (g_wantSubtitles && g_subtitles.state != SubtitlesState::Downloading && !SubtitlesInstalled())
+                StartSubtitles();
+        }
         else if (later || back)
             g_modal = Modal::None;
         break;
@@ -299,10 +389,7 @@ void DrawImportModal()
         Draw(0, copying ? T({ "COPYING THE GAME FILES", "COPIANDO OS ARQUIVOS DO JOGO" }) : T({ "CHECKING THE GAME FILES", "VERIFICANDO OS ARQUIVOS DO JOGO" }), cx,
              t + 40.0f, 34.0f, TITLE, 0.5f, width);
         float fraction = copying && g_import.total > 0 ? float(double(g_import.done) / double(g_import.total)) : 0.0f;
-        float x0 = l + 70.0f, x1 = r - 70.0f, y0 = t + 110.0f, y1 = t + 134.0f;
-        g_draw->AddRectFilled(g_view.P(x0, y0), g_view.P(x1, y1), IM_COL32(60, 28, 4, 255), 6.0f * g_view.s);
-        if (fraction > 0.0f)
-            g_draw->AddRectFilled(g_view.P(x0, y0), g_view.P(x0 + (x1 - x0) * std::min(fraction, 1.0f), y1), IM_COL32(236, 150, 20, 255), 6.0f * g_view.s);
+        DrawBar(l + 70.0f, r - 70.0f, t + 110.0f, fraction);
         if (copying)
         {
             char text[96];
@@ -328,7 +415,10 @@ void DrawImportModal()
         case BuildState::Recompiling: step = T({ "Recompiling default.xex (XenonRecomp)...", "Recompilando o default.xex (XenonRecomp)..." }); break;
         case BuildState::Compiling: step = T({ "Compiling the game's code...", "Compilando o código do jogo..." }); break;
         case BuildState::Linking: step = T({ "Linking...", "Ligando..." }); break;
-        case BuildState::Done: step = T({ "Ready. Opening the launcher again...", "Pronto. Abrindo o launcher de novo..." }); break;
+        case BuildState::Done:
+            step = g_subtitles.state == SubtitlesState::Downloading ? T({ "Ready. Downloading the subtitles...", "Pronto. Baixando as legendas..." })
+                                                                    : T({ "Ready. Opening the launcher again...", "Pronto. Abrindo o launcher de novo..." });
+            break;
         case BuildState::Failed: step = T({ "The game could not be built.", "Não foi possível montar o jogo." }); break;
         }
         Draw(0, step, cx, t + 90.0f, 26.0f, HELP, 0.5f, width);
@@ -351,21 +441,86 @@ void DrawImportModal()
                        : g_build.state == BuildState::Linking     ? 0.98f
                        : g_build.state == BuildState::Done        ? 1.0f
                                                                   : 0.0f;
-        float x0 = l + 70.0f, x1 = r - 70.0f, y0 = t + 140.0f, y1 = t + 164.0f;
-        g_draw->AddRectFilled(g_view.P(x0, y0), g_view.P(x1, y1), IM_COL32(60, 28, 4, 255), 6.0f * g_view.s);
-        g_draw->AddRectFilled(g_view.P(x0, y0), g_view.P(x0 + (x1 - x0) * fraction, y1), IM_COL32(236, 150, 20, 255), 6.0f * g_view.s);
+        DrawBar(l + 70.0f, r - 70.0f, t + 140.0f, fraction);
         if (g_build.state == BuildState::Compiling && g_build.total)
         {
             char text[64];
             snprintf(text, sizeof(text), T({ "%d / %d files", "%d / %d arquivos" }), g_build.done, g_build.total);
             Draw(0, text, cx, t + 180.0f, 22.0f, HELP, 0.5f, width);
         }
+        if (g_subtitles.state == SubtitlesState::Failed)
+            DrawUi(std::string(T({ "Subtitles not downloaded: ", "Legendas não baixadas: " })) + g_subtitles.error +
+                       T({ " (SETUP > EXTRA DATA tries again)", " (INSTALAÇÃO > DADOS EXTRAS tenta de novo)" }),
+                   cx, t + 185.0f, 18.0f, IM_COL32(255, 200, 170, 235), 0.5f, width);
+        // The launcher starts again once the subtitles are in too; a failed download is shown
+        // for a few seconds first.
+        if (g_restart > 0 && g_subtitles.state == SubtitlesState::Downloading)
+            g_restart = 45;
+        if (g_restart == 1 && g_subtitles.state == SubtitlesState::Failed && !g_subtitlesNoticed)
+            g_restart = 300, g_subtitlesNoticed = true;
         if (g_restart > 0 && --g_restart == 0)
         {
             Log("[launcher] build: done, starting again");
             if (!LauncherJava().Void("restartLauncher"))
                 g_quit = true;
         }
+        break;
+    }
+    }
+}
+
+// SETUP > EXTRA DATA: the subtitles downloaded now (the dump's screen's SUBTITLES, later).
+void DrawSubtitlesModal()
+{
+    PollSubtitles();
+    float l = 220.0f, r = 1060.0f, t = 220.0f, b = 500.0f, cx = VW * 0.5f, width = r - l - 80.0f;
+    DrawFrame(l, t, r, b);
+    float bx = cx - 230.0f, by = t + 200.0f;
+    auto button = [&](char32_t icon, const Text& text, bool selected) {
+        float x0 = bx;
+        bx = Icon(icon, bx, by, 32.0f) + 8.0f;
+        bx = Draw(0, T(text), bx, by + 2.0f, 30.0f, selected ? SELECTED : NORMAL);
+        bool clicked = Clicked(x0 - 24.0f, by - 18.0f, bx + 24.0f, by + 52.0f);
+        bx += 70.0f;
+        return clicked;
+    };
+    bool accept = KeyPressed({ ImGuiKey_GamepadFaceDown, ImGuiKey_Enter, ImGuiKey_KeypadEnter }, false);
+    bool back = KeyPressed({ ImGuiKey_GamepadFaceRight, ImGuiKey_Escape }, false);
+    Draw(0, T({ "SUBTITLES", "LEGENDAS" }), cx, t + 40.0f, 34.0f, TITLE, 0.5f, width);
+    switch (g_subtitles.state)
+    {
+    case SubtitlesState::Downloading:
+        Draw(0, T({ "Downloading the subtitles...", "Baixando as legendas..." }), cx, t + 95.0f, 26.0f, HELP, 0.5f, width);
+        DrawBar(l + 70.0f, r - 70.0f, t + 140.0f, g_subtitles.total > 0 ? float(double(g_subtitles.done) / double(g_subtitles.total)) : 0.0f);
+        bx = cx - 80.0f;
+        if (button(ma::ICON_B, { "CLOSE", "FECHAR" }, false) || back)
+            g_modal = Modal::None;  // the download goes on
+        break;
+    case SubtitlesState::Done:
+        Draw(0, T({ "The subtitles are installed.", "As legendas estão instaladas." }), cx, t + 95.0f, 26.0f, HELP, 0.5f, width);
+        bx = cx - 50.0f;
+        if (button(ma::ICON_A, { "OK", "OK" }, true) || accept || back)
+            g_modal = Modal::None;
+        break;
+    default:
+    {
+        bool installed = SubtitlesInstalled();
+        if (g_subtitles.state == SubtitlesState::Failed)
+            Draw(0, T({ "The subtitles could not be downloaded.", "Não foi possível baixar as legendas." }), cx, t + 95.0f, 26.0f, HELP, 0.5f, width);
+        else
+            Draw(0, installed ? T({ "The subtitles are installed.", "As legendas estão instaladas." })
+                              : T({ "English transcript and the Brazilian Portuguese translation.", "Transcrição em inglês e a tradução em português do Brasil." }),
+                 cx, t + 95.0f, 26.0f, HELP, 0.5f, width);
+        DrawUi(g_subtitles.state == SubtitlesState::Failed ? g_subtitles.error
+                                                           : std::string(T({ "From the project's releases on GitHub (about 1 MB, needs internet).",
+                                                                             "Das releases do projeto no GitHub (cerca de 1 MB, precisa de internet)." })),
+               cx, t + 140.0f, 20.0f, IM_COL32(255, 245, 220, 235), 0.5f, width);
+        bool download = button(ma::ICON_A, installed ? Text{ "DOWNLOAD AGAIN", "BAIXAR DE NOVO" } : Text{ "DOWNLOAD", "BAIXAR" }, true);
+        bool close = button(ma::ICON_B, { "CLOSE", "FECHAR" }, false);
+        if (download || accept)
+            StartSubtitles();
+        else if (close || back)
+            g_modal = Modal::None;
         break;
     }
     }

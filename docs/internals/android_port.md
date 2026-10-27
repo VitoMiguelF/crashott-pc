@@ -334,6 +334,17 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     80 files compiled, built in 140 s from the launcher, then PLAY runs the game into the village.
     The `build` step still compiles the runtime here against a local `generated/ppc` (only its
     `ppc_config.h` / `ppc_context.h`): a machine without the dump (CI) can't make the APK yet.
+  - **The PC installer's options on the phone (same day):** the dump's screen has SUBTITLES: YES
+    (Y or a touch switches it, on by default as in CrashSetup): `Subtitles.java` downloads the
+    release asset `CrashRecomp-v1.07-legendas.zip` (the tag of `setup.py` `SUBTITLES_TAG`, bumped
+    together), checks it against the release's `SHA256SUMS.txt` and unpacks it into the files
+    folder (`private/` → `data/`, `languages/` as it is; `data/subtitles/release.txt` names the
+    tag), while the dump is copied and the game built; the launcher starts again only once it is
+    in, and a failed download says so for 5 s (SETUP > EXTRA DATA downloads it later, its own
+    dialog). The manifest asks for `INTERNET`. The language packs (`languages/`, without the
+    downloaded `subtitles.txt`) were never in the APK: now in `assets/languages/`, copied into
+    the files folder at each start (`LauncherActivity.onCreate`). The other options don't apply:
+    no HD AI Remaster on Android, no shortcuts, the dump is always copied, no asset export.
   - **Next on the phone:** the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
     it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
@@ -418,7 +429,7 @@ APK (built on the player's PC, never published)
 ├── game/        the dump (default.xex, *.rcf, shaders/...), pushed by the PC tool
 ├── userdata/    settings.toml, saves, shadercache/ (pipeline cache is per device)
 ├── mods/
-└── data/        subtitles, symbols (derived from the dump: made on the PC, pushed)
+└── data/        subtitles (downloaded by the launcher from the project's releases)
 ```
 
 Everything the runtime finds "next to the exe" on PC (`paths.cpp`) comes from the app's external

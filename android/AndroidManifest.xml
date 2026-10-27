@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The app tools/android_build.py assembles (docs/internals/android_port.md). SDL3's Java glue
      (org.libsdl.app, from the SDL source) plus LauncherActivity (the launcher, the app's first
-     screen, libcrashlauncher.so) and CrashActivity (the game, lib/arm64-v8a/libmain.so, built on
-     the player's PC from their own dump: this APK is personal and is never published). -->
+     screen, libcrashlauncher.so) and CrashActivity (the game, libmain.so, built on the phone from
+     the player's own dump by GameInstaller.java: the APK holds no game code). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.vitomiguelf.crashottde"
     android:versionCode="1"
@@ -15,6 +15,8 @@
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- The subtitles, downloaded from the project's releases (Subtitles.java). -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:label="Crash of the Titans DE"

@@ -197,10 +197,11 @@ namespace
     bool g_capturing = false;          // CONTROLS: waiting for a key
     uint16_t g_captured = 0;           // set by the window procedure
     bool g_captureCancelled = false;
-    enum class Modal { None, Exit, Message, Update, Import } g_modal = Modal::None;
+    enum class Modal { None, Exit, Message, Update, Import, Subtitles } g_modal = Modal::None;
 #ifdef __ANDROID__
     void OpenImport();  // android_import.inc: the dump's folder asked for and copied into the app
     void OpenBuild();   // android_import.inc: the game built on the phone from that dump
+    void OpenSubtitles();  // android_import.inc: the subtitles downloaded (SETUP > EXTRA DATA)
     bool GameBuilt();
 #endif
     std::string g_message[2];
@@ -564,7 +565,12 @@ namespace
         }
         case Item::ModsFolder: return { Narrow(paths::Mods().wstring()), T({ "One folder per mod (README, \"Mods\").", "Uma pasta por mod (README, \"Mods\")." }) };
         case Item::SavesFolder: return { Narrow(paths::UserData().wstring()), T({ "Your saves (content) and settings.toml.", "Seus saves (content) e o settings.toml." }) };
+#ifdef __ANDROID__
+        case Item::ExtraData: return { T({ "A / touch: download the subtitles (English + PT-BR).", "A / toque: baixar as legendas (inglês + PT-BR)." }),
+                                       T({ "Made from your own game; never share it.", "Feitos a partir do seu jogo; não compartilhe." }) };
+#else
         case Item::ExtraData: return { Narrow(paths::Data().wstring()), T({ "Made from your own game; never share it.", "Feitos a partir do seu jogo; não compartilhe." }) };
+#endif
         default: return opt::Help(item, g_values, OptionContext());
         }
     }
@@ -680,6 +686,7 @@ namespace
         {
 #ifdef __ANDROID__
         case Item::GameFolder: OpenImport(); break;  // no folder to point at: the dump is copied into the app
+        case Item::ExtraData: OpenSubtitles(); break;
 #else
         case Item::GameFolder: ChooseGameFolder(); break;
 #endif
@@ -1664,6 +1671,8 @@ namespace
 #ifdef __ANDROID__
         if (g_modal == Modal::Import)
             return DrawImportModal();
+        if (g_modal == Modal::Subtitles)
+            return DrawSubtitlesModal();
 #endif
         float l = 300.0f, r = 980.0f, t = 250.0f, b = 470.0f, cx = VW * 0.5f;
         DrawFrame(l, t, r, b);

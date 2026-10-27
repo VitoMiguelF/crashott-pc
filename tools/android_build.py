@@ -342,6 +342,12 @@ def apk(debuggable=False):
         with zipfile.ZipFile(ONDEVICE_ZIP) as bundle:
             z.writestr("assets/ondevice.stamp", bundle.read("ondevice.stamp"), compress_type=zipfile.ZIP_STORED)
         say("with the on-device toolchain (clang, lld, XenonRecomp, runtime): the game is built on the phone")
+        # The language packs, copied into the files folder by LauncherActivity (the PC's
+        # make_dist.py puts them next to the exe); the subtitles of a pack come with the
+        # downloaded subtitles (Subtitles.java), not from here.
+        for f in sorted((ROOT / "languages").rglob("*")):
+            if f.is_file() and f.suffix != ".md" and f.name != "subtitles.txt":
+                z.write(f, "assets/" + f.relative_to(ROOT).as_posix(), compress_type=zipfile.ZIP_DEFLATED)
         z.write(launcher_stripped, "lib/arm64-v8a/libcrashlauncher.so", compress_type=zipfile.ZIP_DEFLATED)
         hooks = [CMAKE_BUILD / "adrenotools" / "src" / "hook" / name for name in ("libhook_impl.so", "libmain_hook.so")]
         if all(h.is_file() for h in hooks) and TURNIP_LIB.is_file():

@@ -4,8 +4,10 @@ import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.AssetManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.Process;
 import android.os.StatFs;
 import android.provider.DocumentsContract;
@@ -33,6 +35,9 @@ import org.libsdl.app.SDLActivity;
 // folder picker (the storage access framework: no storage permission); it is checked as the PC
 // installer checks it (the files the launcher names, default.xex's SHA-256) and copied into game/.
 // The launcher draws the progress from the import* getters.
+//
+// The language packs (languages/ of the project, in the APK's assets) are copied into the files
+// folder at each start, as the PC's make_dist.py copies them next to the exe.
 public class LauncherActivity extends SDLActivity {
     private static final String TAG = "CrashLauncher";
     private static final int PICK_GAME = 0x4352;
@@ -50,6 +55,47 @@ public class LauncherActivity extends SDLActivity {
     private static volatile boolean importCancel;
     private static volatile String[] importRequired = new String[0];
     private static volatile String importSha256 = "";
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        try {
+            copyAssets(getAssets(), "languages", new File(getExternalFilesDir(null), "languages"));
+        } catch (IOException e) {
+            Log.w(TAG, "language packs not copied", e);
+        }
+        super.onCreate(savedInstanceState);
+    }
+
+    // A folder of the assets into `target`; a file of the same size is kept.
+    private static void copyAssets(AssetManager assets, String path, File target) throws IOException {
+        String[] names = assets.list(path);
+        if (names == null)
+            return;
+        for (String name : names) {
+            String child = path + "/" + name;
+            File out = new File(target, name);
+            String[] inside = assets.list(child);
+            if (inside != null && inside.length > 0) {
+                copyAssets(assets, child, out);
+                continue;
+            }
+            try (InputStream in = assets.open(child)) {
+                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+                byte[] buffer = new byte[16384];
+                int n;
+                while ((n = in.read(buffer)) > 0)
+                    bytes.write(buffer, 0, n);
+                byte[] data = bytes.toByteArray();
+                if (out.isFile() && out.length() == data.length)
+                    continue;
+                if (!target.isDirectory() && !target.mkdirs())
+                    throw new IOException("can't make " + target);
+                try (OutputStream os = new FileOutputStream(out)) {
+                    os.write(data);
+                }
+            }
+        }
+    }
 
     @Override
     protected String[] getLibraries() {
@@ -106,6 +152,14 @@ public class LauncherActivity extends SDLActivity {
     public static int buildDone() { return GameInstaller.done(); }
     public static int buildTotal() { return GameInstaller.total(); }
     public static String buildError() { return GameInstaller.error(); }
+
+    // From native code: the subtitles (SUBTITLES on the dump's screen, EXTRA DATA in SETUP).
+    public static boolean subtitlesInstalled() { return Subtitles.installed(SDL.getContext()); }
+    public static void downloadSubtitles() { Subtitles.download(SDL.getContext()); }
+    public static int subtitlesState() { return Subtitles.state(); }
+    public static long subtitlesDone() { return Subtitles.done(); }
+    public static long subtitlesTotal() { return Subtitles.total(); }
+    public static String subtitlesError() { return Subtitles.error(); }
 
     public static void cancelImport() { importCancel = true; }
     public static int importState() { return importState; }
