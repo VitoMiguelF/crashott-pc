@@ -3,7 +3,8 @@
 // On-screen touch controls (Android; touch_controls.cpp, docs/internals/android_port.md "Touch
 // controls"): the game playable on a phone without a gamepad.
 //
-// - In gameplay: a floating left stick (a finger on the left of the screen puts its centre there),
+// - In gameplay: a floating left stick (a finger on the left of the screen puts its centre there;
+//   it stays there, the knob stopping at the edge),
 //   A / B / X / Y on the right in the pad's diamond, RT (block / dodge) and a spin button (the
 //   left stick going round with X tapped, like the keyboard's spin attack) beside it, START and
 //   BACK at the top right. A drag on the rest of the right half turns the camera (right stick).

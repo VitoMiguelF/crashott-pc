@@ -155,16 +155,22 @@ namespace
         return std::any_of(std::begin(g_fingers), std::end(g_fingers), [](const Finger& f) { return f.used && f.role != Role::None; });
     }
 
-    // The stick's centre follows a finger that goes past the full deflection.
-    void MoveStickLocked(const Layout& l, float x, float y)
+    // The stick's centre stays where the finger landed; past the full deflection the knob stays on
+    // the edge (Draw) and the stick at full.
+    void MoveStickLocked(float x, float y)
     {
         g_stick.x = x, g_stick.y = y;
-        float dx = x - g_stick.ox, dy = y - g_stick.oy, d = std::hypot(dx, dy);
-        if (d > l.stickRange)
-        {
-            g_stick.ox = x - dx / d * l.stickRange;
-            g_stick.oy = y - dy / d * l.stickRange;
-        }
+    }
+
+    // The finger's deflection (0..1) as the stick: a small dead zone of its own, then straight to
+    // where the game starts to move Crash (it ignores about the first 40 % of a pad's stick, so a
+    // finger had to go half way before anything happened), then linear to full.
+    constexpr float TOUCH_DEADZONE = 0.08f, GAME_DEADZONE = 0.4f;
+    float StickCurve(float deflection)
+    {
+        if (deflection <= TOUCH_DEADZONE)
+            return 0.0f;
+        return GAME_DEADZONE + (1.0f - GAME_DEADZONE) * std::min((deflection - TOUCH_DEADZONE) / (1.0f - TOUCH_DEADZONE), 1.0f);
     }
 
     int16_t Axis(float value)
@@ -334,7 +340,7 @@ namespace touch_controls
                 f->role = Role::Stick;
                 // The centre where the finger landed, kept far enough from the edges for the base.
                 g_stick = { true, std::clamp(px, l.baseR, l.stickZone), std::clamp(py, l.baseR, l.h - l.baseR), px, py };
-                MoveStickLocked(l, px, py);
+                MoveStickLocked(px, py);
             }
             else if (px >= l.stickZone)
                 f->role = Role::Camera;
@@ -348,7 +354,7 @@ namespace touch_controls
         switch (f->role)
         {
         case Role::Stick:
-            MoveStickLocked(l, px, py);
+            MoveStickLocked(px, py);
             break;
         case Role::Camera:
             g_cameraX += dx, g_cameraY += dy;
@@ -414,8 +420,11 @@ namespace touch_controls
         {
             x = (g_stick.x - g_stick.ox) / l.stickRange, y = (g_stick.oy - g_stick.y) / l.stickRange;
             float length = std::hypot(x, y);
-            if (length > 1.0f)
-                x /= length, y /= length;
+            float curved = StickCurve(length);
+            if (curved > 0.0f)
+                x *= curved / length, y *= curved / length;
+            else
+                x = y = 0.0f;
         }
         if (pressed >> BTN_SPIN & 1)
         {

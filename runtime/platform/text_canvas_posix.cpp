@@ -7,12 +7,23 @@
 // the build needs only FreeType's headers (thirdparty/freetype, setup.py) and fontconfig's few calls
 // are declared here. Without the headers (CRASH_HAVE_FREETYPE unset) or the libraries, every call
 // fails and the console / subtitles are not drawn.
-#if CRASH_HAVE_FREETYPE
+//
+// Android has neither: stb_truetype (Dear ImGui's copy) renders the system's own fonts there
+// (Roboto, Droid Sans Mono), the same glyph cache and drawing.
+#if CRASH_HAVE_FREETYPE || defined(__ANDROID__)
 #include "platform.h"
 #include "../diagnostics.h"
 
+#if CRASH_HAVE_FREETYPE
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#else
+#define STBTT_STATIC
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "../../thirdparty/imgui/imstb_truetype.h"
+#include <cmath>
+#include <fstream>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -29,6 +40,13 @@ namespace plat
 {
     namespace
     {
+        struct Glyph
+        {
+            int left = 0, top = 0, width = 0, height = 0, advance = 0;  // top: above the baseline
+            std::vector<uint8_t> coverage;
+        };
+
+#if CRASH_HAVE_FREETYPE
         // fontconfig's ABI (fontconfig.h): opaque patterns, and the few constants used here.
         struct FcPattern;
         using FcChar8 = unsigned char;
@@ -85,12 +103,6 @@ namespace plat
             }();
             return loaded;
         }
-
-        struct Glyph
-        {
-            int left = 0, top = 0, width = 0, height = 0, advance = 0;
-            std::vector<uint8_t> coverage;
-        };
 
         // One face at one size, with its rendered glyphs. Shared by every canvas (the subtitles make a
         // new canvas per line) and kept for the run: a few fonts at a few sizes.
@@ -186,6 +198,86 @@ namespace plat
             g_fonts[key] = std::move(font);
             return result;
         }
+#else
+        // One face at one size, with its rendered glyphs (as FreeType's above).
+        struct Font
+        {
+            std::vector<unsigned char> data;
+            stbtt_fontinfo info{};
+            float scale = 1.0f;
+            int ascent = 0, height = 0, averageWidth = 1;
+            std::unordered_map<uint32_t, Glyph> glyphs;
+            std::mutex mutex;
+
+            const Glyph& Get(uint32_t c)
+            {
+                auto it = glyphs.find(c);
+                if (it != glyphs.end())
+                    return it->second;
+                Glyph& glyph = glyphs[c];
+                int index = stbtt_FindGlyphIndex(&info, int(c));
+                if (!index)
+                    return glyph;
+                int advance = 0, bearing = 0, x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+                stbtt_GetGlyphHMetrics(&info, index, &advance, &bearing);
+                stbtt_GetGlyphBitmapBox(&info, index, scale, scale, &x0, &y0, &x1, &y1);
+                glyph.advance = int(std::lround(advance * scale));
+                glyph.left = x0;
+                glyph.top = -y0;
+                glyph.width = std::max(x1 - x0, 0);
+                glyph.height = std::max(y1 - y0, 0);
+                glyph.coverage.resize(size_t(glyph.width) * glyph.height);
+                if (!glyph.coverage.empty())
+                    stbtt_MakeGlyphBitmap(&info, glyph.coverage.data(), glyph.width, glyph.height, glyph.width, scale, scale, index);
+                return glyph;
+            }
+        };
+
+        std::mutex g_mutex;
+        std::map<std::tuple<int, int, bool>, std::unique_ptr<Font>> g_fonts;
+
+        // Android's own fonts (Roboto: a variable font on newer versions, one file for every weight).
+        std::string FontFile(FontFace face, bool semibold)
+        {
+            static const std::vector<const char*> regular = { "/system/fonts/Roboto-Regular.ttf", "/system/fonts/DroidSans.ttf" };
+            static const std::vector<const char*> bold = { "/system/fonts/Roboto-Bold.ttf", "/system/fonts/Roboto-Medium.ttf",
+                                                           "/system/fonts/Roboto-Regular.ttf", "/system/fonts/DroidSans.ttf" };
+            static const std::vector<const char*> monospace = { "/system/fonts/DroidSansMono.ttf", "/system/fonts/CutiveMono.ttf",
+                                                                "/system/fonts/Roboto-Regular.ttf" };
+            for (const char* file : face == FontFace::Monospace ? monospace : semibold ? bold : regular)
+                if (access(file, R_OK) == 0)
+                    return file;
+            return {};
+        }
+
+        Font* GetFont(FontFace face, int pixelHeight, bool semibold)
+        {
+            std::lock_guard lock(g_mutex);
+            auto key = std::make_tuple(int(face), pixelHeight, semibold);
+            if (auto it = g_fonts.find(key); it != g_fonts.end())
+                return it->second.get();
+            std::string file = FontFile(face, semibold);
+            auto font = std::make_unique<Font>();
+            std::ifstream in(file, std::ios::binary);
+            font->data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            if (file.empty() || font->data.empty() || !stbtt_InitFont(&font->info, font->data.data(), stbtt_GetFontOffsetForIndex(font->data.data(), 0)))
+            {
+                Log("[text] %s: no usable font (%s): no subtitles or console text", face == FontFace::Monospace ? "monospace" : "sans-serif",
+                    file.empty() ? "none found" : file.c_str());
+                return nullptr;
+            }
+            // GDI's negative height: the character (em) height, without the internal leading.
+            font->scale = stbtt_ScaleForMappingEmToPixels(&font->info, float(pixelHeight));
+            int ascent = 0, descent = 0, gap = 0;
+            stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &gap);
+            font->ascent = int(std::ceil(ascent * font->scale));
+            font->height = font->ascent + int(std::ceil(-descent * font->scale));
+            font->averageWidth = std::max(font->Get('x').advance, 1);  // GDI's tmAveCharWidth is about an 'x'
+            Font* result = font.get();
+            g_fonts[key] = std::move(font);
+            return result;
+        }
+#endif
 
         int LineWidth(Font& font, const std::wstring& line)
         {
@@ -236,8 +328,10 @@ namespace plat
 
     std::string SystemFontFile(FontFace face, bool bold)
     {
+#if CRASH_HAVE_FREETYPE
         if (!LoadApi())
             return {};
+#endif
         std::lock_guard lock(g_mutex);
         return FontFile(face, bold);
     }
@@ -369,17 +463,8 @@ namespace plat
 
 namespace plat
 {
-    std::string SystemFontFile(FontFace, bool bold)
+    std::string SystemFontFile(FontFace, bool)
     {
-#if defined(__ANDROID__)
-        // Android's own (Roboto; a variable font on newer versions, the same file for bold).
-        for (const char* file : { bold ? "/system/fonts/Roboto-Bold.ttf" : "/system/fonts/Roboto-Regular.ttf", "/system/fonts/Roboto-Regular.ttf",
-                                  "/system/fonts/DroidSans.ttf" })
-            if (access(file, R_OK) == 0)
-                return file;
-#else
-        (void)bold;
-#endif
         return {};
     }
 

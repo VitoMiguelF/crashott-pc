@@ -190,7 +190,8 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
 
   - **Touch controls (same day).** `settings/touch_controls.*`, Android only (`CRASH_TOUCH_CONTROLS`
     0/1 overrides): in gameplay a floating left stick (a finger on the left 45% of the screen puts
-    its centre there; it follows a finger past full deflection), A/B/X/Y in the pad's diamond, RT
+    its centre there; it stays there, the knob stopping at the edge; a dead zone of 8 % of the
+    range, then straight to 40 %, where the game starts to move Crash), A/B/X/Y in the pad's diamond, RT
     and a spin button (the stick going round with X tapped, as the keyboard's spin attack), START
     and BACK at the top right, and a drag on the rest of the right half turns the camera. Drawn
     through three overlay bitmap channels, the game's own icons on translucent discs, re-uploaded
