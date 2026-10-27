@@ -315,9 +315,25 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     fresh install compiles its own shaders. Checked on the S20 FE after the fresh install (no
     SPIR-V cache): the logo videos and the frontend draw, 31 shaders compiled on the phone, none
     failed (it was the orange screen before).
-  - **Next for the single APK:** XenonRecomp + clang / lld on the phone (an LLVM built for Android arm64) and DXC for Android,
-    so the APK carries no game code (the game's code then lives in the app's internal storage:
-    `dlopen` is refused on the external one).
+  - **The single APK builds the game on the phone (same day):** `android_build.py` makes
+    `CrashOTTDE.apk` (85 MB) with no game code: the launcher, SDL3, DXC, Turnip, FFmpeg, clang /
+    lld / XenonRecomp as `lib*.so` programs (the native library folder is the one place an app may
+    run programs from) and `assets/ondevice.zip` (the `toolchain` step: the NDK's arm64 sysroot,
+    clang's headers and the NDK's compiler-rt, the runtime's objects as `libcrashruntime.a` with
+    libXexImage / libadrenotools, `config/Crash.toml` + switch tables, XenonRecomp's
+    `ppc_context.h`, simde; 19 MB). After the import the launcher shows BUILDING THE GAME
+    (`GameInstaller.java`): the zip unpacked into internal storage (again when its stamp changes),
+    links named `clang`, `clang++`, `ld.lld` to the programs (clang finds ld.lld by `-B`, lld its
+    flavour by its name), XenonRecomp run in its config's folder with the config's bare name
+    (it glues every path to that folder as text), every `.cpp` compiled on its own core, and
+    `libmain.so` linked as CMake links it on a PC, except that `--exclude-libs` names the
+    third-party archives (`ALL` would hide `SDL_main`, which now comes from an archive) and the
+    runtime goes in whole (`--whole-archive`: its hooks replace weak definitions). `CrashActivity`
+    loads `files/libmain.so`; the runtime finds the APK's library folder (Turnip, hooks) through
+    `libSDL3.so`. Checked on the S20 FE: XenonRecomp 2.5 s (its output identical to the PC's),
+    80 files compiled, built in 140 s from the launcher, then PLAY runs the game into the village.
+    The `build` step still compiles the runtime here against a local `generated/ppc` (only its
+    `ppc_config.h` / `ppc_context.h`): a machine without the dump (CI) can't make the APK yet.
   - **Next on the phone:** the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
     it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL

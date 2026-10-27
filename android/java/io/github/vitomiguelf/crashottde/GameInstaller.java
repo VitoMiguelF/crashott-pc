@@ -123,7 +123,10 @@ final class GameInstaller {
         link(bin, "clang++", libDir + "/libcrashclang.so");
         link(bin, "ld.lld", libDir + "/libcrashlld.so");
 
-        // 2. XenonRecomp: default.xex -> recomp/ppc (the project's config, its paths made absolute).
+        // 2. XenonRecomp: default.xex -> recomp/ppc (the project's config with the dump and the output
+        // folder as absolute paths). XenonRecomp glues every path in it to the config's folder as
+        // text, so it runs in that folder and gets the config's bare name: the absolute paths stay
+        // whole and the switch tables' relative one resolves there.
         state = RECOMPILING;
         File recomp = new File(files, "recomp");
         deleteTree(recomp);
@@ -135,10 +138,9 @@ final class GameInstaller {
         String config = new String(Files.readAllBytes(new File(xenon, "Crash.toml").toPath()), StandardCharsets.UTF_8);
         config = replaceSetting(config, "file_path", new File(gameFolder(context), "default.xex").getPath());
         config = replaceSetting(config, "out_directory_path", ppc.getPath());
-        config = replaceSetting(config, "switch_table_file_path", new File(xenon, "Crash_switch_tables.toml").getPath());
-        File toml = new File(recomp, "Crash.toml");
+        File toml = new File(xenon, "Crash.device.toml");
         Files.write(toml.toPath(), config.getBytes(StandardCharsets.UTF_8));
-        exec(log, recomp, libDir + "/libxenonrecomp.so", toml.getPath(), new File(xenon, "ppc_context.h").getPath());
+        exec(log, xenon, libDir + "/libxenonrecomp.so", toml.getName(), new File(xenon, "ppc_context.h").getPath());
 
         // 3. Each .cpp on its own core.
         state = COMPILING;
