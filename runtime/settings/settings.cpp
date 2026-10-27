@@ -73,10 +73,11 @@ namespace settings
 #if defined(__ANDROID__)
                 // A phone: the screen's own shape (20:9, 19.5:9...), not the nearest monitor aspect,
                 // so the picture fills it edge to edge (Hor+, gpu/widescreen.h). Its usual heights
-                // below the native one, then the native resolution.
+                // below the native one, then the native resolution. Below the game's 720 lines too
+                // (a render scale under 1, upscaled by the present pass): a phone's GPU is the limit.
                 int screenWidth, screenHeight;
                 MonitorSize(screenWidth, screenHeight);
-                for (int height : { 720, 900, 1080, 1440 })
+                for (int height : { 360, 480, 540, 720, 900, 1080, 1440 })
                 {
                     if (height >= screenHeight)
                         break;
@@ -213,7 +214,7 @@ namespace settings
             {
                 // "WxH": the height; the width follows video.aspect (ResolutionOf).
                 int width = 0, height = 0;
-                ok = sscanf(lower.c_str(), "%dx%d", &width, &height) == 2 && height >= 480 && height <= 4320;
+                ok = sscanf(lower.c_str(), "%dx%d", &width, &height) == 2 && height >= 360 && height <= 4320;
                 if (ok)
                     values.renderHeight = height;
             }

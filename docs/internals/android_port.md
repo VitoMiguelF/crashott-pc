@@ -253,6 +253,15 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     `build/android/cmake/libmain.so` here (the same runtime and generated code), and
     `android_build.py push -s <serial>` puts it in the app through `run-as` (APK built
     `--debuggable`), keeping `libmain.stamp`, so the launcher doesn't rebuild it.
+  - **Resolutions below 720 lines on Android (2026-10-27).** The GPU time is all pixels and
+    passes, nothing wasted on the 2048-row EDRAM targets: the 2D passes are scissored to the 720
+    lines, and clamping every pass's `renderArea` to 720 rows changed nothing (Turnip draws these
+    passes to memory, not in its tile memory). The 3.2 ms 2D draw (`ps 45775928e9ebd556`) is a
+    full-screen pass of 18 texture reads. So the phone's resolution list (`settings.cpp`,
+    `AutoResolutions`) now starts at 360 lines: 360, 480, 540, then 720... (`video.resolution` takes
+    heights from 360). A render scale under 1 needed nothing else: the present pass scales the
+    picture to the screen (linear). S20 FE, L1_E1, no fps limit, phone warm: 1600x720 ~32 ms,
+    1200x540 22.7 ms, 1066x480 20.6 ms, 800x360 15.2 ms per frame. The default stays 720 lines.
   - **Tab S10 Ultra (Mali-G720 MC12, driver r44p1, Vulkan 1.3.247), same day: the game runs**, the
     opening cutscene at a steady 60 fps (16.67 ms per frame, the limit) at 1154x720 on its
     2960x1848 screen, with the dump pushed (3.0 GB over adb Wi-Fi in 66 s) and the S20 FE's SPIR-V
