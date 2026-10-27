@@ -11,6 +11,8 @@ apksigner (no Gradle, no Android Studio).
     python tools/android_build.py dxc           # libdxcompiler.so: the shaders compiled on the phone
     python tools/android_build.py xenonrecomp   # XenonRecomp for arm64 (the phone recompiles the dump)
     python tools/android_build.py toolchain     # what compiles the game on the phone, in one folder
+    python tools/android_build.py push -s <serial>   # test builds: this machine's libmain.so (`build`)
+                                                # into the app on the phone (an APK built --debuggable)
 
 The APK holds no game code: on the phone the launcher asks for the player's dump, copies it into the
 app and builds the game from it (XenonRecomp, clang, lld: GameInstaller.java), as CrashSetup does on
@@ -220,6 +222,27 @@ def turnip():
     if old in text:
         meson_build.write_text(text.replace(old, "    prog_flex = host_machine.system() == 'windows' ? [prog_flex, '--wincompat'] : [prog_flex]"),
                                encoding="utf-8", newline="")
+    # A poll of a GPU timestamp (no time left) reads the retired timestamp: some kgsl kernels (the
+    # S20 FE's) block on a zero-timeout IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID until it retires, so
+    # every vkGetSemaphoreCounterValue of the emulated timeline waited for the GPU to finish the
+    # frame and the CPU never recorded the next one while the GPU drew (docs/internals/android_port.md).
+    kgsl = MESA_SOURCE / "src" / "freedreno" / "vulkan" / "tu_knl_kgsl.cc"
+    text = kgsl.read_text(encoding="utf-8")
+    old = "      .timeout = get_relative_ms(abs_timeout_ns),\n   };\n\n   while (true) {\n"
+    if "KGSL_TIMESTAMP_RETIRED, " not in text:
+        if old not in text:
+            sys.exit(f"{kgsl.relative_to(ROOT)}: wait_timestamp_safe not as expected (another Mesa version?)")
+        kgsl.write_text(text.replace(old, """      .timeout = get_relative_ms(abs_timeout_ns),
+   };
+
+   if (wait.timeout == 0) {
+      struct kgsl_cmdstream_readtimestamp_ctxtid read = { context_id, KGSL_TIMESTAMP_RETIRED, 0 };
+      if (safe_ioctl(fd, IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_CTXTID, &read) == 0)
+         return timestamp_cmp(read.timestamp, timestamp) ? VK_SUCCESS : VK_TIMEOUT;
+   }
+
+   while (true) {
+"""), encoding="utf-8", newline="")
 
     bin_dir = NDK / "toolchains" / "llvm" / "prebuilt" / HOST / "bin"
     cross = TURNIP / "android-aarch64.cross"
@@ -595,13 +618,37 @@ def toolchain():
     say(f"{ONDEVICE_ZIP.relative_to(ROOT)}: {ONDEVICE_ZIP.stat().st_size / 1e6:.0f} MB ({size / 1e6:.0f} MB unpacked, stamp {stamp})")
 
 
+def push(serial):
+    """Test builds without the phone's recompile: the libmain.so the `build` step linked here (the
+    same runtime and generated code as the phone's own link) replaces the app's, through run-as (so
+    the installed APK must be built --debuggable). libmain.stamp stays, so the launcher keeps it;
+    a new APK with another ondevice.stamp makes the phone build its own again."""
+    library = CMAKE_BUILD / "libmain.so"
+    if not library.is_file():
+        sys.exit("build/android/cmake/libmain.so not built: run `python tools/android_build.py build` first")
+    adb = shutil.which("adb") or sys.exit("push: adb not found on PATH")
+    device = [adb] + (["-s", serial] if serial else [])
+    stripped = CMAKE_BUILD / "libmain.push.so"
+    run([NDK / "toolchains" / "llvm" / "prebuilt" / HOST / "bin" / ("llvm-strip" + EXE), "--strip-debug", "-o", stripped, library])
+    package = "io.github.vitomiguelf.crashottde"
+    run(device + ["shell", "am", "force-stop", package])
+    run(device + ["push", stripped, "/data/local/tmp/libmain.so"], stdout=subprocess.DEVNULL)
+    run(device + ["shell", f"chmod 644 /data/local/tmp/libmain.so && run-as {package} cp /data/local/tmp/libmain.so files/libmain.so"
+                  f" && run-as {package} chmod 700 files/libmain.so; rm -f /data/local/tmp/libmain.so"])
+    say(f"libmain.so ({stripped.stat().st_size / 1e6:.0f} MB) in the app on {serial or 'the phone'}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk", "turnip", "ffmpeg", "llvm", "dxc", "xenonrecomp", "toolchain"])
+    parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk", "turnip", "ffmpeg", "llvm", "dxc", "xenonrecomp", "toolchain", "push"])
     parser.add_argument("--debuggable", action="store_true",
                         help="android:debuggable APK, for profiling on the phone (simpleperf record --app <package>)")
+    parser.add_argument("-s", "--serial", help="push: the phone (adb -s)")
     args = parser.parse_args()
     step = args.step
+    if step == "push":
+        push(args.serial)
+        return
     if step == "turnip" or (step == "all" and MESA_SOURCE.is_dir() and not TURNIP_LIB.is_file()):
         turnip()
     if step == "ffmpeg" or (step == "all" and FFMPEG_SOURCE.is_dir() and not all(f.is_file() for f in FFMPEG_LIBS)):

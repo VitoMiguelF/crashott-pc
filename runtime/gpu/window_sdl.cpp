@@ -484,12 +484,25 @@ namespace gpu::window
             for (;;)
             {
                 SDL_Event event;
+#if defined(__ANDROID__)
+                // SDL's Android wait comes back at once over and over (a big core at 100% on the
+                // S20 FE, heat that lowers the GPU's clock): poll, then sleep a little.
+                bool any = false;
+                while (SDL_PollEvent(&event))
+                {
+                    OnEvent(window, event);
+                    any = true;
+                }
+                if (!any)
+                    SDL_Delay(4);
+#else
                 if (SDL_WaitEventTimeout(&event, 100))
                 {
                     do
                         OnEvent(window, event);
                     while (SDL_PollEvent(&event));
                 }
+#endif
                 uint64_t now = SDL_GetTicks();
                 if (now >= nextCursor)
                 {

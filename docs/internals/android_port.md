@@ -231,6 +231,28 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     main menu, slots, HUB, gameplay HUD and pause look the same with `CRASH_HUD_FOLD=0` (HUD_GS)
     and with the fold (`build\hud_fold\`). `CRASH_HUD_FOLD_TRACE=N` logs the draws left to HUD_GS
     (quads whose two triangles differ). The CP log's work line counts them per frame.
+  - **Gameplay 42 ms -> 30 ms per frame (2026-10-27): the CPU waited for every frame's GPU work.**
+    L1_E1 at 1600x720 ran at 24 fps with or without the fps limit, the GPU only 80-85% busy.
+    `simpleperf record --trace-offcpu` put 75% of the command processor in
+    `BeginCommandBuffer -> Collect -> vkGetSemaphoreCounterValue -> vk_sync_timeline_get_value ->
+    kgsl_syncobj_wait -> IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID`: Turnip's timeline semaphores are
+    emulated on kgsl, a poll is a wait with a zero timeout, and this kernel blocks on a zero-timeout
+    wait until the timestamp retires. So each poll waited for the frame just submitted, the CPU's
+    recording (~6 ms) and the GPU (~34 ms) ran one after the other, and the game thread spun in
+    D3D's fence wait (`sub_8226D968`) behind them. (The menus' 97% in `kgsl_syncobj_wait` above was
+    this too.) The `turnip` step now patches Mesa's `wait_timestamp_safe`: no time left reads the
+    retired timestamp (`IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_CTXTID`) instead. Also, SDL's
+    `SDL_WaitEventTimeout` on Android came back at once in a loop (a big core at 100%, heat that
+    cut the GPU from 587 to 441 MHz after a few minutes): the window thread polls and sleeps 4 ms
+    there (`window_sdl.cpp`). S20 FE, L1_E1: submit 35 ms -> 0.2 ms per frame; at the 30 fps limit
+    a steady 33.3 ms; unlimited (`CRASH_FPS_LIMIT_AT=0:0`) 30 ms per frame with the GPU 99% busy at
+    587 MHz, so now GPU-bound: 18 ms of the GPU's 30 is the scene, 418 draws of one shader pair
+    (`vs aecab5202246c470` / `ps bc5a024f96d50e67`). `TU_DEBUG=sysmem`/`gmem` (property
+    `debug.mesa.tu_debug`), anisotropic 1x, no motion blur or depth of field changed nothing.
+  - **Test builds without the phone's recompile:** `android_build.py build` links
+    `build/android/cmake/libmain.so` here (the same runtime and generated code), and
+    `android_build.py push -s <serial>` puts it in the app through `run-as` (APK built
+    `--debuggable`), keeping `libmain.stamp`, so the launcher doesn't rebuild it.
   - **Tab S10 Ultra (Mali-G720 MC12, driver r44p1, Vulkan 1.3.247), same day: the game runs**, the
     opening cutscene at a steady 60 fps (16.67 ms per frame, the limit) at 1154x720 on its
     2960x1848 screen, with the dump pushed (3.0 GB over adb Wi-Fi in 66 s) and the S20 FE's SPIR-V
