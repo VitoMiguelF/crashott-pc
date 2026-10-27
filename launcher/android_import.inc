@@ -452,6 +452,16 @@ void DrawImportModal()
             DrawUi(std::string(T({ "Subtitles not downloaded: ", "Legendas não baixadas: " })) + g_subtitles.error +
                        T({ " (SETUP > EXTRA DATA tries again)", " (INSTALAÇÃO > DADOS EXTRAS tenta de novo)" }),
                    cx, t + 185.0f, 18.0f, IM_COL32(255, 200, 170, 235), 0.5f, width);
+        // Straight to the build (the dump was in place): SUBTITLES asked here, downloaded once built.
+        if (g_subtitles.state == SubtitlesState::Idle)
+        {
+            if (g_build.state != BuildState::Done)
+                DrawSubtitlesToggle(cx, t + 250.0f);
+            else if (g_wantSubtitles && !SubtitlesInstalled())
+                StartSubtitles();
+            else
+                g_subtitles.state = SubtitlesState::Done;  // nothing to download: no more checks
+        }
         // The launcher starts again once the subtitles are in too; a failed download is shown
         // for a few seconds first.
         if (g_restart > 0 && g_subtitles.state == SubtitlesState::Downloading)

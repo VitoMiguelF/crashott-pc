@@ -339,12 +339,16 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     release asset `CrashRecomp-v1.07-legendas.zip` (the tag of `setup.py` `SUBTITLES_TAG`, bumped
     together), checks it against the release's `SHA256SUMS.txt` and unpacks it into the files
     folder (`private/` → `data/`, `languages/` as it is; `data/subtitles/release.txt` names the
-    tag), while the dump is copied and the game built; the launcher starts again only once it is
+    tag), while the dump is copied and the game built (a dump already in place: the toggle is on
+    the build's screen, the download once built); the launcher starts again only once it is
     in, and a failed download says so for 5 s (SETUP > EXTRA DATA downloads it later, its own
     dialog). The manifest asks for `INTERNET`. The language packs (`languages/`, without the
     downloaded `subtitles.txt`) were never in the APK: now in `assets/languages/`, copied into
     the files folder at each start (`LauncherActivity.onCreate`). The other options don't apply:
     no HD AI Remaster on Android, no shortcuts, the dump is always copied, no asset export.
+    Checked on the Tab S10 Ultra (a dump already in place): the toggle on the build's screen,
+    the game built, then `english.txt` and `pt-br/subtitles.txt` in 1 s, the launcher again with
+    the pt-br pack found.
   - **Next on the phone:** the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
     it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
