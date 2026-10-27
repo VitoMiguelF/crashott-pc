@@ -66,12 +66,13 @@ namespace
     }
 
     // ---- Vulkan driver -------------------------------------------------------------------------
-    // The folder of libmain.so: the APK's native library folder (extractNativeLibs="true", which
-    // libadrenotools needs: its hooks are loaded from there).
+    // The APK's native library folder (extractNativeLibs="true", which libadrenotools needs: its
+    // hooks are loaded from there): libSDL3.so's. Not libmain.so's, which the phone builds from the
+    // player's dump into the app's internal storage (LauncherActivity's installer).
     std::string NativeLibraryDir()
     {
         Dl_info info{};
-        if (!dladdr(reinterpret_cast<void*>(&NativeLibraryDir), &info) || !info.dli_fname)
+        if (!dladdr(reinterpret_cast<void*>(&SDL_GetVersion), &info) || !info.dli_fname)
             return {};
         std::string path = info.dli_fname;
         return path.substr(0, path.rfind('/') + 1);

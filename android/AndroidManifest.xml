@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The app tools/android_build.py assembles (docs/internals/android_port.md). SDL3's Java glue
-     (org.libsdl.app, from the SDL source) plus CrashActivity; the game is lib/arm64-v8a/libmain.so,
-     built on the player's PC from their own dump: this APK is personal and is never published. -->
+     (org.libsdl.app, from the SDL source) plus LauncherActivity (the launcher, the app's first
+     screen, libcrashlauncher.so) and CrashActivity (the game, libmain.so, built on the phone from
+     the player's own dump by GameInstaller.java: the APK holds no game code). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.vitomiguelf.crashottde"
     android:versionCode="1"
@@ -14,6 +15,8 @@
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- The subtitles, downloaded from the project's releases (Subtitles.java). -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:label="Crash of the Titans DE"
@@ -26,17 +29,28 @@
         android:appCategory="game"
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
-        <activity android:name=".CrashActivity"
+        <!-- The launcher, in a process of its own: the game starts in a fresh one. -->
+        <activity android:name=".LauncherActivity"
             android:exported="true"
-            android:launchMode="singleInstance"
-            android:alwaysRetainTaskState="true"
+            android:process=":launcher"
+            android:launchMode="singleTask"
             android:screenOrientation="sensorLandscape"
-            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
-            android:preferMinimalPostProcessing="true">
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- The game, started by the launcher's PLAY. A task affinity of its own: in the recent
+             apps beside the launcher's (the same affinity would drop one of them from the list),
+             and LauncherActivity finds it there when the icon is tapped with the game running. -->
+        <activity android:name=".CrashActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity="io.github.vitomiguelf.crashottde.game"
+            android:alwaysRetainTaskState="true"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:preferMinimalPostProcessing="true" />
     </application>
 </manifest>

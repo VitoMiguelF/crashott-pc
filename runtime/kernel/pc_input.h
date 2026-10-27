@@ -59,6 +59,12 @@ namespace input::pc
     uint16_t MenuKeys(const std::vector<uint16_t>& scriptKeys);
     // The frontend is showing a menu (main menu, pause, save slots...), not gameplay or a cutscene.
     bool InMenus();
+    // The app went to the background (gpu/window.h, Suspended): in gameplay, the game's next reads
+    // get START, so it comes back on its pause menu. Pending until that press is over (or the game
+    // turned out not to be in gameplay); the window holds the game only after it.
+    void RequestBackgroundPause();
+    bool BackgroundPausePending();
+    void CancelBackgroundPause();  // the game didn't read its pad in time: no press after the return
     // The game's Frontend tree node shown now (frontend_hooks.cpp, every frame it runs).
     void NoteFrontendNode(uint32_t node);
 

@@ -127,7 +127,11 @@ namespace settings
         WindowMode window = WindowMode::Windowed;
         bool vsync = false;  // off = as before (Present without waiting for the vblank)
         int fpsLimit = 30;   // 30 (the original), 60, 120 or 0 = no limit (gpu::SetFrameLimit)
+#if defined(__ANDROID__)
+        int renderHeight = 540;  // a phone's GPU: 0.75x the game's lines (docs/internals/android_port.md)
+#else
         int renderHeight = 720;  // internal resolution (Resolutions(aspect)), with `aspect`
+#endif
         Aspect aspect = Aspect::Auto;
         bool hud16x9 = true;      // video.hud_16_9: the HUD and menus in the middle 16:9 area (else the HUD corners at the screen's edges)
         OverlayMode overlay = OverlayMode::Off;

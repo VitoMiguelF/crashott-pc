@@ -437,6 +437,8 @@ namespace gpu::rhi
             bool CreateLogicalDevice();
             bool CreateSwapchain(uint32_t width, uint32_t height);
             void DestroySwapchainViews();
+            bool KeepSurface();
+            VulkanTexture* UnshownBackBuffer();
             void NoteSuboptimal(const char* call);
             void LogDiagnostics();
             bool CreateDrawLayouts();
@@ -557,6 +559,7 @@ namespace gpu::rhi
             VulkanTexture* m_fallbackBackBuffer = nullptr;    // drawn into when no image could be acquired
             uint32_t m_imageIndex = UINT32_MAX;               // acquired, not presented yet
             bool m_swapchainDirty = false;
+            bool m_surfaceLost = false;  // VK_ERROR_SURFACE_LOST_KHR: made again (KeepSurface)
             uint32_t m_suboptimalStreak = 0;  // frames in a row with VK_SUBOPTIMAL_KHR (NoteSuboptimal)
             bool m_frameSuboptimal = false;
             bool m_vsync = false;
@@ -3611,7 +3614,7 @@ float4 main(uint id : SV_VertexID) : SV_Position
 
         bool VulkanDevice::Resize(uint32_t width, uint32_t height)
         {
-            if (!width || !height)
+            if (!width || !height || !m_surface)
                 return false;
             if (!m_swapchainDirty && width == m_swapchainExtent.width && height == m_swapchainExtent.height)
                 return false;
@@ -3639,10 +3642,65 @@ float4 main(uint id : SV_VertexID) : SV_Position
                     m_swapchainExtent.height);
         }
 
+        // The app in the background (window.h, Suspended): Android takes the window's surface away, so
+        // the swap chain and the surface go, and new ones are made once it's back (the window then
+        // has another ANativeWindow). False while there is none: the frame isn't shown.
+        bool VulkanDevice::KeepSurface()
+        {
+            if ((window::Suspended() || m_surfaceLost) && m_surface)
+            {
+                WaitIdle();
+                vkQueueWaitIdle(m_queue);
+                DestroySwapchainViews();
+                if (m_swapchain)
+                    vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
+                m_swapchain = VK_NULL_HANDLE;
+                vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+                m_surface = VK_NULL_HANDLE;
+                Log("[vulkan] window surface released (%s)", m_surfaceLost ? "lost" : "the app in the background");
+            }
+            if (m_surface)
+                return true;
+            if (window::Suspended())
+                return false;
+            if (!window::CreateVulkanSurface(m_instance, &m_surface))
+            {
+                m_surface = VK_NULL_HANDLE;
+                return false;
+            }
+            m_surfaceLost = false;
+            if (!CreateSwapchain(m_swapchainExtent.width, m_swapchainExtent.height))
+                return false;
+            Log("[vulkan] window surface made again");
+            return true;
+        }
+
+        // A texture of the back buffer's format for a frame that can't be shown.
+        VulkanTexture* VulkanDevice::UnshownBackBuffer()
+        {
+            m_stats.unshownFrames++;
+            m_imageIndex = UINT32_MAX;
+            if (!m_fallbackBackBuffer || m_fallbackBackBuffer->desc.width != m_swapchainExtent.width ||
+                m_fallbackBackBuffer->desc.height != m_swapchainExtent.height)
+            {
+                DestroyTexture(m_fallbackBackBuffer);
+                TextureDesc desc;
+                desc.width = m_swapchainExtent.width;
+                desc.height = m_swapchainExtent.height;
+                desc.format = m_backBufferFormat;
+                desc.usage = USAGE_RENDER_TARGET;
+                desc.name = "unshown back buffer";
+                m_fallbackBackBuffer = static_cast<VulkanTexture*>(CreateTexture(desc));
+            }
+            return m_fallbackBackBuffer;
+        }
+
         Texture* VulkanDevice::BeginPresent()
         {
             if (m_imageIndex != UINT32_MAX)
                 return m_swapchainImages[m_imageIndex].get();
+            if (!KeepSurface() || !m_swapchain)
+                return UnshownBackBuffer();
             if (m_swapchainDirty)
                 Resize(m_swapchainExtent.width, m_swapchainExtent.height);
             uint32_t slot = m_acquireIndex;
@@ -3660,22 +3718,10 @@ float4 main(uint id : SV_VertexID) : SV_Position
             else if (result != VK_SUCCESS)
             {
                 Check(result, "vkAcquireNextImageKHR");
-                m_stats.unshownFrames++;
-                m_imageIndex = UINT32_MAX;
+                if (result == VK_ERROR_SURFACE_LOST_KHR)
+                    m_surfaceLost = true;
                 // This frame is drawn into a texture of the back buffer's format and not shown.
-                if (!m_fallbackBackBuffer || m_fallbackBackBuffer->desc.width != m_swapchainExtent.width ||
-                    m_fallbackBackBuffer->desc.height != m_swapchainExtent.height)
-                {
-                    DestroyTexture(m_fallbackBackBuffer);
-                    TextureDesc desc;
-                    desc.width = m_swapchainExtent.width;
-                    desc.height = m_swapchainExtent.height;
-                    desc.format = m_backBufferFormat;
-                    desc.usage = USAGE_RENDER_TARGET;
-                    desc.name = "unshown back buffer";
-                    m_fallbackBackBuffer = static_cast<VulkanTexture*>(CreateTexture(desc));
-                }
-                return m_fallbackBackBuffer;
+                return UnshownBackBuffer();
             }
             m_acquireIndex = (m_acquireIndex + 1) % ACQUIRE_SEMAPHORES;
             m_acquireValues[slot] = UINT64_MAX;  // set by the submission that waits on it
@@ -3726,8 +3772,8 @@ float4 main(uint id : SV_VertexID) : SV_Position
                     m_swapchainDirty = true;
                 else if (result == VK_SUBOPTIMAL_KHR)
                     NoteSuboptimal("vkQueuePresentKHR");
-                else
-                    Check(result, "vkQueuePresentKHR");
+                else if (!Check(result, "vkQueuePresentKHR") && result == VK_ERROR_SURFACE_LOST_KHR)
+                    m_surfaceLost = true;
                 m_imageIndex = UINT32_MAX;
                 if (!m_frameSuboptimal)
                     m_suboptimalStreak = 0;

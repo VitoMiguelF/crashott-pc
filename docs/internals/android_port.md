@@ -190,7 +190,8 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
 
   - **Touch controls (same day).** `settings/touch_controls.*`, Android only (`CRASH_TOUCH_CONTROLS`
     0/1 overrides): in gameplay a floating left stick (a finger on the left 45% of the screen puts
-    its centre there; it follows a finger past full deflection), A/B/X/Y in the pad's diamond, RT
+    its centre there; it stays there, the knob stopping at the edge; a dead zone of 8 % of the
+    range, then straight to 40 %, where the game starts to move Crash), A/B/X/Y in the pad's diamond, RT
     and a spin button (the stick going round with X tapped, as the keyboard's spin attack), START
     and BACK at the top right, and a drag on the rest of the right half turns the camera. Drawn
     through three overlay bitmap channels, the game's own icons on translucent discs, re-uploaded
@@ -230,6 +231,62 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     main menu, slots, HUB, gameplay HUD and pause look the same with `CRASH_HUD_FOLD=0` (HUD_GS)
     and with the fold (`build\hud_fold\`). `CRASH_HUD_FOLD_TRACE=N` logs the draws left to HUD_GS
     (quads whose two triangles differ). The CP log's work line counts them per frame.
+  - **Gameplay 42 ms -> 30 ms per frame (2026-10-27): the CPU waited for every frame's GPU work.**
+    L1_E1 at 1600x720 ran at 24 fps with or without the fps limit, the GPU only 80-85% busy.
+    `simpleperf record --trace-offcpu` put 75% of the command processor in
+    `BeginCommandBuffer -> Collect -> vkGetSemaphoreCounterValue -> vk_sync_timeline_get_value ->
+    kgsl_syncobj_wait -> IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID`: Turnip's timeline semaphores are
+    emulated on kgsl, a poll is a wait with a zero timeout, and this kernel blocks on a zero-timeout
+    wait until the timestamp retires. So each poll waited for the frame just submitted, the CPU's
+    recording (~6 ms) and the GPU (~34 ms) ran one after the other, and the game thread spun in
+    D3D's fence wait (`sub_8226D968`) behind them. (The menus' 97% in `kgsl_syncobj_wait` above was
+    this too.) The `turnip` step now patches Mesa's `wait_timestamp_safe`: no time left reads the
+    retired timestamp (`IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_CTXTID`) instead. Also, SDL's
+    `SDL_WaitEventTimeout` on Android came back at once in a loop (a big core at 100%, heat that
+    cut the GPU from 587 to 441 MHz after a few minutes): the window thread polls and sleeps 4 ms
+    there (`window_sdl.cpp`). S20 FE, L1_E1: submit 35 ms -> 0.2 ms per frame; at the 30 fps limit
+    a steady 33.3 ms; unlimited (`CRASH_FPS_LIMIT_AT=0:0`) 30 ms per frame with the GPU 99% busy at
+    587 MHz, so now GPU-bound: 18 ms of the GPU's 30 is the scene, 418 draws of one shader pair
+    (`vs aecab5202246c470` / `ps bc5a024f96d50e67`). `TU_DEBUG=sysmem`/`gmem` (property
+    `debug.mesa.tu_debug`), anisotropic 1x, no motion blur or depth of field changed nothing.
+  - **Test builds without the phone's recompile:** `android_build.py build` links
+    `build/android/cmake/libmain.so` here (the same runtime and generated code), and
+    `android_build.py push -s <serial>` puts it in the app through `run-as` (APK built
+    `--debuggable`), keeping `libmain.stamp`, so the launcher doesn't rebuild it.
+  - **Resolutions below 720 lines on Android (2026-10-27).** The GPU time is all pixels and
+    passes, nothing wasted on the 2048-row EDRAM targets: the 2D passes are scissored to the 720
+    lines, and clamping every pass's `renderArea` to 720 rows changed nothing (Turnip draws these
+    passes to memory, not in its tile memory). The 3.2 ms 2D draw (`ps 45775928e9ebd556`) is a
+    full-screen pass of 18 texture reads. So the phone's resolution list (`settings.cpp`,
+    `AutoResolutions`) now starts at 360 lines: 360, 480, 540, then 720... (`video.resolution` takes
+    heights from 360). A render scale under 1 needed nothing else: the present pass scales the
+    picture to the screen (linear). S20 FE, L1_E1, no fps limit, phone warm: 1600x720 ~32 ms,
+    1200x540 22.7 ms, 1066x480 20.6 ms, 800x360 15.2 ms per frame. The default on Android is 540
+    lines (`settings.h`, `renderHeight`); a settings.toml already written keeps its own.
+  - **A hitch at every touch-button press (2026-10-27).** Each press and release drew the action
+    buttons' bitmap again on the render thread, and each button's Crash shadow is a distance field
+    of curves and ellipses evaluated per pixel: ~86 ms frames (S20 FE, 20 presses: 40 frames over
+    50 ms). The shadow's coverage is now worked out once per button and size (`ShadowMask`), a
+    press only blends the plate's colours; the stick's base and knob are two bitmaps
+    (`BITMAP_TOUCH_KNOB`), so a moving finger only moves the knob's. Same 20 presses: no frame over
+    31 ms.
+  - **Tried at 540 lines, nothing kept (2026-10-27).** S20 FE, L1_E1, no fps limit: GPU 20.5 ms
+    per frame, the scene 12.3 ms of it (the main pair `vs aecab5202246c470` /
+    `ps bc5a024f96d50e67`). Measured with `userdata/shaderoverride` and test builds:
+    - 4 interpolators instead of 16 for the main pair (it uses 4): 12.32 vs 12.35 ms, nothing.
+    - Pre-rotating the swap chain: the surface reports ROTATE_90, but `dumpsys SurfaceFlinger`
+      shows our layer composited by the display hardware (`composition type=DEVICE`), so the
+      rotation costs the GPU nothing.
+    - `SampleGrad` (the gradient fetches, `FindGradientFetches`) is slow on Adreno: the main PS
+      with `Sample` 1.3 ms faster, with every gradient fetch sampled at the top of main() through
+      `SampleBias` (implicit derivatives, bias `log2` of the gradient scale) GPU 19.3 ms. But
+      that build lost the device (`VK_ERROR_DEVICE_LOST` at submit) in 4 of 4 runs, between frames
+      780 and 1860; the same build without the change ran twice to frame 4680. No kgsl detail
+      reaches logcat. `SampleLevel` with a computed LOD would avoid derivatives but drops the
+      anisotropic filtering (16x by default).
+    - The Xenos multiply (`xe_mul`: 0 times anything is 0) as `m = a * b; isnan(m) ? 0 : m`:
+      another 1.5 ms on the main PS (GPU 17.7 ms with the hoist above), but those runs lost the
+      device as well, and the plain product too (one run), so it was not kept either.
   - **Tab S10 Ultra (Mali-G720 MC12, driver r44p1, Vulkan 1.3.247), same day: the game runs**, the
     opening cutscene at a steady 60 fps (16.67 ms per frame, the limit) at 1154x720 on its
     2960x1848 screen, with the dump pushed (3.0 GB over adb Wi-Fi in 66 s) and the S20 FE's SPIR-V
@@ -275,6 +332,86 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     the S20 FE by touch: a finger dragged over the five save slots selects each under it, slot 1
     loads, the opening cutscene skips by holding, and SAVE AND EXIT -> YES in the pause works;
     on a PC at 21:9 and 16:9 (`mouse_menus`, all checks pass).
+  - **The launcher first (single APK, step 1; same day):** the app opens the PC launcher
+    (`launcher/launcher.cpp`, the Linux SDL3 + Dear ImGui code) built as `libcrashlauncher.so`,
+    in `LauncherActivity`, a process of its own (`:launcher`), with the game's own art from the
+    dump. PLAY calls `LauncherActivity.startGame` by JNI, which starts `CrashActivity` (the game,
+    `libmain.so`) in the app's main process, and the launcher closes. It is full screen; touches
+    are the mouse; the text font is Android's Roboto. The rows that don't exist on Android are
+    gone, in the launcher and in the game's SETTINGS (`options.cpp`): HD AI Remaster, DLSS / FSR
+    and its mode and sharpness, and the window mode. Checked on the S20 FE: the launcher opens
+    from the app icon, the ADVANCED tabs show, PLAY starts the game.
+  - **The dump imported on the phone (single APK, step 2; same day):** while the app's game folder (`game/` in the external files folder) has no dump,
+    the launcher opens on a question (`launcher/android_import.inc`); GAME FOLDER in SETUP and PLAY
+    without a game ask again. CHOOSE FOLDER opens Android's folder picker
+    (`ACTION_OPEN_DOCUMENT_TREE`: no storage permission); `LauncherActivity.java` then, on a thread
+    of its own: takes the picked folder or the one inside it with `default.xex`, checks the
+    installer's list (`DUMP_FILES` + `shaders/`, now in `launcher.cpp` for both), the free space,
+    copies `default.xex` first and compares its SHA-256 (`DUMP_XEX_SHA256`) before the rest, then
+    copies everything (`.part` then rename; files of the same size already there are kept, so a
+    stopped import goes on). The launcher polls its state by JNI (a local frame per call: the
+    thread never returns to Java), draws the progress with CANCEL, words the errors (not the game,
+    incomplete, wrong version, no space, I/O) and, once done, starts itself again in a new
+    `:launcher` process (`restartLauncher`: the activity started while in front, then the process
+    ends), which reads the art of the new dump. Checked on the S20 FE from a fresh install: the
+    question on the first start, the picker (Android refuses the storage root and `Download`
+    itself, so the dump goes in a folder such as `Download/CrashDump`), 3.2 GB copied in about 8 s
+    (same SHA-256), the launcher back with the game's art. PLAY then gave an orange screen with
+    sound: a fresh install has no SPIR-V cache and the APK has no shader compiler ("dxcompiler not
+    found"), which the `dxc` step below is for.
+  - **The compilers for the phone (`android_build.py llvm` / `dxc`):** the sources in
+    `build/downloads/android` (llvm-project 21.1.8, DirectXShaderCompiler with its submodules; never
+    in git); each builds its table generators for the PC first, then clang + lld (AArch64 only) or
+    `libdxcompiler.so` with the NDK. They run with few jobs at a low priority (`CRASH_BUILD_JOBS`):
+    at full speed the clang build made the PC unusable. clang (80 MB stripped) and lld build: PIE
+    AArch64 programs that need only Android's libc / libm / libdl. DXC's table generators can't be
+    built with MinGW (its Windows code expects MSVC) and need MSVC with ATL (`atlbase.h`); with a
+    translated MSVC, CMake's rc.exe wrapper breaks on the localized "Note: including file:" prefix
+    (`CMAKE_NINJA_CMCLDEPS_RC=OFF`). `libdxcompiler.so` builds (446 MB, 26 MB stripped; libc / libm
+    / libdl only, `DxcCreateInstance` exported, 16 KB pages) and the `apk` step packs it, so a
+    fresh install compiles its own shaders. Checked on the S20 FE after the fresh install (no
+    SPIR-V cache): the logo videos and the frontend draw, 31 shaders compiled on the phone, none
+    failed (it was the orange screen before).
+  - **The single APK builds the game on the phone (same day):** `android_build.py` makes
+    `CrashOTTDE.apk` (85 MB) with no game code: the launcher, SDL3, DXC, Turnip, FFmpeg, clang /
+    lld / XenonRecomp as `lib*.so` programs (the native library folder is the one place an app may
+    run programs from) and `assets/ondevice.zip` (the `toolchain` step: the NDK's arm64 sysroot,
+    clang's headers and the NDK's compiler-rt, the runtime's objects as `libcrashruntime.a` with
+    libXexImage / libadrenotools, `config/Crash.toml` + switch tables, XenonRecomp's
+    `ppc_context.h`, simde; 19 MB). After the import the launcher shows BUILDING THE GAME
+    (`GameInstaller.java`): the zip unpacked into internal storage (again when its stamp changes),
+    links named `clang`, `clang++`, `ld.lld` to the programs (clang finds ld.lld by `-B`, lld its
+    flavour by its name), XenonRecomp run in its config's folder with the config's bare name
+    (it glues every path to that folder as text), every `.cpp` compiled on its own core, and
+    `libmain.so` linked as CMake links it on a PC, except that `--exclude-libs` names the
+    third-party archives (`ALL` would hide `SDL_main`, which now comes from an archive) and the
+    runtime goes in whole (`--whole-archive`: its hooks replace weak definitions). `CrashActivity`
+    loads `files/libmain.so`; the runtime finds the APK's library folder (Turnip, hooks) through
+    `libSDL3.so`. Checked on the S20 FE: XenonRecomp 2.5 s (its output identical to the PC's),
+    80 files compiled, built in 140 s from the launcher, then PLAY runs the game into the village.
+    The `build` step still compiles the runtime here against a local `generated/ppc` (only its
+    `ppc_config.h` / `ppc_context.h`): a machine without the dump (CI) can't make the APK yet.
+  - **Crash's shadow on the action buttons (same day):** the touch buttons A / B / X / Y / RT /
+    spin no longer show the pad's letters but Crash doing the action, a dark shadow on a
+    see-through fire plate (the frontend's shadow play): a jump over his dust, a punch, a flying
+    kick, a hand reaching for a mutant (B interacts and jacks), a guard behind a shield, a spin.
+    Drawn by `touch_controls.cpp` from ellipses, round strokes and polygons joined by their
+    distance field (one shape, one transparency: no darker overlaps); no game file.
+  - **The PC installer's options on the phone (same day):** the dump's screen has SUBTITLES: YES
+    (Y or a touch switches it, on by default as in CrashSetup): `Subtitles.java` downloads the
+    release asset `CrashRecomp-v1.07-legendas.zip` (the tag of `setup.py` `SUBTITLES_TAG`, bumped
+    together), checks it against the release's `SHA256SUMS.txt` and unpacks it into the files
+    folder (`private/` → `data/`, `languages/` as it is; `data/subtitles/release.txt` names the
+    tag), while the dump is copied and the game built (a dump already in place: the toggle is on
+    the build's screen, the download once built); the launcher starts again only once it is
+    in, and a failed download says so for 5 s (SETUP > EXTRA DATA downloads it later, its own
+    dialog). The manifest asks for `INTERNET`. The language packs (`languages/`, without the
+    downloaded `subtitles.txt`) were never in the APK: now in `assets/languages/`, copied into
+    the files folder at each start (`LauncherActivity.onCreate`). The other options don't apply:
+    no HD AI Remaster on Android, no shortcuts, the dump is always copied, no asset export.
+    Checked on the Tab S10 Ultra (a dump already in place): the toggle on the build's screen,
+    the game built, then `english.txt` and `pt-br/subtitles.txt` in 1 s, the launcher again with
+    the pt-br pack found.
   - **Next on the phone:** the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
     it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL
@@ -346,11 +483,12 @@ headers are the `ucontext` functions glibc has).
 
 ```
 APK (built on the player's PC, never published)
+├── lib/arm64-v8a/libcrashlauncher.so   the launcher (launcher/launcher.cpp), the app's first screen
 ├── lib/arm64-v8a/libmain.so    runtime + generated/ppc + XexImage (SDL_main), c++_static
 ├── lib/arm64-v8a/libSDL3.so    SDL 3.4.18 built with the NDK (AAudio, Android input, Vulkan)
 ├── lib/arm64-v8a/libavcodec…   FFmpeg LGPL, only the WMA Pro / XMA decoder (M6)
 ├── lib/arm64-v8a/libdxcompiler.so   DXC for Android (M4b, optional)
-├── classes.dex                 SDL's org.libsdl.app Java glue + a tiny CrashActivity
+├── classes.dex                 SDL's org.libsdl.app Java glue + LauncherActivity + CrashActivity
 ├── res/, AndroidManifest.xml   landscape, fullscreen, game controller and Vulkan features
 └── assets/                     languages/ and our own data (no game file)
 
@@ -358,7 +496,7 @@ APK (built on the player's PC, never published)
 ├── game/        the dump (default.xex, *.rcf, shaders/...), pushed by the PC tool
 ├── userdata/    settings.toml, saves, shadercache/ (pipeline cache is per device)
 ├── mods/
-└── data/        subtitles, symbols (derived from the dump: made on the PC, pushed)
+└── data/        subtitles (downloaded by the launcher from the project's releases)
 ```
 
 Everything the runtime finds "next to the exe" on PC (`paths.cpp`) comes from the app's external
@@ -487,11 +625,27 @@ phone builds its own.
   must stay on that thread. Today `window_sdl.cpp` creates the window on a dedicated window thread
   while the game runs on the main thread. On Android the roles swap: `SDL_main` keeps the window
   and the event loop, and starts the game on a new thread (64 MB stack, as for guest threads).
-- **Lifecycle:** `SDL_EVENT_WILL_ENTER_BACKGROUND` → pause the guest (stop the vblank interrupt
-  thread and the frame pacing, mute the audio stream), drop the swapchain and surface.
-  `DID_ENTER_FOREGROUND` → recreate the surface (`SDL_Vulkan_CreateSurface` again: the
-  `ANativeWindow` changes), the swapchain and the audio. `SDL_EVENT_LOW_MEMORY` → log. An
-  interrupted save is the main risk: pause only between guest frames.
+- **Lifecycle (done 2026-10-27).** Before it, the game kept running in the background (183% CPU
+  on the S20 FE), came back to a lost surface (`VK_ERROR_SURFACE_LOST_KHR` every frame: black),
+  and the app's icon opened a second launcher (orange) while the game's task was gone from the
+  recent apps (same task affinity as the launcher's). Now:
+  - `window_sdl.cpp` watches `SDL_EVENT_WILL/DID_ENTER_BACKGROUND` and `DID_ENTER_FOREGROUND`
+    with `SDL_AddEventWatch` (SDL's Android pump blocks for the whole pause, so `OnEvent` would only
+    see them on return): `window::Suspended()`, the touch fingers released.
+  - In gameplay (`input::pc::RequestBackgroundPause`: in a level, the frontend not on a menu or a
+    cinematic) the game's next reads get START, so it is on its own pause menu when it comes back;
+    on a menu or already paused nothing is pressed.
+  - `gpu::HoldWhileSuspended` (in VdSwap, between two frames) holds the game thread once that menu
+    is up (2 s at most); the vblank interrupts and the audio thread wait with it (the stall check
+    of the audio device starts over on return). The command processor then has nothing to do.
+  - `rhi_vulkan.cpp` `KeepSurface`: in the background (or after a lost surface) the swap chain and
+    the surface go; back in the foreground new ones are made on the window's new `ANativeWindow`.
+  - `CrashActivity` has a task affinity of its own; PLAY removes the launcher's task
+    (`finishAndRemoveTask`), and the launcher, opened by the icon with the game's task still
+    running, brings that task to the front and goes.
+  - S20 FE: HOME in L1_E1 → 6-10% CPU in the background (a few threads' periodic wakeups); the icon
+    and the recent apps both bring the game back on "P1 PAUSED / RESUME GAME" with the picture.
+    Not tried yet: the screen turned off (the phone's lock), a call. `SDL_EVENT_LOW_MEMORY`: nothing.
 - Landscape only (`sensorLandscape`), immersive fullscreen, display cutout `shortEdges`, refresh
   rate via `ANativeWindow_setFrameRate` (30/60).
 - `android:hasFragileUserData="true"`: when the player uninstalls, Android offers to keep
