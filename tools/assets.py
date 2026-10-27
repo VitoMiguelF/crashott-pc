@@ -58,11 +58,9 @@ def build_assettool(force=False):
     out.mkdir(parents=True, exist_ok=True)
     src = ROOT / "tools" / "assettool"
     script = out / "build.cmd"
-    script.write_text("\r\n".join([
-        "@echo off",
-        *buildenv.cmd_prelude(),
-        *buildenv.build_lines(src, out), ""]), encoding="ascii")
-    result = subprocess.run(["cmd", "/d", "/c", str(script)], capture_output=True, text=True, errors="replace")
+    buildenv.write_cmd(script, [*buildenv.cmd_prelude(), *buildenv.build_lines(src, out)])
+    result = subprocess.run(["cmd", "/d", "/c", str(script)], capture_output=True, text=True, encoding="utf-8",
+                            errors="replace")
     if result.returncode != 0:
         print(result.stdout[-4000:], result.stderr[-2000:])
         raise SystemExit("falha ao compilar tools/assettool")

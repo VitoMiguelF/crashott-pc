@@ -300,9 +300,8 @@ def build(config, run_dir):
             return False
         return True
     script = run_dir / "build.cmd"
-    lines = ["@echo off", *buildenv.cmd_prelude(),
-             *buildenv.build_lines(ROOT, resolve(b.get("build_dir", "build")), b.get("target", "CrashRecomp"))]
-    script.write_text("".join(line + "\r\n" for line in lines), encoding="ascii")
+    buildenv.write_cmd(script, [*buildenv.cmd_prelude(), *buildenv.build_lines(
+        ROOT, resolve(b.get("build_dir", "build")), b.get("target", "CrashRecomp"))])
     log_path = run_dir / "build.log"
     with open(log_path, "w", encoding="utf-8", errors="replace") as log:
         result = subprocess.run(["cmd", "/d", "/c", str(script)], stdout=log, stderr=subprocess.STDOUT, cwd=ROOT)

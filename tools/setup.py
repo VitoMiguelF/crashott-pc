@@ -212,7 +212,7 @@ _ENV = None
 def build_env():
     """The build environment: the toolchain's folders first on PATH (+ vcvars64.bat for msvc), computed once."""
     global _ENV
-    if _ENV is None and not WINDOWS:
+    if _ENV is None and (not WINDOWS or buildenv.toolchain_kind() == "bundled"):
         try:
             _ENV = buildenv.build_env()
         except SystemExit as error:
@@ -221,8 +221,9 @@ def build_env():
         lines = buildenv.cmd_prelude() + ["set"]
         script = ROOT / "build" / "setup_env.cmd"
         script.parent.mkdir(parents=True, exist_ok=True)
-        script.write_text("@echo off\r\n" + "\r\n".join(lines) + "\r\n", encoding="ascii")
-        out = subprocess.run(["cmd", "/d", "/c", str(script)], capture_output=True, text=True, errors="replace")
+        buildenv.write_cmd(script, lines)
+        out = subprocess.run(["cmd", "/d", "/c", str(script)], capture_output=True, text=True, encoding="utf-8",
+                             errors="replace")
         if out.returncode != 0:
             fail("vcvars64.bat falhou: confira a instalação do Visual Studio (C++)" if buildenv.toolchain_kind() == "msvc"
                  else "não consegui preparar o ambiente de compilação: " + (out.stdout + out.stderr).strip()[-300:])
@@ -602,7 +603,10 @@ def recompile():
     # This default.xex has no __savevmx_* / __restvmx_* helpers (config/Crash.toml): XenonRecomp reports
     # their missing addresses as "ERROR", which is expected; shown as a note instead.
     no_vmx = re.compile(r"ERROR: __(save|rest)vmx_\d+ address is unspecified")
-    for line in run([recomp, ROOT / "config" / "Crash.toml", XENON / "XenonUtils" / "ppc_context.h"], env=env, hide=no_vmx.fullmatch):
+    # Paths relative to ROOT (run's cwd): XenonRecomp reads its arguments as UTF-8, so an absolute path
+    # with an accent (C:\Users\João\...) can't be opened; Crash.toml's own paths are relative to it.
+    args = [Path("config") / "Crash.toml", (XENON / "XenonUtils" / "ppc_context.h").relative_to(ROOT)]
+    for line in run([recomp, *args], env=env, hide=no_vmx.fullmatch):
         if line.startswith("[phase] analysed"):
             progress(0.3)
     say("nota: este default.xex não tem as funções __savevmx/__restvmx (normal, veja config/Crash.toml)")

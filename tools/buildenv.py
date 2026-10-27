@@ -148,17 +148,24 @@ def vcvars():
 
 
 def build_env(kind=None):
-    """(POSIX) The environment the builds run in: this one with the toolchain's folders first on PATH.
-    Raises SystemExit when the bundled toolchain is missing."""
+    """The environment the builds run in: this one with the toolchain's folders first on PATH (POSIX, and
+    Windows with the bundled toolchain; msvc needs vcvars64.bat through cmd_prelude). Raises SystemExit
+    when the bundled toolchain is missing."""
     kind = kind or toolchain_kind()
     if kind == "bundled":
         gaps = portable.missing(parts=portable.BUILD_PARTS)
         if gaps:
             raise SystemExit(f"toolchain/ incompleta (falta {', '.join(gaps)}): use o instalador ou rode "
-                             "python3 tools/toolchain.py fetch")
+                             + ("python tools\\toolchain.py fetch" if WINDOWS else "python3 tools/toolchain.py fetch"))
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join([str(p) for p in path_prepend(kind)] + [env.get("PATH", "")])
     return env
+
+
+def write_cmd(path, lines):
+    """Writes a .cmd script in UTF-8 (chcp 65001 first): its folders may have accents (C:\\Users\\João)."""
+    Path(path).write_text("".join(line + "\r\n" for line in ["@echo off", "chcp 65001 >nul", *lines]),
+                          encoding="utf-8")
 
 
 def cmd_prelude(kind=None):
