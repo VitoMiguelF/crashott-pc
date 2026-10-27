@@ -2133,6 +2133,18 @@ As barreiras e os começos de instância medidos à parte (com `CRASH_GPU_PROFIL
 
 Medido com `tools\run_game.py vila_sem_cena` e `CRASH_SETTINGS="video.fps_limit=0;video.vsync=false"`, o "antes" com `CRASH_SHADER_STATE_MACHINE=1`.
 
+## Derivadas implícitas nos fetches de textura (2026-10-27) (`gpu/shader_translator.cpp`)
+
+**Medida antes** (os 24 PS do jogo em `shaders\*.out` + os 29 microcodes gravados na vila, `desempenho_vila_direto`; 39 shaders únicos): nenhum shader cai mais na máquina de estados (o fluxo estruturado acima resolve todos). 27 VS e 14 PS só têm exec/cond exec (linha reta, `EmitStructured`); 11 PS têm saltos (`simpleshaderunlitfp`, `pal*`, água, pelo, partículas, motion blur com um loop). Nenhum PS do jogo tem kill nem fim predicado. Dos 117 fetches 2D com LOD calculado, 21 usavam `SampleGrad` (coordenada ainda igual à entrada, derivada tirada no começo do `main()`) e 96 caíam em `SampleLevel(0)`, sem mip (coordenada calculada: `palreflectfp` 12, `DOF` 15, `shadowshaderfp` 9, os `pal*` 8 cada...).
+
+**Agora** (`FindImplicitFetches`): onde todos os pixels do quad 2x2 executam o fetch, ele usa `SampleBias` (derivadas implícitas) com o bias de antes (`xe_lod_bias` + o do fetch + `log2(xe_effect.w)`, o mesmo que a escala dos gradientes). Isso vale para qualquer exec de fluxo em linha reta e, no estruturado, fora dos loops e das instruções que algum salto pode pular, até o primeiro kill ou fim predicado. Condição de bool constant é uniforme; um fetch predicado, ou num exec predicado, amostra fora da condição e só escreve sob ela (o exec predicado guarda a condição num `bool xe_execN` e cada instrução vira um `if` próprio, porque um setp no meio do exec muda o `xe_p0`). Resultado: 82 fetches com `SampleBias`; ficam 1 `SampleGrad` (`waterfp`) e 34 `SampleLevel(0)` (os fetches atrás de saltos predicados dos `pal*` e 2 do motion blur no loop). O `simpleshaderunlitfp` (`bc5a024f`, o PS mais caro da vila) tem o fetch antes dos saltos e sai com `SampleBias`, sem as derivadas no `main()`.
+
+`CRASH_SHADER_DERIVATIVES=gradients` dá o HLSL de antes byte a byte (conferido nos 39 shaders, nas duas variantes); `=linear` usa as derivadas implícitas só nos shaders sem saltos nem loops. O cache de SPIR-V é por hash do HLSL, então os shaders novos são compilados de novo sozinhos (warmup de início e `--precompile-shaders`: 39 x 2 variantes, 0 falhas).
+
+**Imagem:** vila (`desempenho_vila_direto`) e menu (`menu`), novo contra antigo, diferenças do mesmo tamanho ou menores que antigo contra antigo (partículas, brilho do cristal e luz do menu são animados): vila 0,23 contra 0,19–0,21 de média, menu 1,2–1,7 contra 3,2–4,6. Os patches de motion blur, DOF e sombra continuam aplicando.
+
+**GPU no PC** (RTX 5080, vila parada, `CRASH_GPU_PROFILE=4500-10500`, duas execuções de cada): a 720p, 1,11 / 1,12 ms por quadro (nada, a GPU sobra); a 3840x2160 interna, 3,36 / 3,35 -> 3,30 / 3,29 ms (−1,8%: cena 1,475 -> 1,44 ms, passadas 2D 0,587 -> 0,564 ms). O fps é da CPU (~480 a 720p).
+
 ## Ultrawide e 16:10 (issue #2, 2026-10-25, branch `ultrawide`) (`gpu/widescreen.*`, `camera/hor_plus.cpp`, `gpu/xenos_renderer.cpp`, `gpu/shader_translator.cpp`, `settings/*`, `kernel/pc_input.cpp`, `gpu/window.cpp`)
 
 Pedido: VitoMiguelF/crashott-pc#2 ("Support for ultrawide (3440x1440)"). Objetivo: 21:9, 32:9 e 16:10 de verdade (Hor+), sem esticar nem pôr faixas no jogo.

@@ -285,7 +285,15 @@ namespace gpu
             // the instructions a forward jump can skip.
             std::vector<uint32_t> m_loopEnd;
             std::vector<uint8_t> m_skippable;
+            std::vector<uint8_t> m_inLoop;
             bool m_hasLoops = false;
+            // Pixel shader texture fetches sampled with implicit derivatives (by instruction slot):
+            // the ones every pixel of a quad reaches (FindImplicitFetches). m_execGuard: the
+            // variable holding the predicate condition of the exec being emitted, when its
+            // instructions are guarded one by one so such a fetch samples outside the condition.
+            std::vector<uint8_t> m_implicitFetch;
+            std::string m_execGuard;
+            uint32_t m_execGuards = 0;
 
             bool IsPixel() const { return m_stage == ShaderStage::Pixel; }
 
@@ -293,6 +301,9 @@ namespace gpu
             void ParseControlFlow();
             void ScanRegisters();
             void FindGradientFetches();
+            void FindImplicitFetches(bool structured);
+            bool ExecHasImplicitFetch(const Cf& cf) const;
+            void EmitExec(const Cf& cf, const std::string& condition);
             void EmitStructured();
             bool FindStructuredFlow();
             void EmitStructuredFlow();
@@ -406,7 +417,8 @@ namespace gpu
         }
 
         // Mipmapped sampling needs derivatives, which HLSL can't take inside the control flow the
-        // translated shaders run in (the state machine loop). The derivative of a coordinate that
+        // translated shaders run in (the state machine loop, the instructions a jump can skip, a
+        // loop: where FindImplicitFetches can't use implicit ones). The derivative of a coordinate that
         // is still exactly a pixel shader input (interpolator or param gen) can be taken at the top
         // of main() instead. Finds the 2D fetches with computed LOD whose coordinate components
         // are not written by any instruction that can run before them (earlier in control flow
@@ -505,6 +517,75 @@ namespace gpu
                     m_gradientRegisters |= 1u << reg;
                 }
             }
+        }
+
+        // Implicit derivatives (SampleBias) are defined where every pixel of the 2x2 quad runs the
+        // fetch, so they can replace FindGradientFetches' SampleGrad and the LOD 0 sampling of
+        // computed coordinates there: any exec of straight-line control flow, and of structured
+        // control flow those outside loops and that no jump can skip, up to the first kill or
+        // predicated end (pixels that left). Bool constant conditions are uniform; a predicated
+        // fetch, or one in a predicated exec, samples unconditionally and writes under the
+        // predicate. Cheaper than SampleGrad on Adreno (docs/internals/android_port.md).
+        // CRASH_SHADER_DERIVATIVES=gradients: the previous translation; =linear: only in shaders
+        // without loops or jumps.
+        void Translator::FindImplicitFetches(bool structured)
+        {
+            m_implicitFetch.assign(m_dwordCount / 3 + 1, 0);
+            static const char* s_mode = getenv("CRASH_SHADER_DERIVATIVES");
+            std::string mode = s_mode ? s_mode : "";
+            if (!IsPixel() || !structured || mode == "gradients" || (mode == "linear" && m_out.usesControlFlowMachine))
+                return;
+            bool exited = false;
+            for (uint32_t c = 0; c < uint32_t(m_cf.size()) && !exited; c++)
+            {
+                const Cf& cf = m_cf[c];
+                if (!cf.IsExec())
+                    continue;
+                bool reachedByAll = (c >= m_skippable.size() || !m_skippable[c]) && (c >= m_inLoop.size() || !m_inLoop[c]);
+                for (uint32_t i = 0; i < cf.ExecCount() && !exited; i++)
+                {
+                    uint32_t slot = cf.ExecAddress() + i;
+                    if (slot * 3 + 3 > m_dwordCount)
+                        break;
+                    const uint32_t* words = m_ucode + slot * 3;
+                    if ((cf.ExecSequence() >> (i * 2)) & 1)
+                    {
+                        Fetch fetch{ words[0], words[1], words[2] };
+                        if (reachedByAll && fetch.Opcode() == F_TEXTURE && fetch.TextureDimension() <= 1 && fetch.TextureUseComputedLod() &&
+                            !fetch.TextureUseRegisterLod())
+                        {
+                            m_implicitFetch[slot] = 1;
+                            m_gradientFetch[slot] = 0;
+                        }
+                    }
+                    else
+                    {
+                        Alu alu{ words[0], words[1], words[2] };
+                        exited = (alu.VectorOp() >= V_KILL_EQ && alu.VectorOp() <= V_KILL_NE) ||
+                                 (alu.ScalarOp() >= S_KILLS_EQ && alu.ScalarOp() <= S_KILLS_ONE);
+                    }
+                }
+                if (cf.EndsShader() && (cf.Opcode() == CF_COND_EXEC_PRED_END || !reachedByAll))
+                    exited = true;
+            }
+            // The input registers whose derivatives main() still takes.
+            m_gradientRegisters = 0;
+            for (uint32_t slot = 0; slot < uint32_t(m_gradientFetch.size()); slot++)
+            {
+                if (m_gradientFetch[slot])
+                    m_gradientRegisters |= 1u << Fetch{ m_ucode[slot * 3], m_ucode[slot * 3 + 1], m_ucode[slot * 3 + 2] }.SrcReg();
+            }
+        }
+
+        bool Translator::ExecHasImplicitFetch(const Cf& cf) const
+        {
+            for (uint32_t i = 0; i < cf.ExecCount(); i++)
+            {
+                uint32_t slot = cf.ExecAddress() + i;
+                if (slot < m_implicitFetch.size() && m_implicitFetch[slot] && ((cf.ExecSequence() >> (i * 2)) & 1))
+                    return true;
+            }
+            return false;
         }
 
         std::string Translator::BoolConstant(uint32_t index) const
@@ -1012,8 +1093,18 @@ namespace gpu
             uint32_t opcode = fetch.Opcode();
             uint32_t fc = fetch.TextureFetchConstant();
             uint32_t dimension = fetch.TextureDimension();
+            bool implicit = opcode == F_TEXTURE && m_currentSlot < m_implicitFetch.size() && m_implicitFetch[m_currentSlot];
 
-            if (fetch.IsPredicated())
+            // An implicit derivative fetch samples outside its exec's and its own predicate.
+            std::string writeCondition;
+            if (implicit)
+            {
+                writeCondition = m_execGuard;
+                if (fetch.IsPredicated())
+                    writeCondition += std::string(writeCondition.empty() ? "" : " && ") + (fetch.PredCondition() ? "xe_p0" : "!xe_p0");
+                Line("{");
+            }
+            else if (fetch.IsPredicated())
                 Line("if (%sxe_p0) {", fetch.PredCondition() ? "" : "!");
             else
                 Line("{");
@@ -1054,7 +1145,14 @@ namespace gpu
                 else if (dimension == 3)
                     Line("uvw.xy = uvw.xy - 1.0; // cube: face 0 only");
 
-                if (opcode == F_TEXTURE && m_currentSlot < m_gradientFetch.size() && m_gradientFetch[m_currentSlot])
+                if (implicit)
+                {
+                    // Mipmapped (and anisotropic) sampling with implicit derivatives
+                    // (FindImplicitFetches), biased as the gradient scale below.
+                    Line("float4 t = xe_swizzle(xe_t%u.SampleBias(xe_s%u, uvw.xy, xe_lod_bias(%u) + %.9g + log2(xe_effect.w)), %u);", fc, fc, fc,
+                         double(fetch.TextureLodBias()) / 16.0, fc);
+                }
+                else if (opcode == F_TEXTURE && m_currentSlot < m_gradientFetch.size() && m_gradientFetch[m_currentSlot])
                 {
                     // Mipmapped (and anisotropic) sampling with the derivatives of the input
                     // register taken in main() (FindGradientFetches), scaled by the LOD biases of
@@ -1081,7 +1179,17 @@ namespace gpu
                 {
                     Line("float4 t = 0.0;");
                 }
+                if (!writeCondition.empty())
+                {
+                    Line("if (%s) {", writeCondition.c_str());
+                    m_indent++;
+                }
                 WriteFetchResult(fetch, "t");
+                if (!writeCondition.empty())
+                {
+                    m_indent--;
+                    Line("}");
+                }
                 break;
             }
             case F_GET_GRADIENTS:
@@ -1130,7 +1238,16 @@ namespace gpu
                 const uint32_t* words = m_ucode + slot * 3;
                 m_currentSlot = slot;
                 m_out.instructionCount++;
-                if ((cf.ExecSequence() >> (i * 2)) & 1)
+                bool isFetch = ((cf.ExecSequence() >> (i * 2)) & 1) != 0;
+                // Guarded one by one (EmitExec): all but the implicit derivative fetches, which
+                // guard their result themselves.
+                bool guarded = !m_execGuard.empty() && !(isFetch && slot < m_implicitFetch.size() && m_implicitFetch[slot]);
+                if (guarded)
+                {
+                    Line("if (%s) {", m_execGuard.c_str());
+                    m_indent++;
+                }
+                if (isFetch)
                 {
                     Line("// %u: fetch %08X %08X %08X", slot, words[0], words[1], words[2]);
                     EmitFetch(Fetch{ words[0], words[1], words[2] });
@@ -1140,6 +1257,42 @@ namespace gpu
                     Line("// %u: alu %08X %08X %08X", slot, words[0], words[1], words[2]);
                     EmitAlu(Alu{ words[0], words[1], words[2] });
                 }
+                if (guarded)
+                {
+                    m_indent--;
+                    Line("}");
+                }
+            }
+        }
+
+        // An exec under `condition` (ExecCondition). A predicated one holding an implicit
+        // derivative fetch keeps its condition (taken when the exec starts) in a variable that
+        // guards each instruction, so the fetch can sample outside it.
+        void Translator::EmitExec(const Cf& cf, const std::string& condition)
+        {
+            uint32_t op = cf.Opcode();
+            if ((op == CF_COND_EXEC_PRED || op == CF_COND_EXEC_PRED_END) && ExecHasImplicitFetch(cf))
+            {
+                m_execGuard = "xe_exec" + std::to_string(m_execGuards++);
+                Line("bool %s = %s;", m_execGuard.c_str(), condition.c_str());
+                EmitExecBody(cf);
+                if (cf.EndsShader())
+                    Line("if (%s) return;", m_execGuard.c_str());
+                m_execGuard.clear();
+                return;
+            }
+            if (!condition.empty())
+            {
+                Line("if (%s) {", condition.c_str());
+                m_indent++;
+            }
+            EmitExecBody(cf);
+            if (cf.EndsShader())
+                Line("return;");
+            if (!condition.empty())
+            {
+                m_indent--;
+                Line("}");
             }
         }
 
@@ -1152,19 +1305,7 @@ namespace gpu
                 if (!cf.IsExec())
                     continue;
                 std::string condition = ExecCondition(cf);
-                if (!condition.empty())
-                {
-                    Line("if (%s) {", condition.c_str());
-                    m_indent++;
-                }
-                EmitExecBody(cf);
-                if (cf.EndsShader())
-                    Line("return;");
-                if (!condition.empty())
-                {
-                    m_indent--;
-                    Line("}");
-                }
+                EmitExec(cf, condition);
                 if (cf.EndsShader() && condition.empty())
                     break;
             }
@@ -1206,6 +1347,9 @@ namespace gpu
             }
             if (!stack.empty())
                 return false;
+            m_inLoop.assign(count, 0);
+            for (uint32_t i = 0; i < count; i++)
+                m_inLoop[i] = container[i] != UINT32_MAX;
             for (uint32_t i = 0; i < count; i++)
             {
                 if (m_cf[i].Opcode() != CF_COND_JMP)
@@ -1320,19 +1464,7 @@ namespace gpu
                     m_indent++;
                 }
                 std::string condition = ExecCondition(cf);
-                if (!condition.empty())
-                {
-                    Line("if (%s) {", condition.c_str());
-                    m_indent++;
-                }
-                EmitExecBody(cf);
-                if (cf.EndsShader())
-                    Line("return;");
-                if (!condition.empty())
-                {
-                    m_indent--;
-                    Line("}");
-                }
+                EmitExec(cf, condition);
                 if (!guard.empty())
                 {
                     m_indent--;
@@ -1606,9 +1738,11 @@ float4 xe_unpack32(uint4 w, bool isSigned, bool normalized)
             registerCount = std::max(registerCount, 16u);
 
         static const bool s_stateMachine = getenv("CRASH_SHADER_STATE_MACHINE") != nullptr;  // debug: every jump in the state machine
+        bool structured = !m_out.usesControlFlowMachine || (!s_stateMachine && FindStructuredFlow());
+        FindImplicitFetches(structured);
         if (!m_out.usesControlFlowMachine)
             EmitStructured();
-        else if (!s_stateMachine && FindStructuredFlow())
+        else if (structured)
             EmitStructuredFlow();
         else
             EmitStateMachine();
