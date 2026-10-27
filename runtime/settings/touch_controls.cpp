@@ -404,21 +404,46 @@ namespace
         return s;
     }
 
+    // The shadow's coverage (0..1) over a `size` x `size` button of radius `radius`: its distance
+    // field is costly (~17 ms a button on the S20 FE, on the render thread), so it is worked out
+    // once per button and size, and a press only blends colours (each one stalled a frame).
+    const std::vector<float>& ShadowMask(int button, int size, float radius)
+    {
+        struct Mask
+        {
+            int size = 0;
+            float radius = 0;
+            std::vector<float> cover;
+        };
+        static Mask masks[BUTTON_COUNT];
+        Mask& mask = masks[button];
+        if (mask.size == size && mask.radius == radius)
+            return mask.cover;
+        Silhouette shadow = MakeSilhouette(button);
+        // The picture a little inside the rim: 90 % of the plate.
+        const float units = radius / 46.0f * 0.9f;  // pixels per unit of the square
+        const float c = size * 0.5f;
+        mask.cover.assign(size_t(size) * size, 0.0f);
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float px = x + 0.5f - c, py = y + 0.5f - c;
+                if (std::hypot(px, py) > radius + 1.0f)
+                    continue;
+                float sd = shadow.Distance({ 50.0f + px / units, 50.0f + py / units }) * units;
+                mask.cover[size_t(y) * size + x] = std::clamp(0.5f - sd, 0.0f, 1.0f);
+            }
+        }
+        mask.size = size, mask.radius = radius;
+        return mask.cover;
+    }
+
     // The fire plate (see-through, brighter while held), its light rim and the shadow over it, as
     // a premultiplied `size` x `size` image of a button of radius `radius` pixels.
     menu_art::Image ActionButton(int button, int size, float radius, bool down, float edgeWidth)
     {
-        static Silhouette shapes[BUTTON_COUNT];
-        static bool made = false;
-        if (!made)
-        {
-            for (int b = 0; b < BUTTON_COUNT; b++)
-                shapes[b] = MakeSilhouette(b);
-            made = true;
-        }
-        const Silhouette& shadow = shapes[button];
-        // The picture a little inside the rim: 90 % of the plate.
-        const float units = radius / 46.0f * 0.9f;  // pixels per unit of the square
+        const std::vector<float>& shadow = ShadowMask(button, size, radius);
         const Color fire = down ? Color{ 255, 178, 60, 190 } : Color{ 239, 159, 39, 97 };
         const Color rim = down ? Color{ 255, 238, 200, 230 } : Color{ 250, 238, 218, 140 };
         constexpr float SHADOW_R = 44 / 255.0f, SHADOW_G = 26 / 255.0f, SHADOW_B = 4 / 255.0f, SHADOW_A = 0.8f;
@@ -439,8 +464,7 @@ namespace
                 float a = (rim.a * (1 - t) + fire.a * t) / 255.0f * cover;
                 float r = (rim.r * (1 - t) + fire.r * t) / 255.0f * a, g = (rim.g * (1 - t) + fire.g * t) / 255.0f * a,
                       b = (rim.b * (1 - t) + fire.b * t) / 255.0f * a;
-                float sd = shadow.Distance({ 50.0f + px / units, 50.0f + py / units }) * units;
-                float s = std::clamp(0.5f - sd, 0.0f, 1.0f) * std::clamp(-d - edgeWidth + 0.5f, 0.0f, 1.0f) * SHADOW_A;
+                float s = shadow[size_t(y) * size + x] * std::clamp(-d - edgeWidth + 0.5f, 0.0f, 1.0f) * SHADOW_A;
                 r = SHADOW_R * s + r * (1 - s), g = SHADOW_G * s + g * (1 - s), b = SHADOW_B * s + b * (1 - s), a = s + a * (1 - s);
                 auto byte = [](float v) { return uint32_t(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
                 image.px[size_t(y) * size + x] = byte(r) | byte(g) << 8 | byte(b) << 16 | byte(a) << 24;
@@ -497,23 +521,23 @@ namespace
         out.version++;
     }
 
-    // The stick: its base and the knob `kx`, `ky` pixels from the centre.
-    void RasterizeStick(const Layout& l, bool active, int kx, int ky, Drawn& out)
+    // The stick: its base, or the knob (two bitmaps: a moving finger only moves the knob's, nothing
+    // is drawn again).
+    void RasterizeStick(const Layout& l, bool active, bool knob, Drawn& out)
     {
-        int size = int(std::ceil((l.stickRange + l.knobR) * 2.0f)) + 4;
-        menu_art::Canvas canvas;
-        canvas.Reset(size, size);
         float edgeWidth = std::max(1.5f, 2.5f * l.s);
-        int baseSize = int(std::ceil(l.baseR * 2.0f)) + 2;
-        canvas.Blit(Disc(baseSize, l.baseR, Color{ 14, 8, 0, uint8_t(active ? 90 : 60) }, Color{ 236, 222, 190, uint8_t(active ? 130 : 90) },
-                         edgeWidth),
-                    (size - baseSize) / 2, (size - baseSize) / 2);
-        int knobSize = int(std::ceil(l.knobR * 2.0f)) + 2;
-        canvas.Blit(Disc(knobSize, l.knobR, active ? Color{ 236, 222, 190, 150 } : Color{ 236, 222, 190, 80 },
-                         active ? EDGE_DOWN : EDGE, edgeWidth),
-                    (size - knobSize) / 2 + kx, (size - knobSize) / 2 + ky);
-        canvas.Export(out.pixels);
-        out.w = out.h = size;
+        menu_art::Image image;
+        if (knob)
+            image = Disc(int(std::ceil(l.knobR * 2.0f)) + 2, l.knobR, active ? Color{ 236, 222, 190, 150 } : Color{ 236, 222, 190, 80 },
+                         active ? EDGE_DOWN : EDGE, edgeWidth);
+        else
+            image = Disc(int(std::ceil(l.baseR * 2.0f)) + 2, l.baseR, Color{ 14, 8, 0, uint8_t(active ? 90 : 60) },
+                         Color{ 236, 222, 190, uint8_t(active ? 130 : 90) }, edgeWidth);
+        menu_art::Canvas canvas;
+        canvas.Reset(image.w, image.h);
+        canvas.Blit(image, 0, 0);
+        canvas.Export(out.pixels);  // straight alpha, as DrawBitmap takes it
+        out.w = image.w, out.h = image.h;
         out.version++;
     }
 }
@@ -734,7 +758,7 @@ namespace touch_controls
         Layout l = MakeLayout(float(width), float(height));
         uint64_t size = uint64_t(width) << 32 | height;
 
-        static Drawn cluster, top, stick;
+        static Drawn cluster, top, base, knob;
         auto draw = [&](Drawn& d, uint32_t set, gpu::overlay::BitmapChannel channel) {
             uint64_t look = size * 31 + (uint64_t(set) << 16 | (pressed & set));
             if (d.look != look || d.pixels.empty())
@@ -758,13 +782,19 @@ namespace touch_controls
         }
         else
             ox = l.stickHome.x, oy = l.stickHome.y;
-        uint64_t look = size * 31 + (uint64_t(stickActive) << 40 | uint64_t(uint16_t(kx)) << 16 | uint16_t(ky));
-        if (stick.look != look || stick.pixels.empty())
+        uint64_t look = size * 31 + uint64_t(stickActive);
+        for (Drawn* d : { &base, &knob })
         {
-            RasterizeStick(l, stickActive, kx, ky, stick);
-            stick.look = look;
+            if (d->look != look || d->pixels.empty())
+            {
+                RasterizeStick(l, stickActive, d == &knob, *d);
+                d->look = look;
+            }
         }
-        int x = int(std::lround(ox)) - stick.w / 2, y = int(std::lround(oy)) - stick.h / 2;
-        gpu::overlay::DrawBitmap(width, height, stick.pixels.data(), stick.w, stick.h, x, y, stick.version, gpu::overlay::BITMAP_TOUCH_STICK);
+        int x = int(std::lround(ox)), y = int(std::lround(oy));
+        gpu::overlay::DrawBitmap(width, height, base.pixels.data(), base.w, base.h, x - base.w / 2, y - base.h / 2, base.version,
+                                 gpu::overlay::BITMAP_TOUCH_STICK);
+        gpu::overlay::DrawBitmap(width, height, knob.pixels.data(), knob.w, knob.h, x + kx - knob.w / 2, y + ky - knob.h / 2, knob.version,
+                                 gpu::overlay::BITMAP_TOUCH_KNOB);
     }
 }

@@ -58,7 +58,8 @@ namespace gpu::overlay
     // keyboard and delete prompt, the cutscenes' skip prompt, the console, the touch controls'
     // stick, buttons and top row) has its own upload buffer.
     enum BitmapChannel { BITMAP_SUBTITLES, BITMAP_SETTINGS, BITMAP_SAVE_SCREENS, BITMAP_SKIP_PROMPT, BITMAP_CONSOLE,
-                         BITMAP_TOUCH_STICK, BITMAP_TOUCH_BUTTONS, BITMAP_TOUCH_TOP, BITMAP_CHANNELS };
+                         BITMAP_TOUCH_STICK, BITMAP_TOUCH_KNOB, BITMAP_TOUCH_BUTTONS, BITMAP_TOUCH_TOP,
+                         BITMAP_CHANNELS };
     void DrawBitmap(uint32_t width, uint32_t height, const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, uint64_t version,
                     BitmapChannel channel = BITMAP_SUBTITLES);
 }

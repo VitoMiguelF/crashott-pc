@@ -261,7 +261,15 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     `AutoResolutions`) now starts at 360 lines: 360, 480, 540, then 720... (`video.resolution` takes
     heights from 360). A render scale under 1 needed nothing else: the present pass scales the
     picture to the screen (linear). S20 FE, L1_E1, no fps limit, phone warm: 1600x720 ~32 ms,
-    1200x540 22.7 ms, 1066x480 20.6 ms, 800x360 15.2 ms per frame. The default stays 720 lines.
+    1200x540 22.7 ms, 1066x480 20.6 ms, 800x360 15.2 ms per frame. The default on Android is 540
+    lines (`settings.h`, `renderHeight`); a settings.toml already written keeps its own.
+  - **A hitch at every touch-button press (2026-10-27).** Each press and release drew the action
+    buttons' bitmap again on the render thread, and each button's Crash shadow is a distance field
+    of curves and ellipses evaluated per pixel: ~86 ms frames (S20 FE, 20 presses: 40 frames over
+    50 ms). The shadow's coverage is now worked out once per button and size (`ShadowMask`), a
+    press only blends the plate's colours; the stick's base and knob are two bitmaps
+    (`BITMAP_TOUCH_KNOB`), so a moving finger only moves the knob's. Same 20 presses: no frame over
+    31 ms.
   - **Tab S10 Ultra (Mali-G720 MC12, driver r44p1, Vulkan 1.3.247), same day: the game runs**, the
     opening cutscene at a steady 60 fps (16.67 ms per frame, the limit) at 1154x720 on its
     2960x1848 screen, with the dump pushed (3.0 GB over adb Wi-Fi in 66 s) and the S20 FE's SPIR-V
