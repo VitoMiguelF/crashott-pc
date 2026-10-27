@@ -61,6 +61,10 @@ namespace gpu
     void SetFrameLimit(uint32_t fps);
     // VdSwap (game thread): with the 60/120 fps limits, waits until the frame's slot (SetFrameLimit).
     void PaceFrame();
+    // VdSwap (game thread): while the app is in the background (window.h, Suspended), holds the game
+    // here, between two frames, once its own pause menu is up (input::pc::RequestBackgroundPause);
+    // the vblank interrupts stop with it. Returns at once otherwise.
+    void HoldWhileSuspended();
 
     // Frames: VdSwap calls and PM4 swap packets the command processor executed.
     void CountVdSwap(uint32_t frontBuffer, uint32_t width, uint32_t height);

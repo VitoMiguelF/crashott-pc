@@ -3,6 +3,7 @@
 #include "wav_writer.h"
 #include "xma.h"
 #include "../diagnostics.h"
+#include "../gpu/window.h"
 #include "../settings/settings.h"
 
 #include <algorithm>
@@ -31,6 +32,7 @@ namespace
 
     Clock::time_point g_nextFrame;
     std::atomic<int64_t> g_lastSubmit;
+    int64_t g_resumed;  // ticks: the app came back from the background (the device was paused)
     std::atomic<uint64_t> g_callbacks;
     std::atomic<uint64_t> g_framesSubmitted, g_framesDropped, g_peakFrames;
     float g_peak;
@@ -78,6 +80,14 @@ namespace audio
 
     void WaitForNextFrame()
     {
+        // The app in the background (gpu/window.h): no game audio frames until it's back. The
+        // device was paused meanwhile, so it isn't taken for stalled at once on return.
+        if (gpu::window::Suspended())
+        {
+            gpu::window::WaitWhileSuspended();
+            g_nextFrame = Clock::now();
+            g_resumed = g_nextFrame.time_since_epoch().count();
+        }
         auto now = Clock::now();
         g_nextFrame += FRAME_PERIOD;
 
@@ -86,7 +96,7 @@ namespace audio
             int queued = device::Queued();
             int64_t ticks = now.time_since_epoch().count();
             bool submitting = ticks - g_lastSubmit < Ticks(std::chrono::milliseconds(100));
-            if (queued > 0 && ticks - device::LastPlayed() > Ticks(DEVICE_STALL))
+            if (queued > 0 && ticks - std::max(device::LastPlayed(), g_resumed) > Ticks(DEVICE_STALL))
             {
                 Log("[audio] the device stopped consuming frames; continuing without sound");
                 g_deviceActive = false;

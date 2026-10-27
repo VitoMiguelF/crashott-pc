@@ -32,6 +32,8 @@ namespace touch_controls
     // is not for the controls: the window then makes it the mouse (the menus).
     enum class Phase { Down, Move, Up };
     bool OnFinger(uint64_t finger, Phase phase, float x, float y);
+    // Every finger up (the app went to the background: Android may never send their ends).
+    void ReleaseAll();
 
     // Controller 0 as the game reads it (kernel/xam_input_imports.cpp, the pad alone, before the
     // keyboard), `poll` the game's own read: the controls' buttons and sticks on top.

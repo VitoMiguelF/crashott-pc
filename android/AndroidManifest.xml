@@ -41,10 +41,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- The game, started by the launcher's PLAY. -->
+        <!-- The game, started by the launcher's PLAY. A task affinity of its own: in the recent
+             apps beside the launcher's (the same affinity would drop one of them from the list),
+             and LauncherActivity finds it there when the icon is tapped with the game running. -->
         <activity android:name=".CrashActivity"
             android:exported="false"
             android:launchMode="singleInstance"
+            android:taskAffinity="io.github.vitomiguelf.crashottde.game"
             android:alwaysRetainTaskState="true"
             android:screenOrientation="sensorLandscape"
             android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"

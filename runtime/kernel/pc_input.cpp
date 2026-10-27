@@ -11,6 +11,7 @@
 #include "../settings/settings_menu.h"
 #include "../settings/touch_controls.h"
 #include "../dev/dev_console.h"
+#include "../dev/dev_tools.h"
 #include "../gpu/widescreen.h"
 #include "../gpu/window.h"
 #include "../platform/platform.h"
@@ -85,6 +86,7 @@ namespace input::pc
         // ExitSequencerDone, ExitArenaCinematic, ExitWhenDone1). Found by FindGameplayNodes.
         std::mutex g_nodesMutex;
         std::vector<uint32_t> g_gameplayNodes;
+        size_t g_runningNodes = 0;  // the first ones of g_gameplayNodes: the game running, not a cinematic
         // The pause menu (target of ExitPause): Esc resumes there (START), as it paused.
         std::vector<uint32_t> g_pauseNodes;
 
@@ -137,6 +139,7 @@ namespace input::pc
                 nodes.size(), running ? nodes[0] : 0u, nodes.size() - running, pause.empty() ? 0u : pause[0]);
             std::lock_guard lock(g_nodesMutex);
             g_gameplayNodes = std::move(nodes);
+            g_runningNodes = running;
             g_pauseNodes = std::move(pause);
             return false;  // nothing changed
         }
@@ -416,6 +419,44 @@ namespace input::pc
 
     // ---- game thread ----
 
+    namespace
+    {
+        // RequestBackgroundPause: 0 none, -1 asked (decided at the game's next read), n > 0 reads
+        // of START left.
+        std::atomic<int> g_backgroundPause{ 0 };
+        constexpr int PAUSE_READS = 4;
+
+        // Gameplay that START pauses: in a level, the frontend not on a menu or a cinematic (in
+        // gameplay its conditions stop running, or it sits on the game-running node).
+        bool CanPause()
+        {
+            if (!dev::skins::InLevel())
+                return false;
+            uint64_t last = g_frontendTime.load();
+            if (!last || plat::TickCountMs() - last > 250)
+                return true;
+            uint32_t node = g_frontendNode.load();
+            std::lock_guard lock(g_nodesMutex);
+            return std::find(g_gameplayNodes.begin(), g_gameplayNodes.begin() + std::min(g_runningNodes, g_gameplayNodes.size()), node) !=
+                   g_gameplayNodes.begin() + std::min(g_runningNodes, g_gameplayNodes.size());
+        }
+    }
+
+    void RequestBackgroundPause()
+    {
+        g_backgroundPause = -1;
+    }
+
+    bool BackgroundPausePending()
+    {
+        return g_backgroundPause.load() != 0;
+    }
+
+    void CancelBackgroundPause()
+    {
+        g_backgroundPause = 0;
+    }
+
     bool InMenus()
     {
         // The Frontend tree's conditions run every frame while one of its screens is up; in
@@ -693,6 +734,19 @@ namespace input::pc
     void Apply(XINPUT_STATE& state, bool poll, const std::vector<uint16_t>& scriptKeys)
     {
         XINPUT_GAMEPAD& pad = state.Gamepad;
+        if (int pause = g_backgroundPause.load(); pause != 0)
+        {
+            if (pause < 0)
+            {
+                pause = CanPause() ? PAUSE_READS : 0;
+                Log("[input] the app went to the background: %s", pause ? "START (the game's pause menu)" : "not in gameplay, no pause menu");
+            }
+            if (pause > 0)
+                pad.wButtons |= XINPUT_GAMEPAD_START;
+            if (poll && pause > 0)
+                pause--;
+            g_backgroundPause = pause;
+        }
         settings::Controls controls = Controls();
         bool menus = InMenus();
         using settings::Action;

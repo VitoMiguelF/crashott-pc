@@ -629,6 +629,14 @@ namespace touch_controls
         return true;
     }
 
+    void ReleaseAll()
+    {
+        std::lock_guard lock(g_mutex);
+        for (Finger& f : g_fingers)
+            f.used = false;
+        g_stick.active = false;
+    }
+
     void Apply(XINPUT_GAMEPAD& pad, bool poll)
     {
         if (!Enabled())

@@ -591,11 +591,27 @@ phone builds its own.
   must stay on that thread. Today `window_sdl.cpp` creates the window on a dedicated window thread
   while the game runs on the main thread. On Android the roles swap: `SDL_main` keeps the window
   and the event loop, and starts the game on a new thread (64 MB stack, as for guest threads).
-- **Lifecycle:** `SDL_EVENT_WILL_ENTER_BACKGROUND` → pause the guest (stop the vblank interrupt
-  thread and the frame pacing, mute the audio stream), drop the swapchain and surface.
-  `DID_ENTER_FOREGROUND` → recreate the surface (`SDL_Vulkan_CreateSurface` again: the
-  `ANativeWindow` changes), the swapchain and the audio. `SDL_EVENT_LOW_MEMORY` → log. An
-  interrupted save is the main risk: pause only between guest frames.
+- **Lifecycle (done 2026-10-27).** Before it, the game kept running in the background (183% CPU
+  on the S20 FE), came back to a lost surface (`VK_ERROR_SURFACE_LOST_KHR` every frame: black),
+  and the app's icon opened a second launcher (orange) while the game's task was gone from the
+  recent apps (same task affinity as the launcher's). Now:
+  - `window_sdl.cpp` watches `SDL_EVENT_WILL/DID_ENTER_BACKGROUND` and `DID_ENTER_FOREGROUND`
+    with `SDL_AddEventWatch` (SDL's Android pump blocks for the whole pause, so `OnEvent` would only
+    see them on return): `window::Suspended()`, the touch fingers released.
+  - In gameplay (`input::pc::RequestBackgroundPause`: in a level, the frontend not on a menu or a
+    cinematic) the game's next reads get START, so it is on its own pause menu when it comes back;
+    on a menu or already paused nothing is pressed.
+  - `gpu::HoldWhileSuspended` (in VdSwap, between two frames) holds the game thread once that menu
+    is up (2 s at most); the vblank interrupts and the audio thread wait with it (the stall check
+    of the audio device starts over on return). The command processor then has nothing to do.
+  - `rhi_vulkan.cpp` `KeepSurface`: in the background (or after a lost surface) the swap chain and
+    the surface go; back in the foreground new ones are made on the window's new `ANativeWindow`.
+  - `CrashActivity` has a task affinity of its own; PLAY removes the launcher's task
+    (`finishAndRemoveTask`), and the launcher, opened by the icon with the game's task still
+    running, brings that task to the front and goes.
+  - S20 FE: HOME in L1_E1 → 6-10% CPU in the background (a few threads' periodic wakeups); the icon
+    and the recent apps both bring the game back on "P1 PAUSED / RESUME GAME" with the picture.
+    Not tried yet: the screen turned off (the phone's lock), a call. `SDL_EVENT_LOW_MEMORY`: nothing.
 - Landscape only (`sensorLandscape`), immersive fullscreen, display cutout `shortEdges`, refresh
   rate via `ANativeWindow_setFrameRate` (30/60).
 - `android:hasFragileUserData="true"`: when the player uninstalls, Android offers to keep

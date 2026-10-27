@@ -15,6 +15,12 @@ namespace gpu::window
     void* Create(uint32_t clientWidth, uint32_t clientHeight, const wchar_t* title);
     void* Handle();  // the native window (HWND / SDL_Window*), null before Create
     bool IsFocused(); // the game window is the foreground window
+    // The app in the background (Android: SDL_EVENT_WILL/DID_ENTER_BACKGROUND until
+    // DID_ENTER_FOREGROUND; never on a PC): frames aren't shown (the window's Vulkan surface goes
+    // and a new one is made on return) and the game is held at its next VdSwap, the audio and
+    // vblank threads with it (gpu.h, HoldWhileSuspended).
+    bool Suspended();
+    void WaitWhileSuspended();  // returns at once when not suspended
 
     // Vulkan presentation, done by the window backend: the instance extensions the window's
     // surface needs (VK_KHR_surface + the platform's), and that surface for `instance` (a

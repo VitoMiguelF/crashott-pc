@@ -1,6 +1,8 @@
 package io.github.vitomiguelf.crashottde;
 
 import android.app.Activity;
+import android.app.ActivityManager;
+import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
@@ -58,12 +60,33 @@ public class LauncherActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // The app's icon opens this activity's task, not the game's (CrashActivity, a task of its
+        // own): with the game still running in the background, back to it instead of a launcher.
+        if (bringGameToFront()) {
+            super.onCreate(savedInstanceState);
+            finishAndRemoveTask();
+            return;
+        }
         try {
             copyAssets(getAssets(), "languages", new File(getExternalFilesDir(null), "languages"));
         } catch (IOException e) {
             Log.w(TAG, "language packs not copied", e);
         }
         super.onCreate(savedInstanceState);
+    }
+
+    private boolean bringGameToFront() {
+        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        for (ActivityManager.AppTask task : manager.getAppTasks()) {
+            ActivityManager.RecentTaskInfo info = task.getTaskInfo();
+            ComponentName top = info.topActivity;
+            if (info.isRunning && top != null && top.getClassName().equals(CrashActivity.class.getName())) {
+                Log.i(TAG, "the game is running: back to it");
+                task.moveToFront();
+                return true;
+            }
+        }
+        return false;
     }
 
     // A folder of the assets into `target`; a file of the same size is kept.
@@ -103,11 +126,16 @@ public class LauncherActivity extends SDLActivity {
     }
 
     // From native code (launcher.cpp StartGame): the game, CrashActivity, in the app's main process.
+    // The launcher's task leaves the recent apps: the game's is the one to come back to.
     public static void startGame() {
         Context context = SDL.getContext();
         Intent intent = new Intent(context, CrashActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         context.startActivity(intent);
+        if (context instanceof Activity) {
+            Activity activity = (Activity) context;
+            activity.runOnUiThread(activity::finishAndRemoveTask);
+        }
     }
 
     // From native code: the launcher again in a new process (it reads the game's art at startup).

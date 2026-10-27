@@ -267,5 +267,6 @@ PPC_FUNC(__imp__VdSwap)
 
     gpu::CountVdSwap(frontBuffer, width, height);
     gpu::PaceFrame();
+    gpu::HoldWhileSuspended();
 
 }
