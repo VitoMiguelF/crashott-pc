@@ -1,17 +1,22 @@
-"""Builds the Android app (docs/internals/android_port.md): libmain.so + libSDL3.so for arm64, SDL3's
-Java glue, the APK assembled with aapt2 / d8 / zipalign / apksigner (no Gradle, no Android Studio).
+"""Builds the Android app (docs/internals/android_port.md), the single APK: the launcher, libSDL3.so
+and what builds the game on the phone, SDL3's Java glue, assembled with aapt2 / d8 / zipalign /
+apksigner (no Gradle, no Android Studio).
 
-    python tools/android_build.py               # configure if needed, build, assemble the APK
-    python tools/android_build.py build         # only libmain.so / libSDL3.so (CMake + Ninja)
-    python tools/android_build.py apk           # only the APK, from what build left
+    python tools/android_build.py               # configure if needed, build, toolchain, assemble the APK
+    python tools/android_build.py build         # the launcher, libSDL3.so and the runtime (CMake + Ninja)
+    python tools/android_build.py apk           # only the APK, from what build and toolchain left
     python tools/android_build.py turnip        # Mesa's Turnip (Adreno 6xx/7xx with an old driver)
     python tools/android_build.py ffmpeg        # FFmpeg's WMA Pro + Vorbis decoders (the game's audio)
     python tools/android_build.py llvm          # clang + lld that run on the phone (the single APK)
     python tools/android_build.py dxc           # libdxcompiler.so: the shaders compiled on the phone
+    python tools/android_build.py xenonrecomp   # XenonRecomp for arm64 (the phone recompiles the dump)
+    python tools/android_build.py toolchain     # what compiles the game on the phone, in one folder
 
-The APK holds the game recompiled from the player's own dump (generated/ppc): it is personal, for
-their phone, sideloaded; never published, never in git (build/ is not). Installing it and copying
-the game to the phone are separate steps the player runs (adb install, adb push).
+The APK holds no game code: on the phone the launcher asks for the player's dump, copies it into the
+app and builds the game from it (XenonRecomp, clang, lld: GameInstaller.java), as CrashSetup does on
+a PC. The `build` step still compiles the runtime on this machine against a local generated/ppc
+(its headers ppc_config.h / ppc_context.h): the runtime objects go into the APK as a static library,
+the generated code doesn't.
 
 Needs (unpacked under build/android; tools/toolchain.py will fetch them for players later):
   ndk/                    Android NDK r30 (toolchains/llvm/prebuilt/<host>, build/cmake)
@@ -43,6 +48,7 @@ For the single APK (the game recompiled on the phone itself), a compiler that ru
                           table generators need Visual Studio's C++ tools with the C++ ATL component
 """
 import argparse
+import hashlib
 import os
 import re
 import secrets
@@ -80,6 +86,12 @@ DXC = WORK / "dxc"
 DXC_HOST_BUILD = DXC / "build-host"
 DXC_BUILD = DXC / "build-arm64"
 DXC_LIB = DXC_BUILD / "lib" / "libdxcompiler.so"
+XENON_SOURCE = ROOT / "tools" / "XenonRecomp"
+XENON_BUILD = WORK / "xenonrecomp"
+XENON_EXE = XENON_BUILD / "XenonRecomp" / "XenonRecomp"
+ONDEVICE_ROOT = WORK / "ondevice"           # the `toolchain` step: what the phone builds the game with
+ONDEVICE = ONDEVICE_ROOT / "toolchain"      # bin/ (for adb tests), sysroot/, lib/clang/<v>/
+ONDEVICE_ZIP = WORK / "ondevice.zip"         # all of it but bin/: the APK's assets/ondevice.zip
 OUT = WORK / "apk"
 KEYSTORE = WORK / "keystore" / "crashrecomp.jks"  # made once; updates need the same key
 MIN_SDK = 30     # memfd_create in bionic
@@ -271,11 +283,17 @@ def keystore():
 
 
 def apk(debuggable=False):
-    libmain = CMAKE_BUILD / "libmain.so"
+    """The single APK: no game code. The launcher, SDL3 and the libraries the game loads, plus what
+    builds the game on the phone from the player's dump (the `toolchain` step's ondevice.zip in
+    assets/, clang / lld / XenonRecomp as lib*.so programs); GameInstaller.java makes libmain.so."""
     liblauncher = CMAKE_BUILD / "libcrashlauncher.so"
     libsdl = next(iter(sorted(CMAKE_BUILD.rglob("libSDL3.so"))), None)
-    if not libmain.is_file() or not liblauncher.is_file() or not libsdl:
-        sys.exit("libmain.so / libcrashlauncher.so / libSDL3.so not built: run `python tools/android_build.py build` first")
+    if not liblauncher.is_file() or not libsdl:
+        sys.exit("libcrashlauncher.so / libSDL3.so not built: run `python tools/android_build.py build` first")
+    programs = {"libcrashclang.so": ONDEVICE / "bin" / "clang", "libcrashlld.so": ONDEVICE / "bin" / "ld.lld",
+                "libxenonrecomp.so": ONDEVICE / "bin" / "XenonRecomp"}
+    if not ONDEVICE_ZIP.is_file() or not all(f.is_file() for f in programs.values()):
+        sys.exit("the on-device toolchain is not made: run `python tools/android_build.py toolchain` first")
     if OUT.exists():
         shutil.rmtree(OUT)
     classes = OUT / "classes"
@@ -305,12 +323,11 @@ def apk(debuggable=False):
     if debuggable:
         say("debuggable (simpleperf / run-as can reach the app)")
 
-    # classes.dex + the .so files (libmain.so without its debug sections). extractNativeLibs="true":
-    # Android unpacks them into the app's native library folder, where libadrenotools loads its
-    # hooks and Turnip from (android_main_android.cpp); so they can be compressed.
+    # classes.dex + the .so files. extractNativeLibs="true": Android unpacks them into the app's
+    # native library folder, where libadrenotools loads its hooks and Turnip from
+    # (android_main_android.cpp) and the only place the app may run programs from; so they can be
+    # compressed.
     strip = NDK / "toolchains" / "llvm" / "prebuilt" / HOST / "bin" / ("llvm-strip" + EXE)
-    stripped = OUT / "libmain.so"
-    run([strip, "--strip-debug", "-o", stripped, libmain])
     launcher_stripped = OUT / "libcrashlauncher.so"
     run([strip, "--strip-debug", "-o", launcher_stripped, liblauncher])
     unaligned = OUT / "unaligned.apk"
@@ -318,7 +335,13 @@ def apk(debuggable=False):
     with zipfile.ZipFile(unaligned, "a") as z:
         z.write(OUT / "classes.dex", "classes.dex", compress_type=zipfile.ZIP_DEFLATED)
         z.write(libsdl, "lib/arm64-v8a/libSDL3.so", compress_type=zipfile.ZIP_DEFLATED)
-        z.write(stripped, "lib/arm64-v8a/libmain.so", compress_type=zipfile.ZIP_DEFLATED)
+        for name, program in programs.items():
+            z.write(program, f"lib/arm64-v8a/{name}", compress_type=zipfile.ZIP_DEFLATED)
+        # Stored: already compressed, and read as a stream.
+        z.write(ONDEVICE_ZIP, "assets/ondevice.zip", compress_type=zipfile.ZIP_STORED)
+        with zipfile.ZipFile(ONDEVICE_ZIP) as bundle:
+            z.writestr("assets/ondevice.stamp", bundle.read("ondevice.stamp"), compress_type=zipfile.ZIP_STORED)
+        say("with the on-device toolchain (clang, lld, XenonRecomp, runtime): the game is built on the phone")
         z.write(launcher_stripped, "lib/arm64-v8a/libcrashlauncher.so", compress_type=zipfile.ZIP_DEFLATED)
         hooks = [CMAKE_BUILD / "adrenotools" / "src" / "hook" / name for name in ("libhook_impl.so", "libmain_hook.so")]
         if all(h.is_file() for h in hooks) and TURNIP_LIB.is_file():
@@ -340,13 +363,13 @@ def apk(debuggable=False):
     # 16 KB alignment of the stored .so files (-P 16), 4 bytes for the rest; then the signature.
     aligned = OUT / "aligned.apk"
     run([BUILD_TOOLS / ("zipalign" + EXE), "-P", "16", "-f", "4", unaligned, aligned])
-    final = OUT / "CrashOTTDE-personal.apk"
+    final = OUT / "CrashOTTDE.apk"
     password = keystore()
     run([jdk_tool("java"), "-jar", BUILD_TOOLS / "lib" / "apksigner.jar", "sign", "--ks", KEYSTORE, "--ks-pass", f"pass:{password}",
          "--min-sdk-version", MIN_SDK, "--out", final, aligned])
     run([jdk_tool("java"), "-jar", BUILD_TOOLS / "lib" / "apksigner.jar", "verify", "--min-sdk-version", MIN_SDK, final])
     size = final.stat().st_size
-    say(f"{final.relative_to(ROOT)}: {size / 2**20:.1f} MB (personal: holds your recompiled game, don't share it)")
+    say(f"{final.relative_to(ROOT)}: {size / 2**20:.1f} MB (no game code: the phone builds it from the player's dump)")
 
 
 def llvm():
@@ -470,9 +493,105 @@ def dxc():
     say(f"{DXC_LIB.relative_to(ROOT)}: {DXC_LIB.stat().st_size / 1e6:.0f} MB")
 
 
+def xenonrecomp():
+    """XenonRecomp (tools/XenonRecomp, the pinned source with patches/XenonRecomp.patch, as
+    tools/setup.py makes it) as an Android arm64 program: the phone turns the player's default.xex
+    into generated/ppc itself."""
+    if not (XENON_SOURCE / "XenonRecomp" / "main.cpp").is_file():
+        sys.exit(f"{XENON_SOURCE.relative_to(ROOT)} not found: tools/setup.py fetches and patches it")
+    env = build_env()
+    if not (XENON_BUILD / "build.ninja").is_file():
+        say("configuring XenonRecomp (Android arm64)")
+        run(["cmake", "-S", XENON_SOURCE, "-B", XENON_BUILD, "-G", "Ninja",
+             f"-DCMAKE_TOOLCHAIN_FILE={(NDK / 'build/cmake/android.toolchain.cmake').as_posix()}",
+             "-DANDROID_ABI=arm64-v8a", f"-DANDROID_PLATFORM=android-{MIN_SDK}", "-DANDROID_STL=c++_static",
+             # The pinned fmt uses malloc without <cstdlib>, which the NDK's libc++ no longer brings in.
+             "-DCMAKE_CXX_FLAGS=-include cstdlib",
+             "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_EXE_LINKER_FLAGS=-Wl,-z,max-page-size=16384", "-Wno-dev"],
+            env=env, stdout=subprocess.DEVNULL)
+    say("building XenonRecomp (Android arm64)")
+    run(["cmake", "--build", XENON_BUILD, "--target", "XenonRecomp"], **background_build(env))
+
+
+def toolchain():
+    """What the phone builds the game with, in build/android/ondevice/: toolchain/bin/ (clang,
+    ld.lld, XenonRecomp: the `llvm` and `xenonrecomp` steps', stripped; in the APK as lib*.so
+    programs), toolchain/sysroot/ (the NDK's headers, API-level stubs and C++ runtime, arm64 only),
+    toolchain/lib/clang/<version>/ (clang's headers, the NDK's compiler-rt builtins and libunwind),
+    runtime/ (libcrashruntime.a and the static libraries libmain.so links), xenon/ (config/Crash.toml
+    and its switch tables, XenonRecomp's ppc_context.h) and include/simde. All but bin/ is zipped
+    into ondevice.zip for the APK's assets. No game file goes in: the phone makes generated/ppc
+    from the player's own default.xex."""
+    for tool, step in [(LLVM_TOOLS[0], "llvm"), (LLVM_TOOLS[1], "llvm"), (XENON_EXE, "xenonrecomp")]:
+        if not tool.is_file():
+            sys.exit(f"{tool.relative_to(ROOT)} not built: run `python tools/android_build.py {step}` first")
+    prebuilt = NDK / "toolchains" / "llvm" / "prebuilt" / HOST
+    ndk_sysroot = prebuilt / "sysroot"
+    ndk_resource = next(iter(sorted((prebuilt / "lib" / "clang").iterdir())))
+    resource = next(iter(sorted((LLVM_BUILD / "lib" / "clang").iterdir())))
+    if ONDEVICE_ROOT.exists():
+        shutil.rmtree(ONDEVICE_ROOT)
+    strip = prebuilt / "bin" / ("llvm-strip" + EXE)
+    (ONDEVICE / "bin").mkdir(parents=True)
+    run([strip, "--strip-all", "-o", ONDEVICE / "bin" / "clang", LLVM_TOOLS[0]])
+    run([strip, "--strip-all", "-o", ONDEVICE / "bin" / "ld.lld", LLVM_TOOLS[1]])
+    triple = "aarch64-linux-android"
+    # Headers: everything but the other architectures' asm/ folders.
+    others = {"arm-linux-androideabi", "i686-linux-android", "x86_64-linux-android", "riscv64-linux-android"}
+    shutil.copytree(ndk_sysroot / "usr" / "include", ONDEVICE / "sysroot" / "usr" / "include",
+                    ignore=lambda folder, names: [n for n in names if n in others])
+    libs = ONDEVICE / "sysroot" / "usr" / "lib" / triple
+    shutil.copytree(ndk_sysroot / "usr" / "lib" / triple / str(MIN_SDK), libs / str(MIN_SDK))
+    for name in ("libc++_static.a", "libc++abi.a"):
+        shutil.copy(ndk_sysroot / "usr" / "lib" / triple / name, libs / name)
+    target = ONDEVICE / "lib" / "clang" / resource.name
+    shutil.copytree(resource / "include", target / "include")
+    (target / "lib" / "linux" / "aarch64").mkdir(parents=True)
+    shutil.copy(ndk_resource / "lib" / "linux" / "libclang_rt.builtins-aarch64-android.a", target / "lib" / "linux")
+    for name in ("libunwind.a", "libatomic.a"):
+        shutil.copy(ndk_resource / "lib" / "linux" / "aarch64" / name, target / "lib" / "linux" / "aarch64" / name)
+    run([strip, "--strip-all", "-o", ONDEVICE / "bin" / "XenonRecomp", XENON_EXE])
+
+    # The runtime (runtime/, built by the `build` step: the same objects as libmain.so's, so the
+    # game links the same on the phone) and the static libraries it needs, without debug info.
+    objects = sorted((CMAKE_BUILD / "CMakeFiles" / "CrashRecomp.dir").rglob("*.o"))
+    if not objects:
+        sys.exit("the runtime is not built: run `python tools/android_build.py build` first")
+    runtime = ONDEVICE_ROOT / "runtime"
+    runtime.mkdir(parents=True)
+    run([prebuilt / "bin" / ("llvm-ar" + EXE), "rcs", runtime / "libcrashruntime.a", *objects])
+    for library in [runtime / "libcrashruntime.a", CMAKE_BUILD / "libXexImage.a", CMAKE_BUILD / "adrenotools" / "libadrenotools.a",
+                    CMAKE_BUILD / "adrenotools" / "lib" / "linkernsbypass" / "liblinkernsbypass.a"]:
+        if library.is_file():
+            run([strip, "--strip-debug", "-o", runtime / library.name, library])
+    # What XenonRecomp reads (the project's config, XenonRecomp's context header) and what the
+    # recompiled code includes (simde).
+    xenon = ONDEVICE_ROOT / "xenon"
+    xenon.mkdir()
+    for path in (ROOT / "config" / "Crash.toml", ROOT / "config" / "Crash_switch_tables.toml", XENON_SOURCE / "XenonUtils" / "ppc_context.h"):
+        shutil.copy(path, xenon / path.name)
+    shutil.copytree(XENON_SOURCE / "thirdparty" / "simde", ONDEVICE_ROOT / "include" / "simde",
+                    ignore=shutil.ignore_patterns(".git*", "test", "*.md", "COPYING"))
+
+    # One zip for the APK (bin/ goes in as lib*.so programs), named by its content: the phone
+    # unpacks it again when it changes.
+    entries = sorted(f for f in ONDEVICE_ROOT.rglob("*") if f.is_file() and ONDEVICE / "bin" not in f.parents)
+    digest = hashlib.sha256()
+    for f in entries:
+        digest.update(f.relative_to(ONDEVICE_ROOT).as_posix().encode())
+        digest.update(f.read_bytes())
+    stamp = digest.hexdigest()[:16]
+    with zipfile.ZipFile(ONDEVICE_ZIP, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        for f in entries:
+            z.write(f, f.relative_to(ONDEVICE_ROOT).as_posix())
+        z.writestr("ondevice.stamp", stamp)
+    size = sum(f.stat().st_size for f in entries)
+    say(f"{ONDEVICE_ZIP.relative_to(ROOT)}: {ONDEVICE_ZIP.stat().st_size / 1e6:.0f} MB ({size / 1e6:.0f} MB unpacked, stamp {stamp})")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk", "turnip", "ffmpeg", "llvm", "dxc"])
+    parser.add_argument("step", nargs="?", default="all", choices=["all", "build", "apk", "turnip", "ffmpeg", "llvm", "dxc", "xenonrecomp", "toolchain"])
     parser.add_argument("--debuggable", action="store_true",
                         help="android:debuggable APK, for profiling on the phone (simpleperf record --app <package>)")
     args = parser.parse_args()
@@ -485,8 +604,14 @@ def main():
         llvm()
     if step == "dxc":
         dxc()
+    if step == "xenonrecomp":
+        xenonrecomp()
+    if step == "toolchain":
+        toolchain()
     if step in ("all", "build"):
         build()
+    if step == "all":
+        toolchain()
     if step in ("all", "apk"):
         apk(args.debuggable)
 

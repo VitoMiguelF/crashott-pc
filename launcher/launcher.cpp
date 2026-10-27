@@ -200,6 +200,8 @@ namespace
     enum class Modal { None, Exit, Message, Update, Import } g_modal = Modal::None;
 #ifdef __ANDROID__
     void OpenImport();  // android_import.inc: the dump's folder asked for and copied into the app
+    void OpenBuild();   // android_import.inc: the game built on the phone from that dump
+    bool GameBuilt();
 #endif
     std::string g_message[2];
     bool g_quit = false;
@@ -736,6 +738,13 @@ namespace
             g_focusFirstRow = true;
             return false;
         }
+#ifdef __ANDROID__
+        if (!GameBuilt())
+        {
+            OpenBuild();
+            return false;
+        }
+#endif
         if (!(g_values == g_saved))
             Save();
 #if defined(__ANDROID__)
@@ -2192,6 +2201,8 @@ static int RunLauncher(int argc, char** argv)
 #ifdef __ANDROID__
     if (!paths::IsGameFolder(GameFolder()))
         OpenImport();  // the first start: the dump is asked for at once
+    else if (!GameBuilt())
+        OpenBuild();   // a dump without a game built from it (a new APK): built now
 #endif
 #ifdef CRASH_INSTALLER
     InitInstaller();

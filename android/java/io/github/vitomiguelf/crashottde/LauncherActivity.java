@@ -99,6 +99,14 @@ public class LauncherActivity extends SDLActivity {
         });
     }
 
+    // From native code: the game built from the imported dump (GameInstaller), and its progress.
+    public static boolean gameInstalled() { return GameInstaller.installed(SDL.getContext()); }
+    public static void installGame() { GameInstaller.install(SDL.getContext()); }
+    public static int buildState() { return GameInstaller.state(); }
+    public static int buildDone() { return GameInstaller.done(); }
+    public static int buildTotal() { return GameInstaller.total(); }
+    public static String buildError() { return GameInstaller.error(); }
+
     public static void cancelImport() { importCancel = true; }
     public static int importState() { return importState; }
     public static int importError() { return importError; }

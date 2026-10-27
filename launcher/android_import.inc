@@ -6,8 +6,13 @@
 // question; GAME FOLDER in SETUP asks again. LauncherActivity.java does the work on its own thread:
 // Android's folder picker (no storage permission), the check of the PC installer (DUMP_FILES,
 // shaders/, default.xex's SHA-256, read first) and the copy. This side asks for it, shows its
-// progress and, once the files are in, starts the launcher again in a new process (the game's art
-// and fonts are read at startup).
+// progress.
+//
+// Then the game is built from it, as CrashSetup builds it on a PC (GameInstaller.java: XenonRecomp,
+// clang and lld on the phone, libmain.so in the app's internal storage; about two minutes on a
+// Galaxy S20 FE): the APK carries no game code. A dump already in place without a game built from
+// it (a new APK, a dump imported again) opens on that step. Once built, the launcher starts again
+// in a new process (the game's art and fonts are read at startup).
 
 enum class ImportState { Idle, Picking, Checking, Copying, Done, Failed, Cancelled };  // LauncherActivity.IMPORT_*
 enum ImportError { IMPORT_NOT_GAME = 1, IMPORT_INCOMPLETE, IMPORT_VERSION, IMPORT_SPACE, IMPORT_IO, IMPORT_PICKER };  // ERROR_*
@@ -20,7 +25,16 @@ struct ImportStatus
     std::string file, detail;
 };
 ImportStatus g_import;
-int g_importRestart = 0;  // frames left before the launcher starts again
+
+enum class BuildState { Idle, Unpacking, Recompiling, Compiling, Linking, Done, Failed };  // GameInstaller's states
+struct BuildStatus
+{
+    BuildState state = BuildState::Idle;
+    int done = 0, total = 0;
+    std::string error;
+};
+BuildStatus g_build;
+int g_restart = 0;  // frames left before the launcher starts again
 
 // LauncherActivity's static methods from the launcher's thread, in a local frame of their own (the
 // thread never goes back to Java, so local references would pile up).
@@ -142,8 +156,54 @@ void PollImport()
         g_import.error = java.Int("importError"), g_import.detail = java.String("importDetail");
     if (g_import.state != before)
         Log("[launcher] import: state %d (error %d %s)", int(g_import.state), g_import.error, g_import.detail.c_str());
-    if (g_import.state == ImportState::Done)
-        g_importRestart = 45;
+}
+
+bool GameBuilt()
+{
+    LauncherJava java;
+    jmethodID method = java ? java.Method("gameInstalled", "()Z") : nullptr;
+    bool built = method && java.env->CallStaticBooleanMethod(java.type, method);
+    return !java.Threw() && built;
+}
+
+// The dump is in place but no game was built from it: straight to the build.
+void OpenBuild()
+{
+    g_import = {};
+    g_import.state = ImportState::Done;
+    if (g_build.state == BuildState::Failed || g_build.state == BuildState::Done)
+        g_build = {};
+    g_modal = Modal::Import;
+}
+
+void PollBuild()
+{
+    if (g_build.state == BuildState::Done || g_build.state == BuildState::Failed)
+        return;
+    LauncherJava java;
+    if (!java)
+        return;
+    if (g_build.state == BuildState::Idle)
+    {
+        Log("[launcher] building the game from the dump");
+        if (!java.Void("installGame"))
+        {
+            g_build.state = BuildState::Failed, g_build.error = "LauncherActivity.installGame";
+            return;
+        }
+    }
+    BuildState before = g_build.state;
+    g_build.state = BuildState(java.Int("buildState"));
+    if (g_build.state == BuildState::Idle)
+        g_build.state = BuildState::Unpacking;  // the installer's thread has not begun yet
+    g_build.done = java.Int("buildDone");
+    g_build.total = java.Int("buildTotal");
+    if (g_build.state == BuildState::Failed)
+        g_build.error = java.String("buildError");
+    if (g_build.state != before)
+        Log("[launcher] build: state %d %s", int(g_build.state), g_build.error.c_str());
+    if (g_build.state == BuildState::Done)
+        g_restart = 45;
 }
 
 void DrawImportModal()
@@ -256,14 +316,57 @@ void DrawImportModal()
         break;
     }
     case ImportState::Done:
-        Draw(0, T({ "THE GAME FILES ARE IN PLACE", "OS ARQUIVOS DO JOGO ESTÃO PRONTOS" }), cx, t + 40.0f, 34.0f, TITLE, 0.5f, width);
-        Draw(0, T({ "Opening the launcher again...", "Abrindo o launcher de novo..." }), cx, t + 110.0f, 26.0f, HELP, 0.5f, width);
-        if (g_importRestart > 0 && --g_importRestart == 0)
+    {
+        // The game built from the dump (GameInstaller).
+        PollBuild();
+        Draw(0, T({ "BUILDING THE GAME", "MONTANDO O JOGO" }), cx, t + 40.0f, 34.0f, TITLE, 0.5f, width);
+        const char* step = "";
+        switch (g_build.state)
         {
-            Log("[launcher] import: done, starting again");
+        case BuildState::Idle:
+        case BuildState::Unpacking: step = T({ "Preparing the compiler...", "Preparando o compilador..." }); break;
+        case BuildState::Recompiling: step = T({ "Recompiling default.xex (XenonRecomp)...", "Recompilando o default.xex (XenonRecomp)..." }); break;
+        case BuildState::Compiling: step = T({ "Compiling the game's code...", "Compilando o código do jogo..." }); break;
+        case BuildState::Linking: step = T({ "Linking...", "Ligando..." }); break;
+        case BuildState::Done: step = T({ "Ready. Opening the launcher again...", "Pronto. Abrindo o launcher de novo..." }); break;
+        case BuildState::Failed: step = T({ "The game could not be built.", "Não foi possível montar o jogo." }); break;
+        }
+        Draw(0, step, cx, t + 90.0f, 26.0f, HELP, 0.5f, width);
+        if (g_build.state == BuildState::Failed)
+        {
+            DrawUi(g_build.error + "  (install.log)", cx, t + 135.0f, 18.0f, IM_COL32(255, 200, 170, 235), 0.5f, width);
+            bx = cx - 230.0f;
+            bool again = button(ma::ICON_A, { "TRY AGAIN", "TENTAR DE NOVO" }, true);
+            bool later = button(ma::ICON_B, { "LATER", "DEPOIS" }, false);
+            if (again || accept)
+                g_build = {};
+            else if (later || back)
+                g_modal = Modal::None;
+            break;
+        }
+        // The steps before the compile are short; the compile goes file by file.
+        float fraction = g_build.state == BuildState::Unpacking     ? 0.03f
+                       : g_build.state == BuildState::Recompiling ? 0.06f
+                       : g_build.state == BuildState::Compiling && g_build.total ? 0.08f + 0.9f * float(g_build.done) / float(g_build.total)
+                       : g_build.state == BuildState::Linking     ? 0.98f
+                       : g_build.state == BuildState::Done        ? 1.0f
+                                                                  : 0.0f;
+        float x0 = l + 70.0f, x1 = r - 70.0f, y0 = t + 140.0f, y1 = t + 164.0f;
+        g_draw->AddRectFilled(g_view.P(x0, y0), g_view.P(x1, y1), IM_COL32(60, 28, 4, 255), 6.0f * g_view.s);
+        g_draw->AddRectFilled(g_view.P(x0, y0), g_view.P(x0 + (x1 - x0) * fraction, y1), IM_COL32(236, 150, 20, 255), 6.0f * g_view.s);
+        if (g_build.state == BuildState::Compiling && g_build.total)
+        {
+            char text[64];
+            snprintf(text, sizeof(text), T({ "%d / %d files", "%d / %d arquivos" }), g_build.done, g_build.total);
+            Draw(0, text, cx, t + 180.0f, 22.0f, HELP, 0.5f, width);
+        }
+        if (g_restart > 0 && --g_restart == 0)
+        {
+            Log("[launcher] build: done, starting again");
             if (!LauncherJava().Void("restartLauncher"))
                 g_quit = true;
         }
         break;
+    }
     }
 }
