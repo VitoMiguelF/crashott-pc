@@ -270,6 +270,23 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     press only blends the plate's colours; the stick's base and knob are two bitmaps
     (`BITMAP_TOUCH_KNOB`), so a moving finger only moves the knob's. Same 20 presses: no frame over
     31 ms.
+  - **Tried at 540 lines, nothing kept (2026-10-27).** S20 FE, L1_E1, no fps limit: GPU 20.5 ms
+    per frame, the scene 12.3 ms of it (the main pair `vs aecab5202246c470` /
+    `ps bc5a024f96d50e67`). Measured with `userdata/shaderoverride` and test builds:
+    - 4 interpolators instead of 16 for the main pair (it uses 4): 12.32 vs 12.35 ms, nothing.
+    - Pre-rotating the swap chain: the surface reports ROTATE_90, but `dumpsys SurfaceFlinger`
+      shows our layer composited by the display hardware (`composition type=DEVICE`), so the
+      rotation costs the GPU nothing.
+    - `SampleGrad` (the gradient fetches, `FindGradientFetches`) is slow on Adreno: the main PS
+      with `Sample` 1.3 ms faster, with every gradient fetch sampled at the top of main() through
+      `SampleBias` (implicit derivatives, bias `log2` of the gradient scale) GPU 19.3 ms. But
+      that build lost the device (`VK_ERROR_DEVICE_LOST` at submit) in 4 of 4 runs, between frames
+      780 and 1860; the same build without the change ran twice to frame 4680. No kgsl detail
+      reaches logcat. `SampleLevel` with a computed LOD would avoid derivatives but drops the
+      anisotropic filtering (16x by default).
+    - The Xenos multiply (`xe_mul`: 0 times anything is 0) as `m = a * b; isnan(m) ? 0 : m`:
+      another 1.5 ms on the main PS (GPU 17.7 ms with the hoist above), but those runs lost the
+      device as well, and the plain product too (one run), so it was not kept either.
   - **Tab S10 Ultra (Mali-G720 MC12, driver r44p1, Vulkan 1.3.247), same day: the game runs**, the
     opening cutscene at a steady 60 fps (16.67 ms per frame, the limit) at 1154x720 on its
     2960x1848 screen, with the dump pushed (3.0 GB over adb Wi-Fi in 66 s) and the S20 FE's SPIR-V
