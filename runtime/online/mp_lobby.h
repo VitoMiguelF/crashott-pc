@@ -17,7 +17,8 @@
 // an address ("192.168.0.10" or "192.168.0.10:47810") works where a code does. Over the internet the
 // host needs the port forwarded (or a VPN such as a virtual LAN): there is no relay server.
 //
-//   CRASH_MP_NAME=<name>      the player's name (default: the OS user's, A-Z 0-9, 12 letters)
+//   CRASH_MP_NAME=<name>      the player's name (default: the OS user's, on Android the device's model;
+//                             A-Z 0-9, 12 letters)
 //   CRASH_MP_PASSWORD=<text>  tests: the host's password, and what a client's password field starts with
 //   CRASH_MP_CODE=<code>      tests: what ENTER CODE starts with (mp_menu.cpp)
 

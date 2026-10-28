@@ -1,5 +1,8 @@
 // The MULTIPLAYER screens (mp_menu.h), drawn like the settings screen (settings/settings_menu.cpp):
 // the game's fonts and frames (settings/menu_art.h) in a virtual 1280x720 screen scaled to the window.
+// Controller, keyboard, and the mouse / touch (Android's menus are touch as a mouse): a click on a
+// row chooses it, on the game's B BACK / SELECT A hints is that button, on an option's left / right
+// half changes it, on the HUB panel opens the lobby; code and password have keys on the screen.
 
 #include "mp_menu.h"
 #include "mp.h"
@@ -107,6 +110,19 @@ namespace mp::menu
         int g_drawnW = 0, g_drawnH = 0;
         const Palette* g_palette = &CLOTH;
 
+        // The mouse / touch: what each part of the screen does, as last drawn (virtual units).
+        enum class Hit : uint8_t { Row, RowLeft, RowRight, Back, Accept, Key, Erase, Confirm, Panel, Anywhere };
+        struct HitZone
+        {
+            float x0, y0, x1, y1;
+            Hit hit;
+            int index;          // the row, or the key's letter
+            bool askFirst;      // a click on a row not selected yet only selects it (kick)
+        };
+        std::vector<HitZone> g_zones;
+        uint32_t g_mouseMoves = 0, g_mouseClicks = 0;
+        std::u32string g_tapped;  // letters clicked on the screen's keys
+
         constexpr const char* CODE_LETTERS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
         constexpr const char* PASSWORD_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         constexpr size_t CODE_LENGTH = 10, PASSWORD_LENGTH = 12;
@@ -125,6 +141,19 @@ namespace mp::menu
         };
 
         float Width(FontId font, const std::string& text, float cell) { return art::TextWidth(font, art::Utf32(text), cell); }
+
+        void AddZone(float x0, float y0, float x1, float y1, Hit hit, int index = 0, bool askFirst = false)
+        {
+            g_zones.push_back({ x0, y0, x1, y1, hit, index, askFirst });
+        }
+
+        // The game's own hints at the bottom of the options screen the full screens are drawn over
+        // (x 232-375 and 873-1040 at 720p; Portuguese VOLTAR ends at ~410, SELECIONAR starts at ~786).
+        void AddFooterZones()
+        {
+            AddZone(222.0f, 610.0f, g_portuguese ? 418.0f : 384.0f, 676.0f, Hit::Back);
+            AddZone(g_portuguese ? 778.0f : 864.0f, 610.0f, 1048.0f, 676.0f, Hit::Accept);
+        }
 
         float Draw(const View& v, FontId font, const std::string& text, float x, float y, float cell, const TextStyle& style,
                    float align = 0.0f, float maxWidth = 1e9f)
@@ -222,6 +251,26 @@ namespace mp::menu
             }
         }
 
+        // Keys for the mouse / touch: the field's letters, ERASE and OK, 10 a row from `top`.
+        constexpr float KEY_W = 64.0f, KEY_H = 46.0f, KEY_PITCH_X = 70.0f, KEY_PITCH_Y = 52.0f;
+
+        void DrawKeys(const View& v, const Palette& pal, float top, bool code)
+        {
+            std::string letters = code ? CODE_LETTERS : PASSWORD_LETTERS;
+            int count = int(letters.size()) + 2;
+            float left = VIRTUAL_W * 0.5f - (10 * KEY_PITCH_X - (KEY_PITCH_X - KEY_W)) * 0.5f;
+            for (int i = 0; i < count; i++)
+            {
+                float x = left + (i % 10) * KEY_PITCH_X, y = top + (i / 10) * KEY_PITCH_Y;
+                bool erase = i == count - 2, ok = i == count - 1;
+                float w = KEY_W;
+                g_canvas.Fill(v.IX(x), v.IY(y), v.IX(x + w), v.IY(y + KEY_H), { 0, 0, 0, 70 });
+                std::string label = erase ? std::string("\xC2\xB3") : ok ? std::string("OK") : std::string(1, letters[size_t(i)]);
+                Draw(v, FontId::Small, label, x + w * 0.5f, y + 7.0f, 32.0f, ok ? pal.selected : pal.normal, 0.5f, w - 6.0f);
+                AddZone(x, y, x + w, y + KEY_H, erase ? Hit::Erase : ok ? Hit::Confirm : Hit::Key, erase || ok ? 0 : letters[size_t(i)]);
+            }
+        }
+
         void DrawHelp(const View& v, const Palette& pal, const std::vector<std::string>& lines, float y = HELP_Y)
         {
             for (const std::string& line : lines)
@@ -246,6 +295,8 @@ namespace mp::menu
                 if (p.me && p.slot != 0)
                     right = std::string(T("YOU", "VOCÊ")) + "  " + right;
                 Draw(v, FontId::Small, right, 880.0f, y, LIST_CELL, style, 1.0f);
+                if (host && p.slot != 0)
+                    AddZone(380.0f, y - 6.0f, 900.0f, y + LIST_CELL + 6.0f, Hit::Row, int(i), true);
                 y += LIST_PITCH;
             }
         }
@@ -277,12 +328,18 @@ namespace mp::menu
             if (g_palette == &DIMMED)
                 g_canvas.FillGradient(0, 0, width, height, DIM_TOP, DIM_BOTTOM);
             Draw(v, FontId::Large, Title(), VIRTUAL_W * 0.5f, TITLE_Y, TITLE_CELL, pal.title, 0.5f);
+            if (g_screen != Screen::Message)
+                AddFooterZones();
             std::vector<std::string> rows = Rows();
             if (!rows.empty())
             {
                 for (size_t i = 0; i < rows.size(); i++)
-                    Draw(v, FontId::Large, rows[i], VIRTUAL_W * 0.5f, ROWS_Y + 40.0f + i * ROW_PITCH, ROW_CELL,
-                         int(i) == g_row ? pal.selected : pal.normal, 0.5f);
+                {
+                    float y = ROWS_Y + 40.0f + i * ROW_PITCH;
+                    float right = Draw(v, FontId::Large, rows[i], VIRTUAL_W * 0.5f, y, ROW_CELL, int(i) == g_row ? pal.selected : pal.normal, 0.5f);
+                    float left = VIRTUAL_W - right;
+                    AddZone(left - 20.0f, y - 6.0f, right + 20.0f, y + ROW_CELL + 6.0f, Hit::Row, int(i));
+                }
                 std::string help = g_screen == Screen::Root
                                        ? T("Up to 4 players: one hosts, the others find the game in the list (same network) or by its code.",
                                            "Até 4 jogadores: um cria a partida, os outros a encontram na lista (mesma rede) ou pelo código.")
@@ -317,6 +374,7 @@ namespace mp::menu
                     if (s.inGame)
                         state += std::string("  ") + T("IN A LEVEL", "EM FASE");
                     Draw(v, FontId::Small, state, 980.0f, y, LIST_CELL, style, 1.0f);
+                    AddZone(280.0f, y - 6.0f, 1000.0f, y + LIST_CELL + 6.0f, Hit::Row, int(i));
                     y += LIST_PITCH;
                 }
                 DrawHelp(v, pal, { T("A: join    B: back", "A: entrar    B: voltar") });
@@ -328,10 +386,12 @@ namespace mp::menu
                 bool code = g_screen == Screen::Code;
                 Draw(v, FontId::Small, code ? T("The host's code (in its HUB panel)", "O código do host (no painel do HUB dele)")
                                             : T("This game has a password", "Esta partida tem senha"),
-                     VIRTUAL_W * 0.5f, ROWS_Y, SUB_CELL, pal.help, 0.5f);
-                DrawField(v, pal, ROWS_Y + 70.0f, code);
-                DrawHelp(v, pal, { T("Type it, or D-pad up / down: letter, left / right: move, X: erase", "Digite, ou direcional cima / baixo: letra, esquerda / direita: mover, X: apagar"),
-                                   T("A / Enter: join    B: back", "A / Enter: entrar    B: voltar") });
+                     VIRTUAL_W * 0.5f, SUB_Y + 4.0f, SUB_CELL, pal.help, 0.5f);
+                DrawField(v, pal, ROWS_Y - 40.0f, code);
+                DrawKeys(v, pal, ROWS_Y + 30.0f, code);
+                DrawHelp(v, pal, { T("Type it, touch the keys, or D-pad up / down: letter, left / right: move, X: erase",
+                                     "Digite, toque nas teclas, ou direcional cima / baixo: letra, esquerda / direita: mover, X: apagar"),
+                                   T("A / Enter / OK: join    B: back", "A / Enter / OK: entrar    B: voltar") }, HELP_Y + 4.0f);
                 break;
             }
             case Screen::Waiting:
@@ -354,6 +414,7 @@ namespace mp::menu
                 break;
             }
             case Screen::Message:
+                AddZone(0.0f, 0.0f, VIRTUAL_W, VIRTUAL_H, Hit::Anywhere);
                 DrawFrame(v, 260.0f, 220.0f, 1020.0f, 420.0f);
                 Draw(v, FontId::Small, g_message, VIRTUAL_W * 0.5f, 270.0f, SUB_CELL, DIMMED.warning, 0.5f, 680.0f);
                 Draw(v, FontId::Small, std::string("\xC2\xB1 OK"), VIRTUAL_W * 0.5f, 340.0f, SUB_CELL, DIMMED.selected, 0.5f);
@@ -367,8 +428,20 @@ namespace mp::menu
         {
             const Palette& pal = DIMMED;
             int players = LobbyPlayerRows();
-            float top = 90.0f, bottom = top + 200.0f + (players + int(LOBBY_ROWS)) * LIST_PITCH;
             g_canvas.FillGradient(0, 0, width, height, DIM_TOP, DIM_BOTTOM);  // the HUB's own texts behind
+            if (g_screen == Screen::HostPassword)
+            {
+                DrawFrame(v, 240.0f, 90.0f, 1040.0f, 560.0f);
+                Draw(v, FontId::Large, T("PASSWORD", "SENHA"), VIRTUAL_W * 0.5f, 116.0f, 38.0f, pal.title, 0.5f);
+                DrawField(v, pal, 170.0f, false);
+                DrawKeys(v, pal, 236.0f, false);
+                std::string back = std::string("\xC2\xB2 ") + T("BACK", "VOLTAR");
+                float end = Draw(v, FontId::Small, back, 330.0f, 466.0f, HELP_CELL, pal.help);
+                AddZone(320.0f, 458.0f, end + 10.0f, 466.0f + HELP_CELL + 8.0f, Hit::Back);
+                Draw(v, FontId::Small, T("Empty = no password", "Vazia = sem senha"), 950.0f, 466.0f, HELP_CELL, pal.info, 1.0f);
+                return;
+            }
+            float top = 90.0f, bottom = top + 200.0f + (players + int(LOBBY_ROWS)) * LIST_PITCH;
             DrawFrame(v, 300.0f, top, 980.0f, bottom);
             Draw(v, FontId::Large, "MULTIPLAYER", VIRTUAL_W * 0.5f, top + 26.0f, 38.0f, pal.title, 0.5f);
             Draw(v, FontId::Small, std::string(T("Code ", "Código ")) + lobby::InviteCode() + "   " + lobby::Address(), VIRTUAL_W * 0.5f, top + 74.0f,
@@ -379,11 +452,20 @@ namespace mp::menu
             for (int row = 0; row < LOBBY_ROWS; row++)
             {
                 Draw(v, FontId::Small, LobbyRowText(row), VIRTUAL_W * 0.5f, y, LIST_CELL, g_row == players + row ? pal.selected : pal.normal, 0.5f, 600.0f);
+                if (row == ROW_MAX_PLAYERS || row == ROW_KNOCK_OUT)
+                {
+                    AddZone(380.0f, y - 6.0f, VIRTUAL_W * 0.5f, y + LIST_CELL + 6.0f, Hit::RowLeft, players + row);
+                    AddZone(VIRTUAL_W * 0.5f, y - 6.0f, 900.0f, y + LIST_CELL + 6.0f, Hit::RowRight, players + row);
+                }
+                else
+                    AddZone(380.0f, y - 6.0f, 900.0f, y + LIST_CELL + 6.0f, Hit::Row, players + row, row == ROW_CLOSE);
                 y += LIST_PITCH;
             }
-            std::string help = g_row < players ? T("A: kick    B: back", "A: expulsar    B: voltar")
-                                               : T("A / left / right: change    B: back", "A / esquerda / direita: mudar    B: voltar");
-            Draw(v, FontId::Small, help, VIRTUAL_W * 0.5f, bottom - 62.0f, HELP_CELL, pal.help, 0.5f);
+            std::string help = g_row < players ? T("A: kick", "A: expulsar") : T("A / left / right: change", "A / esquerda / direita: mudar");
+            std::string back = std::string("\xC2\xB2 ") + T("BACK", "VOLTAR");
+            float end = Draw(v, FontId::Small, back, 390.0f, bottom - 62.0f, HELP_CELL, pal.help);
+            AddZone(380.0f, bottom - 70.0f, end + 10.0f, bottom - 62.0f + HELP_CELL + 8.0f, Hit::Back);
+            Draw(v, FontId::Small, help, 890.0f, bottom - 62.0f, HELP_CELL, pal.info, 1.0f);
         }
 
         // The HUB panel's size in virtual units.
@@ -395,6 +477,7 @@ namespace mp::menu
             const Palette& pal = DIMMED;
             std::vector<lobby::Player> players = lobby::Players();
             DrawFrame(v, PANEL_L, PANEL_T, PANEL_R, PanelBottom(players.size()));
+            AddZone(PANEL_L, PANEL_T, PANEL_R, PanelBottom(players.size()), Hit::Panel);
             float x = PANEL_L + PANEL_PAD, y = PANEL_T + 24.0f;
             Draw(v, FontId::Small, "MULTIPLAYER " + std::to_string(players.size()) + "/" + std::to_string(lobby::GetOptions().maxPlayers), x, y, 26.0f,
                  pal.title, 0.0f, 280.0f);
@@ -445,6 +528,50 @@ namespace mp::menu
             return pressed;
         }
 
+        // The mouse / touch since the last call as buttons (and letters in g_tapped). Hover selects a
+        // row; a click is taken from the game's menus.
+        uint16_t MouseButtons()
+        {
+            uint32_t moves = input::pc::CursorMoves(), clicks = input::pc::LeftClicks();
+            bool moved = moves != g_mouseMoves, clicked = clicks != g_mouseClicks;
+            g_mouseMoves = moves, g_mouseClicks = clicks;
+            float u, v;
+            if ((!moved && !clicked) || !g_drawnW || !g_drawnH || !input::pc::CursorInClient(u, v))
+                return 0;
+            if (clicked)
+                input::pc::TakeMenuClick();
+            View view = MakeView(g_drawnW, g_drawnH);
+            float x = (u * g_drawnW - view.ox) / view.s, y = (v * g_drawnH - view.oy) / view.s;
+            const HitZone* zone = nullptr;
+            for (const HitZone& z : g_zones)
+                if (x >= z.x0 && x < z.x1 && y >= z.y0 && y < z.y1)
+                    zone = &z;  // the last drawn is on top
+            if (!zone)
+                return 0;
+            int before = g_row;
+            if ((zone->hit == Hit::Row || zone->hit == Hit::RowLeft || zone->hit == Hit::RowRight) && g_row != zone->index)
+            {
+                g_row = zone->index;
+                g_dirty = true;
+            }
+            if (!clicked)
+                return 0;
+            switch (zone->hit)
+            {
+            case Hit::Row: return zone->askFirst && before != zone->index ? 0 : XINPUT_GAMEPAD_A;
+            case Hit::RowLeft: return XINPUT_GAMEPAD_DPAD_LEFT;
+            case Hit::RowRight: return XINPUT_GAMEPAD_DPAD_RIGHT;
+            case Hit::Back: return XINPUT_GAMEPAD_B;
+            case Hit::Accept:
+            case Hit::Anywhere: return XINPUT_GAMEPAD_A;
+            case Hit::Key: g_tapped += char32_t(zone->index); return 0;
+            case Hit::Erase: return XINPUT_GAMEPAD_X;
+            case Hit::Confirm: g_tapped += U'\r'; return 0;
+            case Hit::Panel: return XINPUT_GAMEPAD_BACK;
+            }
+            return 0;
+        }
+
         bool Typing() { return g_screen == Screen::Code || g_screen == Screen::Password || g_screen == Screen::HostPassword; }
 
         void Go(Screen screen, int row = 0)
@@ -480,6 +607,8 @@ namespace mp::menu
             g_openedAt = plat::TickCountMs();
             g_previousButtons = input::MenuButtons();  // the A that chose the item is not a press here
             g_heldButton = 0;
+            g_mouseMoves = input::pc::CursorMoves(), g_mouseClicks = input::pc::LeftClicks();
+            g_tapped.clear();
             g_dirty = true;
             art::Ready(2000);
         }
@@ -517,7 +646,9 @@ namespace mp::menu
         bool EditField(uint16_t pressed, const char* letters, size_t maximum)
         {
             bool confirm = false;
-            for (char32_t c : input::pc::TakeTypedText())
+            std::u32string typed = input::pc::TakeTypedText() + g_tapped;
+            g_tapped.clear();
+            for (char32_t c : typed)
             {
                 if (c == U'\r')
                 {
@@ -531,7 +662,10 @@ namespace mp::menu
                     ch = '1';
                 if (!strchr(letters, ch) || g_field.size() >= maximum)
                     continue;
-                g_field.insert(g_field.begin() + std::min(g_cursor, g_field.size()), ch);
+                g_cursor = std::min(g_cursor, g_field.size());
+                if (g_cursor < g_field.size() && g_cursor + 1 == maximum)
+                    g_field.erase(g_field.begin() + g_cursor);  // a full field: the last letter is replaced
+                g_field.insert(g_field.begin() + g_cursor, ch);
                 g_cursor = std::min(g_cursor + 1, maximum - 1);
                 g_dirty = true;
             }
@@ -559,6 +693,7 @@ namespace mp::menu
             // X (Backspace): the letter under the cursor, or the last one.
             if ((pressed & XINPUT_GAMEPAD_X) && !g_field.empty())
             {
+                g_dirty = true;
                 if (g_cursor >= g_field.size())
                 {
                     g_field.pop_back();
@@ -803,7 +938,7 @@ namespace mp::menu
             uint16_t buttons = input::MenuButtons();
             if (!g_open)
             {
-                uint16_t pressed = Pressed(buttons);
+                uint16_t pressed = Pressed(buttons) | (panel && g_panelShown ? MouseButtons() : 0);
                 if (g_releasing && !buttons && now >= g_backUntil)
                     g_releasing = false;
                 if (g_closing && now - g_closedAt >= FADE_OUT_MS)
@@ -837,10 +972,11 @@ namespace mp::menu
             if (now - g_openedAt < OPEN_DELAY_MS)
             {
                 g_previousButtons = buttons;
+                g_mouseMoves = input::pc::CursorMoves(), g_mouseClicks = input::pc::LeftClicks();
                 return true;
             }
-            uint16_t pressed = Pressed(buttons);
-            if (pressed)
+            uint16_t pressed = Pressed(buttons) | MouseButtons();
+            if (pressed || !g_tapped.empty())
                 g_dirty = true;
             if (g_lobbyModal)
                 UpdateLobby(pressed);
@@ -862,6 +998,7 @@ namespace mp::menu
             if (!g_dirty)
                 return;
             g_canvas.Reset(width, height);
+            g_zones.clear();
             View v = MakeView(width, height);
             if (g_open && g_lobbyModal)
                 RasterizeLobby(v, width, height);

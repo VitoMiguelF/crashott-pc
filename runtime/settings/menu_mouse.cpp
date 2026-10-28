@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "settings_menu.h"
 #include "save_screens.h"
+#include "../online/mp_menu.h"
 #include "../platform/platform.h"
 #include "../gpu/widescreen.h"
 
@@ -216,7 +217,8 @@ namespace
         uint32_t moves = input::pc::CursorMoves();
         bool moved = moves != s_moves;
         s_moves = moves;
-        if (!settings::Get().controls.mouseMenus || settings::menu::BlocksGameInput() || settings::save_screens::BlocksMenuMouse())
+        if (!settings::Get().controls.mouseMenus || settings::menu::BlocksGameInput() || settings::save_screens::BlocksMenuMouse() ||
+            mp::menu::BlocksGameInput())
         {
             // The settings screen (drawn over the PS2 options menu, which also runs) has the mouse.
             input::pc::TakeMenuClick();

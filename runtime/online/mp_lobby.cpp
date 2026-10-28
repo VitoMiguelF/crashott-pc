@@ -17,6 +17,9 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #else
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#endif
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -558,6 +561,13 @@ namespace mp::lobby
                 DWORD size = sizeof(user);
                 if (GetUserNameA(user, &size))
                     raw = user;
+            }
+#elif defined(__ANDROID__)
+            if (raw.empty())
+            {
+                char model[PROP_VALUE_MAX] = {};  // no user name on Android: the device's model (SM-X920)
+                if (__system_property_get("ro.product.model", model) > 0)
+                    raw = model;
             }
 #else
             if (raw.empty() && getenv("USER"))
