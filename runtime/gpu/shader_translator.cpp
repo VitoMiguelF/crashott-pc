@@ -19,6 +19,7 @@ namespace gpu
     namespace
     {
         bool g_renderScaled = false;  // SetRenderScaled
+        bool g_implicitDerivatives = true;  // SetImplicitDerivatives
 
         void Append(std::string& out, const char* format, ...)
         {
@@ -526,13 +527,13 @@ namespace gpu
         // predicated end (pixels that left). Bool constant conditions are uniform; a predicated
         // fetch, or one in a predicated exec, samples unconditionally and writes under the
         // predicate. Cheaper than SampleGrad on Adreno (docs/internals/android_port.md).
-        // CRASH_SHADER_DERIVATIVES=gradients: the previous translation; =linear: only in shaders
-        // without loops or jumps.
+        // Off on Turnip (SetImplicitDerivatives). CRASH_SHADER_DERIVATIVES=gradients: the previous
+        // translation; =linear: only in shaders without loops or jumps; =implicit: on everywhere.
         void Translator::FindImplicitFetches(bool structured)
         {
             m_implicitFetch.assign(m_dwordCount / 3 + 1, 0);
             static const char* s_mode = getenv("CRASH_SHADER_DERIVATIVES");
-            std::string mode = s_mode ? s_mode : "";
+            std::string mode = s_mode ? s_mode : g_implicitDerivatives ? "" : "gradients";
             if (!IsPixel() || !structured || mode == "gradients" || (mode == "linear" && m_out.usesControlFlowMachine))
                 return;
             bool exited = false;
@@ -1901,6 +1902,11 @@ float4 xe_unpack32(uint4 w, bool isSigned, bool normalized)
     void SetRenderScaled(bool scaled)
     {
         g_renderScaled = scaled;
+    }
+
+    void SetImplicitDerivatives(bool enabled)
+    {
+        g_implicitDerivatives = enabled;
     }
 
     TranslatedShader TranslateShader(ShaderStage stage, const uint32_t* ucode, uint32_t dwordCount)

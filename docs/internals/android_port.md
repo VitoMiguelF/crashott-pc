@@ -287,6 +287,13 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     - The Xenos multiply (`xe_mul`: 0 times anything is 0) as `m = a * b; isnan(m) ? 0 : m`:
       another 1.5 ms on the main PS (GPU 17.7 ms with the hoist above), but those runs lost the
       device as well, and the plain product too (one run), so it was not kept either.
+    - **Implicit derivatives in uniform control flow (2026-10-27, branch `shader-linear`):**
+      the translator now samples with `SampleBias` wherever the whole quad runs the fetch
+      (runtime/NOTES.md, "Derivadas implícitas"). On the S20 FE it still lost the device (frames
+      ~3370 and ~3590, the second without touching the main PS), while the old translation at
+      800x360 (a faster GPU) ran 200 s: it is Turnip and implicit-LOD sampling, not timing. So the
+      renderer turns it off on Turnip (`SupportsImplicitDerivatives`); the S25 Ultra (Qualcomm's
+      driver) uses it, ~2% less GPU time.
   - **Tab S10 Ultra (Mali-G720 MC12, driver r44p1, Vulkan 1.3.247), same day: the game runs**, the
     opening cutscene at a steady 60 fps (16.67 ms per frame, the limit) at 1154x720 on its
     2960x1848 screen, with the dump pushed (3.0 GB over adb Wi-Fi in 66 s) and the S20 FE's SPIR-V

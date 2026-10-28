@@ -2145,6 +2145,11 @@ Medido com `tools\run_game.py vila_sem_cena` e `CRASH_SETTINGS="video.fps_limit=
 
 **GPU no PC** (RTX 5080, vila parada, `CRASH_GPU_PROFILE=4500-10500`, duas execuções de cada): a 720p, 1,11 / 1,12 ms por quadro (nada, a GPU sobra); a 3840x2160 interna, 3,36 / 3,35 -> 3,30 / 3,29 ms (−1,8%: cena 1,475 -> 1,44 ms, passadas 2D 0,587 -> 0,564 ms). O fps é da CPU (~480 a 720p).
 
+**Android (mesmo dia, L1_E1 parado, sem limite de FPS, `CRASH_GPU_PROFILE`):**
+- **S20 FE (Adreno 650, Turnip, 1200x540):** antigo 20,57 ms de GPU (20,4 ms por quadro), rodou até o quadro 5400; o novo 19,3 ms por quadro, mas perdeu o device (`VK_ERROR_DEVICE_LOST` no submit) no quadro ~3370, e com `=linear` (o PS principal intacto) no ~3590. O antigo a 800x360 (GPU 14,1 ms, mais rápido que o novo) rodou 200 s sem travar: não é uma corrida exposta por uma GPU mais rápida, é a amostragem com derivadas implícitas no Turnip. Por isso `rhi::Device::SupportsImplicitDerivatives` é falso no Turnip (`VK_DRIVER_ID_MESA_TURNIP`) e o renderer chama `SetImplicitDerivatives(false)`: o HLSL é o de antes e o S20 rodou 200 s (quadro 9000) sem travar. `CRASH_SHADER_DERIVATIVES=implicit` força o novo lá para testes.
+- **S25 Ultra (Adreno 830, driver da Qualcomm, 1170x540, anisotrópico 16x):** sem travar. GPU 7,16 -> 7,04 ms por quadro na mesma condição (−2%); uma primeira medida deu 6,29 contra 7,15, mas o aparelho esquentou entre as execuções (o quadro foi de 8 para 13 ms), então vale a medida pareada.
+- **Visto no S25, não é desta mudança:** a grama do chão da vila sai com uma textura borrada, mais escura e manchada, igual nos dois caminhos, com anisotrópico 1x, com DXT decodificado na CPU (`CRASH_VULKAN_NO_EXT=bc`) e com `gpu_safe_mode=on`; no S20 e no PC ela tem o detalhe certo. Mesmo dump, nenhum mod.
+
 ## Ultrawide e 16:10 (issue #2, 2026-10-25, branch `ultrawide`) (`gpu/widescreen.*`, `camera/hor_plus.cpp`, `gpu/xenos_renderer.cpp`, `gpu/shader_translator.cpp`, `settings/*`, `kernel/pc_input.cpp`, `gpu/window.cpp`)
 
 Pedido: VitoMiguelF/crashott-pc#2 ("Support for ultrawide (3440x1440)"). Objetivo: 21:9, 32:9 e 16:10 de verdade (Hor+), sem esticar nem pôr faixas no jogo.
