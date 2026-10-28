@@ -24,6 +24,7 @@ namespace mp
     enum class StreamMode { Vanilla, Union, All };
 
     bool Enabled();
+    bool Online();  // CRASH_MP_ROLE host or client: the level starts with both players in play
     StreamMode Stream();
     bool Trace();
     uint32_t TraceIntervalMs();  // CRASH_MP_TRACE=<ms> (1 = 1000)

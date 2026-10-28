@@ -111,12 +111,32 @@ spawned and every native player path (camera, backpack, damage, triggers) alread
 - The host's `ReadController` for user `CRASH_MP_REMOTE_USER` returns that pad (connected) while packets
   arrive (2 s timeout = unplugged). Late / duplicated sequences are dropped.
 - In the game P2 joins with **B / Circle** (into P1's backpack) and the **same button** leaves it; Y
-  (Triangle) does not. Seen on the host: P2 (the black `Crash_Player2` skin) leaves the backpack, runs and
-  jumps away from P1 on the client's stick (L1_E1, (-58, 65) -> (-58, 42)).
+  (Triangle) does not.
+- **Both machines open the level with the two Crashes on foot**, the way the game does between two co-op
+  levels: `Crash::Crash` copies the co-op state the last level left (`0x8245FA9C[index]`: 0 = not joined,
+  1 = in the backpack, 2 = on foot; `Crash::vf20` saves it) into Crash +300, and `0x8245FA98` is the player
+  that auto-joins into the backpack at the start (`OtherPlayerAutoJoinAtStart` `sub_82163A40` ->
+  join `sub_82154110(player, controller)`: flags +0x110 |= 0x18, objective event 0x2F). Online, before the
+  constructors: P2 state 0, auto-join = 1; then while P2 rides (Crash +300 = 1) its controller taps B, so it
+  is off ~20 ms later, under the episode title. Setting state 2 directly skips P2's model setup: only one
+  Crash is drawn (P2's model sits on P1).
+- Online nobody is pulled into the backpack afterwards: co-op puts the player the shared camera leaves behind
+  into the other one's (`EnterOtherPlayersBackpack` `sub_82154D10` on a Crash already on foot); each
+  machine has its own camera, so the hook skips it (the start join, state 0, still goes through).
 - The client's game sees a neutral pad in a level (only START / BACK, so pause stays local) and its
-  player 1 / player 2 records swap (the host's P2 drives the client's P1, whose camera follows it). The
-  client's Crash moves where the host's P2 is; its pose is still the client's own (idle), and the host's P1
-  lands on the client's unjoined P2 (in the backpack, hidden).
+  player 1 / player 2 records swap (the host's P2 drives the client's P1, whose camera follows it, and the
+  host's P1 the client's P2).
+- **Players move through their physics**: writing the transform is not enough, the Crash's physics keeps its
+  own position and puts it back (measured: the client's Crash 3-4 units behind the host's while running).
+  The client calls `CPhysicsBehaviour::Teleport` (`sub_82142338`, vector in r4 / r5; the physics behaviour is
+  Crash +0xDC, the Crash = `0x8249D778[index]`, its +96 is the actor) when a player is > 0.1 off its record.
+  Teleporting one player pulls the other along (co-op), so when one moves both are put back, P1 first; a
+  player that is not on foot (joining, riding) is left to the game. Result: the client's Crashes stay within
+  ~0.03 of the host's records, jumps included.
+- Seen (`mp_m2_host` + `mp_m2_client`, L1_E1): both windows show both Crashes from the first frame; the
+  client walks and jumps its Crash, the host's P1 walks and jumps, each window shows both in the same places.
+  Each machine draws its own player with P1's look (orange) and the other with P2's (`Crash_Player2`): the
+  per-player colours are M4. The pose is still each machine's own (M3).
 - Tried and dropped: a non-player Crash puppet through the `Cheerleader` class (what the cinematics use for
   Cortex / Tiny / N. Gin): its bank only has the Cortex / NGin / Tiny subtypes, so subtype `Crash` crashes in
   `sub_82389720` (`mp_marionete`). A real puppet needs a new actor template (M3).
@@ -142,6 +162,6 @@ spawned and every native player path (camera, backpack, damage, triggers) alread
 
 | Milestone | Work | Effort |
 |---|---|---|
-| M2 client input drives a Crash on the host | **first slice done** (the host's native P2 on the client's pad, above); left: interpolation, client-side prediction, puppet template for players 3-5 as AI targets and trigger actors | 1-2 weeks left |
+| M2 client input drives a Crash on the host | **first slice done** (the host's native P2 on the client's pad, both players on foot from the start, physics teleports, above); left: interpolation, client-side prediction, puppet template for players 3-5 as AI targets and trigger actors | 1-2 weeks left |
 | M3 combat / enemies / level change, up to 5 | fight-tree node sync (animation), spawn/despawn and death events, damage forwarding, jacking titans (titan = host actor ridden by a puppet), objectives/cinematics/level change as host events, palettes for 5 colours, death/respawn per player | 5-8 weeks |
 | M4 lobby, colour select, internet | lobby menu + colour select (Scrooby screens or our own overlay), protocol versioning / reliability layer, STUN hole punching + TURN relay on a small VPS, reconnect | 3-4 weeks (+ VPS) |

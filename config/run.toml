@@ -1177,7 +1177,7 @@ input = [["@gameplay_ready"], [3, "SHOT"], [5, "SHOT"], [7, "LS", 0, -1, 0.6], [
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['mp puppet mp_puppet_1 made'] }
 
 [profiles.mp_m2_host]
-description = "Multijogador M2 (protótipo): o host da vila L1_E1 recebe o controle do mp_m2_client por UDP como controle 2 (o P2 do co-op do jogo) e manda o estado dos atores; o P1 do host fica parado. Rode junto com mp_m2_client; janelas lado a lado"
+description = "Multijogador M2 (protótipo): o host da vila L1_E1 abre com os 2 Crashes a pé; o controle do mp_m2_client chega por UDP como controle 2 (o P2 do co-op do jogo) e o host manda o estado dos atores; o P1 do host anda e pula aos 12-16 s. Rode junto com mp_m2_client; janelas lado a lado"
 test = false
 timeout = 45
 audio = false
@@ -1186,11 +1186,11 @@ boot = "level:L1_E1"
 skip_cinematics = true
 dev_invincible = true
 env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "0,0,1920,1100" }
-input = [["@gameplay_ready"], [5, "SHOT"], [11, "SHOT"], [14, "SHOT"], [17, "SHOT"], [21, "SHOT"]]
+input = [["@gameplay_ready"], [3, "SHOT"], [6.5, "SHOT"], [7.3, "SHOT"], [10.5, "SHOT"], [12, "LS", 1, 0, 0.5], [14, "SHOT"], [16, "A"], [16.3, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: host', 'client pad [1-9]'] }
 
 [profiles.mp_m2_client]
-description = "Multijogador M2 (protótipo): o cliente joga como o P2 do mp_m2_host: o controle 0 dele vai para o host (B entra na mochila, B de novo sai, anda e pula) e o P2 do host aparece no P1 do cliente"
+description = "Multijogador M2 (protótipo): o cliente joga como o P2 do mp_m2_host: o controle 0 dele vai para o host (a fase já abre com os 2 jogadores a pé; anda e pula) e o P2 do host aparece no P1 do cliente"
 test = false
 timeout = 45
 audio = false
@@ -1198,6 +1198,6 @@ userdata_mode = "copy"
 boot = "level:L1_E1"
 skip_cinematics = true
 dev_invincible = true
-env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SUPPRESS = "ai,objectives", CRASH_RESTART_WINDOW = "1920,0,1920,1100" }
-input = [["@gameplay_ready"], [3, "B"], [5, "SHOT"], [7, "B"], [10, "SHOT"], [11, "LS", 1, 0, 2.0], [13.5, "SHOT"], [14, "A"], [15, "LS", 0, 1, 2.0], [17, "SHOT"], [21, "SHOT"]]
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SUPPRESS = "ai,objectives", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1100" }
+input = [["@gameplay_ready"], [3, "SHOT"], [5, "LS", -1, 0, 1.0], [6.5, "SHOT"], [7, "A"], [7.3, "SHOT"], [9, "LS", -1, 0, 0.5], [10.5, "SHOT"], [14, "SHOT"], [17, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }

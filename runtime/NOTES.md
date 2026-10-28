@@ -2423,8 +2423,17 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   compacto. Inimigos criados pelos objetivos do host não existem no cliente; a pose ainda é a do cliente.
 - **M2** (`mp_m2_host` + `mp_m2_client`): o cliente manda o controle do P1 (pacotes "CMI1", 12 bytes do
   `XINPUT_GAMEPAD`, na mudança e a cada 50 ms, só dentro da fase: `mp::InLevel()`), e o host o entrega como
-  controle `CRASH_MP_REMOTE_USER` (1 = o P2 nativo do co-op). B entra na mochila e o mesmo B sai (Y não);
-  visto no host: o P2 (skin preta) desce da mochila, corre e pula pelo analógico do cliente. No cliente o
-  jogo vê um controle neutro (só START/BACK) e os registros P1/P2 trocam: a câmera do cliente segue o P2 do
-  host. Pose ainda é a local. Marionete via classe `Cheerleader` (`mp_marionete`) crasha: o banco só tem
+  controle `CRASH_MP_REMOTE_USER` (1 = o P2 nativo do co-op). B entra na mochila e o mesmo B sai (Y não).
+  As duas máquinas abrem a fase com os 2 Crashes a pé, como o jogo faz entre fases em co-op: estado co-op
+  por jogador em `0x8245FA9C[i]` (0 fora, 1 na mochila, 2 a pé; o construtor copia para Crash+300) e
+  `0x8245FA98` = quem entra sozinho na mochila no começo; online P2 = 0 + auto-entrada e o controle do P2
+  aperta B enquanto ele está na mochila (sai ~20 ms depois, sob o título do episódio). Estado 2 direto não
+  monta o modelo do P2 (só um Crash aparece). Online ninguém é puxado para a mochila por sair da câmera
+  (gancho em `EnterOtherPlayersBackpack` para Crash já a pé). No cliente o jogo vê um controle neutro (só
+  START/BACK) e os registros P1/P2 trocam (a câmera segue o P2 do host). Jogadores andam pela física:
+  escrever a matriz não basta (o cliente ficava 3-4 unidades atrás); `CPhysicsBehaviour::Teleport`
+  (sub_82142338, física = Crash+0xDC) quando sai >0,1 do registro, os dois juntos (teleportar um puxa o
+  outro), nunca quem não está a pé. Resultado: as duas janelas mostram os dois Crashes nos mesmos lugares,
+  erro ~0,03. Cada máquina desenha o próprio jogador laranja e o outro com a skin do P2 (cores = M4); pose
+  ainda local (M3). Marionete via classe `Cheerleader` (`mp_marionete`) crasha: o banco só tem
   Cortex/NGin/Tiny.

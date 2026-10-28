@@ -23,8 +23,9 @@
 // the game as controller CRASH_MP_REMOTE_USER (default 1): the game's own player 2 (B joins the
 // backpack, B again leaves it). The client plays as that player: the host's player 2 record goes on
 // the client's player 1 (its camera follows it) and the host's player 1 on the client's player 2.
-// In a level the client's game sees a neutral pad (START / BACK only), so its player 1 only follows
-// the records: the pose is still its own (fight-tree sync is M3).
+// In a level the client's game sees a neutral pad (START / BACK only), so its players only follow the
+// records, through their physics (TeleportPlayer): the pose is still its own (fight-tree sync is M3).
+// Both machines start the level with player 2 on foot (mp_players.cpp, RemotePad's B taps).
 
 #include "mp.h"
 #include "../diagnostics.h"
@@ -65,12 +66,14 @@ extern "C" PPC_FUNC(__imp__sub_82092668);  // CActorManager::vf10 (actors' updat
 extern "C" PPC_FUNC(__imp__sub_82099058);  // CAIManager::vf10
 extern "C" PPC_FUNC(__imp__sub_8220AC38);  // CObjectiveManager::vf10
 PPC_EXTERN_FUNC(sub_82142608);             // CActor::GetBehaviour(actor, type)
+PPC_EXTERN_FUNC(sub_82142338);             // CPhysicsBehaviour::Teleport(Vector), the vector in r4 / r5
 
 namespace
 {
     constexpr uint32_t MAGIC = 0x434D5031;  // "CMP1"
     constexpr uint32_t INPUT_MAGIC = 0x434D4931;  // "CMI1"
     constexpr uint32_t GAME_DATABASE = 0x824A76A4;  // CGameDatabase: players at +16 / +20
+    constexpr uint32_t CRASH_TABLE = 0x8249D778;    // Crash* [2], by player index
     constexpr size_t RECORD = 64;
     constexpr size_t HEADER = 16;           // magic, sequence, record count, host frame
     constexpr size_t MAX_PACKET = 1200;     // under the usual internet MTU
@@ -109,6 +112,7 @@ namespace
         std::unordered_map<uint64_t, uint32_t> local;
         uint64_t applied = 0, missing = 0, received = 0;
         uint32_t lastSequence = 0, lost = 0;
+        uint64_t lastSyncTrace = 0, lastP2Trace = 0, lastPacketAt = 0, teleports = 0;
         // M2: the client's pad on the host / sent by the client
         uint32_t remoteUser = 1;
         std::mutex padMutex;
@@ -116,6 +120,7 @@ namespace
         uint64_t remotePadAt = 0, padPackets = 0, padSequence = 0;
         XINPUT_GAMEPAD lastSentPad{};
         uint64_t lastPadSend = 0;
+        uint64_t backpackSince = 0;  // player 2 riding in the backpack since (RemotePad taps B)
     };
 
     Net& N()
@@ -215,6 +220,33 @@ namespace
             return 0;
         uint32_t state = LoadBE32(fight + 28);
         return GuestPointer(state) ? state : 0;
+    }
+
+    uint32_t FloatBits(float f)
+    {
+        uint32_t bits;
+        memcpy(&bits, &f, 4);
+        return bits;
+    }
+
+    // A player's own physics keeps its position and puts the transform back every frame: a player is
+    // moved through the physics (CPhysicsBehaviour::Teleport, what the scripts and dev.teleport use).
+    // The physics behaviour is the player's Crash (0x8249D778[index]) +0xDC; its +96 is the actor.
+    bool TeleportPlayer(PPCContext& ctx, uint8_t* base, uint32_t actor, float x, float y, float z)
+    {
+        uint32_t physics = 0;
+        for (uint32_t i = 0; i < 2; ++i)
+            if (uint32_t crash = LoadBE32(CRASH_TABLE + i * 4); GuestPointer(crash))
+                if (uint32_t candidate = LoadBE32(crash + 0xDC); GuestPointer(candidate) && LoadBE32(candidate + 96) == actor)
+                    physics = candidate;
+        if (!physics)
+            return false;
+        PPCContext call = ctx;
+        call.r3.u64 = physics;
+        call.r4.u64 = (uint64_t(FloatBits(x)) << 32) | FloatBits(y);
+        call.r5.u64 = (uint64_t(FloatBits(z)) << 32) | FloatBits(1.0f);
+        sub_82142338(call, base);
+        return true;
     }
 
     bool Read(PPCContext& ctx, uint8_t* base, uint32_t actor, Record& r)
@@ -342,6 +374,16 @@ namespace
         }
         Flush(n, packet, count);
         n.snapshots++;
+        if (mp::Trace() && now - n.lastSyncTrace >= 250)
+        {
+            n.lastSyncTrace = now;
+            if (uint32_t p2 = LoadBE32(GAME_DATABASE + 20); p2 && GuestPointer(LoadBE32(p2 + 44)))
+            {
+                uint32_t xf = LoadBE32(p2 + 44);
+                Log("[mp] sync host t=%llu frame %llu P2 (%.2f, %.2f, %.2f)", (unsigned long long)now,
+                    (unsigned long long)n.frames, LoadF(xf + 48), LoadF(xf + 52), LoadF(xf + 56));
+            }
+        }
 
         if (now - n.lastStats >= 5000)
         {
@@ -372,6 +414,7 @@ namespace
                 n.lost += sequence - n.lastSequence - 1;
             if (sequence > n.lastSequence)
                 n.lastSequence = sequence;
+            n.lastPacketAt = mp::NowMs();
             const uint8_t* p = buffer + HEADER;
             for (uint32_t i = 0; i < count && p + RECORD <= buffer + got; ++i, p += RECORD)
             {
@@ -392,7 +435,7 @@ namespace
     }
 
     // After the client's own actor update: every mirrored actor gets the host's transform.
-    void ClientApply(Net& n)
+    void ClientApply(PPCContext& ctx, uint8_t* base, Net& n)
     {
         if (n.latest.empty())
             return;
@@ -400,6 +443,15 @@ namespace
         uint32_t p1 = LoadBE32(GAME_DATABASE + 16), p2 = LoadBE32(GAME_DATABASE + 20);
         uint64_t p1Name = p1 ? NameOf(p1) : 0, p2Name = p2 ? NameOf(p2) : 0;
         bool refreshed = false;
+        // Players move through their physics, after the loop: teleporting one player pulls the other
+        // along (co-op), so when one moves both are put back, player 1 first.
+        struct Target
+        {
+            uint32_t actor = 0;
+            float pos[3]{};
+            bool set = false;
+        } targets[2];
+        bool moveAny = false;
         for (auto& [recordName, r] : n.latest)
         {
             uint64_t name = recordName;
@@ -422,11 +474,43 @@ namespace
             uint32_t xform = LoadBE32(it->second + 44);
             if (!xform)
                 continue;
+            // A player not on foot (joining, in the backpack: Crash +300 != 2) is the game's to move.
+            if (it->second == p1 || it->second == p2)
+                if (uint32_t crash = LoadBE32(CRASH_TABLE + (it->second == p1 ? 0 : 4)); crash && LoadBE32(crash + 300) != 2)
+                    continue;
+            if (it->second == p2 && mp::Trace() && mp::NowMs() - n.lastP2Trace >= 1000)
+            {
+                n.lastP2Trace = mp::NowMs();
+                uint32_t c1 = LoadBE32(CRASH_TABLE), c2 = LoadBE32(CRASH_TABLE + 4);
+                Log("[mp] sync client P2 before (%.2f, %.2f, %.2f) record (%.2f, %.2f, %.2f); co-op states %u/%u flags "
+                    "%02X/%02X, carrier %08X rider %08X", LoadF(xform + 48), LoadF(xform + 52), LoadF(xform + 56), r.m[9],
+                    r.m[10], r.m[11], c1 ? LoadBE32(c1 + 300) : 99, c2 ? LoadBE32(c2 + 300) : 99,
+                    c1 ? *g_memory.Translate(c1 + 0x110) : 0, c2 ? *g_memory.Translate(c2 + 0x110) : 0,
+                    LoadBE32(0x8249D784), LoadBE32(0x8249D780));
+            }
+            if (it->second == p1 && mp::Trace() && mp::NowMs() - n.lastSyncTrace >= 250)
+            {
+                n.lastSyncTrace = mp::NowMs();
+                Log("[mp] sync client t=%llu P1 before (%.2f, %.2f, %.2f) record (%.2f, %.2f, %.2f), last packet %llu ms ago",
+                    (unsigned long long)n.lastSyncTrace, LoadF(xform + 48), LoadF(xform + 52), LoadF(xform + 56), r.m[9],
+                    r.m[10], r.m[11], (unsigned long long)(n.lastSyncTrace - n.lastPacketAt));
+            }
+            if (it->second == p1 || it->second == p2)
+            {
+                float dx = LoadF(xform + 48) - r.m[9], dy = LoadF(xform + 52) - r.m[10], dz = LoadF(xform + 56) - r.m[11];
+                Target& t = targets[it->second == p1 ? 0 : 1];
+                t = {it->second, {r.m[9], r.m[10], r.m[11]}, true};
+                moveAny |= dx * dx + dy * dy + dz * dz > 0.01f;
+            }
             for (int row = 0; row < 4; ++row)
                 for (int c = 0; c < 3; ++c)
                     StoreF(xform + row * 16 + c * 4, r.m[row * 3 + c]);
             n.applied++;
         }
+        if (moveAny)
+            for (const Target& t : targets)
+                if (t.set && TeleportPlayer(ctx, base, t.actor, t.pos[0], t.pos[1], t.pos[2]))
+                    n.teleports++;
         uint64_t now = mp::NowMs();
         if (now - n.lastStats >= 5000)
         {
@@ -435,10 +519,11 @@ namespace
                 if (r.flags & 1)
                     player = &r;
             Log("[mp] client: %zu actors mirrored (%llu writes, %llu without a local actor), %llu records received, "
-                "%u packets lost; host player at (%.1f, %.1f, %.1f)",
+                "%u packets lost; host player at (%.1f, %.1f, %.1f); %llu player teleports",
                 n.latest.size(), (unsigned long long)n.applied, (unsigned long long)n.missing,
                 (unsigned long long)n.received, n.lost, player ? player->m[9] : 0.f, player ? player->m[10] : 0.f,
-                player ? player->m[11] : 0.f);
+                player ? player->m[11] : 0.f, (unsigned long long)n.teleports);
+            n.teleports = 0;
             n.lastStats = now;
             n.applied = n.missing = 0;
         }
@@ -447,6 +532,8 @@ namespace
 
 namespace mp
 {
+    bool Online() { return Enabled() && N().role != Role::None; }
+
     void LocalPad(void* padBytes, bool poll)
     {
         if (!Enabled())
@@ -479,12 +566,37 @@ namespace mp
         if (!Enabled())
             return false;
         Net& n = N();
-        if (n.role != Role::Host || user != n.remoteUser || !InLevel())
+        // Player 2 joins at the start (mp_players.cpp): its controller stays plugged in. On the client it
+        // is the host's player 1 and only follows the records; on the host a client that went quiet
+        // leaves its Crash standing. While it rides in the backpack (bc +300 = 1) the controller taps B
+        // (0.15 s every 1 s) to get it off, on both machines.
+        if (n.role == Role::None || user != n.remoteUser || !InLevel())
             return false;
-        std::lock_guard<std::mutex> lock(n.padMutex);
-        if (!n.remotePadAt || NowMs() - n.remotePadAt > 2000)
-            return false;  // no client, or it went quiet: the controller is unplugged
-        memcpy(pad, &n.remotePad, sizeof(n.remotePad));
+        XINPUT_GAMEPAD& game = *static_cast<XINPUT_GAMEPAD*>(pad);
+        game = {};
+        if (n.role == Role::Host)
+        {
+            std::lock_guard<std::mutex> lock(n.padMutex);
+            if (n.remotePadAt && NowMs() - n.remotePadAt <= 2000)
+                memcpy(pad, &n.remotePad, sizeof(n.remotePad));
+        }
+        uint32_t crash = LoadBE32(CRASH_TABLE + 4);
+        if (crash && LoadBE32(crash + 300) == 1)
+        {
+            uint64_t now = NowMs();
+            if (!n.backpackSince)
+            {
+                n.backpackSince = now;
+                Log("[mp] player 2 in the backpack: tapping B");
+            }
+            if ((now - n.backpackSince) % 1000 < 150)
+                game.wButtons |= 0x2000;  // B
+        }
+        else if (n.backpackSince)
+        {
+            Log("[mp] player 2 off the backpack after %llu ms", (unsigned long long)(NowMs() - n.backpackSince));
+            n.backpackSince = 0;
+        }
         return true;
     }
 
@@ -503,7 +615,7 @@ PPC_FUNC(sub_82092668)
 {
     __imp__sub_82092668(ctx, base);
     if (mp::Enabled() && N().role == Role::Client)
-        ClientApply(N());
+        ClientApply(ctx, base, N());
 }
 
 // CAIManager::vf10 / CObjectiveManager::vf10: skipped on a client with CRASH_MP_SUPPRESS, once its
