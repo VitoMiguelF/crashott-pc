@@ -4,6 +4,7 @@
 #include "controls.h"
 #include "menu_art.h"
 #include "settings.h"
+#include "settings_menu.h"
 #include "../kernel/pc_input.h"
 #include "../kernel/xinput_types.h"
 #include "../platform/platform.h"
@@ -82,6 +83,53 @@ namespace settings::prompts
         bool CurrentMenus()
         {
             return g_previewMenus >= 0 ? g_previewMenus != 0 : input::pc::InMenus();
+        }
+
+        // The PS2 controller mapping (controls.h) on the screen shown now: its screen, or false when
+        // the buttons are the game's (Xbox 360 mapping, another screen, the preview). Only the
+        // PlayStation icons follow it (the Xbox ones are the game's own pictures; the keyboard has
+        // its own keys).
+        bool MappedScreen(settings::PadScreen& screen)
+        {
+            uint32_t node = settings::menu::FrontendNode();
+            if (g_previewDevice >= 0 || settings::Get().controls.padLayout != settings::PadLayout::Ps2 || !settings::PadScreenOf(node, screen))
+                return false;
+            // The pause screens (1081, 1109 no save, 1134 demo) show no B / Y prompts of their own, but
+            // the level behind them keeps its icons (the B floating over a hint stone): the gameplay's.
+            if (node == 1081 || node == 1109 || node == 1134)
+                screen = settings::PadScreen::Gameplay;
+            return true;
+        }
+
+        // The icons and the buttons they are.
+        constexpr std::pair<char32_t, settings::PadButton> ICON_BUTTONS[] = {
+            { 0xB1, settings::PadButton::A }, { 0xB2, settings::PadButton::B }, { 0xB3, settings::PadButton::X },
+            { 0xB4, settings::PadButton::Y }, { 0xB5, settings::PadButton::Back }, { 0xB6, settings::PadButton::Start },
+            { 0xB7, settings::PadButton::RT }, { 0xB8, settings::PadButton::RB }, { 0xBD, settings::PadButton::LT },
+            { 0xBE, settings::PadButton::LB },
+        };
+
+        // The screen each PlayStation style was made for (Style), read back when drawing for that
+        // style: the frontend node may change between the two (leaving the pause), and an icon drawn
+        // for the wrong screen would stay in the renderer's cache under that style.
+        std::mutex g_styleMutex;
+        std::unordered_map<uint32_t, settings::PadScreen> g_styleScreens;
+
+        // The icon of the physical button that does game icon `icon`'s button on `screen`.
+        char32_t MappedIcon(char32_t icon, settings::PadScreen screen)
+        {
+            for (const auto& [gameIcon, button] : ICON_BUTTONS)
+            {
+                if (gameIcon != icon)
+                    continue;
+                settings::PadButton source = settings::PadLayoutSource(settings::PadLayout::Ps2, screen, button);
+                for (const auto& [shown, other] : ICON_BUTTONS)
+                {
+                    if (other == source)
+                        return shown;
+                }
+            }
+            return icon;
         }
         using settings::Action;
 
@@ -420,6 +468,10 @@ namespace settings::prompts
             return 0;
         uint32_t h = 2166136261u;
         h = (h ^ uint32_t(device)) * 16777619u;
+        settings::PadScreen screen;
+        bool mapped = device == Device::PlayStation && MappedScreen(screen);
+        if (mapped)
+            h = (h ^ (0x100u + uint32_t(screen))) * 16777619u;
         if (device == Device::Keyboard)
         {
             bool menus = CurrentMenus();
@@ -431,7 +483,13 @@ namespace settings::prompts
                 h = Hash(h, label.text + char('0' + label.mouseButton));
             }
         }
-        return h ? h : 1;
+        h = h ? h : 1;
+        if (mapped)
+        {
+            std::lock_guard lock(g_styleMutex);
+            g_styleScreens[h] = screen;
+        }
+        return h;
     }
 
     namespace
@@ -532,6 +590,11 @@ namespace settings::prompts
 
         if (device == Device::PlayStation)
         {
+            {
+                std::lock_guard lock(g_styleMutex);
+                if (auto it = g_styleScreens.find(style); it != g_styleScreens.end())
+                    icon = MappedIcon(icon, it->second);
+            }
             switch (icon)
             {
             case 0xB1: case 0xB2: case 0xB3: case 0xB4:

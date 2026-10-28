@@ -88,7 +88,7 @@ Nomes escolhidos em 2026-10-25, juntando duas palavras como no inglês. Gênero:
 | spin attack / spin hover | ataque giratório / giro planador |
 | slide / Aku Air Grind (air grind) | deslizar, deslize / Deslize do Aku |
 | sprint | arrancada |
-| free kick | chute livre |
+| free kick | chute freejack |
 | precision aiming | mira de precisão |
 | stun | atordoar |
 | press / hold / repeatedly press | pressione / segure / pressione várias vezes |
