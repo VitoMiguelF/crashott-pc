@@ -11,7 +11,8 @@
 //   CRASH_MP_ROLE=<role>       host | client: the M1 mirror over UDP (mp_net.cpp)
 //   CRASH_MP_PORT=<n>          UDP port (default 47810); CRASH_MP_PEER=<ip> the host for a client
 //   CRASH_MP_HZ=<n>            snapshots per second sent by the host (default 30)
-//   CRASH_MP_REMOTE_USER=<n>   host: the game controller the client's pad becomes (default 1 = player 2)
+//   CRASH_MP_REMOTE_USER=<n>   the game controller the peer's pad becomes (default 1 = player 2)
+//   CRASH_MP_SNAP=<units>      client: a player further than this from its record is put back (1.0)
 
 #include <cstdint>
 #include <string>
@@ -54,6 +55,6 @@ namespace mp
     // this player); on the host, the remote player's pad for controller `user` (true if one is
     // connected: it replaces whatever is there).
     // `pad` is a 12-byte XINPUT_GAMEPAD (kernel/xinput_types.h; the name clashes with <xinput.h>).
-    void LocalPad(void* pad, bool poll);
+    void LocalPad(const void* pad, bool poll);
     bool RemotePad(uint32_t user, void* pad);
 }

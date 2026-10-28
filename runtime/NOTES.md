@@ -2429,11 +2429,14 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   `0x8245FA98` = quem entra sozinho na mochila no começo; online P2 = 0 + auto-entrada e o controle do P2
   aperta B enquanto ele está na mochila (sai ~20 ms depois, sob o título do episódio). Estado 2 direto não
   monta o modelo do P2 (só um Crash aparece). Online ninguém é puxado para a mochila por sair da câmera
-  (gancho em `EnterOtherPlayersBackpack` para Crash já a pé). No cliente o jogo vê um controle neutro (só
-  START/BACK) e os registros P1/P2 trocam (a câmera segue o P2 do host). Jogadores andam pela física:
-  escrever a matriz não basta (o cliente ficava 3-4 unidades atrás); `CPhysicsBehaviour::Teleport`
-  (sub_82142338, física = Crash+0xDC) quando sai >0,1 do registro, os dois juntos (teleportar um puxa o
-  outro), nunca quem não está a pé. Resultado: as duas janelas mostram os dois Crashes nos mesmos lugares,
-  erro ~0,03. Cada máquina desenha o próprio jogador laranja e o outro com a skin do P2 (cores = M4); pose
-  ainda local (M3). Marionete via classe `Cheerleader` (`mp_marionete`) crasha: o banco só tem
+  (gancho em `EnterOtherPlayersBackpack` para Crash já a pé). Animação por espelho de controles: as duas
+  máquinas mandam o controle do P1 (sem START/BACK) e põem o do outro no controle 2, então cada uma roda os
+  dois Crashes com as mesmas entradas e o jogo faz os mesmos movimentos (correr, pular, golpes, efeitos);
+  o Crash do cliente responde na hora (previsão local); o controle chega em 1-3 ms no mesmo PC. Os
+  registros P1/P2 trocam no cliente (a câmera segue o P2 do host). Correção pela física: escrever a matriz
+  não basta (o cliente ficava 3-4 unidades atrás); `CPhysicsBehaviour::Teleport` (sub_82142338, física =
+  Crash+0xDC) só quando passa de `CRASH_MP_SNAP` (1,0) do registro e nunca para quem não está a pé (bit 1
+  do registro). Diferença entre as máquinas ~0,3-0,5 correndo e pulando, sem correção depois do começo.
+  Cada máquina desenha o próprio jogador laranja e o outro com a skin do P2 (cores = M4); IA dos inimigos
+  e golpes que acertam diferente = M3. Marionete via classe `Cheerleader` (`mp_marionete`) crasha: o banco só tem
   Cortex/NGin/Tiny.

@@ -13,7 +13,8 @@ hook changes anything.
 | `CRASH_MP_TRACE=1\|<ms>` | rooms + players once a second, every player move > 10 units in one frame |
 | `CRASH_MP_ROLE=host\|client` | the M1 UDP mirror; `CRASH_MP_PEER` (127.0.0.1), `CRASH_MP_PORT` (47810; client = +1), `CRASH_MP_HZ` (30) |
 | `CRASH_MP_SUPPRESS=ai,objectives` | client: skip CAIManager / CObjectiveManager updates once its level is up |
-| `CRASH_MP_REMOTE_USER=<n>` | host: the controller the client's pad becomes (default 1 = the game's player 2) |
+| `CRASH_MP_REMOTE_USER=<n>` | the controller the peer's pad becomes (default 1 = the game's player 2) |
+| `CRASH_MP_SNAP=<units>` | client: a player further than this from the host's record is put back through its physics (default 1.0) |
 
 Profiles (`test = false`): `mp_stream_vanilla`, `mp_stream_union`, `mp_stream_all`, `mp_host` + `mp_client`
 (run together; windows side by side through `CRASH_RESTART_WINDOW`), `mp_tres_crash`, `mp_m2_host` + `mp_m2_client`,
@@ -123,20 +124,28 @@ spawned and every native player path (camera, backpack, damage, triggers) alread
 - Online nobody is pulled into the backpack afterwards: co-op puts the player the shared camera leaves behind
   into the other one's (`EnterOtherPlayersBackpack` `sub_82154D10` on a Crash already on foot); each
   machine has its own camera, so the hook skips it (the start join, state 0, still goes through).
-- The client's game sees a neutral pad in a level (only START / BACK, so pause stays local) and its
-  player 1 / player 2 records swap (the host's P2 drives the client's P1, whose camera follows it, and the
-  host's P1 the client's P2).
-- **Players move through their physics**: writing the transform is not enough, the Crash's physics keeps its
-  own position and puts it back (measured: the client's Crash 3-4 units behind the host's while running).
-  The client calls `CPhysicsBehaviour::Teleport` (`sub_82142338`, vector in r4 / r5; the physics behaviour is
-  Crash +0xDC, the Crash = `0x8249D778[index]`, its +96 is the actor) when a player is > 0.1 off its record.
-  Teleporting one player pulls the other along (co-op), so when one moves both are put back, P1 first; a
-  player that is not on foot (joining, riding) is left to the game. Result: the client's Crashes stay within
-  ~0.03 of the host's records, jumps included.
+- **Animation by input mirroring.** Both machines send their player 1's pad ("CMI1", without START / BACK:
+  pause stays local) and both feed the peer's pad to controller `CRASH_MP_REMOTE_USER`. So each machine runs
+  both Crashes on the same inputs and the game itself plays the same moves on both (run, jump, attacks,
+  their effects); no fight-tree state has to be sent. The client's own Crash runs on its own pad at once
+  (local prediction: no round trip before it moves). Measured on one PC: a pad change reaches the peer in
+  1-3 ms. The client's player 1 / player 2 records swap (the host's P2 is the client's P1, whose camera
+  follows it; the host's P1 is the client's P2).
+- **Corrections go through the physics**: writing the transform is not enough, a Crash's physics keeps its own
+  position and puts it back every frame (measured: 3-4 units behind the host while running), and an animated
+  player must not get its transform overwritten every frame anyway. When a player is more than
+  `CRASH_MP_SNAP` (1.0) off the host's record, the client calls `CPhysicsBehaviour::Teleport`
+  (`sub_82142338`, vector in r4 / r5; the physics behaviour is Crash +0xDC, the Crash = `0x8249D778[index]`,
+  its +96 is the actor). A record of a player that is not on foot (record flag bit 1: joining / riding, the
+  position is a parking spot) and a local player that is not on foot are never snapped. With mirrored inputs
+  the two machines stay within ~0.3-0.5 of each other while running and jumping: no snap at all in the test
+  after the start.
 - Seen (`mp_m2_host` + `mp_m2_client`, L1_E1): both windows show both Crashes from the first frame; the
-  client walks and jumps its Crash, the host's P1 walks and jumps, each window shows both in the same places.
-  Each machine draws its own player with P1's look (orange) and the other with P2's (`Crash_Player2`): the
-  per-player colours are M4. The pose is still each machine's own (M3).
+  client walks, jumps and attacks with its Crash, the host's P1 walks, attacks and jumps, each window shows
+  both in the same places with the same moves (the attack swipe and its hit effect on both). Each machine
+  draws its own player with P1's look (orange) and the other with P2's (`Crash_Player2`): the per-player
+  colours are M4. What inputs cannot mirror (enemies' own AI, hits that land differently on each machine)
+  is M3.
 - Tried and dropped: a non-player Crash puppet through the `Cheerleader` class (what the cinematics use for
   Cortex / Tiny / N. Gin): its bank only has the Cortex / NGin / Tiny subtypes, so subtype `Crash` crashes in
   `sub_82389720` (`mp_marionete`). A real puppet needs a new actor template (M3).
@@ -162,6 +171,6 @@ spawned and every native player path (camera, backpack, damage, triggers) alread
 
 | Milestone | Work | Effort |
 |---|---|---|
-| M2 client input drives a Crash on the host | **first slice done** (the host's native P2 on the client's pad, both players on foot from the start, physics teleports, above); left: interpolation, client-side prediction, puppet template for players 3-5 as AI targets and trigger actors | 1-2 weeks left |
+| M2 client input drives a Crash on the host | **first slice done** (the host's native P2 on the client's pad, both players on foot from the start, physics teleports, above); input mirroring for animation and local prediction, above); left: puppet template for players 3-5 as AI targets and trigger actors, snap against time-aligned records over real latency | 1-2 weeks left |
 | M3 combat / enemies / level change, up to 5 | fight-tree node sync (animation), spawn/despawn and death events, damage forwarding, jacking titans (titan = host actor ridden by a puppet), objectives/cinematics/level change as host events, palettes for 5 colours, death/respawn per player | 5-8 weeks |
 | M4 lobby, colour select, internet | lobby menu + colour select (Scrooby screens or our own overlay), protocol versioning / reliability layer, STUN hole punching + TURN relay on a small VPS, reconnect | 3-4 weeks (+ VPS) |

@@ -450,7 +450,7 @@ namespace
             if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput())
                 state.Gamepad = {};
             state.Gamepad.wButtons |= settings::menu::GameButtons();  // B when it closes
-            mp::LocalPad(&state.Gamepad, poll);  // online prototype client: to the host (the game keeps START / BACK)
+            mp::LocalPad(&state.Gamepad, poll);  // online prototype: player 1's pad to the peer
         }
         // The packet number changes with the state, per controller.
         static uint32_t s_packet[4];
