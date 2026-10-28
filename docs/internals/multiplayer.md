@@ -300,8 +300,13 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   level started from the lobby is the `CRASH_MP_ROLE` prototype with the lobby's players. Host port 47810
   (`CRASH_MP_PORT`), clients any. The invite code is the host's LAN address and port in 10 Crockford base-32
   letters (`XXXXX-XXXXX`); over the internet the host needs the port forwarded or a virtual LAN (no relay).
-- Text entry: letters and digits typed on the keyboard (`input::pc::SetTextEntry`), or the D-pad (up / down the
-  letter, left / right the cursor, X erases).
+- Text entry: letters and digits typed on the keyboard (`input::pc::SetTextEntry`), keys on the screen (mouse /
+  touch), or the D-pad (up / down the letter, left / right the cursor, X erases).
+- Mouse and touch (Android's menus are touch as a mouse): a click on a row chooses it, on the game's B BACK /
+  SELECT A hints is that button, on an option's left / right half changes it, on the HUB panel opens the lobby;
+  kicking needs a second tap on the player. On Android the default name is the device's model.
+- PC + Android: the same protocol (one UDP socket, `net::Broadcast` with SO_BROADCAST); a Windows host needs the
+  firewall to let the game take UDP 47810 (the prompt on the first HOST GAME, private networks).
 - Seen (`mp_lobby_host` + `mp_lobby_c1` + `mp_lobby_c2`, three windows): MULTIPLAYER between LOAD GAME and CREDITS
   (the six items centred), HOST GAME > LOAD GAME > slot 1 to the HUB with the panel (code, 3/4 players); the
   list client found the host (LAN address and 127.0.0.1 answers merged) and was asked the password, the code
