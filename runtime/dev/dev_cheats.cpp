@@ -14,6 +14,7 @@
 #include "dev_tools.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
+#include "../online/mp.h"
 
 #include <atomic>
 #include <cstdio>
@@ -143,6 +144,7 @@ namespace dev
 
 PPC_FUNC(sub_82110448)
 {
+    ctx.f1.f64 = mp::Hitpoints(ctx.r3.u32, ctx.f1.f64);  // online: the host's hitpoints win
     if (getenv("CRASH_DEV_DAMAGE_DEBUG") && ctx.f1.f64 < 0.0)
     {
         uint32_t d = ctx.r3.u32;

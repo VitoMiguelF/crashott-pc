@@ -11,13 +11,12 @@
 // global room (sm +36, same layout). An actor is found on the other side by its 64-bit name hash at
 // actor +8 (the name given to newActor; the same on both machines). actor +40 = its room,
 // actor +44 -> its transform: a 4x4 matrix, rows 0-2 the axes, row 3 (+48) the position.
-// Behaviours by type (CActor::GetBehaviour sub_82142608, the type is each class's vf05): 2 = the
-// fight tree (+28 -> its state: +132 state time, +136 sub-state time, +140 general time),
-// 3 = physics, 38 = render.
+// Enemies run their own AI on both machines (same objectives, same names, same inputs for the
+// players): their positions follow the records; their hitpoints are the host's (Hitpoints below).
 //
 // Wire record (64 bytes, raw floats; docs/internals/multiplayer.md has the compact layout):
-//   u64 name hash, f32 matrix rows 0-3 xyz (48), f32 fight state time, u32 flags (bit 0 = player,
-//   bit 1 = a player not on foot: joining or riding, its position is not where it plays)
+//   u64 name hash, f32 matrix rows 0-3 xyz (48), f32 hitpoints (-1 = none known), u32 flags (bit 0 =
+//   player, bit 1 = a player not on foot: joining or riding, its position is not where it plays)
 //
 // M2, the client's input drives a Crash on the host: the client sends player 1's pad (the state the
 // game read, 12 bytes, "CMI1" packets, on change and at least every 50 ms) and the host gives it to
@@ -69,8 +68,10 @@ static bool SetNonBlocking(socket_t s) { return fcntl(s, F_SETFL, fcntl(s, F_GET
 extern "C" PPC_FUNC(__imp__sub_82092668);  // CActorManager::vf10 (actors' update)
 extern "C" PPC_FUNC(__imp__sub_82099058);  // CAIManager::vf10
 extern "C" PPC_FUNC(__imp__sub_8220AC38);  // CObjectiveManager::vf10
-PPC_EXTERN_FUNC(sub_82142608);             // CActor::GetBehaviour(actor, type)
-PPC_EXTERN_FUNC(sub_82142338);             // CPhysicsBehaviour::Teleport(Vector), the vector in r4 / r5
+PPC_EXTERN_FUNC(sub_82110448);             // CDamageableBehaviour::AdjustHitpoints(this, f1 = delta, r5 = damager)
+PPC_EXTERN_FUNC(sub_820972D0);             // CActionTeleport::CActionTeleport(msg, const Vector*, flags)
+PPC_EXTERN_FUNC(sub_82097348);             // its destructor
+PPC_EXTERN_FUNC(sub_82145358);             // CPhysicsBehaviour: the teleport message (type 40) handler
 PPC_EXTERN_FUNC(sub_8222C2D8);             // character drawable (+348): sets its base palette
 
 namespace
@@ -83,8 +84,8 @@ namespace
     constexpr size_t HEADER = 16;           // magic, sequence, record count, host frame
     constexpr size_t MAX_PACKET = 1200;     // under the usual internet MTU
     constexpr uint32_t CACTOR_VTABLE = 0x820007A4;
-    constexpr uint32_t CHARACTER_FIGHT_TREE_VTABLE = 0x82010474;
-    constexpr uint32_t FIGHT_TREE_VTABLE = 0x82011B14;
+    // CDamageableBehaviour: its actor at +28, -> hitpoints at +64 (dev/dev_cheats.cpp)
+    constexpr uint32_t BEHAVIOUR_ACTOR = 28, DAMAGEABLE_HITPOINTS = 64;
 
     // Heap pointers the game hands out: virtual (0x40000000..) or physical (0xA0000000..) memory.
     bool GuestPointer(uint32_t p) { return (p >= 0x40000000 && p < 0x7F000000) || (p >= 0xA0000000 && p < 0xC0000000); }
@@ -95,7 +96,7 @@ namespace
     {
         uint64_t name = 0;
         float m[12]{};     // rows 0-3, xyz
-        float stateTime = 0;
+        float hitpoints = -1;
         uint32_t flags = 0;
     };
 
@@ -127,7 +128,13 @@ namespace
         uint64_t lastPadSend = 0, sentPadSequence = 0;
         float snap = 1.0f;  // client: player position error corrected through the physics
         uint32_t swappedLooks[2] = {};  // client: the players' drawables whose looks were swapped
+        uint64_t lastSnap[2] = {};      // client: last correction of each player
         uint64_t backpackSince = 0;  // player 2 riding in the backpack since (RemotePad taps B)
+        // Each actor's damageable behaviour, learnt from AdjustHitpoints (it sets every character's
+        // hitpoints when it comes up); client: the host's hitpoints being applied, damage dropped
+        std::unordered_map<uint32_t, uint32_t> damageables;
+        bool applyingHitpoints = false;
+        uint64_t hitpointsApplied = 0, damageDropped = 0;
     };
 
     Net& N()
@@ -218,29 +225,27 @@ namespace
         return out;
     }
 
-    uint32_t FightState(PPCContext& ctx, uint8_t* base, uint32_t actor)
+    // The actor's damageable behaviour, if AdjustHitpoints has seen it (and it is still that actor's).
+    uint32_t Damageable(Net& n, uint32_t actor)
     {
-        PPCContext call = ctx;
-        call.r3.u64 = actor;
-        call.r4.u64 = 2;
-        sub_82142608(call, base);
-        uint32_t fight = call.r3.u32;
-        if (!fight || (LoadBE32(fight) != CHARACTER_FIGHT_TREE_VTABLE && LoadBE32(fight) != FIGHT_TREE_VTABLE))
+        auto it = n.damageables.find(actor);
+        if (it == n.damageables.end())
             return 0;
-        uint32_t state = LoadBE32(fight + 28);
-        return GuestPointer(state) ? state : 0;
-    }
-
-    uint32_t FloatBits(float f)
-    {
-        uint32_t bits;
-        memcpy(&bits, &f, 4);
-        return bits;
+        uint32_t d = it->second;
+        if (LoadBE32(d + BEHAVIOUR_ACTOR) != actor || !GuestPointer(LoadBE32(d + DAMAGEABLE_HITPOINTS)))
+        {
+            n.damageables.erase(it);
+            return 0;
+        }
+        return d;
     }
 
     // A player's own physics keeps its position and puts the transform back every frame: a player is
-    // moved through the physics (CPhysicsBehaviour::Teleport, what the scripts and dev.teleport use).
-    // The physics behaviour is the player's Crash (0x8249D778[index]) +0xDC; its +96 is the actor.
+    // moved through the physics. CPhysicsBehaviour::Teleport (sub_82142338, what the scripts use) sends
+    // a CActionTeleport (message type 40) to the whole actor, and the Crash takes the other player
+    // along; here the message goes to the physics' own handler only (sub_82145358: the body, the
+    // transform, the stream manager), so only this player moves. The physics behaviour is the player's
+    // Crash (0x8249D778[index]) +0xDC; its +96 is the actor.
     bool TeleportPlayer(PPCContext& ctx, uint8_t* base, uint32_t actor, float x, float y, float z)
     {
         uint32_t physics = 0;
@@ -250,11 +255,26 @@ namespace
                     physics = candidate;
         if (!physics)
             return false;
+        static uint32_t message = GuestAlloc(128), vector = GuestAlloc(16);
+        if (!message || !vector)
+            return false;
+        StoreF(vector, x);
+        StoreF(vector + 4, y);
+        StoreF(vector + 8, z);
+        StoreF(vector + 12, 1.0f);
         PPCContext call = ctx;
+        call.r3.u64 = message;
+        call.r4.u64 = vector;
+        call.r5.u64 = 0;
+        sub_820972D0(call, base);
+        call = ctx;
         call.r3.u64 = physics;
-        call.r4.u64 = (uint64_t(FloatBits(x)) << 32) | FloatBits(y);
-        call.r5.u64 = (uint64_t(FloatBits(z)) << 32) | FloatBits(1.0f);
-        sub_82142338(call, base);
+        call.r4.u64 = actor;
+        call.r5.u64 = message;
+        sub_82145358(call, base);
+        call = ctx;
+        call.r3.u64 = message;
+        sub_82097348(call, base);
         return true;
     }
 
@@ -269,8 +289,9 @@ namespace
             uint32_t xf = actor ? LoadBE32(actor + 44) : 0;
             if (!GuestPointer(xf))
                 continue;
-            k += snprintf(line + k, sizeof(line) - k, " | P%u (%.1f, %.1f, %.1f)", i + 1, LoadF(xf + 48), LoadF(xf + 52),
-                          LoadF(xf + 56));
+            uint32_t crash = LoadBE32(CRASH_TABLE + i * 4);
+            k += snprintf(line + k, sizeof(line) - k, " | P%u (%.1f, %.1f, %.1f) co-op %u", i + 1, LoadF(xf + 48),
+                          LoadF(xf + 52), LoadF(xf + 56), GuestPointer(crash) ? LoadBE32(crash + 300) : 9);
         }
         Log("%s", line);
     }
@@ -319,6 +340,38 @@ namespace
         Log("[mp] client: looks swapped (player 1 = the host's player 2's colour, player 2 = the host's player 1's)");
     }
 
+    // Trace: the actors spawned after the level came up (the objectives' enemies), name, controller
+    // (actor +0x1C) and position.
+    void TraceEnemies(const char* role, uint64_t now)
+    {
+        static std::unordered_map<uint32_t, bool> initial;
+        std::vector<uint32_t> actors = Actors();
+        if (initial.empty())
+        {
+            for (uint32_t actor : actors)
+                initial[actor] = true;
+            return;
+        }
+        char line[512];
+        int k = snprintf(line, sizeof(line), "[mp] enemies %s t=%llu", role, (unsigned long long)now);
+        int count = 0;
+        for (uint32_t actor : actors)
+        {
+            uint32_t xf = LoadBE32(actor + 44);
+            if (initial.count(actor) || !GuestPointer(xf))
+                continue;
+            if (++count <= 6 && k < int(sizeof(line)) - 60)
+            {
+                uint32_t damageable = Damageable(N(), actor);
+                k += snprintf(line + k, sizeof(line) - k, " | %08X vt %08X (%.1f, %.1f, %.1f) hp %.1f", LoadBE32(actor + 12),
+                              LoadBE32(LoadBE32(actor + 0x1C)), LoadF(xf + 48), LoadF(xf + 52), LoadF(xf + 56),
+                              damageable ? LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)) : -1.0f);
+            }
+        }
+        if (count)
+            Log("%s (%d)", line, count);
+    }
+
     bool Read(PPCContext& ctx, uint8_t* base, uint32_t actor, Record& r)
     {
         uint32_t xform = LoadBE32(actor + 44);
@@ -328,8 +381,8 @@ namespace
         for (int row = 0; row < 4; ++row)
             for (int c = 0; c < 3; ++c)
                 r.m[row * 3 + c] = LoadF(xform + row * 16 + c * 4);
-        uint32_t state = FightState(ctx, base, actor);
-        r.stateTime = state ? LoadF(state + 132) : 0;
+        uint32_t damageable = Damageable(N(), actor);
+        r.hitpoints = damageable ? LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)) : -1.0f;
         r.flags = 0;
         for (uint32_t player : mp::PlayerActors())
             if (player == actor)
@@ -346,7 +399,7 @@ namespace
         for (int i = 0; i < 12; ++i)
             if (std::abs(a.m[i] - b.m[i]) > 1e-3f)
                 return true;
-        return a.stateTime != b.stateTime || a.flags != b.flags;
+        return a.hitpoints != b.hitpoints || a.flags != b.flags;
     }
 
     void Put32(std::vector<uint8_t>& out, uint32_t v)
@@ -402,9 +455,37 @@ namespace
         }
     }
 
+    // Tests: CRASH_MP_TELEPORT=x,y,z puts both of the host's players there (P2 2 units along x), once,
+    // 2 s after both are on foot.
+    void HostTestTeleport(PPCContext& ctx, uint8_t* base)
+    {
+        static float target[3];
+        static int state = [] {
+            const char* at = getenv("CRASH_MP_TELEPORT");
+            return at && sscanf(at, "%f,%f,%f", &target[0], &target[1], &target[2]) == 3 ? 1 : 0;
+        }();
+        static uint64_t since;
+        if (state != 1)
+            return;
+        uint32_t c1 = LoadBE32(CRASH_TABLE), c2 = LoadBE32(CRASH_TABLE + 4);
+        if (!GuestPointer(c1) || !GuestPointer(c2) || LoadBE32(c1 + 300) != 2 || LoadBE32(c2 + 300) != 2)
+            return;
+        if (!since)
+            since = mp::NowMs();
+        if (mp::NowMs() - since < 2000)
+            return;
+        state = 2;
+        uint32_t p1 = LoadBE32(GAME_DATABASE + 16), p2 = LoadBE32(GAME_DATABASE + 20);
+        bool moved = TeleportPlayer(ctx, base, p1, target[0], target[1], target[2])
+                     && TeleportPlayer(ctx, base, p2, target[0] + 2, target[1], target[2]);
+        Log("[mp] test teleport of both players to (%.1f, %.1f, %.1f): %s", target[0], target[1], target[2],
+            moved ? "done" : "no physics");
+    }
+
     void HostTick(PPCContext& ctx, uint8_t* base, Net& n)
     {
         HostReceive(n);
+        HostTestTeleport(ctx, base);
         uint64_t now = mp::NowMs();
         n.frames++;
         if (now - n.lastSend < uint64_t(1000 / n.hz))
@@ -445,7 +526,7 @@ namespace
                 Put32(packet, bits);
             }
             uint32_t bits;
-            memcpy(&bits, &r.stateTime, 4);
+            memcpy(&bits, &r.hitpoints, 4);
             Put32(packet, bits);
             Put32(packet, r.flags);
             n.records++;
@@ -461,6 +542,8 @@ namespace
         {
             n.lastSyncTrace = now;
             TracePlayers("host", now);
+            if (n.frames % 2)
+                TraceEnemies("host", now);
         }
 
         if (now - n.lastStats >= 5000)
@@ -507,7 +590,7 @@ namespace
                     memcpy(&r.m[k], &bits, 4);
                 }
                 uint32_t bits = Get32(p + 56);
-                memcpy(&r.stateTime, &bits, 4);
+                memcpy(&r.hitpoints, &bits, 4);
                 r.flags = Get32(p + 60);
                 n.latest[r.name] = r;
                 n.received++;
@@ -523,7 +606,11 @@ namespace
         // The client plays the host's player 2: the two players' records swap actors.
         uint32_t p1 = LoadBE32(GAME_DATABASE + 16), p2 = LoadBE32(GAME_DATABASE + 20);
         uint64_t p1Name = p1 ? NameOf(p1) : 0, p2Name = p2 ? NameOf(p2) : 0;
-        bool refreshed = false;
+        // The local actors from the live room lists, every frame: an actor the game removed (an enemy
+        // killed, a pickup taken) must not get the host's transform written into its freed memory.
+        n.local.clear();
+        for (uint32_t actor : Actors())
+            n.local[NameOf(actor)] = actor;
         // Players run on their own inputs here (input mirroring); a record only corrects a player that
         // drifted more than `snap` away, through its physics, after the loop.
         struct Target
@@ -537,14 +624,6 @@ namespace
             if (p1 && p2 && n.remoteUser == 1)
                 name = name == p1Name ? p2Name : name == p2Name ? p1Name : name;
             auto it = n.local.find(name);
-            if (it == n.local.end() && !refreshed)
-            {
-                n.local.clear();
-                for (uint32_t actor : Actors())
-                    n.local[NameOf(actor)] = actor;
-                refreshed = true;
-                it = n.local.find(name);
-            }
             if (it == n.local.end())
             {
                 n.missing++;
@@ -560,14 +639,37 @@ namespace
             if (it->second == p1 || it->second == p2)
             {
                 float dx = LoadF(xform + 48) - r.m[9], dy = LoadF(xform + 52) - r.m[10], dz = LoadF(xform + 56) - r.m[11];
-                if (!(r.flags & 2) && dx * dx + dy * dy + dz * dz > n.snap * n.snap)
-                    targets[it->second == p1 ? 0 : 1] = {it->second, {r.m[9], r.m[10], r.m[11]}};
+                uint32_t index = it->second == p1 ? 0 : 1;
+                // At most every 250 ms: a player that cannot get there (pushed, hit) is not teleported every frame.
+                if (!(r.flags & 2) && dx * dx + dy * dy + dz * dz > n.snap * n.snap && mp::NowMs() - n.lastSnap[index] >= 250)
+                {
+                    targets[index] = {it->second, {r.m[9], r.m[10], r.m[11]}};
+                    n.lastSnap[index] = mp::NowMs();
+                }
                 continue;
             }
             for (int row = 0; row < 4; ++row)
                 for (int c = 0; c < 3; ++c)
                     StoreF(xform + row * 16 + c * 4, r.m[row * 3 + c]);
             n.applied++;
+            // The host's hitpoints: its hits (and the deaths they bring) land here too.
+            if (uint32_t damageable = r.hitpoints >= 0 ? Damageable(n, it->second) : 0)
+            {
+                float local = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS));
+                if (local >= 0 && std::abs(local - r.hitpoints) > 0.01f)
+                {
+                    PPCContext call = ctx;
+                    call.r3.u64 = damageable;
+                    call.r5.u64 = 0;
+                    call.f1.f64 = double(r.hitpoints) - local;
+                    n.applyingHitpoints = true;
+                    sub_82110448(call, base);
+                    n.applyingHitpoints = false;
+                    n.hitpointsApplied++;
+                    if (mp::Trace())
+                        Log("[mp] client: %08X hitpoints %.1f -> %.1f (host)", uint32_t(name), local, r.hitpoints);
+                }
+            }
         }
         for (const Target& t : targets)
             if (t.actor && TeleportPlayer(ctx, base, t.actor, t.pos[0], t.pos[1], t.pos[2]))
@@ -580,6 +682,7 @@ namespace
         {
             n.lastSyncTrace = mp::NowMs();
             TracePlayers("client", n.lastSyncTrace);
+            TraceEnemies("client", n.lastSyncTrace);
         }
         SwapLooks(ctx, base, n, p1, p2);
         uint64_t now = mp::NowMs();
@@ -590,11 +693,13 @@ namespace
                 if (r.flags & 1)
                     player = &r;
             Log("[mp] client: %zu actors mirrored (%llu writes, %llu without a local actor), %llu records received, "
-                "%u packets lost; host player at (%.1f, %.1f, %.1f); %llu player teleports",
+                "%u packets lost; host player at (%.1f, %.1f, %.1f); %llu player teleports; hitpoints: %llu from the "
+                "host, %llu local damages dropped",
                 n.latest.size(), (unsigned long long)n.applied, (unsigned long long)n.missing,
                 (unsigned long long)n.received, n.lost, player ? player->m[9] : 0.f, player ? player->m[10] : 0.f,
-                player ? player->m[11] : 0.f, (unsigned long long)n.teleports);
-            n.teleports = 0;
+                player ? player->m[11] : 0.f, (unsigned long long)n.teleports, (unsigned long long)n.hitpointsApplied,
+                (unsigned long long)n.damageDropped);
+            n.teleports = n.hitpointsApplied = n.damageDropped = 0;
             n.lastStats = now;
             n.applied = n.missing = 0;
         }
@@ -604,6 +709,32 @@ namespace
 namespace mp
 {
     bool Online() { return Enabled() && N().role != Role::None; }
+
+    double Hitpoints(uint32_t damageable, double delta)
+    {
+        if (!Enabled())
+            return delta;
+        Net& n = N();
+        if (n.role == Role::None)
+            return delta;
+        uint32_t actor = LoadBE32(damageable + BEHAVIOUR_ACTOR);
+        if (!GuestPointer(actor))
+            return delta;
+        n.damageables[actor] = damageable;
+        if (Trace() && delta < 0)
+            Log("[mp] %s: %08X takes %.1f (hitpoints %.1f)%s", n.role == Role::Host ? "host" : "client", uint32_t(NameOf(actor)),
+                -delta, LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)), n.applyingHitpoints ? " from the host" : "");
+        if (n.role != Role::Client || delta >= 0 || n.applyingHitpoints)
+            return delta;
+        for (uint32_t player : PlayerActors())
+            if (player == actor)
+                return delta;  // the players' own hitpoints stay with each machine's game
+        // An actor the host mirrors takes its hits from the host's records only.
+        if (!n.latest.count(NameOf(actor)))
+            return delta;
+        n.damageDropped++;
+        return 0.0;
+    }
 
     void LocalPad(const void* padBytes, bool poll)
     {

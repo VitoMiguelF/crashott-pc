@@ -2428,19 +2428,30 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   por jogador em `0x8245FA9C[i]` (0 fora, 1 na mochila, 2 a pé; o construtor copia para Crash+300) e
   `0x8245FA98` = quem entra sozinho na mochila no começo; online P2 = 0 + auto-entrada e o controle do P2
   aperta B enquanto ele está na mochila (sai ~20 ms depois, sob o título do episódio). Estado 2 direto não
-  monta o modelo do P2 (só um Crash aparece). Online ninguém é puxado para a mochila por sair da câmera
-  (gancho em `EnterOtherPlayersBackpack` para Crash já a pé). Animação por espelho de controles: as duas
+  monta o modelo do P2 (só um Crash aparece). Online ninguém é puxado para a mochila por sair da câmera:
+  `IsOkayToEnterBackpack` (sub_82153400) diz não para Crash a pé e uma entrada que ainda venha toma o
+  caminho de falha do próprio jogo (bit 2 de +0x110: colisão volta). Só pular `EnterOtherPlayersBackpack`
+  deixava o Crash sem colisão (o `SetPlayerEnteringBackpack` já a desligou): caía pelo chão e desmaiava. Animação por espelho de controles: as duas
   máquinas mandam o controle do P1 (sem START/BACK) e põem o do outro no controle 2, então cada uma roda os
   dois Crashes com as mesmas entradas e o jogo faz os mesmos movimentos (correr, pular, golpes, efeitos);
   o Crash do cliente responde na hora (previsão local); o controle chega em 1-3 ms no mesmo PC. Os
   registros P1/P2 trocam no cliente (a câmera segue o P2 do host). Correção pela física: escrever a matriz
-  não basta (o cliente ficava 3-4 unidades atrás); `CPhysicsBehaviour::Teleport` (sub_82142338, física =
-  Crash+0xDC) só quando passa de `CRASH_MP_SNAP` (1,0) do registro e nunca para quem não está a pé (bit 1
+  não basta (o cliente ficava 3-4 unidades atrás); um `CActionTeleport` (sub_820972D0, mensagem 40) só
+  para o tratador da física (sub_82145358, física = Crash+0xDC; o `Teleport` dos scripts, sub_82142338,
+  arrasta o outro jogador junto) quando passa de `CRASH_MP_SNAP` (1,0) do registro, no máximo a cada 250 ms e nunca para quem não está a pé (bit 1
   do registro). Diferença entre as máquinas ~0,3-0,5 correndo e pulando, sem correção depois do começo.
   Cores iguais nas duas máquinas: os dois Crashes têm as mesmas paletas (normal `crash_normal`, jacked
   `Crash_Player2`); o drawable (Crash+0xE0 -> +92) copia a normal para a base (+348, sub_8222C2D8) e
   mistura para a jacked por +0x15D0 (o P2 fica na jacked). No cliente, uma vez por drawable: o P1 recebe a
   jacked como base e o "jacked" do P2 aponta para a normal. Visto: P1 do host laranja e o jogador do cliente
-  claro nas duas janelas desde o primeiro quadro (o marcador "1" fica sobre o jogador local). IA dos
-  inimigos e golpes que acertam diferente = M3. Marionete via classe `Cheerleader` (`mp_marionete`) crasha: o banco só tem
+  claro nas duas janelas desde o primeiro quadro (o marcador "1" fica sobre o jogador local).
+  Inimigos (M3, primeira fatia, `mp_m3_host` + `mp_m3_client`): com IA e objetivos ligados no cliente ele
+  cria os mesmos inimigos com os mesmos nomes e eles andam igual (0-1,4 de diferença). O que divergia eram
+  os golpes: os pontos de vida agora são do host. `AdjustHitpoints` (sub_82110448, gancho em
+  dev_cheats.cpp -> `mp::Hitpoints`) aprende o damageable de cada ator (ele também dá a vida inicial), o
+  registro leva os pontos de vida (no lugar do tempo do fight tree), o cliente descarta o próprio dano a
+  atores do host e aplica o valor do host pela mesma função (morte e drops do próprio jogo). O cliente
+  refaz o mapa nome -> ator a cada quadro: escrever a matriz num ator já removido crashava em
+  sub_8228D810. Visto: mesmos inimigos o tempo todo (3 -> 10 -> 9 -> 2), os mesmos morrendo juntos, sem
+  crash em 60 s. `CRASH_MP_TELEPORT=x,y,z` (host, testes) leva os dois jogadores ao combate. Marionete via classe `Cheerleader` (`mp_marionete`) crasha: o banco só tem
   Cortex/NGin/Tiny.

@@ -16,8 +16,12 @@
 // directly skips its model setup (only one Crash is drawn), so it is state 0 + auto-join, and its
 // controller taps B off the backpack (mp_net.cpp, RemotePad) under the episode title.
 // Afterwards nobody is pulled into the backpack: co-op puts the player the shared camera leaves behind
-// into the other one's (Crash::EnterOtherPlayersBackpack on a Crash on foot, state 2), but each
-// machine has its own camera.
+// into the other one's, but each machine has its own camera. The Crash's script asks
+// IsOkayToEnterBackpack (sub_82153400) first, then SetPlayerEnteringBackpack turns the Crash's collision
+// off and EnterOtherPlayersBackpack (sub_82154D10) attaches it: online the question says no for a Crash
+// on foot (state 2), and an entry that still comes takes the game's own failure path (flags +0x110 bit 2:
+// collision back on, DidEnterBackpackFail). Skipping the entry alone left the Crash without collision on
+// the other's back: it fell through the floor and was knocked out.
 
 #include "mp.h"
 #include "../diagnostics.h"
@@ -26,6 +30,7 @@
 
 extern "C" PPC_FUNC(__imp__sub_82153860);  // Crash::Crash
 extern "C" PPC_FUNC(__imp__sub_82154D10);  // Crash::EnterOtherPlayersBackpack
+extern "C" PPC_FUNC(__imp__sub_82153400);  // Crash::IsOkayToEnterBackpack
 
 namespace
 {
@@ -58,14 +63,27 @@ PPC_FUNC(sub_82153860)
             LoadBE32(CRASH_TABLE + index * 4), LoadBE32(bc + 300), *g_memory.Translate(bc + 0x110));
 }
 
+PPC_FUNC(sub_82153400)
+{
+    uint32_t crash = ctx.r3.u32;
+    __imp__sub_82153400(ctx, base);
+    if (mp::Online() && ctx.r3.u32 && LoadBE32(crash + 300) == 2)
+    {
+        static int logged;
+        if (logged++ < 3)
+            Log("[mp] Crash %08X kept out of the backpack (online)", crash);
+        ctx.r3.u64 = 0;
+    }
+}
+
 PPC_FUNC(sub_82154D10)
 {
     if (mp::Online() && LoadBE32(ctx.r3.u32 + 300) == 2)
     {
         static int logged;
         if (logged++ < 3)
-            Log("[mp] Crash %08X kept out of the backpack (online)", ctx.r3.u32);
-        return;
+            Log("[mp] Crash %08X: backpack entry made to fail (online)", ctx.r3.u32);
+        *g_memory.Translate(ctx.r3.u32 + 0x110) |= 4;
     }
     if (mp::Enabled())
         Log("[mp] Crash %08X into the backpack (state %u)", ctx.r3.u32, LoadBE32(ctx.r3.u32 + 300));

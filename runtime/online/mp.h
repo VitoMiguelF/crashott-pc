@@ -13,6 +13,7 @@
 //   CRASH_MP_HZ=<n>            snapshots per second sent by the host (default 30)
 //   CRASH_MP_REMOTE_USER=<n>   the game controller the peer's pad becomes (default 1 = player 2)
 //   CRASH_MP_SNAP=<units>      client: a player further than this from its record is put back (1.0)
+//   CRASH_MP_TELEPORT=x,y,z    host, tests: both players put there once they are on foot
 
 #include <cstdint>
 #include <string>
@@ -57,4 +58,8 @@ namespace mp
     // `pad` is a 12-byte XINPUT_GAMEPAD (kernel/xinput_types.h; the name clashes with <xinput.h>).
     void LocalPad(const void* pad, bool poll);
     bool RemotePad(uint32_t user, void* pad);
+    // CDamageableBehaviour::AdjustHitpoints (dev/dev_cheats.cpp's hook): learns each actor's
+    // damageable behaviour (the records carry its hitpoints) and returns the delta to apply: on a
+    // client, 0 for the local damage to an actor the host mirrors (the host's hitpoints come instead).
+    double Hitpoints(uint32_t damageable, double delta);
 }
