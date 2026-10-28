@@ -120,7 +120,7 @@ namespace settings
 
     struct Values
     {
-        int masterVolume = 100;
+        int masterVolume = 50;
         int musicVolume = 100;
         int effectsVolume = 100;
         int voiceVolume = 100;

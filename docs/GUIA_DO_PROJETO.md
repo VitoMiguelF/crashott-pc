@@ -475,7 +475,7 @@ Capturas da organização atual das abas em `docs\capturas\settings_abas\`: cada
 | Salvamento automático | ligado (padrão) / desligado: o jogo não salva sozinho (o menu de pausa passa a mostrar SAIR DA FASE, como fazia a opção original). Ligado, só salva quando há um slot de save escolhido (NEW GAME ou LOAD GAME); continuar sem salvar continua sem salvar | na hora |
 | Armazenamento | Hard Drive (informativo) | — |
 | **Áudio** | | |
-| Volume geral | 0–100% | na hora (mixagem final do runtime) |
+| Volume geral | 0–100% (padrão 50%) | na hora (mixagem final do runtime) |
 | Música, efeitos, vozes | 0–100%. Substituem as estrelas DIÁLOGOS / MÚSICA / EFEITOS do menu de opções original do jogo (que fica escondido) | na hora (`docs\capturas\settings_aplicar\volume_musica_ao_vivo_*.wav`) |
 | *Legendas* (sub-grupo da aba ÁUDIO, abaixo dos volumes) | | |
 | Legendas | desligado (padrão) / ligado: legendas nas cenas e nas falas do Aku Aku, no idioma dos textos (veja "Legendas") | na hora |
@@ -600,7 +600,7 @@ A tela segue o estilo do frontend do jogo, com a arte lida na abertura do `defau
 [paths]
 game = "D:/Jogos/Crash"   # pasta do jogo, se não estiver em game\ ao lado do exe (veja "Jogando")
 [audio]
-master = 100     # 0-100, vale na hora
+master = 50      # 0-100, vale na hora
 music = 100      # 0-100, vale na hora (como effects e voice)
 effects = 100
 voice = 100
