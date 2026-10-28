@@ -243,6 +243,9 @@ namespace settings
     bool SettingsScreenEmptied();
     // Registers the "PS2" mojo colour patches of mojo_colors.cpp when game.mojo_colors is "ps2".
     void RegisterMojoPatches();
+    // The blue Snipe's shots: a blue copy of the Snipe projectile in its package and the hooks that
+    // give it to a blue Snipe (snipe_colors.cpp). CRASH_SNIPE_COLORS=0 turns it off.
+    void RegisterSnipePatches();
 
     // HD AI Remaster (hd_remaster.cpp): the AI-remastered mod (HD texture pack + package mod with
     // the subdivided models) of the whole game, <data>\remaster_full, or else the level 1 one,
