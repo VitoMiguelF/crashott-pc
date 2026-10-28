@@ -1077,3 +1077,87 @@ dev_lua_file = "tools/dev_lua/snipe_azul.lua"
 env = { CRASH_FORCE_SKIN_VARIANT = "1" }
 input = [["@gameplay_ready"], [5, "SHOT"], [7, "SHOT"], [9, "SHOT"], [11, "SHOT"], [13, "SHOT"], [15, "SHOT"], [17, "SHOT"], [19, "SHOT"], [21, "SHOT"], [23, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]', 'lua error', 'erro:'], log_contains = ['blue Snipe shots: package.c4ec64ea.p3d .* chunks copied', "blue Snipe shots: a blue Snipe's quiver makes", 'invincible: blocked .* damage'] }
+
+[profiles.mp_stream_vanilla]
+description = "Multijogador (protótipo, docs/internals/multiplayer.md): uma âncora (CRASH_MP_ANCHOR, um jogador remoto parado) fica na vila (L1_E1_R1) e o P1 é teleportado para L1_E1_R2 e depois para L1_E1_R5, duas salas adiante; com o streaming do jogo a sala atual fica a da âncora e o P1 cai do mundo (tools/dev_lua/mp_stream.lua)"
+test = false
+timeout = 30
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_file = "tools/dev_lua/mp_stream.lua"
+env = { CRASH_MP = "1", CRASH_MP_TRACE = "1", CRASH_MP_STREAM = "vanilla", CRASH_MP_ANCHOR = "-58,-1.6,65.3" }
+input = [["@gameplay_ready"], [2, "SHOT"], [5, "SHOT"], [8.5, "SHOT"], [12.5, "SHOT"], [16, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] prototype on'] }
+
+[profiles.mp_stream_union]
+description = "Como mp_stream_vanilla, com CRASH_MP_STREAM=union: ficam carregadas a sala de cada jogador e as adjacentes; o P1 tem que pousar em L1_E1_R5"
+test = false
+timeout = 30
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_file = "tools/dev_lua/mp_stream.lua"
+env = { CRASH_MP = "1", CRASH_MP_TRACE = "1", CRASH_MP_STREAM = "union", CRASH_MP_ANCHOR = "-58,-1.6,65.3" }
+input = [["@gameplay_ready"], [2, "SHOT"], [5, "SHOT"], [8.5, "SHOT"], [12.5, "SHOT"], [16, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] prototype on'] }
+
+[profiles.mp_stream_all]
+description = "Como mp_stream_vanilla, com CRASH_MP_STREAM=all: todas as salas da fase ficam carregadas (teste de memória)"
+test = false
+timeout = 30
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_file = "tools/dev_lua/mp_stream.lua"
+env = { CRASH_MP = "1", CRASH_MP_TRACE = "1", CRASH_MP_STREAM = "all", CRASH_MP_ANCHOR = "-58,-1.6,65.3" }
+input = [["@gameplay_ready"], [2, "SHOT"], [5, "SHOT"], [8.5, "SHOT"], [12.5, "SHOT"], [16, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] prototype on'] }
+
+[profiles.mp_host]
+description = "Multijogador M1 (protótipo): o host da vila L1_E1 manda por UDP 127.0.0.1 o estado dos atores (30 Hz); o P1 anda e é teleportado para L1_E1_R2. Rode junto com mp_client (tools/mp_pair.py)"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_file = "tools/dev_lua/mp_host.lua"
+# CRASH_RESTART_WINDOW: host on the left half of the screen, client on the right (both visible)
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_HZ = "30", CRASH_RESTART_WINDOW = "0,0,1920,1100" }
+input = [["@gameplay_ready"], [2, "LS", 0, 1, 2.0], [4.5, "A"], [5, "LS", 1, 0, 2.0], [7.5, "SHOT"], [11, "SHOT"], [13, "LS", -1, 0, 1.5], [15, "SHOT"], [18, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: host', '\[mp\] host: '] }
+
+[profiles.mp_client]
+description = "Multijogador M1 (protótipo): o cliente da vila L1_E1 recebe o estado dos atores do mp_host e escreve os transforms depois do update de atores; IA e objetivos do cliente parados (CRASH_MP_SUPPRESS)"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SUPPRESS = "ai,objectives", CRASH_RESTART_WINDOW = "1920,0,1920,1100" }
+input = [["@gameplay_ready"], [7.5, "SHOT"], [11, "SHOT"], [15, "SHOT"], [18, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
+
+[profiles.mp_tres_crash]
+description = "Multijogador M0 (protótipo): um terceiro Crash na vila L1_E1 por DO_SpawnPlayer(3, ...) (tools/dev_lua/mp_three.lua); o P1 anda com o controle 0 e o controle virtual 3 (P3_) mexe o analógico, para ver quem o terceiro Crash segue"
+test = false
+timeout = 30
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_file = "tools/dev_lua/mp_three.lua"
+env = { CRASH_MP = "1", CRASH_MP_TRACE = "1" }
+input = [["@gameplay_ready"], [3, "SHOT"], [5, "P3_LS", 1, 0, 2.0], [6, "SHOT"], [8, "LS", 0, 1, 1.5], [9, "SHOT"], [10, "P3_A"], [10.2, "SHOT"], [13, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] prototype on'] }

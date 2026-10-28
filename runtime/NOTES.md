@@ -2388,3 +2388,36 @@ O layout PS2 (pedido do usuário): na gameplay, **R1 bloqueia / esquiva e R2 é 
 Onde vale: `RemapPad`, logo depois de `input::slots::Read` (todos os controles físicos, co-op também) e em cada entrada do `CRASH_INPUT_SCRIPT`, na gameplay (nó 638) e em todos os outros nós menos as cenas (633, 655-1051, onde B continua pulando) e o boot (`settings::PadScreenOf`); `input::MenuButtons` também passa por ele, então Y volta nas telas do runtime (opções, saves) e o Esc do teclado continua sendo B. O teclado e os controles de toque entram depois e não mudam. Gatilhos contam como botões: um gatilho num botão aperta a partir de 30/255; um botão num gatilho aperta o gatilho inteiro. Os ícones de PlayStation (`prompt_icons.cpp`, `MappedIcon`) mostram o botão físico nessas telas; os de Xbox são texturas do próprio jogo e ficam iguais. Log `[input] controller mapping: ps2, gameplay (rb <- rt, rt <- rb)` / `ps2, menus (b <- y, y <- b)`.
 
 **Conferido**: `mapeamento_controle` (a linha troca para PS2, salva, o log da gameplay mostra o mapa) e `controles_tela` (PULAR = K com 14 setas), antes das trocas do PS2 entrarem. Com a versão de 16 linhas, o mesmo `RemapPad` trocou A e X na fase (o X físico pulou) e o usuário conferiu com o controle dele. O usuário testou no jogo: bloqueio no R1, chute no R2, START no aviso e CHUTE FREEJACK deram certo; o B/Y passou do HUB para todos os menus depois disso. Aí as dicas (nó 1170 TutorialScreen, que a fase abre pela saída 640) viraram "menu": o B/Y trocava nelas e o ícone de B que flutua sobre o inimigo aparecia como Triângulo enquanto a dica estava aberta; o 1170 passou a contar como gameplay. O log do mapa agora diz o nó do frontend. Depois, o mesmo ícone (o B sobre a pedra de dica) aparecia como Triângulo com a **pausa** aberta (1081, a fase continua desenhada atrás): nas telas de pausa os botões trocam (Y volta), mas os ícones de PlayStation ficam os da fase, já que a pausa não tem ícones de B/Y próprios. Ainda assim o ícone ficou Triângulo na fase: o estilo dos ícones era calculado no começo do quadro e a troca decidida de novo na hora de desenhar; saindo da pausa o nó mudava entre os dois e o ícone desenhado como "menu" ficava no cache do renderizador sob o estilo da fase. Agora a tela fica guardada junto com o estilo (`g_styleScreens`). Também as logos da intro (nós antes da tela título, 59) estavam trocando B/Y, e o B não pulava: lá os botões não trocam mais, e o aviso continua mostrando START com PS2, como nas cenas (o usuário quer a seta nos dois).
+
+## Multijogador online (protótipo, 2026-10-28, branch `online-coop`) (`online/*`, perfis `mp_*`)
+
+Viabilidade de um modo online de até 5 jogadores. Tudo desligado sem `CRASH_MP=1`. Resumo em inglês e
+tabela de variáveis em `docs/internals/multiplayer.md`.
+
+- **Streaming**: o gerenciador é o manager 17 (Update sub_82250510); `*0x824A90CC` é o de pacotes (ler salas
+  por ele crashava). Cada fase tem 1 a 10 salas (`streamgraph.blua`: hull convexo + um `.p3d` de mundo +
+  salas adjacentes). A sala atual (sm+636) só troca quando nenhum dos 2 jogadores (CGameDatabase +16/+20,
+  +24/+28) está nela, e vira a do P1 (sub_8224E760). Residentes = sala atual + adjacentes (sub_82250200,
+  vetores de 10). Atores de sala não residente são desativados (sub_820906E8). Fora das salas residentes
+  não há chão: o jogador cai e o jogo o devolve ao último `WhumpaE1ResetLocator`; o `Teleport` da física
+  para uma sala não residente não faz nada.
+- Hooks: `CRASH_MP_STREAM=union` (sala de cada jogador + adjacentes) / `all` (todas) refazem a lista
+  residente e as listas manter/descarregar/carregar como o original; a checagem de troca de sala vale para
+  N jogadores e para âncoras (`CRASH_MP_ANCHOR`, um jogador remoto parado).
+- Testes (L1_E1, âncora na vila, P1 R2 -> R4 -> R5): vanilla recusa R4; union leva o P1 até R5 com chão
+  (residentes R1, R2 + R5, R6); all deixa as 8 salas carregadas sem crash, e também as 10 do L2_E1 e as 7
+  do L5_E2 (4 "Light"). Política recomendada: host = union (all como reserva), cliente = as salas do
+  próprio jogador.
+- **Terceiro Crash**: o construtor sub_82153860 dá o primeiro slot livre (byte bc+292) e grava em
+  0x8249D778[índice] (2 entradas); o índice 2 cai em 0x8249D780 (o Crash da mochila do co-op), que o hook
+  restaura. Mesmo assim `DO_SpawnPlayer(3, "ref_Crash_P3", ...)` derruba o jogo ~2 s depois (leitura nula
+  na VM Lua, sub_8229FFD8): o limite de 2 jogadores está em todo lugar (`índice < 2`, tabelas de 2, HUD
+  P1/P2, mochila). Daí a arquitetura: um jogador de verdade por máquina, os remotos como marionetes.
+- Cor do P2 = `jacked_skin_1` do template ("Crash_Player2.bmp"); 5 cores = paletas recoloridas como no
+  `snipe_colors.cpp`.
+- **M1** (`mp_host` + `mp_client`, duas instâncias lado a lado): o host manda por UDP, a 30 Hz, os atores
+  que mudaram (hash de 64 bits do nome em actor+8, matriz de actor+44, tempo do fight tree); o cliente acha
+  cada ator pelo hash e escreve o transform depois de CActorManager::vf10, com CAIManager::vf10 e
+  CObjectiveManager::vf10 parados. 439-447 atores espelhados, 0 pacotes perdidos, o Crash do cliente no
+  mesmo ponto do host. Banda: ~1.750 registros/s, ~114 KB/s brutos (~0,9 Mbit/s), ~45 KB/s com registro
+  compacto. Inimigos criados pelos objetivos do host não existem no cliente; a pose ainda é a do cliente.

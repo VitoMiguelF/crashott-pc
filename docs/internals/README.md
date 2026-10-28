@@ -23,3 +23,4 @@ second `PPC_FUNC` for the same address will not link. Extend the existing one.
 | [linux_port.md](linux_port.md) | The Linux / Steam Deck port: Windows dependencies, the platform layer (`runtime/platform`, SDL3 backends), build status, x86-only code |
 | [android_port.md](android_port.md) | The Android port plan: ARM64 (SIMDe/NEON, fences, FPCR, store emulation, 16 KB pages), Vulkan on Adreno/Mali, storage, touch, the APK built on the player's PC |
 | [mods-and-assets.md](mods-and-assets.md) | `.rcf` overlay and the 2 GB limit, HD AI Remaster constraints, model export facts, the blue Snipe shots (package rewrite + quiver hooks) |
+| [multiplayer.md](multiplayer.md) | Online multiplayer prototype: level streaming (rooms, resident set, policies tested), the 2-player limit, actor ids / transforms, the UDP mirror and bandwidth, the recommended architecture and milestones |
