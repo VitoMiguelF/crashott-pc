@@ -25,7 +25,7 @@ namespace settings::options
 
         std::vector<Item> ControlItems()
         {
-            std::vector<Item> items = { Item::Player1, Item::Player2, Item::Prompts, Item::MouseCamera, Item::MouseSensitivity,
+            std::vector<Item> items = { Item::Player1, Item::Player2, Item::Prompts, Item::ControllerLayout, Item::MouseCamera, Item::MouseSensitivity,
                                         Item::MouseInvertY, Item::WalkSpeed, Item::MouseMenus };
             for (int i = 0; i < int(ACTION_COUNT); i++)
                 items.push_back(BindingItem(Action(i)));
@@ -146,6 +146,7 @@ namespace settings::options
         case Item::LightSoftShadows: return "lighting.soft_shadows";
         case Item::Lighting: return "lighting";
         case Item::Prompts: return "controls.prompts";
+        case Item::ControllerLayout: return "controls.pad_layout";
         case Item::Player1: return "controls.player1";
         case Item::Player2: return "controls.player2";
         case Item::MouseCamera: return "controls.mouse_camera";
@@ -207,6 +208,7 @@ namespace settings::options
         case Item::LightSoftShadows: return t({ "SOFT SHADOWS", "SOMBRAS SUAVES" });
         case Item::Lighting: return t({ "LIGHTING", "ILUMINAÇÃO" });
         case Item::Prompts: return t({ "BUTTON ICONS", "ÍCONES DOS BOTÕES" });
+        case Item::ControllerLayout: return t({ "CONTROLLER MAPPING", "MAPEAMENTO DO CONTROLE" });
         case Item::Player1: return t({ "PLAYER 1", "JOGADOR 1" });
         case Item::Player2: return t({ "PLAYER 2", "JOGADOR 2" });
         case Item::MouseCamera: return t({ "MOUSE CAMERA", "CÂMERA PELO MOUSE" });
@@ -340,6 +342,7 @@ namespace settings::options
             case PromptStyle::Keyboard: return t({ "KEYBOARD", "TECLADO" });
             default: return t({ "AUTOMATIC", "AUTOMÁTICO" });
             }
+        case Item::ControllerLayout: return values.controls.padLayout == PadLayout::Ps2 ? "PS2" : "XBOX 360";
         case Item::Player1:
         case Item::Player2:
         {
@@ -525,6 +528,9 @@ namespace settings::options
         case Item::Prompts:
             return { t({ "Icons in menus and hints: the last device used,", "Ícones nos menus e dicas: o último aparelho usado," }),
                      t({ "or always Xbox / PlayStation / keyboard.", "ou sempre Xbox / PlayStation / teclado." }) };
+        case Item::ControllerLayout:
+            return { t({ "The controller's buttons: XBOX 360 (the game's) or the PS2", "Botões do controle: XBOX 360 (os do jogo) ou os da versão" }),
+                     t({ "version's (R1 blocks, R2 kicks; Y goes back in the menus).", "de PS2 (R1 defende, R2 chuta; Y volta nos menus)." }) };
         case Item::MouseCamera:
             return { t({ "The mouse turns the camera in gameplay", "O mouse gira a câmera na gameplay" }),
                      t({ "(the cursor is hidden and kept in the window).", "(o cursor fica escondido e preso na janela)." }) };
@@ -672,6 +678,7 @@ namespace settings::options
             break;
         }
         case Item::Prompts: values.controls.prompts = Cycle(values.controls.prompts, 4, direction); break;
+        case Item::ControllerLayout: values.controls.padLayout = Cycle(values.controls.padLayout, 2, direction); break;
         case Item::Player1:
         case Item::Player2:
         {

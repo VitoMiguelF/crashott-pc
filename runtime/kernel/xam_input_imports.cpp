@@ -50,6 +50,72 @@ namespace
     };
     constexpr uint64_t DEFAULT_HOLD_MS = 200;
 
+    // The XINPUT_GAMEPAD_* bit of each settings::PadButton (0 for the triggers).
+    constexpr uint16_t PAD_BITS[] = {
+        XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y, XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_RIGHT_SHOULDER,
+        0, 0, XINPUT_GAMEPAD_LEFT_THUMB, XINPUT_GAMEPAD_RIGHT_THUMB, XINPUT_GAMEPAD_START, XINPUT_GAMEPAD_BACK,
+        XINPUT_GAMEPAD_DPAD_UP, XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT,
+    };
+    static_assert(std::size(PAD_BITS) == settings::PAD_BUTTON_COUNT);
+    constexpr uint8_t TRIGGER_AS_BUTTON = 30;  // XINPUT_GAMEPAD_TRIGGER_THRESHOLD
+
+    // How far `button` is pressed on `pad`: the trigger's own 0-255, or 0 / 255 for a button.
+    uint8_t PadLevel(const XINPUT_GAMEPAD& pad, settings::PadButton button)
+    {
+        if (button == settings::PadButton::LT)
+            return pad.bLeftTrigger;
+        if (button == settings::PadButton::RT)
+            return pad.bRightTrigger;
+        return (pad.wButtons & PAD_BITS[size_t(button)]) ? 255 : 0;
+    }
+
+    // The controller mapping ([controls] pad_layout, settings/controls.h), in gameplay (frontend node
+    // 638 GameRunning) and in the menus (the pause and the runtime's own screens too; not in the
+    // cutscenes): with PS2, each game button takes the physical button of the PS2 layout for that
+    // screen, a trigger with its analog value. The sticks stay. Applied to every physical pad and to
+    // CRASH_INPUT_SCRIPT's presses, not to the keyboard.
+    void RemapPad(XINPUT_GAMEPAD& pad)
+    {
+        settings::PadScreen screen;
+        if (!settings::PadScreenOf(settings::menu::FrontendNode(), screen))
+            return;
+        settings::PadLayout layout = settings::Get().controls.padLayout;
+        {
+            // In the log once per change: "[input] controller mapping: ps2, gameplay (rb <- rt, rt <- rb)".
+            static std::atomic<int> s_logged{ -1 };  // the last layout and screen logged (Xbox 360: -1)
+            int key = layout == settings::PadLayout::Xbox360 ? -1 : int(screen);
+            if (s_logged.exchange(key) != key && key >= 0)
+            {
+                std::string list;
+                for (size_t b = 0; b < settings::PAD_BUTTON_COUNT; b++)
+                {
+                    settings::PadButton source = settings::PadLayoutSource(layout, screen, settings::PadButton(b));
+                    if (source != settings::PadButton(b))
+                        list += (list.empty() ? "" : ", ") + std::string(settings::PadButtonId(settings::PadButton(b))) + " <- " +
+                                settings::PadButtonId(source);
+                }
+                Log("[input] controller mapping: %s, %s (%s), frontend node %u", settings::PadLayoutName(layout),
+                    screen == settings::PadScreen::Menu ? "menus" : "gameplay", list.empty() ? "same buttons" : list.c_str(),
+                    settings::menu::FrontendNode());
+            }
+        }
+        if (layout == settings::PadLayout::Xbox360)
+            return;
+        XINPUT_GAMEPAD physical = pad;
+        pad.wButtons = 0;
+        pad.bLeftTrigger = pad.bRightTrigger = 0;
+        for (size_t b = 0; b < settings::PAD_BUTTON_COUNT; b++)
+        {
+            uint8_t level = PadLevel(physical, settings::PadLayoutSource(layout, screen, settings::PadButton(b)));
+            if (settings::PadButton(b) == settings::PadButton::LT)
+                pad.bLeftTrigger = level;
+            else if (settings::PadButton(b) == settings::PadButton::RT)
+                pad.bRightTrigger = level;
+            else if (level > TRIGGER_AS_BUTTON)
+                pad.wButtons |= PAD_BITS[b];
+        }
+    }
+
     // Clock zero: the first read of controller 0 (GetTickCount64 ms), 0 = not yet.
     std::atomic<uint64_t> g_clockStart{ 0 };
 
@@ -273,7 +339,17 @@ namespace
                 continue;
             if (Held(press, now))
             {
-                state.Gamepad.wButtons |= press.buttons;
+                // A scripted press stands for a controller's: the controller mapping applies to it.
+                XINPUT_GAMEPAD mapped{};
+                mapped.wButtons = press.buttons;
+                if (press.analog == 'l')
+                    mapped.bLeftTrigger = uint8_t(std::clamp(press.x, 0.0f, 1.0f) * 255.0f);
+                if (press.analog == 'r')
+                    mapped.bRightTrigger = uint8_t(std::clamp(press.x, 0.0f, 1.0f) * 255.0f);
+                RemapPad(mapped);
+                state.Gamepad.wButtons |= mapped.wButtons;
+                state.Gamepad.bLeftTrigger = std::max(state.Gamepad.bLeftTrigger, mapped.bLeftTrigger);
+                state.Gamepad.bRightTrigger = std::max(state.Gamepad.bRightTrigger, mapped.bRightTrigger);
                 if (press.sticks & 1) state.Gamepad.sThumbLX = -32767;
                 if (press.sticks & 2) state.Gamepad.sThumbLX = 32767;
                 if (press.sticks & 4) state.Gamepad.sThumbLY = 32767;
@@ -286,8 +362,6 @@ namespace
                 {
                 case 'L': state.Gamepad.sThumbLX = StickValue(press.x), state.Gamepad.sThumbLY = StickValue(press.y); break;
                 case 'R': state.Gamepad.sThumbRX = StickValue(press.x), state.Gamepad.sThumbRY = StickValue(press.y); break;
-                case 'l': state.Gamepad.bLeftTrigger = uint8_t(std::clamp(press.x, 0.0f, 1.0f) * 255.0f); break;
-                case 'r': state.Gamepad.bRightTrigger = uint8_t(std::clamp(press.x, 0.0f, 1.0f) * 255.0f); break;
                 }
             }
         }
@@ -323,6 +397,7 @@ namespace
     {
         state = {};
         bool connected = input::slots::Read(user, state.Gamepad);
+        RemapPad(state.Gamepad);
         uint32_t playerOne = input::slots::PlayerOneUser();
         if (user != playerOne)
         {
@@ -419,6 +494,7 @@ namespace input
     {
         XINPUT_STATE state{};
         input::slots::Read(input::slots::PlayerOneUser(), state.Gamepad);
+        RemapPad(state.Gamepad);  // PS2: Y goes back on the runtime's screens too
         state.Gamepad.wButtons |= input::pc::MenuKeys(ScriptedKeys(ClockNow()));
         ScriptedState(state, ClockNow());
         input::record::Apply(state);

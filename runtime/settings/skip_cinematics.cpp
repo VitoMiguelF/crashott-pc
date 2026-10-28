@@ -438,6 +438,7 @@ namespace
         int kind = 0;
         bool portuguese = false;
         input::pc::Device device = input::pc::Device::Xbox;
+        bool ps2 = false;  // the PS2 controller mapping: the prompt shows START (the menu button)
         uint32_t style = 0;
         int progress = 0;  // 0..64
         int width = 0, height = 0;
@@ -493,8 +494,9 @@ namespace
         {
             int ring = int(ringSize);
             canvas.Blit(Ring(ring, std::max(2.0f, 3.5f * s), progress, RING, RING_TRACK), int(std::lround(bx)), int(std::lround(by)));
-            float iconW = menu_art::IconWidth(menu_art::ICON_B, iconH);
-            menu_art::DrawIcon(canvas, menu_art::ICON_B, bx + (ringSize - iconW) * 0.5f, by + (ringSize - iconH) * 0.5f, iconH);
+            char32_t icon = look.ps2 ? menu_art::ICON_START : menu_art::ICON_B;
+            float iconW = menu_art::IconWidth(icon, iconH);
+            menu_art::DrawIcon(canvas, icon, bx + (ringSize - iconW) * 0.5f, by + (ringSize - iconH) * 0.5f, iconH);
         }
         menu_art::DrawGameText(canvas, FontId::Large, label, bx + buttonW + gap, (h - cell) * 0.5f, cell, TEXT);
         canvas.Export(out.pixels);
@@ -539,6 +541,7 @@ namespace cutscenes
         look.kind = int(kind);
         look.portuguese = values.language.rfind("pt", 0) == 0;
         look.device = input::pc::PromptDevice();
+        look.ps2 = values.controls.padLayout == settings::PadLayout::Ps2;
         look.style = settings::prompts::Style();
         look.progress = int(std::lround(progress * 64.0f));
         look.width = int(width), look.height = int(height);

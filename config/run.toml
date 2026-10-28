@@ -595,7 +595,7 @@ timeout = 55
 audio = false
 userdata_mode = "copy"
 skip_intros = true
-# Menu: seta para baixo x3 + Enter = SETTINGS; E x4 = aba CONTROLES (RB); seta para baixo x13 =
+# Menu: seta para baixo x3 + Enter = SETTINGS; E x4 = aba CONTROLES (RB); seta para baixo x14 =
 # PULAR; Enter = escolher a tecla; K = a nova tecla; Esc fecha (salva). Depois LOAD GAME como em
 # teclado e, na fase, K pula (o salto aparece na última captura).
 input = [
@@ -603,7 +603,7 @@ input = [
     [6.5, "KEY_E"], [6.9, "KEY_E"], [7.3, "KEY_E"], [7.7, "KEY_E"], [8.8, "SHOT"],
     [9.1, "KEY_DOWN"], [9.4, "KEY_DOWN"], [9.7, "KEY_DOWN"], [10, "KEY_DOWN"], [10.3, "KEY_DOWN"], [10.6, "KEY_DOWN"],
     [10.9, "KEY_DOWN"], [11.2, "KEY_DOWN"], [11.5, "KEY_DOWN"], [11.8, "KEY_DOWN"], [12.1, "KEY_DOWN"],
-    [12.4, "KEY_DOWN"], [12.7, "KEY_DOWN"], [13.2, "KEY_ENTER"], [13.9, "SHOT"], [14.5, "KEY_K"], [15.5, "SHOT"], [16.5, "KEY_ESC"], [17.5, "SHOT"],
+    [12.4, "KEY_DOWN"], [12.7, "KEY_DOWN"], [13, "KEY_DOWN"], [13.5, "KEY_ENTER"], [13.9, "SHOT"], [14.5, "KEY_K"], [15.5, "SHOT"], [16.5, "KEY_ESC"], [17.5, "SHOT"],
     [19.5, "KEY_DOWN"], [20.5, "KEY_ENTER"],
     ["@save_slots"], [1.5, "KEY_ENTER"],
     ["@load_complete"], [1, "KEY_ENTER"],
@@ -611,6 +611,29 @@ input = [
     ["@gameplay_ready"], [3, "KEY_K"], [3.6, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['tab -> controls', 'jump -> K / SPACE', '\[settings\] saved', 'XamContentCreateEx\(.*\(opened\)'] }
+
+[profiles.mapeamento_controle]
+description = "MAPEAMENTO DO CONTROLE (aba CONTROLES, 4ª linha): XBOX 360 -> PS2 pela seta para a direita, Esc salva; LOAD GAME e, na fase, o mapa PS2 vale (log) e X / A continuam respondendo"
+fps_limit = 60
+test = true
+timeout = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+# Menu como em controles_tela: seta para baixo x3 + Enter = SETTINGS; E x4 = aba CONTROLES; seta para
+# baixo x3 = MAPEAMENTO DO CONTROLE (depois de JOGADOR 1, JOGADOR 2, ÍCONES DOS BOTÕES); seta para a
+# direita = PS2; Esc fecha e salva. Na fase: X e A com capturas 0,35 / 0,25 s depois.
+input = [
+    ["@main_menu"], [2.5, "KEY_DOWN"], [3.1, "KEY_DOWN"], [3.7, "KEY_DOWN"], [4.5, "KEY_ENTER"],
+    [6.5, "KEY_E"], [6.9, "KEY_E"], [7.3, "KEY_E"], [7.7, "KEY_E"],
+    [8.5, "KEY_DOWN"], [8.8, "KEY_DOWN"], [9.1, "KEY_DOWN"], [9.6, "SHOT"], [10, "KEY_RIGHT"], [10.6, "SHOT"], [11.5, "KEY_ESC"],
+    [14.5, "KEY_DOWN"], [15.5, "KEY_ENTER"],
+    ["@save_slots"], [1.5, "KEY_ENTER"],
+    ["@load_complete"], [1, "KEY_ENTER"],
+    ["@hub"], [2, "KEY_TAB"],
+    ["@gameplay_ready"], [2.5, "SHOT"], [3, "X"], [3.35, "SHOT"], [5, "A"], [5.25, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['tab -> controls', 'controls.pad_layout -> PS2', '\[settings\] saved', 'controller mapping: ps2'] }
 
 [profiles.mouse_menus]
 description = "Menus pelo mouse como num jogo de PC: passar em SETTINGS vindo de NEW GAME seleciona direto (uma troca só), roda, teclado e D-pad continuam, clique abre SETTINGS; lá: clique nas abas, passar nas linhas, clique e arrasto nas estrelas, clique na linha e nas setas, roda, RB, VOLTAR; depois LOAD GAME, save e CONTINUE pelo clique, menu do episódio; na fase, pausa, passar em OPTIONS e clique em RESUME GAME"

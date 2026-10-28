@@ -44,6 +44,19 @@ namespace settings
         };
         static_assert(std::size(ACTIONS) == ACTION_COUNT);
 
+        // Same order as PadButton.
+        constexpr const char* PAD_BUTTON_IDS[] = { "a", "b", "x", "y", "lb", "rb", "lt", "rt", "ls", "rs", "start", "back",
+                                                   "dpad_up", "dpad_down", "dpad_left", "dpad_right" };
+        static_assert(std::size(PAD_BUTTON_IDS) == PAD_BUTTON_COUNT);
+
+        // PS2: the physical button of each game button (same order as PadButton). Gameplay: R1 (RB)
+        // blocks / dodges (the game's RT) and R2 (RT) is the free kick (the game's RB). Menus: Y goes
+        // back / leaves (the game's B) and B is the game's Y (on the HUB: continue the story).
+        using enum PadButton;
+        constexpr PadButton PS2_GAMEPLAY[] = { A, B, X, Y, LB, RT, LT, RB, LS, RS, Start, Back, DpadUp, DpadDown, DpadLeft, DpadRight };
+        constexpr PadButton PS2_MENU[] = { A, Y, X, B, LB, RB, LT, RT, LS, RS, Start, Back, DpadUp, DpadDown, DpadLeft, DpadRight };
+        static_assert(std::size(PS2_GAMEPLAY) == PAD_BUTTON_COUNT && std::size(PS2_MENU) == PAD_BUTTON_COUNT);
+
         struct KeyNameEntry
         {
             uint16_t key;
@@ -201,6 +214,33 @@ namespace settings
         }
     }
 
+    const char* PadLayoutName(PadLayout layout)
+    {
+        return layout == PadLayout::Ps2 ? "ps2" : "xbox360";
+    }
+
+    const char* PadButtonId(PadButton button)
+    {
+        return PAD_BUTTON_IDS[size_t(button)];
+    }
+
+    bool PadScreenOf(uint32_t node, PadScreen& screen)
+    {
+        // The boot (no node yet, the logo videos and license screen before the title, 59) and the cutscenes.
+        if (node == UINT32_MAX || node < 59 || node == 633 || (node >= 655 && node <= 1051))
+            return false;
+        // The hints (1170 TutorialScreen) open over the level: its buttons and icons, not the menus'.
+        screen = node == 638 || node == 1170 ? PadScreen::Gameplay : PadScreen::Menu;
+        return true;
+    }
+
+    PadButton PadLayoutSource(PadLayout layout, PadScreen screen, PadButton button)
+    {
+        if (layout != PadLayout::Ps2)
+            return button;
+        return screen == PadScreen::Menu ? PS2_MENU[size_t(button)] : PS2_GAMEPLAY[size_t(button)];
+    }
+
     bool ApplyControl(Controls& controls, const std::string& key, const std::string& value, bool& valid)
     {
         valid = true;
@@ -244,6 +284,12 @@ namespace settings
             valid = ValidPlayerDevice(lower);
             if (valid)
                 controls.players[key == "player2"] = lower;
+        }
+        else if (key == "pad_layout")
+        {
+            valid = lower == "xbox360" || lower == "ps2";
+            if (valid)
+                controls.padLayout = lower == "ps2" ? PadLayout::Ps2 : PadLayout::Xbox360;
         }
         else if (key == "prompts")
         {
@@ -299,7 +345,8 @@ namespace settings
             << "mouse_menus = " << (c.mouseMenus ? "true" : "false") << "   # menus do jogo pelo mouse (passar por cima seleciona, clique confirma, botao direito volta)\n"
             << "prompts = \"" << PromptStyleName(c.prompts) << "\"   # icones dos botoes: auto (o ultimo usado) | xbox | playstation | keyboard\n"
             << "player1 = \"" << c.players[0] << "\"   # co-op local, controle do jogador 1: auto | xbox1..xbox4 (XInput) | playstation1..playstation4\n"
-            << "player2 = \"" << c.players[1] << "\"   # controle do jogador 2 (com um controle so, ele e o jogador 1, junto com o teclado)\n";
+            << "player2 = \"" << c.players[1] << "\"   # controle do jogador 2 (com um controle so, ele e o jogador 1, junto com o teclado)\n"
+            << "pad_layout = \"" << PadLayoutName(c.padLayout) << "\"   # mapeamento do controle na gameplay: xbox360 (o do jogo) | ps2 (o da versao de PS2)\n";
         return out.str();
     }
 }

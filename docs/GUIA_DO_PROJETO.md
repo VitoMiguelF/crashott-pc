@@ -188,6 +188,7 @@ O `run_game.py` também imprime `jogo: PID ..., sessão ..., até N s` ao inicia
 | `icones` | Ícones dos botões trocando entre teclado, PlayStation e Xbox no menu principal, nos saves, no episódio e na pausa (`DEVICE_*` no script) | 50 s |
 | `mouse_menus` | Menus pelo mouse como num jogo de PC: de NEW GAME, passar em SETTINGS seleciona direto (o log mostra uma troca só, `selection 0 -> 3`), roda, teclado e D-pad continuam valendo, clique abre SETTINGS; lá, clique nas abas e no RB, passar nas linhas, clique e arrasto nas estrelas, clique na linha e na seta, roda (rola a aba CONTROLES), clique em VOLTAR; LOAD GAME, save e CONTINUE pelo clique, menu do episódio; na fase, pausa, passar em OPTIONS e clique em RESUME GAME. Capturas em `build\mouse_menus\` | 90 s |
 | `controles_tela` | Aba CONTROLES da tela SETTINGS pelo teclado: troca PULAR para K, salva, e faz LOAD GAME | 55 s |
+| `mapeamento_controle` | MAPEAMENTO DO CONTROLE = PS2 na aba CONTROLES pelo teclado, salva, LOAD GAME e, na fase, confere no log que o mapa PS2 vale (veja "Mapeamento do controle") | 60 s |
 | `coop_p2` | Co-op com um segundo controle **virtual** (entradas `P2_`): vila sem a cena, B entra (JOIN GAME), Y desce da mochila, anda, pula e START pausa como P2 (veja "Co-op local") | 50 s |
 | `coop_jogadores` | Só com **dois controles de verdade** (`test = false`): SETTINGS > CONTROLES, JOGADOR 1 = o segundo, JOGADOR 2 = o primeiro; confere a troca no log | 30 s |
 | `coop_manual` | Para alguém jogar com dois controles (`test = false`): vila sem a cena por 90 s, uma captura a cada 6 s | 90 s |
@@ -474,7 +475,7 @@ Capturas da organização atual das abas em `docs\capturas\settings_abas\`: cada
 | Salvamento automático | ligado (padrão) / desligado: o jogo não salva sozinho (o menu de pausa passa a mostrar SAIR DA FASE, como fazia a opção original). Ligado, só salva quando há um slot de save escolhido (NEW GAME ou LOAD GAME); continuar sem salvar continua sem salvar | na hora |
 | Armazenamento | Hard Drive (informativo) | — |
 | **Áudio** | | |
-| Volume geral | 0–100% | na hora (mixagem final do runtime) |
+| Volume geral | 0–100% (padrão 50%) | na hora (mixagem final do runtime) |
 | Música, efeitos, vozes | 0–100%. Substituem as estrelas DIÁLOGOS / MÚSICA / EFEITOS do menu de opções original do jogo (que fica escondido) | na hora (`docs\capturas\settings_aplicar\volume_musica_ao_vivo_*.wav`) |
 | *Legendas* (sub-grupo da aba ÁUDIO, abaixo dos volumes) | | |
 | Legendas | desligado (padrão) / ligado: legendas nas cenas e nas falas do Aku Aku, no idioma dos textos (veja "Legendas") | na hora |
@@ -599,7 +600,7 @@ A tela segue o estilo do frontend do jogo, com a arte lida na abertura do `defau
 [paths]
 game = "D:/Jogos/Crash"   # pasta do jogo, se não estiver em game\ ao lado do exe (veja "Jogando")
 [audio]
-master = 100     # 0-100, vale na hora
+master = 50      # 0-100, vale na hora
 music = 100      # 0-100, vale na hora (como effects e voice)
 effects = 100
 voice = 100
@@ -758,6 +759,24 @@ Ligue dois controles e jogue: na fase, o HUD do jogo mostra **JOIN GAME (B)** en
 - **Log**: `[input] jogadores: P1 = DualSense 1 (USB) (controle 0 do jogo), P2 = DualSense 2 (USB) (controle 1 do jogo)` a cada mudança, `[input] o jogo pegou o controle N como jogador 1` na tela título, `[input] DualSense (USB): controle próprio` / `é o mesmo controle que o XInput 1`, e os primeiros botões dos outros controles (`[input] controle 1 do jogo (DualSense 2 (USB)): botões 0x2000`).
 - **Testes**: `CrashRecomp.exe --pads-selftest` passa pelos casos (Xbox + DualSense, DS4Windows sem HidHide, DS4Windows aberto depois, DualSense e depois Xbox, P1 desconectado, escolhas da tela, START no título). No `CRASH_INPUT_SCRIPT` / `input` do `run.toml`, `P2_` antes de um botão, analógico ou gatilho aperta um **segundo controle virtual** (conectado desde o boot): `[2, "P2_B"]`, `[5, "P2_LS", 1, 0, 2]`; `P3_` e `P4_` também existem. Perfis `coop_p2` (virtual), `coop_jogadores` e `coop_manual` (controles de verdade) na tabela de "Rodando e testando".
 - **Conferido** (2026-10-22, `docs\capturas\coop\`): com o controle virtual, o HUD mostra JOIN GAME, B põe o jogador 2 na mochila, Y solta, ele anda sozinho e START pausa como P2 PAUSED (capturas 1-4); com **dois DualSense de verdade por USB** (o DSX aberto segurando os dois pelo Bluetooth), uma pessoa jogou o P2 pelo segundo controle (`coop_manual`): o log tem `P1 = DualSense 1 (USB) (controle 0 do jogo), P2 = DualSense 2 (USB) (controle 1 do jogo)`, os botões do controle 1 e até o detector de giro do jogo no controle 1 (`coop_manual_input.log`), e o P2 quebra plantas e pega mojo sozinho (capturas 5-6); a troca pela tela (JOGADOR 1 = DUALSENSE 2) está na captura 7.
+
+### Mapeamento do controle
+
+Em **SETTINGS > CONTROLES** (e no launcher), **MAPEAMENTO DO CONTROLE** escolhe os botões: **XBOX 360** (os do jogo, o padrão) ou **PS2** (o layout da versão de PS2, no mesmo controle). Vale na hora, para todos os controles (co-op também). Com PS2:
+
+| Onde | Botão do jogo (Xbox 360) | Botão físico com PS2 |
+|---|---|---|
+| Gameplay | RT: bloquear / esquivar | **RB (R1)** |
+| Gameplay | RB: chute freejack | **RT (R2)** |
+| Menus (todos, a pausa e a tela de opções também; as **dicas** não, ficam como na fase) | B: voltar / sair | **Y (Triângulo)**, como no PS2 |
+| Menus | Y (no HUB: continuar a história) | **B (Círculo)** |
+| Cenas e logos da intro | pular (segurar B / START / A) | o aviso mostra **START** (o botão menu); os botões não trocam (B também pula) |
+
+- O teclado não muda (tem as próprias teclas: Esc continua voltando).
+- Os ícones de **PlayStation** nos textos e dicas mostram o botão físico (o bloquear mostra R1, o "continuar" do HUB mostra o Círculo); os ícones de Xbox são as imagens do próprio jogo e ficam como estão.
+- As tabelas ficam em `runtime/settings/controls.cpp` (`PS2_GAMEPLAY`, `PS2_MENU`: para cada botão do jogo, o botão físico).
+- `settings.toml`: `[controls] pad_layout = "xbox360"` ou `"ps2"`.
+- **Log**: `[settings] controls.pad_layout -> PS2` na tela e `[input] controller mapping: ps2, gameplay (rb <- rt, rt <- rb)` / `ps2, menus (b <- y, y <- b)` ao passar da fase para os menus e de volta. As entradas do `CRASH_INPUT_SCRIPT` contam como um controle (o mapa vale para elas; perfil `mapeamento_controle`).
 
 ### Os controles do jogo
 

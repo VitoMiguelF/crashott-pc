@@ -55,3 +55,29 @@ Full write-ups: `runtime/NOTES.md` "Controles de PC" (with "Co-op local" and "Mo
 - Tests: `P2_<button|LS|RS|LT|RT>` in `CRASH_INPUT_SCRIPT` / run.toml = a virtual 2nd pad.
 - Lua `GetCurrentPlayer(1)` returns P1; useless for P2's position.
 - Start any input / co-op change from `pad_slots.cpp`.
+
+## Controller mapping (`[controls] pad_layout`)
+
+- One row in CONTROLS (`options::Item::ControllerLayout`, 4th, after BUTTON ICONS): XBOX 360 (the game's) or
+  PS2. `controls.cpp` tables `PS2_GAMEPLAY` / `PS2_MENU` `[game button] = physical button`
+  (`settings::PadButton`: A B X Y LB RB LT RT LS RS START BACK and the D-pad; the triggers count as buttons).
+  PS2 gameplay: RB (R1) = the game's RT (block), RT (R2) = the game's RB (free kick). PS2 menus: Y = the
+  game's B (back / leave, as on the PS2), B = the game's Y (on the HUB: continue story).
+- `settings::PadScreenOf(node)`: 638 GameRunning and 1170 TutorialScreen (the hints, opened over the level by
+  exit 640; as a menu they swapped B / Y and the jack icon over the enemies showed Triangle) = gameplay; the cutscene nodes (633, 655-1051) and no node
+  yet = no change (B keeps skipping); any other node = a menu (pause included). `input::MenuButtons` (the
+  runtime's own screens) goes through `RemapPad` too, so Y goes back there as well; the keyboard's Esc stays B.
+- Applied in `kernel/xam_input_imports.cpp` `RemapPad`, right after `input::slots::Read` (every physical pad,
+  every player) and on each `CRASH_INPUT_SCRIPT` press. The keyboard (`pc_input`) and the touch controls are
+  added after it and are not remapped. Logs `[input] controller mapping: ps2, gameplay (...)` / `ps2, menus (...)` on each change.
+- Icons: `prompt_icons.cpp` `MappedIcon` swaps the **PlayStation** icons on those screens (the style hash
+  includes the screen, so the renderer redraws them). The Xbox icons are the game's own textures and stay.
+  The pause screens (1081 / 1109 / 1134) swap the buttons but keep the gameplay icons: they have no B / Y
+  prompts of their own, and the level drawn behind them does (the B floating over a hint stone turned into
+  Triangle). The screen is fixed when `Style()` makes the style (`g_styleScreens`) and read back when drawing:
+  deciding it again at draw time raced with the node change when leaving the pause, and the wrong icon stayed
+  cached under the gameplay style (the B over the stone stayed Triangle in the level). The skip prompt
+  (`skip_cinematics.cpp`) shows START instead of B with PS2, the logo videos included; the buttons don't
+  swap there (nodes < 59 and the cutscenes), so B still skips too.
+- The new row moved the key bindings down one: `controles_tela` now presses DOWN x14 to reach JUMP.
+- Profile `mapeamento_controle` (only checks the row and the log; the PS2 buttons were tested by hand).

@@ -14,6 +14,7 @@
 //   prompts = "auto"            # auto | xbox | playstation | keyboard (button icons)
 //   player1 = "auto"            # local co-op: the controller of each player (kernel/pad_slots.h):
 //   player2 = "auto"            # auto | xbox1..xbox4 (XInput) | playstation1..playstation4
+//   pad_layout = "xbox360"      # controller mapping: xbox360 (the game's) | ps2
 //
 // The game's own controls (scripts\mixins\inputmap_methods.lua, Crash.bfig/Crashlua.blua; see
 // runtime/NOTES.md "Controles de PC"): A jump, X light attack, Y heavy attack, B action/jack/
@@ -51,6 +52,26 @@ namespace settings
     // Pseudo key codes for the mouse wheel (unassigned virtual key codes).
     constexpr uint16_t KEY_WHEEL_UP = 0x0E, KEY_WHEEL_DOWN = 0x0F;
 
+    // The controller's buttons (the triggers count as buttons), for the controller mapping.
+    enum class PadButton : uint8_t
+    {
+        A, B, X, Y, LB, RB, LT, RT, LS, RS, Start, Back, DpadUp, DpadDown, DpadLeft, DpadRight,
+        Count
+    };
+    constexpr size_t PAD_BUTTON_COUNT = size_t(PadButton::Count);
+
+    // The controller mapping (kernel/xam_input_imports.cpp, RemapPad): the Xbox 360 game's own
+    // buttons, or the PS2 version's layout on the same controller. It changes the buttons in
+    // gameplay (PS2: R1 blocks, R2 kicks) and in the menus (PS2: Y goes back / leaves and B takes
+    // the game's Y, as on the HUB's episode screen: B continues the story); the cutscenes keep
+    // the game's buttons (B skips).
+    enum class PadLayout : uint8_t { Xbox360, Ps2 };
+    enum class PadScreen : uint8_t { Gameplay, Menu };
+    // The screen of frontend node `node`: 638 GameRunning and 1170 TutorialScreen (the hints) =
+    // gameplay, the cutscene nodes (633, 655-1051) and the boot (no node yet, the logo videos before
+    // the title screen, 59) = false, any other = a menu.
+    bool PadScreenOf(uint32_t node, PadScreen& screen);
+
     // Which button icons the menus and the HUD show.
     enum class PromptStyle : uint8_t { Auto, Xbox, PlayStation, Keyboard };
 
@@ -66,6 +87,7 @@ namespace settings
         // Local co-op: the controller of player 1 / player 2 (PlayerDeviceKey; "auto" = connection
         // order, and START on the title screen picks player 1). A single pad is always player 1.
         std::array<std::string, 2> players{ "auto", "auto" };
+        PadLayout padLayout = PadLayout::Xbox360;  // every pad; gameplay and the menus
 
         Controls();  // the defaults
         bool operator==(const Controls&) const = default;
@@ -76,6 +98,10 @@ namespace settings
     std::string KeyName(uint16_t key);                      // "W", "SPACE", "MOUSE1"; "" for 0
     bool ParseKey(const std::string& name, uint16_t& key);  // case-insensitive
     const char* PromptStyleName(PromptStyle style);         // "auto", "xbox", "playstation", "keyboard"
+    const char* PadLayoutName(PadLayout layout);            // "xbox360", "ps2"
+    const char* PadButtonId(PadButton button);              // "a", "lt", "dpad_up" (the log)
+    // The physical button that presses game button `button` with `layout` on `screen`.
+    PadButton PadLayoutSource(PadLayout layout, PadScreen screen, PadButton button);
     // [controls] player1 / player2 values: "auto", "xbox1".."xbox4", "playstation1".."playstation4".
     bool ValidPlayerDevice(const std::string& key);
 
