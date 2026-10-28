@@ -12,8 +12,12 @@ namespace settings
     // Called by RegisterFrontendPatches (after its own patches of the same entries).
     void RegisterPcFrontendPatches();
 
-    // Menu index of EXIT GAME on the main menu (StartMenu of GameStart_Start_Xenon).
+    // Menu index of EXIT GAME on the main menu (StartMenu of GameStart_Start_Xenon), as the
+    // game's conditions see it (frontend_hooks.cpp maps the real ones, with MULTIPLAYER, back).
     constexpr int QUIT_MENU_INDEX = 4;
+    // MULTIPLAYER's real index (between LOAD GAME and CREDITS), when MultiplayerItemAdded.
+    constexpr int MULTIPLAYER_MENU_INDEX = 2;
+    bool MultiplayerItemAdded();
 
     // The Frontend fight tree exit that EXIT GAME takes, or -1 when the patches did not apply.
     int QuitExit();

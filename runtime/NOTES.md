@@ -2487,3 +2487,27 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   `mp_ko.lua`): os mesmos dois caem em todas e voltam 5 s depois no mesmo lugar (0,2) com 30 de 30. O T-pose do
   primeiro teste: o P2 em estado 0 tinha o mapa de controle liberado e ignorava o controle.
   Cortex/NGin/Tiny.
+- **Lobby pelo menu** (`online/mp_lobby.*`, `online/mp_menu.*`, perfis `mp_lobby_host` + `mp_lobby_c1` +
+  `mp_lobby_c2`): MULTIPLAYER é o 6º item do menu principal (entre LOAD GAME e CREDITS, cópia do CREDITS em
+  `pc_frontend.cpp`; texto `frontend` / `FE_Button_Multiplayer_Text` posto nas bíblias como o "Definitive
+  Edition"). As condições do jogo só conhecem os itens 0-3: o gancho do GetMenuIndex devolve 3-5 como 2-4 e o
+  MULTIPLAYER como SETTINGS (saída 91 -> tela de opções do PS2 esvaziada, nó 99), e o marcador 4242 abre as
+  telas do MULTIPLAYER no lugar das configurações. CRIAR PARTIDA > NOVO / CARREGAR abre a sessão e fecha a
+  tela sem B; a condição seguinte do nó 99 devolve a saída do próprio menu (88 / 89). O novo jogo vai do nó
+  322 (`FadeOut`) para o HUB pela saída 309 (o `ExitToHUB` do carregar: `EndAccess` + `FadeIn`) no lugar da 323
+  (`StartLevelByName(L1_E1)`); pela 380 (`GotoGameState(LEVEL_SELECT)`) o HUB ficava preto (sem fade in). O
+  carregado chega ao HUB sozinho. No HUB o host tem um painel (código, jogadores); BACK (escondido do jogo)
+  abre o lobby: expulsar, senha, máximo de jogadores, tempo de nocaute, encerrar. Quando o host chega ao nó 630
+  (InGame) o índice da fase (gerenciadores +24) vai no ROSTER; o cliente chama `Frontend:StartLevel`
+  (`sub_820F5D58`) e a saída 51 (SkipToLevel) de onde estiver (opções, menu, HUB). Protocolo "CML1" no socket
+  do jogo, agora com uma thread de E/S (pacotes do lobby tratados nela, os do espelho numa fila para a thread
+  do jogo); DISCOVER a cada segundo para 255.255.255.255 e 127.0.0.1, HELLO / WELCOME / DENY, ROSTER e PING a
+  cada 0,5 s, 6 s de silêncio derrubam. Código de convite = IP da rede + porta em 10 letras base 32 de
+  Crockford; pela internet só com porta aberta ou VPN (sem relay). Visto (`mp_lobby_host` + `mp_lobby_c1` + `mp_lobby_c2`, três janelas): MULTIPLAYER entre LOAD GAME e CREDITS,
+  host por CARREGAR > slot 1 até o HUB com o painel (código, 3/4); o cliente da lista achou o host (respostas
+  do IP da rede e do 127.0.0.1 juntas) e pediu a senha, o do código levou SENHA ERRADA, digitou e entrou; Y no
+  host: os três na fase do host, cada janela com o seu Crash (laranja, claro, azul). `mp_lobby_host_new`: CRIAR
+  PARTIDA > NOVO JOGO (nome, NORMAL, slot 1) direto ao HUB do save novo, com painel e lobby. Falta: o cliente joga sem
+  o save do host (mojo 0, melhorias dele), só segue um início pelos menus / HUB (não de dentro de outra fase),
+  e o NOVO JOGO do host deixa a fase de abertura para o CONTINUE STORY do HUB.
+

@@ -18,6 +18,7 @@
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
 #include "../online/mp.h"
+#include "../online/mp_menu.h"
 #include "../platform/platform.h"
 #include "../platform/crt.h"
 #include "xinput_types.h"
@@ -412,7 +413,7 @@ namespace
             if (mp::RemotePad(user, &state.Gamepad))
                 connected = true;
             // The settings screen and the console hide every controller from the game, not only player 1's.
-            if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput())
+            if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput() || mp::menu::BlocksGameInput())
                 state.Gamepad = {};
         }
         if (user == playerOne)
@@ -447,9 +448,10 @@ namespace
             settings::save_screens::FilterGameInput(state.Gamepad, poll);
             // Hold to skip a cutscene or a video (skip_cinematics.h).
             cutscenes::FilterGameInput(state.Gamepad, poll);
-            if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput())
+            if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput() || mp::menu::BlocksGameInput())
                 state.Gamepad = {};
-            state.Gamepad.wButtons |= settings::menu::GameButtons();  // B when it closes
+            state.Gamepad.wButtons &= ~mp::menu::HiddenButtons();  // BACK opens the lobby at the HUB
+            state.Gamepad.wButtons |= settings::menu::GameButtons() | mp::menu::GameButtons();  // B when it closes
             mp::LocalPad(&state.Gamepad, poll);  // online prototype: player 1's pad to the peer
         }
         // The packet number changes with the state, per controller.

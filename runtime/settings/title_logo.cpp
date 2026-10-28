@@ -224,14 +224,13 @@ namespace settings
             }
         }
 
-        bool AddEditionKey(std::vector<uint8_t>& data)
+        bool AddKey(std::vector<uint8_t>& data, const char* keyName, const char16_t* (*textOf)(char letter), std::string& letters)
         {
             if (data.size() < 12)
                 return false;
             std::vector<LanguageChunk> languages;
             std::vector<size_t> path = { 0 };
             FindLanguages(data, LoadLE32(&data[4]), std::min<size_t>(data.size(), LoadLE32(&data[8])), false, path, languages);
-            std::string letters;
             // Last first: an insertion only moves the chunks after it.
             for (auto it = languages.rbegin(); it != languages.rend(); ++it)
             {
@@ -244,7 +243,7 @@ namespace settings
                 size_t hashes = fields + 13, offsets = hashes + size_t(count) * 4, buffer = offsets + size_t(count) * 4;
                 if (modulo == 0 || buffer + bufferSize > end)
                     continue;
-                uint32_t key = KeyHash(KEY_NAME, modulo);
+                uint32_t key = KeyHash(keyName, modulo);
                 uint32_t index = 0;
                 bool present = false;
                 for (; index < count; index++)
@@ -257,7 +256,7 @@ namespace settings
                 if (present)
                     continue;
                 std::vector<uint8_t> text;
-                for (const char16_t* c = EDITION_TEXT; *c; c++)
+                for (const char16_t* c = textOf(letter); *c; c++)
                     text.push_back(uint8_t(*c)), text.push_back(uint8_t(*c >> 8));
                 text.push_back(0), text.push_back(0);
                 // Back to front, so that the earlier offsets stay valid.
@@ -272,7 +271,13 @@ namespace settings
                 Grow(data, it->ancestors, delta);
                 letters.insert(letters.begin(), letter);
             }
-            if (letters.empty())
+            return !letters.empty();
+        }
+
+        bool AddEditionKey(std::vector<uint8_t>& data)
+        {
+            std::string letters;
+            if (!AddKey(data, KEY_NAME, [](char) { return EDITION_TEXT; }, letters))
                 return false;
             Log("[pc] title logo: %s / %s (0x%X) added to %zu language(s): %s", BIBLE_NAME, KEY_NAME, KeyHash(KEY_NAME, 0x1003F),
                 letters.size(), letters.c_str());
@@ -370,6 +375,22 @@ namespace settings
         }
 
         const char* const BIBLE_PACKAGES[] = { "package\\cdd70a8c.p3d", "package\\7efdcd91.p3d" };
+    }
+
+    bool AddFrontendTextKey(std::vector<uint8_t>& data, const char* key, const char16_t* (*textOf)(char letter))
+    {
+        std::string letters;
+        if (!AddKey(data, key, textOf, letters))
+            return false;
+        Log("[pc] frontend: %s / %s (0x%X) added to %zu language(s): %s", BIBLE_NAME, key, KeyHash(key, 0x1003F), letters.size(),
+            letters.c_str());
+        return true;
+    }
+
+    const char* const* FrontendBiblePackages(size_t& count)
+    {
+        count = sizeof(BIBLE_PACKAGES) / sizeof(BIBLE_PACKAGES[0]);
+        return BIBLE_PACKAGES;
     }
 
     void RegisterTitleLogoPatches()

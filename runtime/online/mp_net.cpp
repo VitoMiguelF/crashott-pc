@@ -31,13 +31,17 @@
 // physics (TeleportPlayer), when they drift more than CRASH_MP_SNAP (default 1.0) away.
 
 #include "mp.h"
+#include "mp_lobby.h"
 #include "../diagnostics.h"
 #include "../kernel/xinput_types.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <deque>
+#include <thread>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -122,6 +126,18 @@ namespace
     {
         Role role = Role::None;
         socket_t sock = INVALID_SOCKET;
+        int localPort = 0;
+        // The I/O thread (IoLoop) owns the receiving; game packets wait here for the game thread.
+        struct Packet
+        {
+            sockaddr_in from;
+            std::vector<uint8_t> data;
+        };
+        std::mutex queueMutex;
+        std::deque<Packet> queue;
+        std::thread io;
+        std::atomic<bool> ioRun{ false };
+        bool wasInLevel = false;
         sockaddr_in peer{};       // client: the host
         sockaddr_in clients[4]{};  // host: each client's address (slot 1-3), learnt from its pads
         uint32_t slot = 0, players = 2;
@@ -162,6 +178,90 @@ namespace
         uint64_t hitpointsApplied = 0, damageDropped = 0;
     };
 
+    uint32_t Get32(const uint8_t* p);
+
+    // Lobby packets on the I/O thread, the rest queued for the game thread (at most 4096: a game
+    // thread that stopped reading, in the menus, keeps only the newest).
+    void IoLoop(Net* n)
+    {
+        std::vector<uint8_t> buffer(2048);
+        while (n->ioRun.load())
+        {
+            fd_set set;
+            FD_ZERO(&set);
+            FD_SET(n->sock, &set);
+            timeval wait{ 0, 50000 };
+            if (select(int(n->sock) + 1, &set, nullptr, nullptr, &wait) > 0)
+            {
+                for (;;)
+                {
+                    sockaddr_in from{};
+                    socklen_t fromSize = sizeof(from);
+                    int got = int(recvfrom(n->sock, reinterpret_cast<char*>(buffer.data()), int(buffer.size()), 0,
+                                           reinterpret_cast<sockaddr*>(&from), &fromSize));
+                    if (got <= 0)
+                        break;
+                    if (got >= 4 && Get32(buffer.data()) == mp::lobby::MAGIC)
+                    {
+                        mp::lobby::OnPacket(ntohl(from.sin_addr.s_addr), ntohs(from.sin_port), buffer.data(), size_t(got));
+                        continue;
+                    }
+                    std::lock_guard<std::mutex> lock(n->queueMutex);
+                    if (n->queue.size() >= 4096)
+                        n->queue.pop_front();
+                    n->queue.push_back({ from, std::vector<uint8_t>(buffer.begin(), buffer.begin() + got) });
+                }
+            }
+            mp::lobby::IoTick();
+        }
+    }
+
+    bool OpenSocket(Net& n, int port)
+    {
+#ifdef _WIN32
+        static bool started = [] {
+            WSADATA wsa;
+            return WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+        }();
+        (void)started;
+#endif
+        n.sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        sockaddr_in local{};
+        local.sin_family = AF_INET;
+        local.sin_addr.s_addr = htonl(INADDR_ANY);
+        local.sin_port = htons(uint16_t(port));
+        if (n.sock == INVALID_SOCKET || bind(n.sock, reinterpret_cast<sockaddr*>(&local), sizeof(local)) != 0 || !SetNonBlocking(n.sock))
+        {
+            Log("[mp] net: no UDP socket on port %d", port);
+            if (n.sock != INVALID_SOCKET)
+                CloseSocket(n.sock);
+            n.sock = INVALID_SOCKET;
+            return false;
+        }
+        int on = 1;
+        setsockopt(n.sock, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&on), sizeof(on));
+        socklen_t size = sizeof(local);
+        getsockname(n.sock, reinterpret_cast<sockaddr*>(&local), &size);
+        n.localPort = ntohs(local.sin_port);
+        n.ioRun = true;
+        n.io = std::thread(IoLoop, &n);
+        return true;
+    }
+
+    // A queued game packet (game thread).
+    bool PopPacket(Net& n, uint8_t* buffer, size_t capacity, int& got, sockaddr_in& from)
+    {
+        std::lock_guard<std::mutex> lock(n.queueMutex);
+        if (n.queue.empty())
+            return false;
+        Net::Packet& packet = n.queue.front();
+        got = int(std::min(capacity, packet.data.size()));
+        memcpy(buffer, packet.data.data(), size_t(got));
+        from = packet.from;
+        n.queue.pop_front();
+        return true;
+    }
+
     Net& N()
     {
         static Net& net = *[] {
@@ -192,19 +292,8 @@ namespace
             if (const char* p = getenv("CRASH_MP_PORT"))
                 port = atoi(p);
             const char* peer = getenv("CRASH_MP_PEER");
-#ifdef _WIN32
-            WSADATA wsa;
-            WSAStartup(MAKEWORD(2, 2), &wsa);
-#endif
-            n.sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-            sockaddr_in local{};
-            local.sin_family = AF_INET;
-            local.sin_addr.s_addr = htonl(INADDR_ANY);
-            local.sin_port = htons(uint16_t(port + n.slot));
-            if (n.sock == INVALID_SOCKET || bind(n.sock, reinterpret_cast<sockaddr*>(&local), sizeof(local)) != 0
-                || !SetNonBlocking(n.sock))
+            if (!OpenSocket(n, port + int(n.slot)))
             {
-                Log("[mp] net: no UDP socket on port %d", ntohs(local.sin_port));
                 n.role = Role::None;
                 return made;
             }
@@ -218,7 +307,7 @@ namespace
                 n.clients[k].sin_port = htons(uint16_t(port + k));
             }
             Log("[mp] net: %s (player %u of %u) on UDP %d, peer %s, %d Hz, suppress ai %d objectives %d",
-                n.role == Role::Host ? "host" : "client", n.slot + 1, n.players, ntohs(local.sin_port),
+                n.role == Role::Host ? "host" : "client", n.slot + 1, n.players, n.localPort,
                 peer && *peer ? peer : "127.0.0.1", n.hz, int(n.suppressAi), int(n.suppressObjectives));
             return made;
         }();
@@ -624,10 +713,8 @@ namespace
         for (;;)
         {
             sockaddr_in from{};
-            socklen_t fromSize = sizeof(from);
-            int got = int(recvfrom(n.sock, reinterpret_cast<char*>(buffer), sizeof(buffer), 0,
-                                   reinterpret_cast<sockaddr*>(&from), &fromSize));
-            if (got <= 0)
+            int got = 0;
+            if (!PopPacket(n, buffer, sizeof(buffer), got, from))
                 break;
             ReceivePad(n, buffer, got, from);
         }
@@ -744,10 +831,8 @@ namespace
         for (;;)
         {
             sockaddr_in from{};
-            socklen_t fromSize = sizeof(from);
-            int got = int(recvfrom(n.sock, reinterpret_cast<char*>(buffer), sizeof(buffer), 0,
-                                   reinterpret_cast<sockaddr*>(&from), &fromSize));
-            if (got <= 0)
+            int got = 0;
+            if (!PopPacket(n, buffer, sizeof(buffer), got, from))
                 break;
             if (got < int(HEADER) || Get32(buffer) != MAGIC)
             {
@@ -1126,10 +1211,32 @@ namespace mp
         }
     }
 
+    // A new level: nothing of the last one's actors, players or corrections is kept.
+    void NewLevel(Net& n)
+    {
+        n.sent.clear();
+        n.latest.clear();
+        n.local.clear();
+        n.damageables.clear();
+        n.lastSequence = 0;
+        memset(n.lookDone, 0, sizeof(n.lookDone));
+        memset(n.interests, 0, sizeof(n.interests));
+        memset(n.lastSnap, 0, sizeof(n.lastSnap));
+        memset(n.snapRepeats, 0, sizeof(n.snapRepeats));
+        Log("[mp] net: level up as %s, player %u of %u", n.role == Role::Host ? "host" : "client", n.slot + 1, n.players);
+    }
+
     void NetTick(PPCContext& ctx, uint8_t* base)
     {
         Net& n = N();
-        if (n.role != Role::None && InLevel())
+        bool inLevel = InLevel();
+        if (inLevel != n.wasInLevel)
+        {
+            n.wasInLevel = inLevel;
+            if (inLevel && n.role != Role::None)
+                NewLevel(n);
+        }
+        if (n.role != Role::None && inLevel)
         {
             FixLooks(ctx, base, n);
             LocalCamera(ctx, base, n);
@@ -1195,4 +1302,89 @@ PPC_FUNC(sub_822212C0)
                 TintPalette(drawable + 0x11C8, hue);
                 return;
             }
+}
+
+namespace mp::net
+{
+    bool Open(int port)
+    {
+        Net& n = N();
+        if (n.sock != INVALID_SOCKET)
+            return true;
+        if (!OpenSocket(n, port))
+            return false;
+        Log("[mp] net: UDP socket on port %d", n.localPort);
+        return true;
+    }
+
+    void Close()
+    {
+        Net& n = N();
+        if (n.sock == INVALID_SOCKET)
+            return;
+        n.ioRun = false;
+        if (n.io.joinable())
+            n.io.join();
+        CloseSocket(n.sock);
+        n.sock = INVALID_SOCKET;
+        n.role = ::Role::None;
+        {
+            std::lock_guard<std::mutex> lock(n.queueMutex);
+            n.queue.clear();
+        }
+        Log("[mp] net: socket closed");
+    }
+
+    bool IsOpen() { return N().sock != INVALID_SOCKET; }
+    int LocalPort() { return N().localPort; }
+
+    void SetRole(Role role, uint32_t slot, uint32_t players, uint32_t hostIp, int hostPort)
+    {
+        Net& n = N();
+        std::lock_guard<std::mutex> lock(n.padMutex);
+        ::Role was = n.role;
+        n.role = role == Role::Host ? ::Role::Host : role == Role::Client ? ::Role::Client : ::Role::None;
+        bool changed = was != n.role || n.slot != slot || n.players != players;
+        n.slot = slot;
+        n.players = std::clamp<uint32_t>(players, 1, 4);
+        if (role == Role::Client)
+        {
+            n.peer = {};
+            n.peer.sin_family = AF_INET;
+            n.peer.sin_addr.s_addr = htonl(hostIp);
+            n.peer.sin_port = htons(uint16_t(hostPort));
+        }
+        if (changed)
+            Log("[mp] net: %s, player %u of %u", n.role == ::Role::Host ? "host" : n.role == ::Role::Client ? "client" : "no role",
+                slot + 1, n.players);
+    }
+
+    void SetClientAddress(uint32_t slot, uint32_t ip, int port)
+    {
+        Net& n = N();
+        if (slot == 0 || slot >= 4)
+            return;
+        std::lock_guard<std::mutex> lock(n.padMutex);
+        n.clients[slot] = {};
+        n.clients[slot].sin_family = AF_INET;
+        n.clients[slot].sin_addr.s_addr = htonl(ip);
+        n.clients[slot].sin_port = htons(uint16_t(port));
+    }
+
+    void SendTo(uint32_t ip, int port, const void* data, size_t size)
+    {
+        Net& n = N();
+        if (n.sock == INVALID_SOCKET)
+            return;
+        sockaddr_in to{};
+        to.sin_family = AF_INET;
+        to.sin_addr.s_addr = htonl(ip);
+        to.sin_port = htons(uint16_t(port));
+        sendto(n.sock, static_cast<const char*>(data), int(size), 0, reinterpret_cast<const sockaddr*>(&to), sizeof(to));
+    }
+
+    void Broadcast(int port, const void* data, size_t size)
+    {
+        SendTo(0xFFFFFFFFu, port, data, size);
+    }
 }

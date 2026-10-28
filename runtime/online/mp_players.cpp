@@ -31,6 +31,7 @@
 // with the lowest slot (the same one on every machine).
 
 #include "mp.h"
+#include "mp_lobby.h"
 #include "../diagnostics.h"
 #include "../dev/dev_tools.h"
 #include "../kernel/kernel.h"
@@ -103,6 +104,8 @@ namespace
         if (!crash || std::any_of(g_knockouts.begin(), g_knockouts.end(), [crash](const Knockout& k) { return k.crash == crash; }))
             return;
         float seconds = LoadF(KNOCKOUT_SECONDS);
+        if (uint32_t chosen = mp::lobby::KnockOutSeconds())
+            seconds = float(chosen);  // the session's option (mp_lobby.h)
         if (!(seconds >= 1.0f && seconds <= 10.0f))
             seconds = 3.0f;
         g_knockouts.push_back({crash, index, mp::NowMs() + uint64_t(seconds * 1000)});

@@ -14,10 +14,12 @@
 #include "save_screens.h"
 #include "settings_menu.h"
 #include "../dev/dev_console.h"
+#include "../online/mp_menu.h"
 #include "../kernel/kernel.h"
 #include "../kernel/pc_input.h"
 #include "../kernel/memory.h"
 
+#include <atomic>
 #include <cstring>
 
 extern "C" PPC_FUNC(__imp__sub_822E29D8);
@@ -54,6 +56,9 @@ namespace
 {
     thread_local int t_conditionDepth = 0;
     thread_local bool t_quitItemChosen = false;
+    thread_local bool t_multiplayerItemChosen = false;
+    // MULTIPLAYER took the SETTINGS exit: its marker opens the MULTIPLAYER screens instead.
+    std::atomic<bool> g_multiplayerPending{ false };
 
     bool GuestStringIs(uint8_t* base, uint32_t address, const char* text)
     {
@@ -61,12 +66,28 @@ namespace
     }
 }
 
+// With MULTIPLAYER (index 2, pc_frontend.cpp) the main menu has six items: the game's conditions
+// see the old indexes (0-1 as they are, 3-5 as 2-4) and MULTIPLAYER as SETTINGS (3).
 PPC_FUNC(sub_820F9A10)
 {
     uint32_t page = ctx.r4.u32, menu = ctx.r5.u32;
     __imp__sub_820F9A10(ctx, base);
-    if (t_conditionDepth > 0 && int32_t(ctx.r3.u32) == settings::QUIT_MENU_INDEX && GuestStringIs(base, page, "GameStart_Start_Xenon") &&
-        GuestStringIs(base, menu, "StartMenu"))
+    if (!GuestStringIs(base, page, "GameStart_Start_Xenon") || !GuestStringIs(base, menu, "StartMenu"))
+        return;
+    int32_t index = int32_t(ctx.r3.u32);
+    if (settings::MultiplayerItemAdded() && index >= settings::MULTIPLAYER_MENU_INDEX)
+    {
+        if (index == settings::MULTIPLAYER_MENU_INDEX)
+        {
+            if (t_conditionDepth > 0)
+                t_multiplayerItemChosen = true;
+            index = settings::QUIT_MENU_INDEX - 1;
+        }
+        else
+            index--;
+        ctx.r3.s64 = index;
+    }
+    if (t_conditionDepth > 0 && index == settings::QUIT_MENU_INDEX && !t_multiplayerItemChosen)
         t_quitItemChosen = true;
 }
 
@@ -82,7 +103,7 @@ PPC_FUNC(sub_820F9BA8)
         settings::save_screens::NoteFrontendNode(node);  // name keyboard, delete on the slot screen
     }
     if (t_conditionDepth++ == 0)
-        t_quitItemChosen = false;
+        t_quitItemChosen = t_multiplayerItemChosen = false;
     __imp__sub_820F9BA8(ctx, base);
     int32_t exit = int32_t(ctx.r3.u32);
     if (settings::IsStorageDeviceExit(exit))
@@ -96,12 +117,19 @@ PPC_FUNC(sub_820F9BA8)
         if (exit >= 0)
             Log("[pc] frontend: EXIT GAME chosen on the main menu (exit %d)", exit);
     }
+    else if (exit >= 0 && t_conditionDepth == 1 && t_multiplayerItemChosen)
+    {
+        g_multiplayerPending = true;
+        Log("[pc] frontend: MULTIPLAYER chosen on the main menu (exit %d)", exit);
+    }
     if (t_conditionDepth == 1)
         exit = boot::OverrideExit(ctx, base, tree, node, exit);  // --skip-intros / CRASH_BOOT
     if (t_conditionDepth == 1)
         exit = settings::save_screens::OverrideExit(node, exit);  // the slots read again after a delete
     if (t_conditionDepth == 1)
         exit = dev::console::OverrideExit(ctx, base, tree, node, exit);  // the console's "level" from the HUB / main menu
+    if (t_conditionDepth == 1)
+        exit = mp::menu::OverrideExit(ctx, base, tree, node, exit);  // MULTIPLAYER: host / client flows
     ctx.r3.s64 = exit;
     t_conditionDepth--;
 }
@@ -111,7 +139,12 @@ PPC_FUNC(sub_822E29D8)
     float marker;
     if (MarkerArgument(ctx.r3.u32, marker))
     {
-        if (marker == SETTINGS_MARKER)
+        if (marker == SETTINGS_MARKER && g_multiplayerPending.exchange(false))
+        {
+            Log("[mp] main menu MULTIPLAYER selected");
+            mp::menu::RequestOpen();
+        }
+        else if (marker == SETTINGS_MARKER)
         {
             Log("[settings] main menu SETTINGS selected (lr=0x%08X)", GuestLR(ctx));
             settings::menu::RequestOpen();

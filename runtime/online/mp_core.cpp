@@ -5,6 +5,7 @@
 #include "../kernel/memory.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -74,16 +75,28 @@ namespace
 
     std::mutex g_mutex;
     std::vector<uint32_t> g_extra;  // Crashes added by the prototype
+
+    std::atomic<bool> g_session{ false };     // a MULTIPLAYER session is open (mp_lobby.cpp)
+    std::atomic<uint32_t> g_sessionPlayers{ 0 };
 }
 
 namespace mp
 {
-    bool Enabled() { return Get().enabled; }
+    bool Enabled() { return Get().enabled || g_session.load(std::memory_order_relaxed); }
+
+    void SetSession(bool open, uint32_t players)
+    {
+        g_sessionPlayers = std::clamp<uint32_t>(players, 1, 4);
+        if (g_session.exchange(open) != open)
+            Log("[mp] session %s", open ? "open: the prototype is on" : "closed");
+    }
     StreamMode Stream() { return Get().stream; }
     bool Trace() { return Get().trace; }
 
     uint32_t Players()
     {
+        if (g_session.load(std::memory_order_relaxed))
+            return g_sessionPlayers.load(std::memory_order_relaxed);
         static uint32_t players = [] {
             const char* text = getenv("CRASH_MP_PLAYERS");
             int n = text ? atoi(text) : 2;

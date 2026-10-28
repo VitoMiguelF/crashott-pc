@@ -1,7 +1,7 @@
 #pragma once
 
-// Online multiplayer prototype (docs/internals/multiplayer.md). Everything is off unless CRASH_MP=1;
-// with it off the game runs unchanged.
+// Online multiplayer prototype (docs/internals/multiplayer.md). Everything is off unless CRASH_MP=1 or
+// a session is opened from the main menu's MULTIPLAYER (mp_lobby.h); with it off the game runs unchanged.
 //
 //   CRASH_MP=1                 turns the prototype on
 //   CRASH_MP_STREAM=<mode>     vanilla | union | all: which rooms stay loaded (mp_stream.cpp)
@@ -27,9 +27,12 @@ namespace mp
 {
     enum class StreamMode { Vanilla, Union, All };
 
-    bool Enabled();
-    bool Online();  // CRASH_MP_ROLE host or client: the level starts with both players in play
-    uint32_t Players();  // CRASH_MP_PLAYERS, 2-4
+    bool Enabled();  // CRASH_MP=1, or a MULTIPLAYER session open
+    bool Online();  // host or client (CRASH_MP_ROLE or a session): the level starts with every player in play
+    uint32_t Players();  // a session's player count (1-4), else CRASH_MP_PLAYERS (2-4)
+    // mp_lobby.cpp: a session opened from the menu turns the prototype on (and off when it closes) and
+    // sets the player count the next level starts with.
+    void SetSession(bool open, uint32_t players);
     StreamMode Stream();
     bool Trace();
     uint32_t TraceIntervalMs();  // CRASH_MP_TRACE=<ms> (1 = 1000)
@@ -72,6 +75,23 @@ namespace mp
 
     // mp_net.cpp
     void NetTick(PPCContext& ctx, uint8_t* base);
+    // The UDP socket, opened by CRASH_MP_ROLE at startup or by the lobby (mp_lobby.cpp). One I/O thread
+    // owns its receiving: lobby packets ("CML1") go to lobby::OnPacket on that thread, the rest is queued
+    // for the game thread. Addresses are IPv4, host byte order.
+    namespace net
+    {
+        enum class Role { None, Host, Client };
+        bool Open(int port);  // 0 = any free port; false if the port is taken
+        void Close();
+        bool IsOpen();
+        int LocalPort();
+        // The game's role in the session: the slot this machine plays, the player count, and for a
+        // client the host's address (a host learns its clients' from their packets, SetClientAddress).
+        void SetRole(Role role, uint32_t slot, uint32_t players, uint32_t hostIp, int hostPort);
+        void SetClientAddress(uint32_t slot, uint32_t ip, int port);
+        void SendTo(uint32_t ip, int port, const void* data, size_t size);
+        void Broadcast(int port, const void* data, size_t size);  // 255.255.255.255 (the LAN)
+    }
     // Moves a Crash through its physics only (its partner stays where it is).
     bool TeleportCrash(PPCContext& ctx, uint8_t* base, uint32_t crash, float x, float y, float z);
     // M2 (kernel/xam_input_imports.cpp): LocalPad gets player 1's pad each game read (sent to the other

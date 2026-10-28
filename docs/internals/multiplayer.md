@@ -2,8 +2,8 @@
 
 Feasibility work for an online mode of up to 5 players (branch `online-coop`, 2026-10-28). Local co-op stays
 the game's own 2 players. Full write-up in Portuguese: `runtime/NOTES.md`, "Multijogador online
-(protótipo)". Code: `runtime/online/` (`mp.h`). **Everything is off unless `CRASH_MP=1`**; with it off no
-hook changes anything.
+(protótipo)". Code: `runtime/online/` (`mp.h`). **Everything is off unless `CRASH_MP=1` or a session is
+opened from the main menu's MULTIPLAYER** ("Lobby" below); with it off no hook changes anything.
 
 | Switch | What |
 |---|---|
@@ -16,13 +16,16 @@ hook changes anything.
 | `CRASH_MP_PLAYERS=<n>` | 2-4 players (the game's limit is 4); with more than 2, players 3 and 4 are spawned on every machine |
 | `CRASH_MP_SLOT=<n>` | client: its player, 1-3 (default 1; UDP port + slot); the host is 0 |
 | `CRASH_MP_SNAP=<units>` | client: a player further than this from the host's record is put back through its physics (default 1.0) |
+| `CRASH_MP_NAME=<name>` | the player's name in the lobby (default: the OS user's, A-Z 0-9, 12 letters) |
+| `CRASH_MP_PASSWORD` / `CRASH_MP_CODE` | tests: the host's password and what a client's password field starts with / what ENTER CODE starts with |
 | `CRASH_MP_TELEPORT=x,y,z` | host, tests: once both players are on foot, put P1 there and P2 2 units further along x (`mp_m3_host`: the first fight of L1_E1) |
 
 Profiles (`test = false`): `mp_stream_vanilla`, `mp_stream_union`, `mp_stream_all`, `mp_host` + `mp_client`
 (run together; windows side by side through `CRASH_RESTART_WINDOW`), `mp_tres_crash`, `mp_m2_host` + `mp_m2_client`,
 `mp_m3_host` + `mp_m3_client` (both players in the first fight, client with its own AI and objectives),
 `mp4_host` + `mp4_c1` + `mp4_c2` + `mp4_c3` (4 machines, windows in the screen's quadrants), `mp_tres_crash` (4 players
-on one machine, controllers 0-3), `mp_marionete`.
+on one machine, controllers 0-3), `mp_marionete`, `mp_lobby_host` + `mp_lobby_c1` + `mp_lobby_c2` (the lobby through
+the menus: host, a client from the LAN list, one by code), `mp_lobby_host_new` (the host's NEW GAME to the HUB).
 
 ## Level streaming (the user's must-have question)
 
@@ -262,6 +265,53 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   player 0.9 off the host's for good; now standing players match within 0-0.22. The first try showed a remote P2 in T-pose, stuttering: it
   ignored its controller (state 0 had freed its input map), so the snaps pulled it every 250 ms.
 
+## Lobby (MULTIPLAYER on the main menu)
+
+- **The item**: a sixth main menu item, MULTIPLAYER, between LOAD GAME and CREDITS (`settings/pc_frontend.cpp`:
+  a copy of the CREDITS item in `GameStart_Start_Xenon.pag` / `StartMenu`, the items above it half a step up and
+  the ones below half a step down; its text a new key, `frontend` / `FE_Button_Multiplayer_Text`, added to the
+  bibles of both frontend packages as "Definitive Edition" is, `title_logo.h` `AddFrontendTextKey`). The
+  game's conditions know items 0-3 (GetMenuIndex `sub_820F9A10` compared in `sub_820F9BA8`), so the hook maps
+  the indexes back (3-5 -> 2-4; EXIT GAME stays 4) and MULTIPLAYER to SETTINGS (3): it takes exit 91 to the
+  emptied PS2 options screen (node 99) and its marker (`PlaySoundSelect(4242)`) opens the MULTIPLAYER screens
+  (`online/mp_menu.cpp`) instead of the settings, drawn the same way (game fonts and frames, overlay channel
+  `BITMAP_MULTIPLAYER`, the game's input neutral while open).
+- **Screens**: HOST GAME (NEW GAME / LOAD GAME) and FIND GAME (SERVER LIST / ENTER CODE, then a password if the
+  host has one). The host's choice opens the session and closes the screen without B: the next condition of
+  node 99 returns the main menu's own exit, 88 (NEW GAME -> name entry) or 89 (LOAD GAME -> the slot screen); a
+  new game's last screen (node 322, `FadeOut`) takes exit 309, the loaded game's `ExitToHUB` (`EndAccess` +
+  `FadeIn` -> 575, the HUB), instead of 323 (`StartLevelByName(L1_E1)`); exit 380 (`GotoGameState(LEVEL_SELECT)`)
+  got there too but stayed black (no fade in). A loaded game reaches the HUB by itself (308 -> 309 -> 575). A
+  client waits in LOBBY (the host, the players, their ping); B leaves.
+- **At the HUB** (node 575) the host has a panel at the top right: players, the invite code; BACK (hidden from
+  the game) opens the lobby: A on a player kicks that player, PASSWORD (typed), MAX PLAYERS 2-4, KNOCK-OUT TIME 3 / 5 / 10 s
+  (the knock-out of "4 players", instead of the game's float), CLOSE SESSION. Y (CONTINUE STORY) or any level
+  start of the HUB goes on as usual: when the host reaches InGame (node 630) its level index (managers +24) goes
+  to the clients in the roster; each one, on its options screen / main menu / HUB, calls `Frontend:StartLevel`
+  (`sub_820F5D58`) with it and takes SkipToLevel (exit 51), as the console's `level` does. Joining is refused
+  while the host is in a level; the roster's player count is fixed then.
+- **Protocol** (`online/mp_lobby.h`): "CML1" UDP packets on the game's socket, which now has an I/O thread
+  (`mp_net.cpp`): lobby packets are handled there, the mirror's are queued for the game thread. DISCOVER (a
+  client, every second, to 255.255.255.255 and 127.0.0.1) / ANNOUNCE (name, players, maximum, password, in a
+  level), HELLO (token, name, password, every 0.5 s until) WELCOME (slot) or DENY (full, password, kicked, in a
+  level, version, host left), ROSTER (every 0.5 s: players, options, the level start counter), PING / PONG, LEAVE;
+  6 s of silence drops a player (or the host). Slots stay 0..n-1 in join order while no level runs; the session
+  sets `mp::Players()` and the mirror's role / slot / addresses (`mp::net::SetRole`, `SetClientAddress`), so a
+  level started from the lobby is the `CRASH_MP_ROLE` prototype with the lobby's players. Host port 47810
+  (`CRASH_MP_PORT`), clients any. The invite code is the host's LAN address and port in 10 Crockford base-32
+  letters (`XXXXX-XXXXX`); over the internet the host needs the port forwarded or a virtual LAN (no relay).
+- Text entry: letters and digits typed on the keyboard (`input::pc::SetTextEntry`), or the D-pad (up / down the
+  letter, left / right the cursor, X erases).
+- Seen (`mp_lobby_host` + `mp_lobby_c1` + `mp_lobby_c2`, three windows): MULTIPLAYER between LOAD GAME and CREDITS
+  (the six items centred), HOST GAME > LOAD GAME > slot 1 to the HUB with the panel (code, 3/4 players); the
+  list client found the host (LAN address and 127.0.0.1 answers merged) and was asked the password, the code
+  client was refused (WRONG PASSWORD), typed it and joined; the lobby at the HUB (players with ping, password,
+  options); Y on the host: all three in the host's level, 3 players, each window its own Crash (orange, pale,
+  blue). `mp_lobby_host_new`: HOST GAME > NEW GAME (name, NORMAL, slot 1) straight to a new save's HUB with the
+  panel and the lobby. Left: a client plays without the host's save (its own progress: mojo 0, upgrades), follows a start only
+  from its menus / HUB (not from inside another level); the host's NEW GAME leaves the opening level to CONTINUE
+  STORY at the HUB.
+
 ## Recommended architecture
 
 - **One real player per machine, the others native Crashes on its inputs** (up to 4, the game's limit):
@@ -280,4 +330,4 @@ arrays). So up to 4 players, all native Crashes, no puppets:
 |---|---|---|
 | M2 client input drives a Crash on the host | **first slice done** (the host's native P2 on the client's pad, both players on foot from the start, physics teleports, above); input mirroring for animation and local prediction, above); players 3-4 as native Crashes on their own controllers, 4 machines, above; left: snap against time-aligned records over real latency | 1-2 weeks left |
 | M3 combat / enemies / level change, up to 4 | **first slice done** (same enemies on both machines, host hitpoints and deaths, above); fight-tree node sync (animation), spawn/despawn and death events, jacking titans (titan = host actor ridden by a puppet), objectives/cinematics/level change as host events, palettes for 5 colours, death/respawn per player | 5-8 weeks |
-| M4 lobby, colour select, internet | lobby menu + colour select (Scrooby screens or our own overlay), protocol versioning / reliability layer, STUN hole punching + TURN relay on a small VPS, reconnect | 3-4 weeks (+ VPS) |
+| M4 lobby, colour select, internet | **first slice done** (MULTIPLAYER menu, LAN list, code, password, kick, options, "Lobby" above); left: colour select (Scrooby screens or our own overlay), protocol versioning / reliability layer, STUN hole punching + TURN relay on a small VPS, reconnect | 3-4 weeks (+ VPS) |

@@ -1292,3 +1292,66 @@ dev_invincible = true
 env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1100", CRASH_MP_STREAM = "all" }
 input = [["@gameplay_ready"], [4, "SHOT"], [7, "SHOT"], [10, "SHOT"], [12, "X"], [12.5, "X"], [13, "SHOT"], [16, "SHOT"], [20, "SHOT"], [25, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
+
+[profiles.mp_lobby_host]
+description = "MULTIPLAYER pelo menu principal: CRIAR PARTIDA > CARREGAR JOGO (slot 1) até o HUB, com senha (CRASH_MP_PASSWORD); espera mp_lobby_c1 (lista da rede) e mp_lobby_c2 (código), abre o lobby (BACK) e começa a fase (Y): os clientes entram junto. Janelas em quadrantes"
+test = false
+timeout = 100
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "HOST", CRASH_MP_PASSWORD = "CRASH", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "0,0,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3, "SHOT"], [3.5, "A"], [5, "SHOT"], [5.5, "A"], [6.3, "SHOT"], [6.8, "DOWN"], [7.3, "A"],
+    ["@save_slots"], [1.5, "A"],
+    ["@load_complete"], [1, "A"],
+    ["@hub"], [2, "SHOT"], [16, "SHOT"], [17, "BACK"], [18, "SHOT"], [18.5, "DOWN"], [19, "SHOT"], [20, "B"], [21, "SHOT"], [22, "Y"],
+    ["@gameplay_ready"], [3, "SHOT"], [5, "LS", 1, 0, 2.0], [8, "SHOT"], [12, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "hub", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] hosting on', '\[lobby\] level .* started with 3 player', '\[mp\] net: host'] }
+
+[profiles.mp_lobby_c1]
+description = "Cliente do mp_lobby_host pela LISTA DE PARTIDAS (a rede): ENCONTRAR PARTIDA > LISTA, a partida com senha (preenchida por CRASH_MP_PASSWORD), espera no lobby e entra na fase que o host começar"
+test = false
+timeout = 100
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "LISTA", CRASH_MP_PASSWORD = "CRASH", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "SHOT"], [6.8, "A"], [12, "SHOT"], [12.5, "A"], [13.5, "SHOT"], [14, "A"], [16, "SHOT"], [24, "SHOT"],
+    ["@gameplay_ready"], [3, "SHOT"], [5, "LS", -1, 0, 2.0], [8, "SHOT"], [12, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] joined', '\[mp\] menu: following the host', '\[mp\] net: client'] }
+
+[profiles.mp_lobby_c2]
+description = "Cliente do mp_lobby_host pelo CÓDIGO (CRASH_MP_CODE = o de 127.0.0.1:47810): ENCONTRAR PARTIDA > DIGITAR CÓDIGO, a senha pedida pelo host, espera no lobby e entra na fase que o host começar"
+test = false
+timeout = 100
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "CODIGO", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_PASSWORD = "CRASH", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "0,1080,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "A"], [13.5, "SHOT"], [14, "A"], [16, "SHOT"], [24, "SHOT"],
+    ["@gameplay_ready"], [3, "SHOT"], [5, "LS", 0, 1, 2.0], [8, "SHOT"], [12, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] joined', '\[mp\] menu: following the host', '\[mp\] net: client'] }
+
+[profiles.mp_lobby_host_new]
+description = "MULTIPLAYER pelo menu principal: CRIAR PARTIDA > NOVO JOGO (nome, NORMAL, slot 1 pelo piloto automático) vai para o HUB (saída 309) no lugar da primeira fase; sozinho"
+test = false
+timeout = 70
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "HOST", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_MENU_AUTOPILOT = "96:A:2000,96:Y:1500,105:A+:1500,154:A+:1500,165:DOWN:1500,165:A:1000,320:A+:1000", CRASH_RESTART_WINDOW = "0,0,1920,1100" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [6.3, "SHOT"], [7, "A"],
+    ["@hub"], [2, "SHOT"], [3, "BACK"], [4, "SHOT"], [4.5, "B"], [6, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] hosting on', 'hosted new game: to the HUB', '\[mp\] lobby opened at the HUB'] }

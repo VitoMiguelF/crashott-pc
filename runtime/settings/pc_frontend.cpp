@@ -6,6 +6,10 @@
 //    (page GameStart_Start_Xenon.pag), a copy of the CALIBRATION/SETTINGS item showing the
 //    persistent bible's FE_Button_Exit_Game_Text (EXIT GAME / SAIR DO JOGO, translated by the game
 //    itself); the five items move up so that the menu stays centred. The entry grows: a rewrite.
+//    Then a sixth one, MultiplayerItem, between LOAD GAME and CREDITS (index 2), another copy showing
+//    frontend / FE_Button_Multiplayer_Text (a key added to the bibles, title_logo.h): the items
+//    above it move up and the ones below down by half a step. frontend_hooks.cpp maps its indexes
+//    back (the game's conditions know items 0-3) and sends it the SETTINGS way (online/mp_menu.h).
 // 2. fighttrees\Frontend.bfig: the exit for that item. The fight tree's exits are numbered in
 //    file order, and its conditions return the number of the exit to take. They are native code
 //    (sub_820F9BA8, one case per screen; Frontendlua.blua has the same conditions in Lua, but the
@@ -23,6 +27,7 @@
 //    the original still contains the word the table expects. The PT-BR pack has its own texts.
 
 #include "pc_frontend.h"
+#include "title_logo.h"
 #include "../diagnostics.h"
 #include "../fs/rcf_overlay.h"
 
@@ -80,6 +85,7 @@ namespace settings
         // quit exit, and whether 1 added the item.
         std::atomic<uint32_t> g_quitExitParent{ 0 };
         std::atomic<bool> g_quitItemAdded{ false };
+        std::atomic<bool> g_multiplayerItemAdded{ false };
         constexpr uint32_t QUIT_ITEM = QUIT_MENU_INDEX;
         // ExitWii in this version's Frontend.bfig: its fifth exit, 86, is the quit exit.
         constexpr uint32_t KNOWN_WII_EXIT = 0x51;
@@ -180,6 +186,20 @@ namespace settings
         constexpr uint32_t FE_PAGE = 0x18002, FE_MENU = 0x18010, FE_MENU_ITEM = 0x18011, FE_TEXT = 0x18023, FE_TEXT_REF = 0x1800B;
         constexpr int MENU_STEP = 46;  // between the tops of the last two items (page units, y up)
         constexpr int MENU_SHIFT = 23; // up, to keep the five items centred where the four were
+        constexpr int MULTIPLAYER_ITEM = MULTIPLAYER_MENU_INDEX;
+        constexpr const char* MULTIPLAYER_KEY = "FE_Button_Multiplayer_Text";
+
+        const char16_t* MultiplayerText(char letter)
+        {
+            switch (letter)
+            {
+            case 'F': return u"MULTIJOUEUR";
+            case 'G': return u"MEHRSPIELER";
+            case 'S': return u"MULTIJUGADOR";
+            case 'I': return u"MULTIGIOCATORE";
+            default: return u"MULTIPLAYER";
+            }
+        }
 
         std::string ChunkName(const std::vector<uint8_t>& data, size_t chunk)
         {
@@ -269,6 +289,54 @@ namespace settings
             return text[0];
         }
 
+        // MULTIPLAYER, inserted at MULTIPLAYER_ITEM in the five items (after AddQuitItem).
+        void AddMultiplayerItem(std::vector<uint8_t>& data)
+        {
+            std::vector<size_t> path;
+            if (!FindChunk(data, 0, FE_PAGE, "GameStart_Start_Xenon.pag", path))
+                return;
+            std::vector<size_t> menuPath;
+            if (!FindChunk(data, path.back(), FE_MENU, "StartMenu", menuPath))
+                return;
+            path.insert(path.end(), menuPath.begin() + 1, menuPath.end());
+            size_t menu = path.back();
+            std::vector<size_t> items = Children(data, menu);
+            if (items.size() != QUIT_ITEM + 1)
+                return;
+            std::vector<size_t> texts;
+            for (size_t item : items)
+                if (!(texts.emplace_back(ItemText(data, item))))
+                    return;
+            size_t model = items[MULTIPLAYER_ITEM], modelText = texts[MULTIPLAYER_ITEM];
+            const std::string name = "MultiplayerItem";
+            std::vector<uint8_t> itemHeader = PascalName(name), textHeader = PascalName(name), tail;
+            tail = HeaderTail(data, model);
+            itemHeader.insert(itemHeader.end(), tail.begin(), tail.end());
+            tail = HeaderTail(data, modelText);
+            // Half a step above the item it goes before (which then moves half a step down).
+            StoreLE32(&tail[8], uint32_t(int32_t(LoadLE32(&tail[8])) + MENU_SHIFT));
+            textHeader.insert(textHeader.end(), tail.begin(), tail.end());
+            std::vector<uint8_t> refHeader = PascalName("frontend"), key = PascalName(MULTIPLAYER_KEY);
+            refHeader.insert(refHeader.end(), key.begin(), key.end());
+            std::vector<size_t> wrappers = Children(data, model);
+            if (wrappers.size() != 1)
+                return;
+            size_t wrapper = wrappers[0];
+            std::vector<uint8_t> wrapperHeader(data.begin() + wrapper + 12, data.begin() + wrapper + LoadLE32(&data[wrapper + 4]));
+            std::vector<uint8_t> item = MakeChunk(FE_MENU_ITEM, itemHeader, {
+                MakeChunk(LoadLE32(&data[wrapper]), wrapperHeader, { MakeChunk(FE_TEXT, textHeader, { MakeChunk(FE_TEXT_REF, refHeader, {}) }) }) });
+            for (size_t i = 0; i < texts.size(); i++)
+            {
+                size_t y = texts[i] + 13 + data[texts[i] + 12] + 8;
+                StoreLE32(&data[y], uint32_t(int32_t(LoadLE32(&data[y])) + (i < MULTIPLAYER_ITEM ? MENU_SHIFT : -MENU_SHIFT)));
+            }
+            data.insert(data.begin() + model, item.begin(), item.end());
+            for (size_t chunk : path)
+                StoreLE32(&data[chunk + 8], LoadLE32(&data[chunk + 8]) + uint32_t(item.size()));
+            g_multiplayerItemAdded = true;
+            Log("[pc] frontend: MULTIPLAYER added to the main menu (item %d, frontend %s)", MULTIPLAYER_ITEM, MULTIPLAYER_KEY);
+        }
+
         bool AddQuitItem(std::vector<uint8_t>& data)
         {
             std::vector<size_t> path;
@@ -326,6 +394,7 @@ namespace settings
                 StoreLE32(&data[chunk + 8], LoadLE32(&data[chunk + 8]) + uint32_t(item.size()));
             g_quitItemAdded = true;
             Log("[pc] frontend: EXIT GAME added to the main menu (item %u, persistent FE_Button_Exit_Game_Text)", QUIT_ITEM);
+            AddMultiplayerItem(data);
             return true;
         }
 
@@ -509,6 +578,11 @@ namespace settings
         return parent == KNOWN_WII_EXIT && g_quitItemAdded ? int(parent + 5) : -1;
     }
 
+    bool MultiplayerItemAdded()
+    {
+        return g_multiplayerItemAdded;
+    }
+
     bool IsStorageDeviceExit(int exit)
     {
         // ExitShowXenonDeviceSelect of the main menu, the save slot screen and the one in game
@@ -520,6 +594,11 @@ namespace settings
     {
         rcf_overlay::RegisterBuiltinPatch("default", "fighttrees\\frontend.bfig", "SAIR DO JOGO e Y de armazenamento", PatchFrontendBfig);
         rcf_overlay::RegisterEntryRewrite("default", "package\\cdd70a8c.p3d", "item SAIR DO JOGO", AddQuitItem);
+        size_t bibles = 0;
+        const char* const* packages = FrontendBiblePackages(bibles);
+        for (size_t i = 0; i < bibles; i++)
+            rcf_overlay::RegisterEntryRewrite("default", packages[i], "texto MULTIPLAYER",
+                                              [](std::vector<uint8_t>& data) { return AddFrontendTextKey(data, MULTIPLAYER_KEY, MultiplayerText); });
         for (const char* package : TEXT_PACKAGES)
             rcf_overlay::RegisterBuiltinPatch("default", package, "textos de PC (sem Xbox 360)", PatchTexts);
     }
