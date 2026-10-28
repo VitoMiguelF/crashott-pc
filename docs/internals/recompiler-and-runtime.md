@@ -95,6 +95,10 @@ the patch already applied, stamped in `tools/XenonRecomp/.crashrecomp_source`):
 ## Symbols and reading the code
 
 - `tools/rtti_scan.py` parses MSVC RTTI (2300 classes, 2247 vtables) -> `private/symbols/{rtti.json,
-  functions.csv}`; ~5600 of 20144 functions get names. `runtime/symbols.cpp` prints them in crash reports.
+  functions.csv}`; ~5600 of 20144 functions get names from RTTI alone. It then calls
+  `tools/name_functions.py`: hand-curated `config/function_names.csv` (source `manual`) plus propagation
+  (Lua tables, script bindings, constructors, CRT initializers, thunks, single-scope callers), each row
+  with `source` and `confidence`: 10557 of 20144 (52.4%). `runtime/symbols.cpp` prints them in crash reports.
+- `operator new` 0x821FDA50 (manual, medium).
 - `_purecall` 0x823CF1F0, `operator delete` 0x821FDB28, `_amsg_exit` 0x823D6698.
 - The `rea` MCP / Ghidra on Windows cannot analyze PPC/XEX; read `generated/ppc` with the symbols instead.

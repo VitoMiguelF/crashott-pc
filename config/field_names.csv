@@ -1,0 +1,87 @@
+# Hand-curated field names of game classes (class,offset,size,type,name,confidence,note), merged
+# into private/symbols/fields.csv by tools/rtti_scan.py with source "manual". type is a Ghidra
+# type name (float, float *, byte, bool, undefined4...). Our own names, no game bytes.
+class,offset,size,type,name,confidence,note
+CActionSpawnPlayer,0x8,4,uint,m_SkinHash,medium,"template hash of the current skin, spawned as the player (dev_skins.cpp)"
+CActionUnlockSkin,0x4,4,int,m_Skin,medium,"ESkin to unlock, DO_UnlockSkin(skin) (dev/dev_cheats.cpp)"
+CActor,0x2C,4,float *,m_pWorldMatrix,medium,"world matrix, rows right/up/forward/position (camera/free_camera.cpp)"
+CBehaviour,0x1C,4,CActor *,m_pActor,high,the behaviour's actor (dev/dev_cheats.cpp)
+CCameraBehaviourController,0xA8,4,float *,m_pCameraMatrix,medium,camera matrix copied into the VectorCamera (camera/free_camera.cpp)
+CConfirmMessage,0x4,1,byte,m_Flags,high,"bit 0x80 = shown, 0x40 = taking input (settings/menu_mouse.cpp)"
+CConfirmMessage,0x10,4,pure3d::frontend::Menu *,m_pMenu,high,its own YES/NO menu (settings/menu_mouse.cpp)
+CControllerGroundBehaviour,0x34,4,undefined4 *,m_ppInputMap,medium,"pointer to the pointer of the input map, **(this+52) (free_camera.cpp)"
+CDamageableBehaviour,0x40,4,float *,m_pHitpoints,medium,current hitpoints; AdjustHitpoints adds the delta (dev/dev_cheats.cpp)
+CDamageableBehaviour,0x44,4,float *,m_pMaxHitpoints,medium,AdjustHitpoints clamps the hitpoints to it
+CDamageableBehaviour,0x48,4,float *,m_pHitpointsFraction,medium,AdjustHitpoints writes hitpoints / max (0 when dead)
+CFrontendManager,0x4100,4,int,m_SkinToDisplay,medium,ESkin shown on the skin screen (dev/dev_skins.cpp)
+CFrontendManager,0x410C,1,byte,m_OptionFlags,high,bit 0x02 = invert axis (settings/game_options.cpp)
+CFrontendManager,0x410D,1,byte,m_NameEntryFlags,high,"bit 0x80 = name entry DONE, node 96 takes exit 97 (save_screens.cpp)"
+CGameDatabase,0x10,4,CActor *,m_pPlayer1,high,"player 1's actor, null in menus (dev/dev_cheats.cpp)"
+CGameDatabase,0x14,4,CActor *,m_pPlayer2,high,player 2's actor (dev/dev_cheats.cpp)
+CGameSlotScreenAction,0x18,4,pure3d::frontend::Menu *,m_pSlotMenu,high,slot menu; its +152 = slot - 1 (settings/save_screens.cpp)
+CMasterCinematicAction,0x150,4,undefined4 *,m_pSoundSequence,medium,sound sequence driving the time (settings/skip_cinematics.cpp)
+CMasterCinematicAction,0x154,4,CCinematicCameraAction *,m_pCameraAction,medium,camera action driving the cutscene (settings/skip_cinematics.cpp)
+CMasterCinematicAction,0x19C,4,int,m_State,high,"cutscene state machine 0-7, changed by SetState (settings/skip_cinematics.cpp)"
+CMasterCinematicAction,0x1A2,1,byte,m_Flags,medium,"bit 0x80 = done, awaited by ExitWhenDone (settings/skip_cinematics.cpp)"
+CMenuAction,0x18,4,pure3d::frontend::Menu *,m_pMenu,high,"active menu, updated every frame (settings/menu_mouse.cpp)"
+CNameEntryScreenAction,0x14,4,pure3d::frontend::Page *,m_pPage,medium,"the name entry page, sprites found from it (settings/save_screens.cpp)"
+CNameEntryScreenAction,0x18,4,pure3d::frontend::Layer *,m_pLayer,high,layer of GameStart_NameEntry.pag (settings/save_screens.cpp)
+CNameEntryScreenAction,0x1C,4,undefined4 *,m_pNameText,high,the typed name's text element (settings/save_screens.cpp)
+CNameEntryScreenAction,0x20,4,undefined4 *,m_pArrowLeft,medium,left arrow of the letter wheel (settings/save_screens.cpp)
+CNameEntryScreenAction,0x24,4,undefined4 *,m_pArrowRight,medium,right arrow of the letter wheel (settings/save_screens.cpp)
+CNameEntryScreenAction,0x2C,4,int,m_WheelLetter,high,"wheel letter, 0-25 = A-Z, 26-35 = 0-9 (settings/save_screens.cpp)"
+CRenderManager,0x164,4,pure3d::VectorCamera *,m_pViewCamera,high,render (view) camera (camera/free_camera.cpp)
+CRenderManager,0x1C4,1,byte,m_Flags,medium,"bit 0x80 = cutscene done, set by SetState 7 (settings/skip_cinematics.cpp)"
+CSaveGameManager,0x63,1,byte,m_SlotIndex,high,"chosen save slot, -1 when playing without saving (game_options.cpp)"
+CSaveGameManager,0x64,1,byte,m_Flags,high,bit 0x10 = autosave (settings/game_options.cpp)
+CSettingsDatabase,0x45,1,bool,m_MemoryDoASyncLoading,medium,memory async loading flag (docs/dev_features.md)
+CSettingsDatabase,0x47,1,bool,m_MemoryDrawHUD,medium,memory HUD drawing flag (docs/dev_features.md)
+CSettingsDatabase,0x4B,1,bool,m_MemoryUseBudgeting,medium,memory budgeting flag (docs/dev_features.md)
+CSettingsDatabase,0x50,4,float,m_SlowMotion,medium,"slow motion scale, 1.0 = normal (docs/dev_features.md)"
+CSettingsDatabase,0x54,1,bool,m_MemoryUseDebugPackages,medium,loads the *Debug.p3d packages (docs/dev_features.md)
+CSettingsDatabase,0x55,1,bool,m_UseDevToolMemory,medium,dev tool memory flag (docs/dev_features.md)
+CSettingsDatabase,0x5C,1,bool,m_DrawRoomNumber,medium,draws the room number (docs/dev_features.md)
+CSettingsDatabase,0x5D,1,bool,m_CheatShadowCrash,high,Shadow Crash cheat (docs/dev_features.md)
+CSettingsDatabase,0x5E,1,bool,m_CheatBigHeadCrash,high,Big Head cheat (docs/dev_features.md)
+CSettingsDatabase,0x64,1,bool,m_DrawPlayerPosition,medium,draws the player position (docs/dev_features.md)
+CStreamManager,0x4,4,undefined4 *,m_pPackageEntriesBegin,high,"package entry pointer vector, begin (dev/dev_skins.cpp)"
+CStreamManager,0x8,4,undefined4 *,m_pPackageEntriesEnd,high,"package entry pointer vector, end (dev/dev_skins.cpp)"
+CTRGMessageAction,0x18,16,pure3d::frontend::Menu *,m_apMenus,medium,"4 menus at +24..+36, one per step 1..4 (settings/menu_mouse.cpp)"
+CUberManager,0x18,4,int,m_LevelIndex,high,level index used by StartLevel/SetLevelIndex (settings/direct_boot.cpp)
+CUberManager,0x1C,84,undefined4 *,m_apManagers,high,"managers by index, game::GetManager(i) = this+28+4*i: 1=ActorManager 2=AIManager 4=CameraManager 5=CollisionManager 6=FrontendManager 7=InputManager 12=RenderManager 13=SaveGameManager 14=ScriptManager 15=SoundManager 18=CinematicsManager 20=WorldManager (NOTES.md, free_camera.cpp)"
+CUberManager,0x9C,160,undefined4 *,m_apLevels,high,array of level object pointers (count at +316; name at level+32) (direct_boot.cpp)
+CUberManager,0x15C,4,int,m_PlayerOneControllerIndex,high,user index of the pad that is player 1 (kernel/pad_slots.cpp)
+CUberManager,0x160,1,byte,m_ProfileFlags,medium,bit 0x80 = HasXenonProfileChanged (docs/internals/frontend-and-boot.md)
+core::Drive,0x5C,4,undefined4,m_ErrorMode,medium,"error mode, 2 = raise the error and wait for a reply (NOTES.md)"
+core::Drive,0x68,4,undefined4 *,m_pErrorCallback,medium,error callback the game registered (runtime/NOTES.md)
+core::Drive,0x70,4,undefined4,m_ErrorPending,medium,set by RaiseError while an error is pending (runtime/NOTES.md)
+core::Drive,0x74,4,undefined4,m_ErrorRequest,medium,the request that raised the error (runtime/NOTES.md)
+core::XenonDrive,0xD0,4,undefined4,m_Status,high,"internal status from GetLastError, 0 = ok (fs/xenon_drive_hooks.cpp)"
+pure3d::Camera,0x10,4,float,m_EffectiveFov,high,horizontal FOV derived by SetFOV (camera/hor_plus.cpp)
+pure3d::Camera,0x14,4,float,m_Fov,high,"FOV given to SetFOV, returned by GetFOV (camera/hor_plus.cpp)"
+pure3d::Camera,0x18,4,float,m_Aspect,high,"aspect given to SetFOV, returned by GetFOV (camera/hor_plus.cpp)"
+pure3d::Camera,0x1C,4,float,m_EffectiveAspect,high,aspect derived by SetFOV (camera/hor_plus.cpp)
+pure3d::Camera,0x20,4,float,m_NearClip,high,near plane distance (camera/hor_plus.cpp)
+pure3d::Camera,0x24,4,float,m_FarClip,high,far plane distance (camera/hor_plus.cpp)
+pure3d::Camera,0x28,4,float,m_ProjectionScaleX,high,1 / tan(fov / 2) (camera/hor_plus.cpp)
+pure3d::Camera,0x2C,4,float,m_ProjectionScaleY,high,aspect / tan(fov / 2) (camera/hor_plus.cpp)
+pure3d::Camera,0x30,32,float,m_SidePlanes,high,"frustum side planes as 8 floats, left/right/bottom/top (hor_plus.cpp)"
+pure3d::Camera,0x50,64,float,m_WorldToCamera,high,4x4 world to camera matrix (docs/internals/free-camera.md)
+pure3d::Camera,0x90,64,float,m_CameraToWorld,high,"4x4 camera to world matrix, rows right/up/forward/pos (free-camera.md)"
+pure3d::Camera,0xD0,1,byte,m_bMatricesValid,high,0 = rebuild the matrices from the vectors (camera/free_camera.cpp)
+pure3d::Camera,0xD4,4,float,m_AspectScale,medium,factor of the derived aspect: +212 * aspect * display (hor_plus.cpp)
+pure3d::VectorCamera,0xD8,12,float,m_Position,high,"camera position, 3 floats (camera/free_camera.cpp)"
+pure3d::VectorCamera,0xE4,12,float,m_Direction,high,"camera view direction, 3 floats (camera/free_camera.cpp)"
+pure3d::VectorCamera,0xF0,12,float,m_Up,high,"camera up vector, 3 floats (camera/free_camera.cpp)"
+pure3d::frontend::Menu,0x70,4,undefined4 *,m_pItemsBegin,high,"item pointer vector, begin (settings/menu_mouse.cpp)"
+pure3d::frontend::Menu,0x74,4,undefined4 *,m_pItemsEnd,high,"item pointer vector, end (settings/menu_mouse.cpp)"
+pure3d::frontend::Menu,0x80,4,undefined4 *,m_pCursorSprite,medium,cursor sprite moved by SetSelection (runtime/NOTES.md)
+pure3d::frontend::Menu,0x94,4,undefined4,m_SelectionTime,medium,"time since the selection, zeroed by SetSelection (runtime/NOTES.md)"
+pure3d::frontend::Menu,0x98,1,byte,m_SelectedIndex,high,selected item index (int8) (settings/menu_mouse.cpp)
+pure3d::frontend::Menu,0x99,1,byte,m_Flags,medium,bit 0x40 passed to item mark vf64; bit 0x80 wraps and skips unselectable (NOTES.md)
+pure3d::frontend::MenuItem,0x89,1,byte,m_Flags,high,bit 0x80 = selectable item (settings/menu_mouse.cpp)
+pure3d::frontend::TextMenuItem,0x8C,4,undefined4 *,m_pText,high,the item's text element (settings/menu_mouse.cpp)
+pure3d::pddiBaseContext,0x88,4,undefined4 *,m_pState,medium,render state; SetProjection writes near/far/fov/aspect (graphics.md)
+pure3d::xnContext,0x45C,48,undefined4,m_TileRects,medium,3 D3DRECT tile rects of the per-tile resolves (gpu/tiling_hooks.cpp)
+pure3d::xnContext,0x4C4,1,bool,m_bTilingActive,medium,set by vf04 when BeginTiling runs (gpu/tiling_hooks.cpp)
+script::ScriptManager,0x420,4,undefined4 *,m_pLuaState,high,the lua_State of the game scripts (dev/dev_tools.cpp)

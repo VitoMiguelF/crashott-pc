@@ -39,7 +39,8 @@ def main():
             kept += 1
             continue
         set_name(ea, row['name'])
-        comment = '%s [%s]%s' % (row['name'], row['source'], (' ' + row['note']) if row.get('note') else '')
+        tag = row['source'] + (', ' + row['confidence'] if row.get('confidence') else '')
+        comment = '%s [%s]%s' % (row['name'], tag, (' ' + row['note']) if row.get('note') else '')
         if func:
             ida_funcs.set_func_cmt(func, comment, True)
         else:
