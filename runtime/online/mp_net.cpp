@@ -18,17 +18,17 @@
 //   u64 name hash, f32 matrix rows 0-3 xyz (48), f32 hitpoints (-1 = none known), u32 flags (bit 0 =
 //   player, bit 1 = a player not on foot: joining or riding, its position is not where it plays)
 //
-// M2, the client's input drives a Crash on the host: the client sends player 1's pad (the state the
-// game read, 12 bytes, "CMI1" packets, on change and at least every 50 ms) and the host gives it to
-// the game as controller CRASH_MP_REMOTE_USER (default 1): the game's own player 2 (B joins the
-// backpack, B again leaves it). The client plays as that player: the host's player 2 record goes on
-// the client's player 1 (its camera follows it) and the host's player 1 on the client's player 2.
-// Animation by input mirroring: the host also sends its player 1's pad, so each machine runs both
-// Crashes on the same inputs and the game plays the same moves (run, jump, attacks) on both. The
-// client's own Crash runs on its own pad at once (local prediction); the records only correct the
-// players' positions, through their physics (TeleportPlayer), when they drift more than CRASH_MP_SNAP
-// (default 1.0) away. Both machines start the level with player 2 on foot (mp_players.cpp, RemotePad's
-// B taps).
+// Players (2-4, CRASH_MP_PLAYERS): the host is slot 0, each client its CRASH_MP_SLOT (1-3, UDP port +
+// slot). Every machine plays its own slot as player 1 (camera, HUD, controller 0) and the other slots
+// on players 2-4 in slot order, all native Crashes on foot from the start (mp_players.cpp). Each
+// machine sends player 1's pad (the state the game read, "CMI2" packets: slot, sequence, the 12-byte
+// XINPUT_GAMEPAD and its camera's forward, on change and at least every 50 ms); the host passes the
+// clients' on to the other clients, and each machine gives every remote slot's pad to the controller
+// of the player that slot is there. So every machine runs every Crash on the same inputs and the game
+// plays the same moves (input mirroring); the local Crash answers at once (local prediction). The
+// game walks a player relative to the camera, so a remote left stick is turned from the sender's
+// camera to this one's. The host's records only correct the players' positions, through their
+// physics (TeleportPlayer), when they drift more than CRASH_MP_SNAP (default 1.0) away.
 
 #include "mp.h"
 #include "../diagnostics.h"
@@ -77,7 +77,7 @@ PPC_EXTERN_FUNC(sub_8222C2D8);             // character drawable (+348): sets it
 namespace
 {
     constexpr uint32_t MAGIC = 0x434D5031;  // "CMP1"
-    constexpr uint32_t INPUT_MAGIC = 0x434D4931;  // "CMI1"
+    constexpr uint32_t INPUT_MAGIC = 0x434D4932;  // "CMI2"
     constexpr uint32_t GAME_DATABASE = 0x824A76A4;  // CGameDatabase: players at +16 / +20
     constexpr uint32_t CRASH_TABLE = 0x8249D778;    // Crash* [2], by player index
     constexpr size_t RECORD = 64;
@@ -92,6 +92,21 @@ namespace
 
     enum class Role { None, Host, Client };
 
+    // Players by slot (the host 0, clients 1-3) and by local index (the game's player index on this
+    // machine): each machine plays its own slot as player 1 (camera, HUD, controller 0); the other
+    // slots follow in order on players 2-4. Every machine spawns the players in the same order with
+    // the same names, so a host record of player index g is slot g.
+    uint32_t LocalIndex(uint32_t mine, uint32_t slot) { return slot == mine ? 0 : slot < mine ? slot + 1 : slot; }
+    uint32_t SlotOf(uint32_t mine, uint32_t index) { return index == 0 ? mine : index - 1 < mine ? index - 1 : index; }
+
+    uint32_t PlayerActor(uint32_t index)
+    {
+        uint32_t crash = mp::PlayerCrash(index);
+        uint32_t physics = crash ? LoadBE32(crash + 0xDC) : 0;
+        uint32_t actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
+        return GuestPointer(actor) ? actor : 0;
+    }
+
     struct Record
     {
         uint64_t name = 0;
@@ -104,7 +119,9 @@ namespace
     {
         Role role = Role::None;
         socket_t sock = INVALID_SOCKET;
-        sockaddr_in peer{};
+        sockaddr_in peer{};       // client: the host
+        sockaddr_in clients[4]{};  // host: each client's address (slot 1-3), learnt from its pads
+        uint32_t slot = 0, players = 2;
         int hz = 30;
         bool suppressAi = false, suppressObjectives = false;
         uint32_t sequence = 0;
@@ -120,16 +137,17 @@ namespace
         uint32_t lastSequence = 0, lost = 0;
         uint64_t lastSyncTrace = 0, lastPacketAt = 0, teleports = 0;
         // M2: the client's pad on the host / sent by the client
-        uint32_t remoteUser = 1;
-        std::mutex padMutex;
-        XINPUT_GAMEPAD remotePad{};
-        uint64_t remotePadAt = 0, padPackets = 0, padSequence = 0;
+        std::mutex padMutex;  // the pads and the clients' addresses (the input thread reads them)
+        XINPUT_GAMEPAD remotePad[4]{};  // by slot
+        float remoteForward[4][2]{};    // by slot: the sender's camera forward (x, z) its stick was read with
+        uint64_t remotePadAt[4]{}, padSequence[4]{}, padPackets = 0;
         XINPUT_GAMEPAD lastSentPad{};
         uint64_t lastPadSend = 0, sentPadSequence = 0;
         float snap = 1.0f;  // client: player position error corrected through the physics
-        uint32_t swappedLooks[2] = {};  // client: the players' drawables whose looks were swapped
-        uint64_t lastSnap[2] = {};      // client: last correction of each player
-        uint64_t backpackSince = 0;  // player 2 riding in the backpack since (RemotePad taps B)
+        uint32_t lookDone[4] = {};  // the players' drawables whose colour was set (by local index)
+        uint64_t lastSnap[4] = {};  // client: last correction of each player (by local index)
+        float lastRecordPos[4][3] = {}, lastLocalPos[4][3] = {};  // client: to tell a standing player
+        uint64_t recordMovedAt[4] = {}, localMovedAt[4] = {};
         // Each actor's damageable behaviour, learnt from AdjustHitpoints (it sets every character's
         // hitpoints when it comes up); client: the host's hitpoints being applied, damage dropped
         std::unordered_map<uint32_t, uint32_t> damageables;
@@ -150,8 +168,12 @@ namespace
                 return made;
             if (const char* hz = getenv("CRASH_MP_HZ"))
                 n.hz = std::max(1, atoi(hz));
-            if (const char* user = getenv("CRASH_MP_REMOTE_USER"))
-                n.remoteUser = uint32_t(atoi(user));
+            n.players = mp::Players();
+            if (n.role == Role::Client)
+            {
+                const char* slot = getenv("CRASH_MP_SLOT");
+                n.slot = uint32_t(std::clamp(slot ? atoi(slot) : 1, 1, int(n.players) - 1));
+            }
             if (const char* snap = getenv("CRASH_MP_SNAP"))
                 n.snap = float(atof(snap));
             if (const char* s = getenv("CRASH_MP_SUPPRESS"))
@@ -171,7 +193,7 @@ namespace
             sockaddr_in local{};
             local.sin_family = AF_INET;
             local.sin_addr.s_addr = htonl(INADDR_ANY);
-            local.sin_port = htons(uint16_t(n.role == Role::Host ? port : port + 1));
+            local.sin_port = htons(uint16_t(port + n.slot));
             if (n.sock == INVALID_SOCKET || bind(n.sock, reinterpret_cast<sockaddr*>(&local), sizeof(local)) != 0
                 || !SetNonBlocking(n.sock))
             {
@@ -180,11 +202,17 @@ namespace
                 return made;
             }
             n.peer.sin_family = AF_INET;
-            n.peer.sin_port = htons(uint16_t(n.role == Role::Host ? port + 1 : port));
+            n.peer.sin_port = htons(uint16_t(port));
             inet_pton(AF_INET, peer && *peer ? peer : "127.0.0.1", &n.peer.sin_addr);
-            Log("[mp] net: %s on UDP %d, peer %s:%d, %d Hz, suppress ai %d objectives %d",
-                n.role == Role::Host ? "host" : "client", ntohs(local.sin_port), peer && *peer ? peer : "127.0.0.1",
-                ntohs(n.peer.sin_port), n.hz, int(n.suppressAi), int(n.suppressObjectives));
+            // Until a client's first pad arrives the host sends to CRASH_MP_PEER (127.0.0.1) port + slot.
+            for (uint32_t k = 1; k < n.players; ++k)
+            {
+                n.clients[k] = n.peer;
+                n.clients[k].sin_port = htons(uint16_t(port + k));
+            }
+            Log("[mp] net: %s (player %u of %u) on UDP %d, peer %s, %d Hz, suppress ai %d objectives %d",
+                n.role == Role::Host ? "host" : "client", n.slot + 1, n.players, ntohs(local.sin_port),
+                peer && *peer ? peer : "127.0.0.1", n.hz, int(n.suppressAi), int(n.suppressObjectives));
             return made;
         }();
         return net;
@@ -196,6 +224,26 @@ namespace
         float f;
         memcpy(&f, &bits, 4);
         return f;
+    }
+
+    // The view camera's forward on the ground (x, z): CRenderManager (manager 12) +356 = the
+    // pure3d::VectorCamera, its direction at +228. The game walks a player along stick.x * right +
+    // stick.y * forward with right = (forward.z, -forward.x) (input::StickToWorld sub_821EBC70,
+    // sub_82253818): a remote player's stick only means the same direction under the same camera.
+    bool CameraForward(float& x, float& z)
+    {
+        uint32_t render = LoadBE32(0x824A7A24 + 28 + 4 * 12);
+        uint32_t camera = GuestPointer(render) || (render >= 0x82000000 && render < 0x83000000) ? LoadBE32(render + 356) : 0;
+        if (!GuestPointer(camera) && !(camera >= 0x82000000 && camera < 0x83000000))
+            return false;
+        x = LoadF(camera + 228);
+        z = LoadF(camera + 236);
+        float length = std::sqrt(x * x + z * z);
+        if (!(length > 1e-3f) || !std::isfinite(length))
+            return false;
+        x /= length;
+        z /= length;
+        return true;
     }
 
     void StoreF(uint32_t guest, float f)
@@ -248,96 +296,64 @@ namespace
     // Crash (0x8249D778[index]) +0xDC; its +96 is the actor.
     bool TeleportPlayer(PPCContext& ctx, uint8_t* base, uint32_t actor, float x, float y, float z)
     {
-        uint32_t physics = 0;
-        for (uint32_t i = 0; i < 2; ++i)
-            if (uint32_t crash = LoadBE32(CRASH_TABLE + i * 4); GuestPointer(crash))
-                if (uint32_t candidate = LoadBE32(crash + 0xDC); GuestPointer(candidate) && LoadBE32(candidate + 96) == actor)
-                    physics = candidate;
-        if (!physics)
-            return false;
-        static uint32_t message = GuestAlloc(128), vector = GuestAlloc(16);
-        if (!message || !vector)
-            return false;
-        StoreF(vector, x);
-        StoreF(vector + 4, y);
-        StoreF(vector + 8, z);
-        StoreF(vector + 12, 1.0f);
-        PPCContext call = ctx;
-        call.r3.u64 = message;
-        call.r4.u64 = vector;
-        call.r5.u64 = 0;
-        sub_820972D0(call, base);
-        call = ctx;
-        call.r3.u64 = physics;
-        call.r4.u64 = actor;
-        call.r5.u64 = message;
-        sub_82145358(call, base);
-        call = ctx;
-        call.r3.u64 = message;
-        sub_82097348(call, base);
-        return true;
+        std::vector<uint32_t> crashes = mp::ExtraCrashes();
+        crashes.push_back(LoadBE32(CRASH_TABLE));
+        crashes.push_back(LoadBE32(CRASH_TABLE + 4));
+        for (uint32_t crash : crashes)
+            if (uint32_t physics = GuestPointer(crash) ? LoadBE32(crash + 0xDC) : 0; GuestPointer(physics) && LoadBE32(physics + 96) == actor)
+                return mp::TeleportCrash(ctx, base, crash, x, y, z);
+        return false;
     }
 
     // Trace: both players' positions.
     void TracePlayers(const char* role, uint64_t now)
     {
-        char line[256];
+        char line[400];
         int k = snprintf(line, sizeof(line), "[mp] anim %s t=%llu", role, (unsigned long long)now);
-        for (uint32_t i = 0; i < 2; ++i)
+        for (uint32_t i = 0; i < 4; ++i)
         {
-            uint32_t actor = LoadBE32(GAME_DATABASE + 16 + i * 4);
+            uint32_t actor = PlayerActor(i);
             uint32_t xf = actor ? LoadBE32(actor + 44) : 0;
             if (!GuestPointer(xf))
                 continue;
-            uint32_t crash = LoadBE32(CRASH_TABLE + i * 4);
+            uint32_t crash = mp::PlayerCrash(i);
             k += snprintf(line + k, sizeof(line) - k, " | P%u (%.1f, %.1f, %.1f) co-op %u", i + 1, LoadF(xf + 48),
                           LoadF(xf + 52), LoadF(xf + 56), GuestPointer(crash) ? LoadBE32(crash + 300) : 9);
         }
         Log("%s", line);
     }
 
-    // Each player keeps its colour on both machines. The game draws player 1 with the Crash template's
+    // Each player keeps its colour on every machine. The game draws player 1 with the Crash template's
     // normal palette and player 2 with its jacked one ("Crash_Player2.bmp"): the character drawable
     // (CCharacterObject: Crash +0xE0 is the CCharacterRenderBehaviour, its +92 the drawable) copies the
     // normal palette of its variant (+4548; palettes at +4516 normal / +4532 jacked) into its base
     // (+348, sub_8222C2D8) at setup, and blends it every frame toward the jacked one by +0x15D0
-    // (sub_822212C0; player 2's stays at the jacked end). The client plays the host's player 2 as its
-    // player 1, so the two looks swap there: its player 1 gets the jacked palette as base, its player 2
-    // blends toward the normal one. Done once per drawable (a new level makes new ones).
-    void SwapLooks(PPCContext& ctx, uint8_t* base, Net& n, uint32_t p1, uint32_t p2)
+    // (sub_822212C0; player 2's stays at the jacked end). Here each player's colour follows its slot:
+    // even slots the normal palette, odd ones the jacked one, fixed (base and blend target the same).
+    // Done once per drawable (a new level makes new ones).
+    void FixLooks(PPCContext& ctx, uint8_t* base, Net& n)
     {
-        if (n.role != Role::Client || n.remoteUser != 1 || !p1 || !p2)
-            return;
-        uint32_t drawables[2];
-        for (uint32_t i = 0; i < 2; ++i)
+        for (uint32_t i = 0; i < n.players; ++i)
         {
-            uint32_t crash = LoadBE32(CRASH_TABLE + i * 4);
-            uint32_t render = GuestPointer(crash) ? LoadBE32(crash + 0xE0) : 0;
-            drawables[i] = GuestPointer(render) && LoadBE32(render) == 0x82015BC4 ? LoadBE32(render + 92) : 0;
-            if (!GuestPointer(drawables[i]) || LoadBE32(crash + 300) != 2)
-                return;  // not both on foot with a drawable yet
-        }
-        if (drawables[0] == n.swappedLooks[0] && drawables[1] == n.swappedLooks[1])
-            return;
-        for (uint32_t i = 0; i < 2; ++i)
-        {
-            uint32_t d = drawables[i], variant = LoadBE32(d + 4548) & 3;
+            uint32_t crash = mp::PlayerCrash(i);
+            uint32_t render = crash ? LoadBE32(crash + 0xE0) : 0;
+            uint32_t d = GuestPointer(render) && LoadBE32(render) == 0x82015BC4 ? LoadBE32(render + 92) : 0;
+            if (!GuestPointer(d) || !mp::PlayerOnFoot(i) || d == n.lookDone[i])
+                continue;
+            uint32_t variant = LoadBE32(d + 4548) & 3;
             uint32_t normal = LoadBE32(d + 4516 + variant * 4), jacked = LoadBE32(d + 4532 + variant * 4);
             if (!GuestPointer(normal) || !GuestPointer(jacked))
-                return;
-            if (i == 0)
-            {
-                PPCContext call = ctx;
-                call.r3.u64 = d + 348;
-                call.r4.u64 = jacked + 16;
-                sub_8222C2D8(call, base);
-            }
-            else
-                StoreBE32(d + 4532 + variant * 4, normal);
+                continue;
+            bool odd = SlotOf(n.slot, i) & 1;
+            uint32_t look = odd ? jacked : normal;
+            PPCContext call = ctx;
+            call.r3.u64 = d + 348;
+            call.r4.u64 = look + 16;
+            sub_8222C2D8(call, base);
+            StoreBE32(d + 4532 + variant * 4, look);
+            n.lookDone[i] = d;
+            Log("[mp] player %u (slot %u): %s colour", i + 1, SlotOf(n.slot, i) + 1, odd ? "pale (jacked)" : "orange (normal)");
         }
-        n.swappedLooks[0] = drawables[0];
-        n.swappedLooks[1] = drawables[1];
-        Log("[mp] client: looks swapped (player 1 = the host's player 2's colour, player 2 = the host's player 1's)");
     }
 
     // Trace: the actors spawned after the level came up (the objectives' enemies), name, controller
@@ -387,9 +403,8 @@ namespace
         for (uint32_t player : mp::PlayerActors())
             if (player == actor)
                 r.flags |= 1;
-        for (uint32_t i = 0; i < 2; ++i)
-            if (uint32_t crash = LoadBE32(CRASH_TABLE + i * 4); GuestPointer(crash) && LoadBE32(crash + 0xDC)
-                && LoadBE32(LoadBE32(crash + 0xDC) + 96) == actor && LoadBE32(crash + 300) != 2)
+        for (uint32_t i = 0; i < 4; ++i)
+            if (mp::PlayerCrash(i) && PlayerActor(i) == actor && !mp::PlayerOnFoot(i))
                 r.flags |= 2;
         return true;
     }
@@ -410,6 +425,26 @@ namespace
 
     uint32_t Get32(const uint8_t* p) { return (uint32_t(p[0]) << 24) | (p[1] << 16) | (p[2] << 8) | p[3]; }
 
+    // The host sends to every client, a client to the host; `except` is a slot left out.
+    void SendToPeers(Net& n, const uint8_t* data, size_t size, uint32_t except = ~0u)
+    {
+        if (n.role == Role::Client)
+        {
+            sendto(n.sock, reinterpret_cast<const char*>(data), int(size), 0, reinterpret_cast<const sockaddr*>(&n.peer),
+                   sizeof(n.peer));
+            return;
+        }
+        sockaddr_in to[4];
+        {
+            std::lock_guard<std::mutex> lock(n.padMutex);
+            memcpy(to, n.clients, sizeof(to));
+        }
+        for (uint32_t k = 1; k < n.players; ++k)
+            if (k != except)
+                sendto(n.sock, reinterpret_cast<const char*>(data), int(size), 0, reinterpret_cast<const sockaddr*>(&to[k]),
+                       sizeof(to[k]));
+    }
+
     void Flush(Net& n, std::vector<uint8_t>& packet, uint32_t count)
     {
         if (!count)
@@ -418,29 +453,44 @@ namespace
         packet[9] = uint8_t(count >> 16);
         packet[10] = uint8_t(count >> 8);
         packet[11] = uint8_t(count);
-        sendto(n.sock, reinterpret_cast<const char*>(packet.data()), int(packet.size()), 0,
-               reinterpret_cast<const sockaddr*>(&n.peer), sizeof(n.peer));
-        n.bytes += packet.size() + 28;  // + IPv4 and UDP headers
+        SendToPeers(n, packet.data(), packet.size());
+        n.bytes += (packet.size() + 28) * (n.role == Role::Host ? n.players - 1 : 1);  // + IPv4 and UDP headers
         n.packets++;
     }
 
     // The peer's player pad ("CMI1", sequence, the 12-byte XINPUT_GAMEPAD as its game read it): the
     // client's on the host, the host's player 1 on the client.
-    void ReceivePad(Net& n, const uint8_t* buffer, int got)
+    // A player's pad ("CMI2", its slot, sequence, the 12-byte XINPUT_GAMEPAD as its game read it). The
+    // host learns the client's address from it and passes it on to the other clients.
+    void ReceivePad(Net& n, const uint8_t* buffer, int got, const sockaddr_in& from)
     {
-        if (got < 8 + int(sizeof(XINPUT_GAMEPAD)) || Get32(buffer) != INPUT_MAGIC)
+        if (got < 20 + int(sizeof(XINPUT_GAMEPAD)) || Get32(buffer) != INPUT_MAGIC)
             return;
-        uint32_t sequence = Get32(buffer + 4);
-        std::lock_guard<std::mutex> lock(n.padMutex);
-        if (sequence <= n.padSequence && n.padSequence - sequence < 1000)
-            return;  // late or duplicated
-        n.padSequence = sequence;
-        uint16_t before = n.remotePad.wButtons;
-        memcpy(&n.remotePad, buffer + 8, sizeof(XINPUT_GAMEPAD));
-        if (mp::Trace() && n.remotePad.wButtons != before)
-            Log("[mp] pad in t=%llu buttons %04X", (unsigned long long)mp::NowMs(), n.remotePad.wButtons);
-        n.remotePadAt = mp::NowMs();
-        n.padPackets++;
+        uint32_t slot = Get32(buffer + 4), sequence = Get32(buffer + 8);
+        if (slot >= n.players || slot == n.slot)
+            return;
+        {
+            std::lock_guard<std::mutex> lock(n.padMutex);
+            if (sequence <= n.padSequence[slot] && n.padSequence[slot] - sequence < 1000)
+                return;  // late or duplicated
+            n.padSequence[slot] = sequence;
+            uint16_t before = n.remotePad[slot].wButtons;
+            memcpy(&n.remotePad[slot], buffer + 12, sizeof(XINPUT_GAMEPAD));
+            for (int i = 0; i < 2; ++i)
+            {
+                uint32_t bits = Get32(buffer + 12 + sizeof(XINPUT_GAMEPAD) + i * 4);
+                memcpy(&n.remoteForward[slot][i], &bits, 4);
+            }
+            if (mp::Trace() && n.remotePad[slot].wButtons != before)
+                Log("[mp] pad in t=%llu slot %u buttons %04X", (unsigned long long)mp::NowMs(), slot + 1,
+                    n.remotePad[slot].wButtons);
+            n.remotePadAt[slot] = mp::NowMs();
+            n.padPackets++;
+            if (n.role == Role::Host)
+                n.clients[slot] = from;
+        }
+        if (n.role == Role::Host)
+            SendToPeers(n, buffer, size_t(got), slot);
     }
 
     void HostReceive(Net& n)
@@ -448,10 +498,13 @@ namespace
         uint8_t buffer[256];
         for (;;)
         {
-            int got = int(recv(n.sock, reinterpret_cast<char*>(buffer), sizeof(buffer), 0));
+            sockaddr_in from{};
+            socklen_t fromSize = sizeof(from);
+            int got = int(recvfrom(n.sock, reinterpret_cast<char*>(buffer), sizeof(buffer), 0,
+                                   reinterpret_cast<sockaddr*>(&from), &fromSize));
             if (got <= 0)
                 break;
-            ReceivePad(n, buffer, got);
+            ReceivePad(n, buffer, got, from);
         }
     }
 
@@ -553,7 +606,7 @@ namespace
                 "%.1f KB/s (%.1f kbit/s) raw; compact estimate %.1f KB/s; client pad %.1f packets/s, buttons %04X",
                 n.lastActorCount, n.snapshots / seconds, n.records / seconds, n.packets / seconds, n.bytes / seconds / 1024,
                 n.bytes * 8 / seconds / 1000, (n.records * 24.0 + n.packets * 36.0) / seconds / 1024,
-                n.padPackets / seconds, n.remotePad.wButtons);
+                n.padPackets / seconds, n.remotePad[1].wButtons);
             n.padPackets = 0;
             n.lastStats = now;
             n.snapshots = n.records = n.packets = n.bytes = 0;
@@ -565,12 +618,15 @@ namespace
         uint8_t buffer[2048];
         for (;;)
         {
-            int got = int(recv(n.sock, reinterpret_cast<char*>(buffer), sizeof(buffer), 0));
+            sockaddr_in from{};
+            socklen_t fromSize = sizeof(from);
+            int got = int(recvfrom(n.sock, reinterpret_cast<char*>(buffer), sizeof(buffer), 0,
+                                   reinterpret_cast<sockaddr*>(&from), &fromSize));
             if (got <= 0)
                 break;
             if (got < int(HEADER) || Get32(buffer) != MAGIC)
             {
-                ReceivePad(n, buffer, got);
+                ReceivePad(n, buffer, got, from);
                 continue;
             }
             uint32_t sequence = Get32(buffer + 4), count = Get32(buffer + 8);
@@ -603,9 +659,15 @@ namespace
     {
         if (n.latest.empty())
             return;
-        // The client plays the host's player 2: the two players' records swap actors.
-        uint32_t p1 = LoadBE32(GAME_DATABASE + 16), p2 = LoadBE32(GAME_DATABASE + 20);
-        uint64_t p1Name = p1 ? NameOf(p1) : 0, p2Name = p2 ? NameOf(p2) : 0;
+        // The client plays its own slot as player 1: the host's record of player index g (slot g) goes on
+        // this machine's player LocalIndex(slot, g); the players have the same names everywhere.
+        uint32_t players[4];
+        uint64_t playerNames[4];
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            players[i] = i < n.players ? PlayerActor(i) : 0;
+            playerNames[i] = players[i] ? NameOf(players[i]) : 0;
+        }
         // The local actors from the live room lists, every frame: an actor the game removed (an enemy
         // killed, a pickup taken) must not get the host's transform written into its freed memory.
         n.local.clear();
@@ -617,12 +679,20 @@ namespace
         {
             uint32_t actor = 0;
             float pos[3]{};
-        } targets[2];
+        } targets[4];
         for (auto& [recordName, r] : n.latest)
         {
             uint64_t name = recordName;
-            if (p1 && p2 && n.remoteUser == 1)
-                name = name == p1Name ? p2Name : name == p2Name ? p1Name : name;
+            int player = -1;  // local index of the player this record drives
+            for (uint32_t g = 0; g < n.players; ++g)
+                if (playerNames[g] && name == playerNames[g])
+                {
+                    player = int(LocalIndex(n.slot, g));
+                    name = playerNames[player];
+                    break;
+                }
+            if (player < 0 && r.flags & 1)
+                continue;  // a player this machine has not spawned (yet)
             auto it = n.local.find(name);
             if (it == n.local.end())
             {
@@ -632,16 +702,33 @@ namespace
             uint32_t xform = LoadBE32(it->second + 44);
             if (!xform)
                 continue;
-            // A player not on foot (joining, in the backpack: Crash +300 != 2) is the game's to move.
-            if (it->second == p1 || it->second == p2)
-                if (uint32_t crash = LoadBE32(CRASH_TABLE + (it->second == p1 ? 0 : 4)); crash && LoadBE32(crash + 300) != 2)
-                    continue;
-            if (it->second == p1 || it->second == p2)
+            if (player >= 0)
             {
+                // A player not on foot (not shown yet) is the game's to move.
+                if (!mp::PlayerOnFoot(uint32_t(player)))
+                    continue;
                 float dx = LoadF(xform + 48) - r.m[9], dy = LoadF(xform + 52) - r.m[10], dz = LoadF(xform + 56) - r.m[11];
-                uint32_t index = it->second == p1 ? 0 : 1;
+                uint32_t index = uint32_t(player);
                 // At most every 250 ms: a player that cannot get there (pushed, hit) is not teleported every frame.
-                if (!(r.flags & 2) && dx * dx + dy * dy + dz * dz > n.snap * n.snap && mp::NowMs() - n.lastSnap[index] >= 250)
+                // Moving, only past `snap` (a correction shows as a jump); standing (the host's record still for
+                // 0.5 s, the player here still too), anything past 0.25, so no offset stays for good.
+                uint64_t now = mp::NowMs();
+                float* last = n.lastRecordPos[index];
+                if (std::abs(last[0] - r.m[9]) + std::abs(last[1] - r.m[10]) + std::abs(last[2] - r.m[11]) > 0.05f)
+                {
+                    last[0] = r.m[9], last[1] = r.m[10], last[2] = r.m[11];
+                    n.recordMovedAt[index] = now;
+                }
+                float* mine = n.lastLocalPos[index];
+                float here[3] = {LoadF(xform + 48), LoadF(xform + 52), LoadF(xform + 56)};
+                if (std::abs(mine[0] - here[0]) + std::abs(mine[1] - here[1]) + std::abs(mine[2] - here[2]) > 0.05f)
+                {
+                    memcpy(mine, here, sizeof(here));
+                    n.localMovedAt[index] = now;
+                }
+                bool still = now - n.recordMovedAt[index] >= 500 && now - n.localMovedAt[index] >= 500;
+                float limit = still ? 0.25f : n.snap;
+                if (!(r.flags & 2) && dx * dx + dy * dy + dz * dz > limit * limit && now - n.lastSnap[index] >= 250)
                 {
                     targets[index] = {it->second, {r.m[9], r.m[10], r.m[11]}};
                     n.lastSnap[index] = mp::NowMs();
@@ -676,7 +763,7 @@ namespace
             {
                 n.teleports++;
                 if (mp::Trace())
-                    Log("[mp] snap P%u to (%.1f, %.1f, %.1f)", t.actor == p1 ? 1 : 2, t.pos[0], t.pos[1], t.pos[2]);
+                    Log("[mp] snap P%u to (%.1f, %.1f, %.1f)", uint32_t(&t - targets) + 1, t.pos[0], t.pos[1], t.pos[2]);
             }
         if (mp::Trace() && mp::NowMs() - n.lastSyncTrace >= 250)
         {
@@ -684,7 +771,6 @@ namespace
             TracePlayers("client", n.lastSyncTrace);
             TraceEnemies("client", n.lastSyncTrace);
         }
-        SwapLooks(ctx, base, n, p1, p2);
         uint64_t now = mp::NowMs();
         if (now - n.lastStats >= 5000)
         {
@@ -709,6 +795,35 @@ namespace
 namespace mp
 {
     bool Online() { return Enabled() && N().role != Role::None; }
+
+    bool TeleportCrash(PPCContext& ctx, uint8_t* base, uint32_t crash, float x, float y, float z)
+    {
+        uint32_t physics = GuestPointer(crash) ? LoadBE32(crash + 0xDC) : 0;
+        uint32_t actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
+        if (!GuestPointer(actor))
+            return false;
+        static uint32_t message = GuestAlloc(128), vector = GuestAlloc(16);
+        if (!message || !vector)
+            return false;
+        StoreF(vector, x);
+        StoreF(vector + 4, y);
+        StoreF(vector + 8, z);
+        StoreF(vector + 12, 1.0f);
+        PPCContext call = ctx;
+        call.r3.u64 = message;
+        call.r4.u64 = vector;
+        call.r5.u64 = 0;
+        sub_820972D0(call, base);
+        call = ctx;
+        call.r3.u64 = physics;
+        call.r4.u64 = actor;
+        call.r5.u64 = message;
+        sub_82145358(call, base);
+        call = ctx;
+        call.r3.u64 = message;
+        sub_82097348(call, base);
+        return true;
+    }
 
     double Hitpoints(uint32_t damageable, double delta)
     {
@@ -756,11 +871,19 @@ namespace mp
         n.lastPadSend = now;
         std::vector<uint8_t> packet;
         Put32(packet, INPUT_MAGIC);
+        Put32(packet, n.slot);
         Put32(packet, uint32_t(++n.sentPadSequence));
         const uint8_t* raw = reinterpret_cast<const uint8_t*>(&pad);
         packet.insert(packet.end(), raw, raw + sizeof(pad));
-        sendto(n.sock, reinterpret_cast<const char*>(packet.data()), int(packet.size()), 0,
-               reinterpret_cast<const sockaddr*>(&n.peer), sizeof(n.peer));
+        float forward[2] = {0, 0};
+        CameraForward(forward[0], forward[1]);
+        for (float f : forward)
+        {
+            uint32_t bits;
+            memcpy(&bits, &f, 4);
+            Put32(packet, bits);
+        }
+        SendToPeers(n, packet.data(), packet.size());
     }
 
     bool RemotePad(uint32_t user, void* pad)
@@ -768,35 +891,34 @@ namespace mp
         if (!Enabled())
             return false;
         Net& n = N();
-        // Player 2 joins at the start (mp_players.cpp): its controller stays plugged in, on the peer's
-        // pad (the client's on the host, the host's player 1 on the client); a peer that went quiet
-        // leaves its Crash standing. While it rides in the backpack (bc +300 = 1) the controller taps B
-        // (0.15 s every 1 s) to get it off, on both machines.
-        if (n.role == Role::None || user != n.remoteUser || !InLevel())
+        // Players 2-4 are shown on foot at the start (mp_players.cpp): controller `user` stays plugged in,
+        // on the pad of the slot it plays; a player that went quiet leaves its Crash standing.
+        if (n.role == Role::None || user == 0 || user >= n.players || !InLevel())
             return false;
+        uint32_t slot = SlotOf(n.slot, user);
         XINPUT_GAMEPAD& game = *static_cast<XINPUT_GAMEPAD*>(pad);
         game = {};
         {
             std::lock_guard<std::mutex> lock(n.padMutex);
-            if (n.remotePadAt && NowMs() - n.remotePadAt <= 2000)
-                memcpy(pad, &n.remotePad, sizeof(n.remotePad));
-        }
-        uint32_t crash = LoadBE32(CRASH_TABLE + 4);
-        if (crash && LoadBE32(crash + 300) == 1)
-        {
-            uint64_t now = NowMs();
-            if (!n.backpackSince)
+            if (n.remotePadAt[slot] && NowMs() - n.remotePadAt[slot] <= 2000)
+                memcpy(pad, &n.remotePad[slot], sizeof(XINPUT_GAMEPAD));
+            // The left stick as the sender meant it in the world: from its camera's axes to this one's.
+            float fx = n.remoteForward[slot][0], fz = n.remoteForward[slot][1], gx, gz;
+            if ((fx || fz) && CameraForward(gx, gz) && (game.sThumbLX || game.sThumbLY))
             {
-                n.backpackSince = now;
-                Log("[mp] player 2 in the backpack: tapping B");
+                float sx = game.sThumbLX, sy = game.sThumbLY;
+                float wx = sx * fz + sy * fx, wz = -sx * fx + sy * fz;  // stick.x * right + stick.y * forward
+                float rx = wx * gz - wz * gx, ry = wx * gx + wz * gz;   // onto this camera's right / forward
+                game.sThumbLX = int16_t(std::clamp(rx, -32768.0f, 32767.0f));
+                game.sThumbLY = int16_t(std::clamp(ry, -32768.0f, 32767.0f));
+                static uint64_t traced[4];
+                if (Trace() && NowMs() - traced[slot] >= 400)
+                {
+                    traced[slot] = NowMs();
+                    Log("[mp] stick slot %u: (%.0f, %.0f) camera (%.2f, %.2f) -> (%d, %d) camera (%.2f, %.2f)", slot + 1, sx, sy,
+                        fx, fz, game.sThumbLX, game.sThumbLY, gx, gz);
+                }
             }
-            if ((now - n.backpackSince) % 1000 < 150)
-                game.wButtons |= 0x2000;  // B
-        }
-        else if (n.backpackSince)
-        {
-            Log("[mp] player 2 off the backpack after %llu ms", (unsigned long long)(NowMs() - n.backpackSince));
-            n.backpackSince = 0;
         }
         return true;
     }
@@ -804,6 +926,8 @@ namespace mp
     void NetTick(PPCContext& ctx, uint8_t* base)
     {
         Net& n = N();
+        if (n.role != Role::None && InLevel())
+            FixLooks(ctx, base, n);
         if (n.role == Role::Host)
             HostTick(ctx, base, n);
         else if (n.role == Role::Client)

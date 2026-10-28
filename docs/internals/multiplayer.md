@@ -13,13 +13,16 @@ hook changes anything.
 | `CRASH_MP_TRACE=1\|<ms>` | rooms + players once a second, every player move > 10 units in one frame |
 | `CRASH_MP_ROLE=host\|client` | the M1 UDP mirror; `CRASH_MP_PEER` (127.0.0.1), `CRASH_MP_PORT` (47810; client = +1), `CRASH_MP_HZ` (30) |
 | `CRASH_MP_SUPPRESS=ai,objectives` | client: skip CAIManager / CObjectiveManager updates once its level is up |
-| `CRASH_MP_REMOTE_USER=<n>` | the controller the peer's pad becomes (default 1 = the game's player 2) |
+| `CRASH_MP_PLAYERS=<n>` | 2-4 players (the game's limit is 4); with more than 2, players 3 and 4 are spawned on every machine |
+| `CRASH_MP_SLOT=<n>` | client: its player, 1-3 (default 1; UDP port + slot); the host is 0 |
 | `CRASH_MP_SNAP=<units>` | client: a player further than this from the host's record is put back through its physics (default 1.0) |
 | `CRASH_MP_TELEPORT=x,y,z` | host, tests: once both players are on foot, put P1 there and P2 2 units further along x (`mp_m3_host`: the first fight of L1_E1) |
 
 Profiles (`test = false`): `mp_stream_vanilla`, `mp_stream_union`, `mp_stream_all`, `mp_host` + `mp_client`
 (run together; windows side by side through `CRASH_RESTART_WINDOW`), `mp_tres_crash`, `mp_m2_host` + `mp_m2_client`,
-`mp_m3_host` + `mp_m3_client` (both players in the first fight, client with its own AI and objectives), `mp_marionete`.
+`mp_m3_host` + `mp_m3_client` (both players in the first fight, client with its own AI and objectives),
+`mp4_host` + `mp4_c1` + `mp4_c2` + `mp4_c3` (4 machines, windows in the screen's quadrants), `mp_tres_crash` (4 players
+on one machine, controllers 0-3), `mp_marionete`.
 
 ## Level streaming (the user's must-have question)
 
@@ -109,18 +112,19 @@ spawned and every native player path (camera, backpack, damage, triggers) alread
   `kernel/xam_input_imports.cpp`): "CMI1" packets, sequence + the 12-byte `XINPUT_GAMEPAD`, on change and at
   least every 50 ms (~19 packets/s idle). Only inside a level (`mp::InLevel()`: stream manager has a current
   room and CGameDatabase +16 is set), else the host's title screen takes controller 1 as player 1.
-- The host's `ReadController` for user `CRASH_MP_REMOTE_USER` returns that pad (connected) while packets
-  arrive (2 s timeout = unplugged). Late / duplicated sequences are dropped.
+- The host's `ReadController` for user 1 returns that pad (connected) while packets arrive (2 s timeout =
+  unplugged). Late / duplicated sequences are dropped. (Up to 4 players: "4 players" below.)
 - In the game P2 joins with **B / Circle** (into P1's backpack) and the **same button** leaves it; Y
   (Triangle) does not.
 - **Both machines open the level with the two Crashes on foot**, the way the game does between two co-op
   levels: `Crash::Crash` copies the co-op state the last level left (`0x8245FA9C[index]`: 0 = not joined,
   1 = in the backpack, 2 = on foot; `Crash::vf20` saves it) into Crash +300, and `0x8245FA98` is the player
   that auto-joins into the backpack at the start (`OtherPlayerAutoJoinAtStart` `sub_82163A40` ->
-  join `sub_82154110(player, controller)`: flags +0x110 |= 0x18, objective event 0x2F). Online, before the
-  constructors: P2 state 0, auto-join = 1; then while P2 rides (Crash +300 = 1) its controller taps B, so it
-  is off ~20 ms later, under the episode title. Setting state 2 directly skips P2's model setup: only one
-  Crash is drawn (P2's model sits on P1).
+  join `sub_82154110(player, controller)`: flags +0x110 |= 0x18, objective event 0x2F). The first version
+  used auto-join + B taps (P2 in the backpack, then off ~20 ms later). Now P2 comes up like players 3 and 4
+  ("4 players" below): state 2 + nobody auto-joining, then shown next to P1. State 2 alone leaves P2's model
+  hidden (it sits on P1); state 0 (not joined) frees its input map (`Crash+176` then points at freed memory,
+  and P2 ignores its controller), so it has to be state 2 + the show.
 - Online nobody is pulled into the backpack afterwards: co-op puts the player the shared camera leaves behind
   into the other one's; each machine has its own camera. The Crash's script asks `IsOkayToEnterBackpack`
   (`sub_82153400`), then `SetPlayerEnteringBackpack` turns the Crash's collision off and
@@ -183,19 +187,53 @@ spawned and every native player path (camera, backpack, damage, triggers) alread
 - Tried and dropped: a non-player Crash puppet through the `Cheerleader` class (what the cinematics use for
   Cortex / Tiny / N. Gin): its bank only has the Cortex / NGin / Tiny subtypes, so subtype `Crash` crashes in
   `sub_82389720` (`mp_marionete`). A real puppet needs a new actor template (M3).
-- Limits of this route: 2 players per host (the game's), the client's input travels a round trip before its
-  Crash moves (fine on LAN, ~2x ping online; prediction = running the client's P1 locally and correcting,
-  M3), and remote players beyond P2 still need puppets.
+- Limits of the first route: 2 players; the third and fourth are native Crashes too ("4 players" below).
+
+## 4 players
+
+The game's own limit is 4: 4 controllers (`CInputManager`, manager 7, has 4 `CInputDevice`s, vtable
+0x8201DC54, controller number at +0x10) and 4 AI targets (`CAIManager` holds 4 36-byte slots from +4 with the
+count at +0x94; a 5th add writes over the count and the AI update `sub_820985E0` then runs over its stack
+arrays). So up to 4 players, all native Crashes, no puppets:
+
+- **Spawn**: with `CRASH_MP_PLAYERS` > 2 every machine runs one objective of the game's own system,
+  `DO_SpawnPlayer(3, "ref_Crash_P3", "PlayerSpawnPosition")` (and 4), once per level when P1 is on foot
+  (`dev::RunLua`). The game gives every Crash past the second index 2; the constructor hook gives 3 and 4
+  (`Crash+292`), puts back the words its table store hit past the 2 entries (`0x8249D780..788`: backpack Crash,
+  rider, last rider) and sets co-op state 0. A 5th Crash is left hidden.
+- **Shown on foot**: P2-P4 start hidden and parked like an unjoined P2 (`sub_82154900` turns their behaviours,
+  collision and AI target off). Once P1 is on foot each is shown with the game's own "leave the backpack"
+  show, `sub_82154A58` (behaviours, collision, AI target on; it detaches the Crash from the backpack Crash's
+  attacher, so `0x8249D780` is P1 for the call), set to co-op state 2 and teleported next to P1.
+- **Controller**: `Crash+176` -> an input binding whose +0 is the `CInputDevice`; P3 and P4 start on P2's, so
+  they get devices 2 and 3.
+- **No backpack**: online (or with `CRASH_MP_PLAYERS`) `SetPlayerEnteringBackpack` (`sub_82153348`) is skipped for a
+  Crash on foot, `IsOkayToEnterBackpack` says no and `EnterOtherPlayersBackpack` fails the game's way.
+- **Network**: slots (host 0, clients `CRASH_MP_SLOT` 1-3, UDP port + slot). Each machine plays its own slot as
+  P1 and the others on P2-P4 in slot order (`LocalIndex` / `SlotOf`); the players have the same names
+  everywhere, so a host record of player index g is slot g. "CMI2" pad packets carry the slot; the host
+  learns each client's address from them and passes them on to the other clients; each machine gives
+  slot g's pad to controller `LocalIndex(g)`. Colours by slot: even slots orange (normal palette), odd ones
+  pale (jacked), fixed (base and blend target the same palette).
+- **Camera-relative sticks**: the game walks a player along `stick.x * right + stick.y * forward` of the view
+  camera (`input::StickToWorld` `sub_821EBC70`, right = (forward.z, -forward.x), `sub_82253818`; forward =
+  CRenderManager +356 VectorCamera +228). A remote stick only means the same direction under the same
+  camera, so each pad packet carries the sender's camera forward and the receiver turns the left stick onto
+  its own camera's axes.
+- Seen (`mp4_host` + 3 clients, L1_E1): the 4 Crashes on foot on every machine, each moving its own and every
+  machine showing each slot in the same place (within 0.5-0.9), same colour per slot; 0-13 snaps per machine
+  in 40 s, when players bump into each other. A player that stands still (the host's record and the local
+  Crash both still for 0.5 s) is corrected past 0.25 instead of `CRASH_MP_SNAP`: one client kept its own
+  player 0.9 off the host's for good; now standing players match within 0-0.22. The first try showed a remote P2 in T-pose, stuttering: it
+  ignored its controller (state 0 had freed its input map), so the snaps pulled it every 250 ms.
 
 ## Recommended architecture
 
-- **One real player per machine.** Each machine runs its own Crash as player 1 (input, physics, camera,
-  HUD), so movement is responsive and no code path ever sees more than the game's two players.
-- **Remote players are puppets**: a Crash-looking actor that is not a player (no index, no input, no HUD),
-  driven by the owner's transform + fight-tree state, recoloured per player. On the host the puppets are
-  what enemies target (`CAIManager::AddTarget` exists), what trigger volumes and pickups see
-  (`ETriggeredBy_MID_POINT_OF_ALL_ACTIVE_PLAYERS` already exists for 2), and what damage is applied to
-  (forwarded to the owner).
+- **One real player per machine, the others native Crashes on its inputs** (up to 4, the game's limit):
+  each machine runs its own Crash as player 1 (input, physics, camera, HUD) and the remote players as
+  players 2-4 on their owners' pads, so the game itself animates them, enemies target them and triggers see
+  them; the host's records correct their positions. (The earlier plan, puppet actors driven by transform +
+  fight-tree state, is not needed for 4.)
 - **Host-authoritative world**: enemies, objectives, cinematics, save. Clients suppress AI / objectives and
   mirror host actors by name hash; host events (spawn, death, objective step, cinematic start, level change)
   are messages.
@@ -205,6 +243,6 @@ spawned and every native player path (camera, backpack, damage, triggers) alread
 
 | Milestone | Work | Effort |
 |---|---|---|
-| M2 client input drives a Crash on the host | **first slice done** (the host's native P2 on the client's pad, both players on foot from the start, physics teleports, above); input mirroring for animation and local prediction, above); left: puppet template for players 3-5 as AI targets and trigger actors, snap against time-aligned records over real latency | 1-2 weeks left |
-| M3 combat / enemies / level change, up to 5 | **first slice done** (same enemies on both machines, host hitpoints and deaths, above); fight-tree node sync (animation), spawn/despawn and death events, jacking titans (titan = host actor ridden by a puppet), objectives/cinematics/level change as host events, palettes for 5 colours, death/respawn per player | 5-8 weeks |
+| M2 client input drives a Crash on the host | **first slice done** (the host's native P2 on the client's pad, both players on foot from the start, physics teleports, above); input mirroring for animation and local prediction, above); players 3-4 as native Crashes on their own controllers, 4 machines, above; left: snap against time-aligned records over real latency | 1-2 weeks left |
+| M3 combat / enemies / level change, up to 4 | **first slice done** (same enemies on both machines, host hitpoints and deaths, above); fight-tree node sync (animation), spawn/despawn and death events, jacking titans (titan = host actor ridden by a puppet), objectives/cinematics/level change as host events, palettes for 5 colours, death/respawn per player | 5-8 weeks |
 | M4 lobby, colour select, internet | lobby menu + colour select (Scrooby screens or our own overlay), protocol versioning / reliability layer, STUN hole punching + TURN relay on a small VPS, reconnect | 3-4 weeks (+ VPS) |

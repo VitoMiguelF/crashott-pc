@@ -81,6 +81,16 @@ namespace mp
     bool Enabled() { return Get().enabled; }
     StreamMode Stream() { return Get().stream; }
     bool Trace() { return Get().trace; }
+
+    uint32_t Players()
+    {
+        static uint32_t players = [] {
+            const char* text = getenv("CRASH_MP_PLAYERS");
+            int n = text ? atoi(text) : 2;
+            return uint32_t(n < 2 ? 2 : n > 4 ? 4 : n);
+        }();
+        return players;
+    }
     uint32_t TraceIntervalMs() { return Get().traceMs; }
 
     uint64_t NowMs()
@@ -121,5 +131,9 @@ namespace mp
         return anchors;
     }
 
-    void Tick(PPCContext& ctx, uint8_t* base) { NetTick(ctx, base); }
+    void Tick(PPCContext& ctx, uint8_t* base)
+    {
+        PlayersTick(ctx, base);
+        NetTick(ctx, base);
+    }
 }

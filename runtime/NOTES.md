@@ -2423,12 +2423,12 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   compacto. Inimigos criados pelos objetivos do host não existem no cliente; a pose ainda é a do cliente.
 - **M2** (`mp_m2_host` + `mp_m2_client`): o cliente manda o controle do P1 (pacotes "CMI1", 12 bytes do
   `XINPUT_GAMEPAD`, na mudança e a cada 50 ms, só dentro da fase: `mp::InLevel()`), e o host o entrega como
-  controle `CRASH_MP_REMOTE_USER` (1 = o P2 nativo do co-op). B entra na mochila e o mesmo B sai (Y não).
+  controle 1 (o P2 nativo do co-op). B entra na mochila e o mesmo B sai (Y não).
   As duas máquinas abrem a fase com os 2 Crashes a pé, como o jogo faz entre fases em co-op: estado co-op
   por jogador em `0x8245FA9C[i]` (0 fora, 1 na mochila, 2 a pé; o construtor copia para Crash+300) e
-  `0x8245FA98` = quem entra sozinho na mochila no começo; online P2 = 0 + auto-entrada e o controle do P2
-  aperta B enquanto ele está na mochila (sai ~20 ms depois, sob o título do episódio). Estado 2 direto não
-  monta o modelo do P2 (só um Crash aparece). Online ninguém é puxado para a mochila por sair da câmera:
+  `0x8245FA98` = quem entra sozinho na mochila no começo; online o P2 começa no estado 2 sem ninguém
+  entrando sozinho e é mostrado ao lado do P1 como o P3 e o P4 (abaixo; estado 2 sozinho deixa o modelo
+  escondido, estado 0 libera o mapa de controle dele). Online ninguém é puxado para a mochila por sair da câmera:
   `IsOkayToEnterBackpack` (sub_82153400) diz não para Crash a pé e uma entrada que ainda venha toma o
   caminho de falha do próprio jogo (bit 2 de +0x110: colisão volta). Só pular `EnterOtherPlayersBackpack`
   deixava o Crash sem colisão (o `SetPlayerEnteringBackpack` já a desligou): caía pelo chão e desmaiava. Animação por espelho de controles: as duas
@@ -2454,4 +2454,20 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   refaz o mapa nome -> ator a cada quadro: escrever a matriz num ator já removido crashava em
   sub_8228D810. Visto: mesmos inimigos o tempo todo (3 -> 10 -> 9 -> 2), os mesmos morrendo juntos, sem
   crash em 60 s. `CRASH_MP_TELEPORT=x,y,z` (host, testes) leva os dois jogadores ao combate. Marionete via classe `Cheerleader` (`mp_marionete`) crasha: o banco só tem
+  **4 jogadores** (`mp4_host` + `mp4_c1..c3`, `mp_tres_crash` numa máquina): o limite do jogo é 4 (4
+  controles no CInputManager, 4 alvos no CAIManager: o 5º sobrescreve a contagem em +0x94 e a IA crasha
+  em sub_820985E0). Com `CRASH_MP_PLAYERS` > 2 cada máquina roda um objetivo `DO_SpawnPlayer(3/4,
+  "ref_Crash_P3/P4", "PlayerSpawnPosition")`; o gancho do construtor dá os índices 2 e 3 (o jogo dava 2 a
+  todos) e devolve as palavras depois da tabela de 2 (0x8249D780..788). P2-P4 nascem escondidos e são
+  mostrados ao lado do P1 pelo próprio "sair da mochila" (sub_82154A58, com 0x8249D780 = P1 na chamada),
+  estado 2, e o controle vem de Crash+176 -> +0 = CInputDevice (P3/P4 começam no do P2). Mochila
+  desligada (SetPlayerEnteringBackpack pulado para Crash a pé). Rede: host = vaga 0, clientes
+  `CRASH_MP_SLOT` 1-3 (porta + vaga); cada máquina joga a sua vaga como P1 e as outras em P2-P4 na ordem;
+  pacotes "CMI2" levam a vaga e a frente da câmera; o host repassa os controles dos clientes. O jogo anda
+  relativo à câmera (sub_821EBC70: direita = (frente.z, -frente.x)), então o analógico remoto é girado da
+  câmera de quem mandou para a local. Cor por vaga (par laranja, ímpar clara). Visto: os 4 a pé em todas
+  as máquinas, cada vaga no mesmo lugar e com a mesma cor, 5-13 correções em 40 s; parado (registro e
+  Crash local parados 0,5 s) corrige acima de 0,25 em vez de 1,0, então ninguém fica deslocado (antes um
+  cliente ficou 0,9 fora para sempre; agora 0-0,22). O T-pose do
+  primeiro teste: o P2 em estado 0 tinha o mapa de controle liberado e ignorava o controle.
   Cortex/NGin/Tiny.

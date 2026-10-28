@@ -1149,7 +1149,7 @@ input = [["@gameplay_ready"], [7.5, "SHOT"], [11, "SHOT"], [15, "SHOT"], [18, "S
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
 
 [profiles.mp_tres_crash]
-description = "Multijogador M0 (protótipo): um terceiro Crash na vila L1_E1 por DO_SpawnPlayer(3, ...) (tools/dev_lua/mp_three.lua); o P1 anda com o controle 0 e o controle virtual 3 (P3_) mexe o analógico, para ver quem o terceiro Crash segue"
+description = "Multijogador (protótipo): 4 jogadores na vila L1_E1, P2 a P4 aparecem a pé ao lado do P1 (P3/P4 por DO_SpawnPlayer, tools/dev_lua/mp_three.lua); cada um anda no seu controle (P2_, P3_, P4_)"
 test = false
 timeout = 30
 audio = false
@@ -1158,8 +1158,8 @@ boot = "level:L1_E1"
 skip_cinematics = true
 dev_invincible = true
 dev_lua_file = "tools/dev_lua/mp_three.lua"
-env = { CRASH_MP = "1", CRASH_MP_TRACE = "1" }
-input = [["@gameplay_ready"], [3, "SHOT"], [5, "P3_LS", 1, 0, 2.0], [6, "SHOT"], [8, "LS", 0, 1, 1.5], [9, "SHOT"], [10, "P3_A"], [10.2, "SHOT"], [13, "SHOT"]]
+env = { CRASH_MP = "1", CRASH_MP_TRACE = "1", CRASH_MP_PLAYERS = "4" }
+input = [["@gameplay_ready"], [3, "SHOT"], [5, "P3_LS", 1, 0, 2.0], [5, "P2_LS", -1, 0, 2.0], [6, "SHOT"], [7, "P4_LS", 0, -1, 2.0], [8, "LS", 0, 1, 1.5], [9, "SHOT"], [10, "P3_A"], [10.2, "SHOT"], [13, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] prototype on'] }
 
 [profiles.mp_marionete]
@@ -1200,6 +1200,58 @@ skip_cinematics = true
 dev_invincible = true
 env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SUPPRESS = "ai,objectives", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1100" }
 input = [["@gameplay_ready"], [3, "SHOT"], [5, "LS", -1, 0, 1.0], [6.5, "SHOT"], [7, "A"], [7.3, "SHOT"], [8.5, "X"], [8.75, "SHOT"], [9.2, "X"], [9.8, "X"], [10.1, "SHOT"], [14, "SHOT"], [17, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
+
+[profiles.mp4_host]
+description = "Multijogador 4 jogadores (protótipo): host da vila L1_E1 (jogador 1); rode junto com mp4_c1, mp4_c2 e mp4_c3, janelas em quadrantes. Os 4 Crashes aparecem a pé, cada máquina joga o seu como P1 e anda para um lado"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_PLAYERS = "4", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "0,0,1920,1080" }
+input = [["@gameplay_ready"], [4, "SHOT"], [6, "LS", 1, 0, 2.0], [8.5, "LS", 0, 1, 1.5], [10.5, "A"], [9, "SHOT"], [12, "SHOT"], [15, "SHOT"], [19, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: host', 'spawning players 3-4: ok'] }
+
+[profiles.mp4_c1]
+description = "Multijogador 4 jogadores (protótipo): cliente 1 (jogador 2) do mp4_host; o seu Crash é o P1 desta janela"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SLOT = "1", CRASH_MP_PLAYERS = "4", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
+input = [["@gameplay_ready"], [4, "SHOT"], [6.5, "LS", -1, 0.3, 2.0], [9, "LS", 0, -1, 1.5], [11, "X"], [9, "SHOT"], [12, "SHOT"], [15, "SHOT"], [19, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
+
+[profiles.mp4_c2]
+description = "Multijogador 4 jogadores (protótipo): cliente 2 (jogador 3) do mp4_host; o seu Crash é o P1 desta janela"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SLOT = "2", CRASH_MP_PLAYERS = "4", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "0,1080,1920,1080" }
+input = [["@gameplay_ready"], [4, "SHOT"], [7, "LS", 0, 1, 2.0], [9.5, "LS", 1, 0, 1.5], [11.5, "A"], [9, "SHOT"], [12, "SHOT"], [15, "SHOT"], [19, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
+
+[profiles.mp4_c3]
+description = "Multijogador 4 jogadores (protótipo): cliente 3 (jogador 4) do mp4_host; o seu Crash é o P1 desta janela"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SLOT = "3", CRASH_MP_PLAYERS = "4", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "1920,1080,1920,1080" }
+input = [["@gameplay_ready"], [4, "SHOT"], [7.5, "LS", 0.7, -0.7, 2.0], [10, "LS", -1, 0, 1.5], [12, "X"], [9, "SHOT"], [12, "SHOT"], [15, "SHOT"], [19, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
 
 [profiles.mp_m3_host]

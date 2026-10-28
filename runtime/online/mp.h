@@ -11,7 +11,9 @@
 //   CRASH_MP_ROLE=<role>       host | client: the M1 mirror over UDP (mp_net.cpp)
 //   CRASH_MP_PORT=<n>          UDP port (default 47810); CRASH_MP_PEER=<ip> the host for a client
 //   CRASH_MP_HZ=<n>            snapshots per second sent by the host (default 30)
-//   CRASH_MP_REMOTE_USER=<n>   the game controller the peer's pad becomes (default 1 = player 2)
+//   CRASH_MP_PLAYERS=<n>       2-4 players (the game's limit is 4: controllers, AI targets); with more
+//                              than 2, players 3 and 4 are spawned on every machine (mp_players.cpp)
+//   CRASH_MP_SLOT=<n>          client: its player, 1-3 (default 1); the host is 0
 //   CRASH_MP_SNAP=<units>      client: a player further than this from its record is put back (1.0)
 //   CRASH_MP_TELEPORT=x,y,z    host, tests: both players put there once they are on foot
 
@@ -27,6 +29,7 @@ namespace mp
 
     bool Enabled();
     bool Online();  // CRASH_MP_ROLE host or client: the level starts with both players in play
+    uint32_t Players();  // CRASH_MP_PLAYERS, 2-4
     StreamMode Stream();
     bool Trace();
     uint32_t TraceIntervalMs();  // CRASH_MP_TRACE=<ms> (1 = 1000)
@@ -49,12 +52,22 @@ namespace mp
     uint32_t RoomAt(PPCContext& ctx, uint8_t* base, uint32_t position);  // room holding a position
     std::string RoomLabel(uint32_t room);
 
+    // mp_players.cpp: the Crashes beyond the game's two (player index >= 2, DO_SpawnPlayer(3..5)); each
+    // one is put on foot next to player 1 (PlayersTick, every frame on the game thread).
+    std::vector<uint32_t> ExtraCrashes();
+    uint32_t PlayerCrash(uint32_t index);  // the Crash of player index 0-3 (0 if none)
+    bool PlayerOnFoot(uint32_t index);     // in play: co-op state 2 and, for players 2-4, already shown
+    void PlayersTick(PPCContext& ctx, uint8_t* base);
+    // Online (or more than two players): nobody enters another player's backpack.
+    bool NoBackpack();
+
     // mp_net.cpp
     void NetTick(PPCContext& ctx, uint8_t* base);
-    // M2 (kernel/xam_input_imports.cpp): on a client, player 1's final pad state each game read
-    // (sent to the host; in a level the local game then sees only START / BACK: the host moves
-    // this player); on the host, the remote player's pad for controller `user` (true if one is
-    // connected: it replaces whatever is there).
+    // Moves a Crash through its physics only (its partner stays where it is).
+    bool TeleportCrash(PPCContext& ctx, uint8_t* base, uint32_t crash, float x, float y, float z);
+    // M2 (kernel/xam_input_imports.cpp): LocalPad gets player 1's pad each game read (sent to the other
+    // machines); RemotePad gives controller `user` the pad of the remote player it plays (true if one
+    // is connected: it replaces whatever is there).
     // `pad` is a 12-byte XINPUT_GAMEPAD (kernel/xinput_types.h; the name clashes with <xinput.h>).
     void LocalPad(const void* pad, bool poll);
     bool RemotePad(uint32_t user, void* pad);
