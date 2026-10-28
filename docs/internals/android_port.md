@@ -294,6 +294,25 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
       800x360 (a faster GPU) ran 200 s: it is Turnip and implicit-LOD sampling, not timing. So the
       renderer turns it off on Turnip (`SupportsImplicitDerivatives`); the S25 Ultra (Qualcomm's
       driver) uses it, ~2% less GPU time.
+  - **S25 Ultra: the village grass blurry, dark and blotchy (2026-10-27), fixed.** On the
+    Galaxy S25 Ultra (Adreno 830, Qualcomm's own driver 1.3.284) the L1_E1 ground looked like
+    water (soft green and dark waves) instead of the grass blades of the PC and the S20 FE
+    (Turnip); the river and the glow around the mojos were wrong as well, and changed with the
+    camera. Not the shaders, the mips, the filtering, BC, the resolution or the post effects:
+    the derivative modes, `CRASH_GPU_NO_MIPS`, AF 1x, CPU DXT decode, `gpu_safe_mode`, 720 lines,
+    DoF and motion blur at 0 all looked the same, and the translated HLSL is the PC's (but for the
+    internal-resolution constants; the PC at 1.5x is fine). What
+    changed it is how the textures reach the draws: with `CRASH_VULKAN_NO_EXT=push_descriptor`
+    (descriptor sets of the command buffer's pool, the Mali path) the grass, the river and the
+    mojos are right. Through `VK_KHR_push_descriptor`, which the driver reports (32 per set), the
+    draws see wrong textures; pushing all 32 bindings, or pushing on every draw instead of only
+    when the textures change, did not help, so it is the driver's push path itself. The renderer
+    no longer uses push descriptors on `VK_DRIVER_ID_QUALCOMM_PROPRIETARY` (`rhi_vulkan.cpp`,
+    log `Qualcomm driver: push descriptors not used`); Turnip keeps them. Cost on the S25: about
+    0.5 ms more command recording per frame on the CP thread, the village at 60 fps capped.
+    Finding the draw: `CRASH_DUMP_SHADERS` on the phone, `CRASH_GPU_SKIP_PS` and
+    `userdata/shaderoverride` tints (each PS's output mixed with a solid colour) on the PC and
+    the phone, compared screen by screen.
   - **Tab S10 Ultra (Mali-G720 MC12, driver r44p1, Vulkan 1.3.247), same day: the game runs**, the
     opening cutscene at a steady 60 fps (16.67 ms per frame, the limit) at 1154x720 on its
     2960x1848 screen, with the dump pushed (3.0 GB over adb Wi-Fi in 66 s) and the S20 FE's SPIR-V
@@ -594,7 +613,7 @@ The renderer needs Vulkan 1.3 with dynamic rendering, synchronization2, timeline
 | Vulkan 1.3 | yes on recent drivers (Android 13+) | yes on recent drivers | keep; log and refuse below |
 | `geometryShader` | yes | older Mali: **no**; Mali-G720 (Tab S10 Ultra): yes | GS-free path: rect lists (`RECT_LIST_GS`) expanded to two triangles in the vertex shader (vertex pulling from the storage ring, already used) or on the CPU; `HUD_GS` (Hor+ 2D): most draws now folded into c4..c7 on the CPU (`HudFoldDraw`, done 2026-10-26). Needed for older Mali |
 | BC1–BC5 textures (`textureCompressionBC`) | mostly yes on 7xx; check per device | **no** (ASTC/ETC2 only) | when the format reports no `SAMPLED_IMAGE` support: decode to RGBA8 on upload (CPU `bcdec`, public domain, or a compute shader). That costs 4–8× the memory for those textures. Transcoding to ASTC is an option for later |
-| `VK_KHR_push_descriptor` | recent drivers | recent drivers | already only for draws (passes use regular sets): a fallback to per-draw sets from a pool if missing |
+| `VK_KHR_push_descriptor` | recent drivers, but **not used on Qualcomm's own driver** (wrong textures on the Adreno 830; Turnip is fine) | recent drivers | already only for draws (passes use regular sets): per-draw sets from a pool when missing or on Qualcomm's driver |
 | D24S8 sampled | yes | yes | the renderer already falls back to D32S8 |
 | `depthClamp`, anisotropy, `independentBlend` | yes | varies | already optional |
 | `VK_EXT_graphics_pipeline_library` (async shaders) | some drivers | rare | the fallback already exists (whole pipelines; `CRASH_VULKAN_NO_EXT=gpl` tests it). `shader_compilation = async` still works without GPL, just slower to link |

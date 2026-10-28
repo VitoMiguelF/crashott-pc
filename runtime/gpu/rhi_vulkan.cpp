@@ -986,6 +986,15 @@ namespace gpu::rhi
             m_implicitDerivatives = driver.driverID != VK_DRIVER_ID_MESA_TURNIP;
             if (!m_implicitDerivatives)
                 Log("[vulkan] Turnip: texture fetches sampled with explicit gradients (no implicit derivatives)");
+            // Qualcomm's own driver (Adreno 830, 1.3.284) reports VK_KHR_push_descriptor, but the
+            // draws see wrong textures through it: the village grass came out as blotchy water,
+            // the water and the mojos' glow too. Pushing all 32 bindings or on every draw did not
+            // help; the same textures through descriptor sets do (android_port.md).
+            if (m_pushDescriptors && driver.driverID == VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
+            {
+                m_pushDescriptors = false;
+                Log("[vulkan] Qualcomm driver: push descriptors not used");
+            }
             VkPhysicalDeviceVulkan13Features features13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
             features13.dynamicRendering = VK_TRUE;
             features13.synchronization2 = VK_TRUE;
