@@ -8,7 +8,7 @@ Needs (nothing is downloaded here; build/ is not in git):
   build/downloads/zig/ziglang/zig.exe     the ziglang wheel from PyPI, unzipped (pip download ziglang)
   build/downloads/sdl/SDL3-*/include      the SDL3 3.2.x source tarball, unpacked (headers only)
 
-No CMake: the same sources as CMakeLists.txt's non-WIN32 branch (runtime/ without *_win32.cpp,
+No CMake: the same sources as CMakeLists.txt's non-WIN32 branch (runtime/ without *_win32.cpp and *_android.cpp,
 generated/ppc, XexImage), glibc 2.35, -mavx, libc++ linked statically. SDL3 is not built here
 (no X11/Wayland headers): the link uses a stub libSDL3.so.0 holding just the SDL functions the
 game calls, and the system's SDL3 takes its place at run time. Anything else left undefined is
@@ -50,7 +50,7 @@ def jobs(kind):
     if kind in ("runtime", "all"):
         for path in sorted((ROOT / "runtime").rglob("*.cpp")):
             rel = path.relative_to(ROOT).as_posix()
-            if "/xex_image/" not in rel and "/gpu/dlss_module/" not in rel and not rel.endswith("_win32.cpp"):
+            if "/xex_image/" not in rel and "/gpu/dlss_module/" not in rel and not rel.endswith(("_win32.cpp", "_android.cpp")):
                 result.append(("c++", path, runtime))
     if kind == "all":
         ppc = common + ["-std=gnu++20", f"-I{ROOT / 'generated/ppc'}", simde]
