@@ -1,4 +1,4 @@
-# Online multiplayer (prototype, M0 / M1 / streaming)
+# Online multiplayer (prototype, M0 / M1 / M2 / streaming)
 
 Feasibility work for an online mode of up to 5 players (branch `online-coop`, 2026-10-28). Local co-op stays
 the game's own 2 players. Full write-up in Portuguese: `runtime/NOTES.md`, "Multijogador online
@@ -13,9 +13,11 @@ hook changes anything.
 | `CRASH_MP_TRACE=1\|<ms>` | rooms + players once a second, every player move > 10 units in one frame |
 | `CRASH_MP_ROLE=host\|client` | the M1 UDP mirror; `CRASH_MP_PEER` (127.0.0.1), `CRASH_MP_PORT` (47810; client = +1), `CRASH_MP_HZ` (30) |
 | `CRASH_MP_SUPPRESS=ai,objectives` | client: skip CAIManager / CObjectiveManager updates once its level is up |
+| `CRASH_MP_REMOTE_USER=<n>` | host: the controller the client's pad becomes (default 1 = the game's player 2) |
 
 Profiles (`test = false`): `mp_stream_vanilla`, `mp_stream_union`, `mp_stream_all`, `mp_host` + `mp_client`
-(run together; windows side by side through `CRASH_RESTART_WINDOW`), `mp_tres_crash`.
+(run together; windows side by side through `CRASH_RESTART_WINDOW`), `mp_tres_crash`, `mp_m2_host` + `mp_m2_client`,
+`mp_marionete`.
 
 ## Level streaming (the user's must-have question)
 
@@ -97,6 +99,31 @@ enemies there keep running.
   ~24 bytes). Players only: 5 x 30 Hz x 24 B = ~3.6 KB/s. Interest management (only actors near any player,
   only moving ones, 20 Hz for far ones) cuts the world part further.
 
+## Client input on the host (M2)
+
+The first M2 route uses the game's own player 2 instead of a new puppet class, so nothing new has to be
+spawned and every native player path (camera, backpack, damage, triggers) already works for it:
+
+- The client sends player 1's pad as the game read it (`XamInputGetState` path in
+  `kernel/xam_input_imports.cpp`): "CMI1" packets, sequence + the 12-byte `XINPUT_GAMEPAD`, on change and at
+  least every 50 ms (~19 packets/s idle). Only inside a level (`mp::InLevel()`: stream manager has a current
+  room and CGameDatabase +16 is set), else the host's title screen takes controller 1 as player 1.
+- The host's `ReadController` for user `CRASH_MP_REMOTE_USER` returns that pad (connected) while packets
+  arrive (2 s timeout = unplugged). Late / duplicated sequences are dropped.
+- In the game P2 joins with **B / Circle** (into P1's backpack) and the **same button** leaves it; Y
+  (Triangle) does not. Seen on the host: P2 (the black `Crash_Player2` skin) leaves the backpack, runs and
+  jumps away from P1 on the client's stick (L1_E1, (-58, 65) -> (-58, 42)).
+- The client's game sees a neutral pad in a level (only START / BACK, so pause stays local) and its
+  player 1 / player 2 records swap (the host's P2 drives the client's P1, whose camera follows it). The
+  client's Crash moves where the host's P2 is; its pose is still the client's own (idle), and the host's P1
+  lands on the client's unjoined P2 (in the backpack, hidden).
+- Tried and dropped: a non-player Crash puppet through the `Cheerleader` class (what the cinematics use for
+  Cortex / Tiny / N. Gin): its bank only has the Cortex / NGin / Tiny subtypes, so subtype `Crash` crashes in
+  `sub_82389720` (`mp_marionete`). A real puppet needs a new actor template (M3).
+- Limits of this route: 2 players per host (the game's), the client's input travels a round trip before its
+  Crash moves (fine on LAN, ~2x ping online; prediction = running the client's P1 locally and correcting,
+  M3), and remote players beyond P2 still need puppets.
+
 ## Recommended architecture
 
 - **One real player per machine.** Each machine runs its own Crash as player 1 (input, physics, camera,
@@ -115,6 +142,6 @@ enemies there keep running.
 
 | Milestone | Work | Effort |
 |---|---|---|
-| M2 client input drives a Crash on the host | puppet actor (spawnable Crash look without player behaviours), owner -> host transform/state at 30 Hz, interpolation, puppets as AI targets and trigger actors | 2-3 weeks |
+| M2 client input drives a Crash on the host | **first slice done** (the host's native P2 on the client's pad, above); left: interpolation, client-side prediction, puppet template for players 3-5 as AI targets and trigger actors | 1-2 weeks left |
 | M3 combat / enemies / level change, up to 5 | fight-tree node sync (animation), spawn/despawn and death events, damage forwarding, jacking titans (titan = host actor ridden by a puppet), objectives/cinematics/level change as host events, palettes for 5 colours, death/respawn per player | 5-8 weeks |
 | M4 lobby, colour select, internet | lobby menu + colour select (Scrooby screens or our own overlay), protocol versioning / reliability layer, STUN hole punching + TURN relay on a small VPS, reconnect | 3-4 weeks (+ VPS) |

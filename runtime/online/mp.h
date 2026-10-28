@@ -11,6 +11,7 @@
 //   CRASH_MP_ROLE=<role>       host | client: the M1 mirror over UDP (mp_net.cpp)
 //   CRASH_MP_PORT=<n>          UDP port (default 47810); CRASH_MP_PEER=<ip> the host for a client
 //   CRASH_MP_HZ=<n>            snapshots per second sent by the host (default 30)
+//   CRASH_MP_REMOTE_USER=<n>   host: the game controller the client's pad becomes (default 1 = player 2)
 
 #include <cstdint>
 #include <string>
@@ -31,6 +32,8 @@ namespace mp
     // The player actors: CGameDatabase +16 / +20 (the game's two players) and the extra Crashes
     // the prototype added (AddPlayer).
     std::vector<uint32_t> PlayerActors();
+    // A level is up: the stream manager has a current room and player 1 exists.
+    bool InLevel();
     void AddPlayer(uint32_t actor);
     // CRASH_MP_ANCHOR positions (guest vec3 addresses): stand-ins for remote players in the room check.
     const std::vector<uint32_t>& Anchors();
@@ -45,4 +48,11 @@ namespace mp
 
     // mp_net.cpp
     void NetTick(PPCContext& ctx, uint8_t* base);
+    // M2 (kernel/xam_input_imports.cpp): on a client, player 1's final pad state each game read
+    // (sent to the host; in a level the local game then sees only START / BACK: the host moves
+    // this player); on the host, the remote player's pad for controller `user` (true if one is
+    // connected: it replaces whatever is there).
+    // `pad` is a 12-byte XINPUT_GAMEPAD (kernel/xinput_types.h; the name clashes with <xinput.h>).
+    void LocalPad(void* pad, bool poll);
+    bool RemotePad(uint32_t user, void* pad);
 }

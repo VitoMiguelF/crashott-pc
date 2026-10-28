@@ -17,6 +17,7 @@
 #include "../settings/touch_controls.h"
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
+#include "../online/mp.h"
 #include "../platform/platform.h"
 #include "../platform/crt.h"
 #include "xinput_types.h"
@@ -407,6 +408,9 @@ namespace
                 ScriptedState(state, ClockNow(), user);
                 connected = true;
             }
+            // Online prototype host: a client's controller (online/mp.h).
+            if (mp::RemotePad(user, &state.Gamepad))
+                connected = true;
             // The settings screen and the console hide every controller from the game, not only player 1's.
             if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput())
                 state.Gamepad = {};
@@ -446,6 +450,7 @@ namespace
             if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput())
                 state.Gamepad = {};
             state.Gamepad.wButtons |= settings::menu::GameButtons();  // B when it closes
+            mp::LocalPad(&state.Gamepad, poll);  // online prototype client: to the host (the game keeps START / BACK)
         }
         // The packet number changes with the state, per controller.
         static uint32_t s_packet[4];

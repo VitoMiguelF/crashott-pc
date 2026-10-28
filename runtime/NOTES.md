@@ -2421,3 +2421,10 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   CObjectiveManager::vf10 parados. 439-447 atores espelhados, 0 pacotes perdidos, o Crash do cliente no
   mesmo ponto do host. Banda: ~1.750 registros/s, ~114 KB/s brutos (~0,9 Mbit/s), ~45 KB/s com registro
   compacto. Inimigos criados pelos objetivos do host não existem no cliente; a pose ainda é a do cliente.
+- **M2** (`mp_m2_host` + `mp_m2_client`): o cliente manda o controle do P1 (pacotes "CMI1", 12 bytes do
+  `XINPUT_GAMEPAD`, na mudança e a cada 50 ms, só dentro da fase: `mp::InLevel()`), e o host o entrega como
+  controle `CRASH_MP_REMOTE_USER` (1 = o P2 nativo do co-op). B entra na mochila e o mesmo B sai (Y não);
+  visto no host: o P2 (skin preta) desce da mochila, corre e pula pelo analógico do cliente. No cliente o
+  jogo vê um controle neutro (só START/BACK) e os registros P1/P2 trocam: a câmera do cliente segue o P2 do
+  host. Pose ainda é a local. Marionete via classe `Cheerleader` (`mp_marionete`) crasha: o banco só tem
+  Cortex/NGin/Tiny.

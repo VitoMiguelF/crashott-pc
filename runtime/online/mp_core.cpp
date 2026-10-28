@@ -102,6 +102,12 @@ namespace mp
         return out;
     }
 
+    bool InLevel()
+    {
+        uint32_t sm = StreamManager();
+        return sm && LoadBE32(sm + 636) && LoadBE32(GAME_DATABASE + 16);
+    }
+
     void AddPlayer(uint32_t actor)
     {
         std::lock_guard<std::mutex> lock(g_mutex);

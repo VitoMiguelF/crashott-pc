@@ -17,9 +17,18 @@
 //
 // Wire record (64 bytes, raw floats; docs/internals/multiplayer.md has the compact layout):
 //   u64 name hash, f32 matrix rows 0-3 xyz (48), f32 fight state time, u32 flags (bit 0 = player)
+//
+// M2, the client's input drives a Crash on the host: the client sends player 1's pad (the state the
+// game read, 12 bytes, "CMI1" packets, on change and at least every 50 ms) and the host gives it to
+// the game as controller CRASH_MP_REMOTE_USER (default 1): the game's own player 2 (B joins the
+// backpack, B again leaves it). The client plays as that player: the host's player 2 record goes on
+// the client's player 1 (its camera follows it) and the host's player 1 on the client's player 2.
+// In a level the client's game sees a neutral pad (START / BACK only), so its player 1 only follows
+// the records: the pose is still its own (fight-tree sync is M3).
 
 #include "mp.h"
 #include "../diagnostics.h"
+#include "../kernel/xinput_types.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
 
@@ -29,6 +38,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -59,6 +69,8 @@ PPC_EXTERN_FUNC(sub_82142608);             // CActor::GetBehaviour(actor, type)
 namespace
 {
     constexpr uint32_t MAGIC = 0x434D5031;  // "CMP1"
+    constexpr uint32_t INPUT_MAGIC = 0x434D4931;  // "CMI1"
+    constexpr uint32_t GAME_DATABASE = 0x824A76A4;  // CGameDatabase: players at +16 / +20
     constexpr size_t RECORD = 64;
     constexpr size_t HEADER = 16;           // magic, sequence, record count, host frame
     constexpr size_t MAX_PACKET = 1200;     // under the usual internet MTU
@@ -97,20 +109,30 @@ namespace
         std::unordered_map<uint64_t, uint32_t> local;
         uint64_t applied = 0, missing = 0, received = 0;
         uint32_t lastSequence = 0, lost = 0;
+        // M2: the client's pad on the host / sent by the client
+        uint32_t remoteUser = 1;
+        std::mutex padMutex;
+        XINPUT_GAMEPAD remotePad{};
+        uint64_t remotePadAt = 0, padPackets = 0, padSequence = 0;
+        XINPUT_GAMEPAD lastSentPad{};
+        uint64_t lastPadSend = 0;
     };
 
     Net& N()
     {
-        static Net net = [] {
-            Net n;
+        static Net& net = *[] {
+            Net* made = new Net;
+            Net& n = *made;
             const char* role = getenv("CRASH_MP_ROLE");
             if (!mp::Enabled() || !role)
-                return n;
+                return made;
             n.role = !strcmp(role, "host") ? Role::Host : !strcmp(role, "client") ? Role::Client : Role::None;
             if (n.role == Role::None)
-                return n;
+                return made;
             if (const char* hz = getenv("CRASH_MP_HZ"))
                 n.hz = std::max(1, atoi(hz));
+            if (const char* user = getenv("CRASH_MP_REMOTE_USER"))
+                n.remoteUser = uint32_t(atoi(user));
             if (const char* s = getenv("CRASH_MP_SUPPRESS"))
             {
                 n.suppressAi = strstr(s, "ai") != nullptr;
@@ -134,7 +156,7 @@ namespace
             {
                 Log("[mp] net: no UDP socket on port %d", ntohs(local.sin_port));
                 n.role = Role::None;
-                return n;
+                return made;
             }
             n.peer.sin_family = AF_INET;
             n.peer.sin_port = htons(uint16_t(n.role == Role::Host ? port + 1 : port));
@@ -142,7 +164,7 @@ namespace
             Log("[mp] net: %s on UDP %d, peer %s:%d, %d Hz, suppress ai %d objectives %d",
                 n.role == Role::Host ? "host" : "client", ntohs(local.sin_port), peer && *peer ? peer : "127.0.0.1",
                 ntohs(n.peer.sin_port), n.hz, int(n.suppressAi), int(n.suppressObjectives));
-            return n;
+            return made;
         }();
         return net;
     }
@@ -243,8 +265,31 @@ namespace
         n.packets++;
     }
 
+    // Host: the client's pad packets ("CMI1", sequence, the 12-byte XINPUT_GAMEPAD as the client has it).
+    void HostReceive(Net& n)
+    {
+        uint8_t buffer[256];
+        for (;;)
+        {
+            int got = int(recv(n.sock, reinterpret_cast<char*>(buffer), sizeof(buffer), 0));
+            if (got < 8 + int(sizeof(XINPUT_GAMEPAD)))
+                break;
+            if (Get32(buffer) != INPUT_MAGIC)
+                continue;
+            uint32_t sequence = Get32(buffer + 4);
+            std::lock_guard<std::mutex> lock(n.padMutex);
+            if (sequence <= n.padSequence && n.padSequence - sequence < 1000)
+                continue;  // late or duplicated
+            n.padSequence = sequence;
+            memcpy(&n.remotePad, buffer + 8, sizeof(XINPUT_GAMEPAD));
+            n.remotePadAt = mp::NowMs();
+            n.padPackets++;
+        }
+    }
+
     void HostTick(PPCContext& ctx, uint8_t* base, Net& n)
     {
+        HostReceive(n);
         uint64_t now = mp::NowMs();
         n.frames++;
         if (now - n.lastSend < uint64_t(1000 / n.hz))
@@ -302,9 +347,11 @@ namespace
         {
             double seconds = n.lastStats ? (now - n.lastStats) / 1000.0 : 5.0;
             Log("[mp] host: %zu actors in the stream manager, %.1f snapshots/s, %.1f records/s, %.1f packets/s, "
-                "%.1f KB/s (%.1f kbit/s) raw; compact estimate %.1f KB/s",
+                "%.1f KB/s (%.1f kbit/s) raw; compact estimate %.1f KB/s; client pad %.1f packets/s, buttons %04X",
                 n.lastActorCount, n.snapshots / seconds, n.records / seconds, n.packets / seconds, n.bytes / seconds / 1024,
-                n.bytes * 8 / seconds / 1000, (n.records * 24.0 + n.packets * 36.0) / seconds / 1024);
+                n.bytes * 8 / seconds / 1000, (n.records * 24.0 + n.packets * 36.0) / seconds / 1024,
+                n.padPackets / seconds, n.remotePad.wButtons);
+            n.padPackets = 0;
             n.lastStats = now;
             n.snapshots = n.records = n.packets = n.bytes = 0;
         }
@@ -349,9 +396,15 @@ namespace
     {
         if (n.latest.empty())
             return;
+        // The client plays the host's player 2: the two players' records swap actors.
+        uint32_t p1 = LoadBE32(GAME_DATABASE + 16), p2 = LoadBE32(GAME_DATABASE + 20);
+        uint64_t p1Name = p1 ? NameOf(p1) : 0, p2Name = p2 ? NameOf(p2) : 0;
         bool refreshed = false;
-        for (auto& [name, r] : n.latest)
+        for (auto& [recordName, r] : n.latest)
         {
+            uint64_t name = recordName;
+            if (p1 && p2 && n.remoteUser == 1)
+                name = name == p1Name ? p2Name : name == p2Name ? p1Name : name;
             auto it = n.local.find(name);
             if (it == n.local.end() && !refreshed)
             {
@@ -394,6 +447,47 @@ namespace
 
 namespace mp
 {
+    void LocalPad(void* padBytes, bool poll)
+    {
+        if (!Enabled())
+            return;
+        Net& n = N();
+        // Only in a level: in the menus the host's title screen would take it as player 1.
+        if (n.role != Role::Client || !InLevel())
+            return;
+        XINPUT_GAMEPAD& game = *static_cast<XINPUT_GAMEPAD*>(padBytes);
+        XINPUT_GAMEPAD pad = game;
+        // The host simulates this player; the local copy only follows its records (pause stays local).
+        game = {};
+        game.wButtons = pad.wButtons & (0x0010 | 0x0020);  // START, BACK
+        uint64_t now = NowMs();
+        if (!poll || (!memcmp(&pad, &n.lastSentPad, sizeof(pad)) && now - n.lastPadSend < 50))
+            return;
+        n.lastSentPad = pad;
+        n.lastPadSend = now;
+        std::vector<uint8_t> packet;
+        Put32(packet, INPUT_MAGIC);
+        Put32(packet, uint32_t(++n.padSequence));
+        const uint8_t* raw = reinterpret_cast<const uint8_t*>(&pad);
+        packet.insert(packet.end(), raw, raw + sizeof(pad));
+        sendto(n.sock, reinterpret_cast<const char*>(packet.data()), int(packet.size()), 0,
+               reinterpret_cast<const sockaddr*>(&n.peer), sizeof(n.peer));
+    }
+
+    bool RemotePad(uint32_t user, void* pad)
+    {
+        if (!Enabled())
+            return false;
+        Net& n = N();
+        if (n.role != Role::Host || user != n.remoteUser || !InLevel())
+            return false;
+        std::lock_guard<std::mutex> lock(n.padMutex);
+        if (!n.remotePadAt || NowMs() - n.remotePadAt > 2000)
+            return false;  // no client, or it went quiet: the controller is unplugged
+        memcpy(pad, &n.remotePad, sizeof(n.remotePad));
+        return true;
+    }
+
     void NetTick(PPCContext& ctx, uint8_t* base)
     {
         Net& n = N();

@@ -1161,3 +1161,43 @@ dev_lua_file = "tools/dev_lua/mp_three.lua"
 env = { CRASH_MP = "1", CRASH_MP_TRACE = "1" }
 input = [["@gameplay_ready"], [3, "SHOT"], [5, "P3_LS", 1, 0, 2.0], [6, "SHOT"], [8, "LS", 0, 1, 1.5], [9, "SHOT"], [10, "P3_A"], [10.2, "SHOT"], [13, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] prototype on'] }
+
+[profiles.mp_marionete]
+description = "Multijogador M2 (protótipo): marionetes com a cara do Crash que não são jogadores (classe Cheerleader, como Cortex nas cenas) ao lado do P1 na vila (tools/dev_lua/mp_puppet.lua). Resultado: crasha, o banco Cheerleader só tem Cortex/NGin/Tiny"
+test = false
+timeout = 25
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_file = "tools/dev_lua/mp_puppet.lua"
+env = { CRASH_MP = "1" }
+input = [["@gameplay_ready"], [3, "SHOT"], [5, "SHOT"], [7, "LS", 0, -1, 0.6], [8, "SHOT"], [10, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['mp puppet mp_puppet_1 made'] }
+
+[profiles.mp_m2_host]
+description = "Multijogador M2 (protótipo): o host da vila L1_E1 recebe o controle do mp_m2_client por UDP como controle 2 (o P2 do co-op do jogo) e manda o estado dos atores; o P1 do host fica parado. Rode junto com mp_m2_client; janelas lado a lado"
+test = false
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "0,0,1920,1100" }
+input = [["@gameplay_ready"], [5, "SHOT"], [11, "SHOT"], [14, "SHOT"], [17, "SHOT"], [21, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: host', 'client pad [1-9]'] }
+
+[profiles.mp_m2_client]
+description = "Multijogador M2 (protótipo): o cliente joga como o P2 do mp_m2_host: o controle 0 dele vai para o host (B entra na mochila, B de novo sai, anda e pula) e o P2 do host aparece no P1 do cliente"
+test = false
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SUPPRESS = "ai,objectives", CRASH_RESTART_WINDOW = "1920,0,1920,1100" }
+input = [["@gameplay_ready"], [3, "B"], [5, "SHOT"], [7, "B"], [10, "SHOT"], [11, "LS", 1, 0, 2.0], [13.5, "SHOT"], [14, "A"], [15, "LS", 0, 1, 2.0], [17, "SHOT"], [21, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
