@@ -240,6 +240,12 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   CRenderManager +356 VectorCamera +228). A remote stick only means the same direction under the same
   camera, so each pad packet carries the sender's camera forward and the receiver turns the left stick onto
   its own camera's axes.
+- **Each machine's own camera**: the gameplay camera frames every actor with a registered
+  `CCameraInterestBehaviour` (vtable 0x8200DB6C; `vf11` = SetEnabled -> `sub_820E10E8` adds it to the
+  `CCameraManager`, manager 4, `sub_821B2830`, and removes it, `sub_821B2950`; +0x3C bit 0x40 = registered,
+  +0x38 its id). Every Crash has one, so all 4 machines showed the same view framing the whole group (the
+  shared co-op camera). Online the remote players' interests are taken out every frame (a show turns them
+  back on): each window follows its own player. Local co-op (`mp_tres_crash`) keeps the shared camera.
 - **Fewer corrections**: player 1 is in play 500 ms after the level shows it and P2-P4 300 ms after being
   shown (their transform holds the parking place, 57.4 45.5 -52.1, until then; a client snapped its P2 there
   and back); no correction for a knocked-out player or one just back; moving within 1.6 of another player

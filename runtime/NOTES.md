@@ -2477,7 +2477,10 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   vtable 0x8201145C, ator em +28). Menos correções: P1 em jogo 500 ms depois de aparecer e P2-P4 300 ms
   (antes o cliente puxava o P2 para o estacionamento e voltava), nenhuma para quem está nocauteado,
   até 2,0 de folga encostado em outro jogador, e 3 tentativas no máximo para o mesmo alvo
-  (`mp_m3_client` 20 -> 6 em 60 s). Visto: os 4 a pé em todas
+  (`mp_m3_client` 20 -> 6 em 60 s). Câmera: a do jogo enquadra todo ator com `CCameraInterestBehaviour`
+  registrado (vtable 0x8200DB6C, +0x3C bit 0x40; tirar = `sub_821B2950` no CCameraManager, gerente 4), então
+  as 4 máquinas mostravam a mesma vista do grupo; online os interesses dos remotos saem a cada quadro e
+  cada janela segue o seu jogador. Visto: os 4 a pé em todas
   as máquinas, cada vaga no mesmo lugar e com a mesma cor, 5-13 correções em 40 s; parado (registro e
   Crash local parados 0,5 s) corrige acima de 0,25 em vez de 1,0, então ninguém fica deslocado (antes um
   cliente ficou 0,9 fora para sempre; agora 0-0,22). Nocaute nas 4 máquinas (`mp4_host` com

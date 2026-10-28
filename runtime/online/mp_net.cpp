@@ -73,6 +73,7 @@ PPC_EXTERN_FUNC(sub_82110448);             // CDamageableBehaviour::AdjustHitpoi
 PPC_EXTERN_FUNC(sub_820972D0);             // CActionTeleport::CActionTeleport(msg, const Vector*, flags)
 PPC_EXTERN_FUNC(sub_82097348);             // its destructor
 PPC_EXTERN_FUNC(sub_82145358);             // CPhysicsBehaviour: the teleport message (type 40) handler
+PPC_EXTERN_FUNC(sub_821B2950);             // CCameraManager: removes a camera interest (id, actor, behaviour)
 PPC_EXTERN_FUNC(sub_8222C2D8);             // character drawable (+348): sets its base palette
 
 namespace
@@ -155,6 +156,7 @@ namespace
         std::unordered_map<uint32_t, uint32_t> damageables;
         bool applyingHitpoints = false;
         float recordHitpoints[4] = {-1, -1, -1, -1};
+        uint32_t interests[4]{};  // the players' camera interests (LocalCamera)
         float lastSnapPos[4][3]{};  // client: the last correction's target, and how many went there in a row
         uint32_t snapRepeats[4]{};  // trace: the host's last hitpoints (fraction) for each player
         uint64_t hitpointsApplied = 0, damageDropped = 0;
@@ -364,6 +366,13 @@ namespace
     {
         char line[400];
         int k = snprintf(line, sizeof(line), "[mp] anim %s t=%llu", role, (unsigned long long)now);
+        {
+            uint32_t render = LoadBE32(0x824A7A24 + 28 + 4 * 12);
+            uint32_t camera = render ? LoadBE32(render + 356) : 0;
+            if (camera)
+                k += snprintf(line + k, sizeof(line) - k, " cam (%.1f, %.1f, %.1f)", LoadF(camera + 216), LoadF(camera + 220),
+                              LoadF(camera + 224));
+        }
         for (uint32_t i = 0; i < 4; ++i)
         {
             uint32_t actor = PlayerActor(i);
@@ -1075,11 +1084,56 @@ namespace mp
         return true;
     }
 
+    // The gameplay camera frames the actors with a registered CCameraInterestBehaviour (vtable 0x8200DB6C;
+    // vf11 = SetEnabled -> sub_820E10E8 adds it to the CCameraManager, manager 4, with sub_821B2830 and
+    // removes it with sub_821B2950; +0x3C bit 0x40 = registered, +0x38 its id). Every Crash is one, so all
+    // machines framed the whole group the same way, as the shared co-op camera does. Online each machine has
+    // its own screen: the remote players' interests are taken out (again after a show turns them back on).
+    void LocalCamera(PPCContext& ctx, uint8_t* base, Net& n)
+    {
+        constexpr uint32_t INTEREST_VTABLE = 0x8200DB6C;
+        uint32_t cameras = LoadBE32(0x824A7A24 + 28 + 4 * 4);
+        if (!GuestPointer(cameras))
+            return;
+        for (uint32_t i = 1; i < 4; ++i)
+        {
+            uint32_t actor = PlayerActor(i), controller = actor ? LoadBE32(actor + 0x1C) : 0;
+            if (!GuestPointer(controller))
+                continue;
+            uint32_t& interest = n.interests[i];
+            if (!GuestPointer(interest) || LoadBE32(interest) != INTEREST_VTABLE || LoadBE32(interest + BEHAVIOUR_ACTOR) != actor)
+            {
+                interest = 0;
+                for (uint32_t o = 0; o < 0x400 && !interest; o += 4)
+                    if (uint32_t b = LoadBE32(controller + o); GuestPointer(b) && LoadBE32(b) == INTEREST_VTABLE &&
+                                                              LoadBE32(b + BEHAVIOUR_ACTOR) == actor)
+                        interest = b;
+                if (!interest)
+                    continue;
+            }
+            uint8_t* flags = g_memory.Translate(interest + 0x3C);
+            if (!(*flags & 0x40))
+                continue;
+            PPCContext call = ctx;
+            call.r3.u64 = cameras;
+            call.r4.u64 = LoadBE32(interest + 0x38);
+            call.r5.u64 = actor;
+            call.r6.u64 = interest;
+            sub_821B2950(call, base);
+            *flags &= ~0x40;
+            if (mp::Trace())
+                Log("[mp] camera: player %u no longer framed here", i + 1);
+        }
+    }
+
     void NetTick(PPCContext& ctx, uint8_t* base)
     {
         Net& n = N();
         if (n.role != Role::None && InLevel())
+        {
             FixLooks(ctx, base, n);
+            LocalCamera(ctx, base, n);
+        }
         if (n.role == Role::Host)
             HostTick(ctx, base, n);
         else if (n.role == Role::Client)
