@@ -29,13 +29,13 @@ from ghidra.program.model.symbol import SourceType
 
 
 def split_scope(name):
-    """'a::b<c::d>::e' -> ['a', 'b<c::d>', 'e'] (ignores :: inside template arguments)."""
+    """'a::b<c::d>::e' -> ['a', 'b<c::d>', 'e'] (ignores :: inside template arguments and {for_x::y})."""
     parts, depth, start, i = [], 0, 0, 0
     while i < len(name):
         c = name[i]
-        if c in '<(':
+        if c in '<({':
             depth += 1
-        elif c in '>)':
+        elif c in '>)}':
             depth -= 1
         elif depth == 0 and name.startswith('::', i):
             parts.append(name[start:i])
