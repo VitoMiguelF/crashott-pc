@@ -106,3 +106,26 @@ converts old F5 recordings to the direct boot.
   not ImGui nav (nav lost its focused item, NavId 0, when the window opened behind another one).
 - `graphics.hd_textures` has no row anywhere (default on); `gpu/hd_textures.cpp` always uses the HD AI
   Remaster mod's pack when `graphics.hd_remaster` is on.
+
+## Skin challenge counters (`runtime/settings/challenge_counters.cpp`)
+
+- The HUB's locked skin dolls show the player's progress ("DEFEAT 87/200 RATNICIANS"). Hook on
+  `sub_82315950(bible, index)`, the string pointer every frontend text item takes (item: keys +112, bible
+  +148, shown UTF-16 string +156, code-set string +152). Language = bible+20 [bible+36]: count +20, sorted
+  keys +24, offsets +28, buffer +32. 19 `frontend` keys (0xF9DD, 0x6B5E, ...); rewritten only while the
+  text still holds the challenge's number.
+- Unlock rules: `script\bootup_files.blua` (`UnlockXSkin` objectives; the loose `objectives.blua/.lua` are
+  stale). `CStatsManager` = manager 16; int stat s of class c (1 = Global) at +((c * 93 + s + 114) * 4).
+  EStatInt 30-44 `*Jacked`, 50-55 minion `*Deaths` (Chiratta = Ratnician, Koala = Koo-ala, Monkey, Rabbit,
+  BratGirl). Gold idols `sub_82248228`, completion % `sub_822485E0`.
+- Profile `contador_desafios` (add `game.language=pt-br` via `CRASH_SETTINGS` for PT-BR). To reach the
+  other episodes' dolls: console `unlock levels` (`dev.unlock_levels()`, `DO_UnlockLevel` 0-19 only, skins
+  stay locked), then LB / RB in the HUB.
+- In a level: `settings::challenges::Draw` (overlay channel `BITMAP_CHALLENGES`) polls the 17 enemy stats
+  while the frontend node is 638; a rise of 1-5 shows the challenge text from the count on (no verb:
+  "2/200 SKIN RATNICIANS") under the game's
+  `CFodderCounter` (right side, y 185-310 of 720; ours from y 326), one line per enemy (same enemy = same
+  line), lines stacked and sliding up as they end. Each line slides in from beyond the right edge and back
+  out the same way (0.7 s each, smoothstep). The texts are copied from the frontend bible the first
+  time the hook sees one of its languages (main menu). Profile `contador_fase` (console
+  `Managers.StatsManager:IncrementValueInt(EStatInt_ChirattaDeaths, 1)`).

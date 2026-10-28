@@ -55,9 +55,10 @@ namespace gpu::overlay
     // screen). `version` names the contents: a call with the previous call's version on the same
     // `channel` draws the copy already uploaded and doesn't read `pixels`. Each channel (one per
     // caller, BITMAP_CHANNELS of them: the subtitles, the settings screen, the save screens'
-    // keyboard and delete prompt, the cutscenes' skip prompt, the console, the touch controls'
+    // keyboard and delete prompt, the cutscenes' skip prompt, the skin challenges' counters, the
+    // console, the touch controls'
     // stick, buttons and top row) has its own upload buffer.
-    enum BitmapChannel { BITMAP_SUBTITLES, BITMAP_SETTINGS, BITMAP_SAVE_SCREENS, BITMAP_SKIP_PROMPT, BITMAP_CONSOLE,
+    enum BitmapChannel { BITMAP_SUBTITLES, BITMAP_SETTINGS, BITMAP_SAVE_SCREENS, BITMAP_SKIP_PROMPT, BITMAP_CHALLENGES, BITMAP_CONSOLE,
                          BITMAP_TOUCH_STICK, BITMAP_TOUCH_BUTTONS, BITMAP_TOUCH_TOP, BITMAP_CHANNELS };
     void DrawBitmap(uint32_t width, uint32_t height, const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, uint64_t version,
                     BitmapChannel channel = BITMAP_SUBTITLES);

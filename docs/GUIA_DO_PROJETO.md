@@ -353,6 +353,7 @@ Enter roda a linha; setas para cima/baixo andam no histórico (guardado em `user
 |---|---|
 | `help [comando]` | lista os comandos ou explica um |
 | `unlock all` | as 20 skins do jogo, fases e golpes (os objetivos do próprio jogo; o jogo grava no save quando salvar) + a Crash_Hulk no menu de skins |
+| `unlock levels` | só as fases (todos os episódios no HUB, trocados com LB/RB); skins e golpes ficam como estão, então os bonecos trancados continuam mostrando o desafio com o contador ("DERROTE 87/200 RATECNICOS") |
 | `unlock skin <nome>` | uma skin (`hulk` não ocupa vaga da lista de 20 do jogo: fica em `[dev] hulk_skin`) |
 | `mojo <n>` | +n de mojo (o HUD acompanha) |
 | `god [on\|off]` | invencibilidade (o HP não desce; poços ainda matam) |

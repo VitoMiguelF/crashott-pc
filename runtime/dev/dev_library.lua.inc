@@ -112,4 +112,11 @@ function dev.unlock_all(extra_skins)
   devprint("dev.unlock_all queued")
 end
 
+-- Only the levels (the HUB's episodes), leaving the skins locked: their challenges keep showing.
+function dev.unlock_levels()
+  local i
+  dev.objective("dev_unlock_levels", function(o) for i = 0, 19 do o:DO_UnlockLevel(i) end end)
+  devprint("dev.unlock_levels queued")
+end
+
 )lua"

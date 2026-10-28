@@ -1003,3 +1003,40 @@ dev_console = [
 ]
 input = [["@hub"], [2.8, "SHOT"], ["@gameplay_ready"], [2, "SHOT"]]
 expect = { exit = ["timeout"], events = ["hub", "level_ready", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['StartLevel \+ SkipToLevel from node 575', 'event level_start .*L1_E3'] }
+
+[profiles.contador_desafios]
+description = "Contador nos desafios das skins (settings/challenge_counters.cpp): LOAD GAME até o HUB (slot 1), desce para a fileira dos bonecos e anda para a direita; os bonecos trancados mostram \"DEFEAT 37/200 RATNICIANS\" etc. Em PT-BR: --set 'env={ CRASH_SETTINGS = \"game.language=pt-br\" }'"
+fps_limit = 60
+test = true
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "load:1:hub"
+input = [["@hub"], [2, "DOWN"], [3, "SHOT"], [3.5, "RIGHT"], [4.5, "SHOT"], [5, "RIGHT"], [6, "SHOT"], [6.5, "RIGHT"], [7.5, "SHOT"], [8, "RIGHT"], [9, "SHOT"],
+         [9.5, "RIGHT"], [10.5, "SHOT"], [11, "RIGHT"], [12, "SHOT"], [12.5, "RIGHT"], [13.5, "SHOT"], [14, "RIGHT"], [15, "SHOT"], [15.5, "RIGHT"], [16.5, "SHOT"],
+         [17, "RIGHT"], [18, "SHOT"], [18.5, "RIGHT"], [19.5, "SHOT"], [20, "RIGHT"], [21, "SHOT"]]
+expect = { exit = ["timeout"], events = ["hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[challenges\] key 0x'] }
+
+[profiles.contador_fase]
+description = "Contador das skins na fase (settings/challenge_counters.cpp): vila L1_E1 sem cena; o console soma 1 Ratecnico (aparece o contador do jogo e o nosso embaixo), outro Ratecnico 1 s depois (a mesma linha atualiza), um Espeto dominado e um Coelho Vodu (linhas novas embaixo); depois as linhas somem e as de baixo sobem"
+fps_limit = 60
+test = true
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_console = [
+    ["@gameplay_ready+1", "!toggle"],
+    ["@gameplay_ready+1.5", "lua Managers.StatsManager:IncrementValueInt(EStatInt_ChirattaDeaths, 1)"],
+    ["@gameplay_ready+1.8", "!esc"],
+    ["@gameplay_ready+3", "!toggle"],
+    ["@gameplay_ready+3.3", "lua Managers.StatsManager:IncrementValueInt(EStatInt_ChirattaDeaths, 1)"],
+    ["@gameplay_ready+3.6", "lua Managers.StatsManager:IncrementValueInt(EStatInt_SpikeJacked, 1)"],
+    ["@gameplay_ready+3.9", "!esc"],
+    ["@gameplay_ready+5.5", "!toggle"],
+    ["@gameplay_ready+5.8", "lua Managers.StatsManager:IncrementValueInt(EStatInt_RabbitDeaths, 1)"],
+    ["@gameplay_ready+6.1", "!esc"],
+]
+input = [["@gameplay_ready"], [2.4, "SHOT"], [4.4, "SHOT"], [6.6, "SHOT"], [8.6, "SHOT"], [10.5, "SHOT"], [13, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "console_cmd"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['challenge texts kept for the levels', 'in level: Ratnicians defeated \(Chiratta\) 2/200', 'in level: Spikes jacked 1/50', 'in level: Voodoo Bunnies defeated \(Rabbit\) 1/200'] }
