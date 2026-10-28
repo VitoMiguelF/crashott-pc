@@ -142,10 +142,17 @@ spawned and every native player path (camera, backpack, damage, triggers) alread
   after the start.
 - Seen (`mp_m2_host` + `mp_m2_client`, L1_E1): both windows show both Crashes from the first frame; the
   client walks, jumps and attacks with its Crash, the host's P1 walks, attacks and jumps, each window shows
-  both in the same places with the same moves (the attack swipe and its hit effect on both). Each machine
-  draws its own player with P1's look (orange) and the other with P2's (`Crash_Player2`): the per-player
-  colours are M4. What inputs cannot mirror (enemies' own AI, hits that land differently on each machine)
-  is M3.
+  both in the same places with the same moves (the attack swipe and its hit effect on both). What inputs
+  cannot mirror (enemies' own AI, hits that land differently on each machine) is M3.
+- **Same colour on both machines.** Both Crashes' drawables (`CCharacterObject`: Crash +0xE0 is the
+  `CCharacterRenderBehaviour`, vtable 0x82015BC4, its +92 the drawable) hold the same palettes: normal
+  (`crash_normal`) and jacked (`Crash_Player2`) of their variant (+4548; +4516 / +4532). At setup the normal
+  one is copied into the drawable's base (+348, `sub_8222C2D8`); every frame `sub_822212C0` blends the base
+  toward the jacked one by +0x15D0, which stays at the jacked end for player 2. The client's P1 is the host's
+  P2, so the client swaps them once per drawable when both are on foot: its P1 gets the jacked palette as
+  base, its P2's jacked slot points to the normal palette. Seen: the host's P1 orange and the client's player
+  pale on both windows from the first frame. The head marker stays per machine ("1" over the local player).
+  Up to 5 colours = more palettes (recoloured at load, as `settings/snipe_colors.cpp` does) chosen the same way.
 - Tried and dropped: a non-player Crash puppet through the `Cheerleader` class (what the cinematics use for
   Cortex / Tiny / N. Gin): its bank only has the Cortex / NGin / Tiny subtypes, so subtype `Crash` crashes in
   `sub_82389720` (`mp_marionete`). A real puppet needs a new actor template (M3).

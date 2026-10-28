@@ -2437,6 +2437,10 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   não basta (o cliente ficava 3-4 unidades atrás); `CPhysicsBehaviour::Teleport` (sub_82142338, física =
   Crash+0xDC) só quando passa de `CRASH_MP_SNAP` (1,0) do registro e nunca para quem não está a pé (bit 1
   do registro). Diferença entre as máquinas ~0,3-0,5 correndo e pulando, sem correção depois do começo.
-  Cada máquina desenha o próprio jogador laranja e o outro com a skin do P2 (cores = M4); IA dos inimigos
-  e golpes que acertam diferente = M3. Marionete via classe `Cheerleader` (`mp_marionete`) crasha: o banco só tem
+  Cores iguais nas duas máquinas: os dois Crashes têm as mesmas paletas (normal `crash_normal`, jacked
+  `Crash_Player2`); o drawable (Crash+0xE0 -> +92) copia a normal para a base (+348, sub_8222C2D8) e
+  mistura para a jacked por +0x15D0 (o P2 fica na jacked). No cliente, uma vez por drawable: o P1 recebe a
+  jacked como base e o "jacked" do P2 aponta para a normal. Visto: P1 do host laranja e o jogador do cliente
+  claro nas duas janelas desde o primeiro quadro (o marcador "1" fica sobre o jogador local). IA dos
+  inimigos e golpes que acertam diferente = M3. Marionete via classe `Cheerleader` (`mp_marionete`) crasha: o banco só tem
   Cortex/NGin/Tiny.

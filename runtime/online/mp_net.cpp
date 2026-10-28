@@ -71,6 +71,7 @@ extern "C" PPC_FUNC(__imp__sub_82099058);  // CAIManager::vf10
 extern "C" PPC_FUNC(__imp__sub_8220AC38);  // CObjectiveManager::vf10
 PPC_EXTERN_FUNC(sub_82142608);             // CActor::GetBehaviour(actor, type)
 PPC_EXTERN_FUNC(sub_82142338);             // CPhysicsBehaviour::Teleport(Vector), the vector in r4 / r5
+PPC_EXTERN_FUNC(sub_8222C2D8);             // character drawable (+348): sets its base palette
 
 namespace
 {
@@ -125,6 +126,7 @@ namespace
         XINPUT_GAMEPAD lastSentPad{};
         uint64_t lastPadSend = 0, sentPadSequence = 0;
         float snap = 1.0f;  // client: player position error corrected through the physics
+        uint32_t swappedLooks[2] = {};  // client: the players' drawables whose looks were swapped
         uint64_t backpackSince = 0;  // player 2 riding in the backpack since (RemotePad taps B)
     };
 
@@ -271,6 +273,50 @@ namespace
                           LoadF(xf + 56));
         }
         Log("%s", line);
+    }
+
+    // Each player keeps its colour on both machines. The game draws player 1 with the Crash template's
+    // normal palette and player 2 with its jacked one ("Crash_Player2.bmp"): the character drawable
+    // (CCharacterObject: Crash +0xE0 is the CCharacterRenderBehaviour, its +92 the drawable) copies the
+    // normal palette of its variant (+4548; palettes at +4516 normal / +4532 jacked) into its base
+    // (+348, sub_8222C2D8) at setup, and blends it every frame toward the jacked one by +0x15D0
+    // (sub_822212C0; player 2's stays at the jacked end). The client plays the host's player 2 as its
+    // player 1, so the two looks swap there: its player 1 gets the jacked palette as base, its player 2
+    // blends toward the normal one. Done once per drawable (a new level makes new ones).
+    void SwapLooks(PPCContext& ctx, uint8_t* base, Net& n, uint32_t p1, uint32_t p2)
+    {
+        if (n.role != Role::Client || n.remoteUser != 1 || !p1 || !p2)
+            return;
+        uint32_t drawables[2];
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+            uint32_t crash = LoadBE32(CRASH_TABLE + i * 4);
+            uint32_t render = GuestPointer(crash) ? LoadBE32(crash + 0xE0) : 0;
+            drawables[i] = GuestPointer(render) && LoadBE32(render) == 0x82015BC4 ? LoadBE32(render + 92) : 0;
+            if (!GuestPointer(drawables[i]) || LoadBE32(crash + 300) != 2)
+                return;  // not both on foot with a drawable yet
+        }
+        if (drawables[0] == n.swappedLooks[0] && drawables[1] == n.swappedLooks[1])
+            return;
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+            uint32_t d = drawables[i], variant = LoadBE32(d + 4548) & 3;
+            uint32_t normal = LoadBE32(d + 4516 + variant * 4), jacked = LoadBE32(d + 4532 + variant * 4);
+            if (!GuestPointer(normal) || !GuestPointer(jacked))
+                return;
+            if (i == 0)
+            {
+                PPCContext call = ctx;
+                call.r3.u64 = d + 348;
+                call.r4.u64 = jacked + 16;
+                sub_8222C2D8(call, base);
+            }
+            else
+                StoreBE32(d + 4532 + variant * 4, normal);
+        }
+        n.swappedLooks[0] = drawables[0];
+        n.swappedLooks[1] = drawables[1];
+        Log("[mp] client: looks swapped (player 1 = the host's player 2's colour, player 2 = the host's player 1's)");
     }
 
     bool Read(PPCContext& ctx, uint8_t* base, uint32_t actor, Record& r)
@@ -535,6 +581,7 @@ namespace
             n.lastSyncTrace = mp::NowMs();
             TracePlayers("client", n.lastSyncTrace);
         }
+        SwapLooks(ctx, base, n, p1, p2);
         uint64_t now = mp::NowMs();
         if (now - n.lastStats >= 5000)
         {
