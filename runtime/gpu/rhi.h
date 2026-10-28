@@ -359,6 +359,9 @@ namespace gpu::rhi
         // Geometry shaders usable (false on Mali: the renderer's rectangle lists and wide-screen 2D
         // then go without them).
         virtual bool SupportsGeometryShaders() const { return true; }
+        // Implicit-LOD sampling in the translated shaders (shader_translator.h
+        // SetImplicitDerivatives); false on Turnip, which loses the device with it.
+        virtual bool SupportsImplicitDerivatives() const { return true; }
 
         // Presentation. BeginPresent returns the back buffer (DXGI BackBufferFormat()) to draw the
         // frame into; Present submits and shows it, keeping at most two frames in flight.

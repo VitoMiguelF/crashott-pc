@@ -384,6 +384,7 @@ namespace gpu::rhi
 
             bool SupportsBlockCompression() const override { return m_blockCompression; }
             bool SupportsGeometryShaders() const override { return m_geometryShaders; }
+            bool SupportsImplicitDerivatives() const override { return m_implicitDerivatives; }
             DXGI_FORMAT BackBufferFormat() const override { return m_backBufferFormat; }
             void BackBufferSize(uint32_t& width, uint32_t& height) const override
             {
@@ -510,6 +511,9 @@ namespace gpu::rhi
             // Geometry shaders: off where the driver has none, and on Mali, whose compiler (G720,
             // r44p1) crashes on the renderer's (RECT_LIST_GS, HUD_GS); CRASH_VULKAN_NO_EXT=gs on others.
             bool m_geometryShaders = true;
+            // Implicit-LOD sampling: off on Mesa's Turnip (Adreno 650, Mesa 26.2.5), where the
+            // translated shaders' SampleBias lost the device after 1-2 minutes of a level.
+            bool m_implicitDerivatives = true;
             bool m_gplExtension = false;  // VK_EXT_graphics_pipeline_library + VK_KHR_pipeline_library listed
             std::vector<std::string> m_enabledDeviceExtensions;
             std::unordered_map<uint32_t, VkFormatFeatureFlags> m_formatFeatures;  // (format, usage) pairs checked by CreateTexture
@@ -976,6 +980,21 @@ namespace gpu::rhi
             m_geometryShaders = available.features.geometryShader && m_properties.vendorID != 0x13B5 && !(extensionsOff && strstr(extensionsOff, "gs"));
             if (!m_geometryShaders)
                 Log("[vulkan] geometry shaders not used%s: rectangle lists drawn as triangles", m_properties.vendorID == 0x13B5 ? " (Mali)" : "");
+            VkPhysicalDeviceDriverProperties driver{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
+            VkPhysicalDeviceProperties2 driverProperties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver };
+            vkGetPhysicalDeviceProperties2(m_physical, &driverProperties);
+            m_implicitDerivatives = driver.driverID != VK_DRIVER_ID_MESA_TURNIP;
+            if (!m_implicitDerivatives)
+                Log("[vulkan] Turnip: texture fetches sampled with explicit gradients (no implicit derivatives)");
+            // Qualcomm's own driver (Adreno 830, 1.3.284) reports VK_KHR_push_descriptor, but the
+            // draws see wrong textures through it: the village grass came out as blotchy water,
+            // the water and the mojos' glow too. Pushing all 32 bindings or on every draw did not
+            // help; the same textures through descriptor sets do (android_port.md).
+            if (m_pushDescriptors && driver.driverID == VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
+            {
+                m_pushDescriptors = false;
+                Log("[vulkan] Qualcomm driver: push descriptors not used");
+            }
             VkPhysicalDeviceVulkan13Features features13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
             features13.dynamicRendering = VK_TRUE;
             features13.synchronization2 = VK_TRUE;

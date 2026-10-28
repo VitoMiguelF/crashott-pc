@@ -70,6 +70,10 @@ namespace gpu
     // getWeights and the pixel position of param gen. Set before translating; at 1x the HLSL is
     // unchanged.
     void SetRenderScaled(bool scaled);
+    // Whether texture fetches may sample with implicit derivatives where the whole quad runs them
+    // (rhi::Device::SupportsImplicitDerivatives; on by default). CRASH_SHADER_DERIVATIVES
+    // (gradients / linear / implicit) overrides it. Set before translating.
+    void SetImplicitDerivatives(bool enabled);
     TranslatedShader TranslateShader(ShaderStage stage, const uint32_t* ucode, uint32_t dwordCount);
     // The same for a given variant instead of the current one (any thread: shader_warmup.cpp).
     TranslatedShader TranslateShader(ShaderStage stage, const uint32_t* ucode, uint32_t dwordCount, bool renderScaled);

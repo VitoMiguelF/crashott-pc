@@ -4202,6 +4202,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         }
         g_rhi->BackBufferSize(g_backBufferWidth, g_backBufferHeight);
         gpu::SetHostBlockCompression(g_rhi->SupportsBlockCompression());
+        SetImplicitDerivatives(g_rhi->SupportsImplicitDerivatives());
 
         // Temporal upscaler: probed on this device; the scene scale depends on it.
         upscaler::Init(g_rhi, settings::AtStartup().upscaler, (vfs::UserDataDir() / "ngx").wstring());
