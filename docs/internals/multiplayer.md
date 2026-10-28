@@ -173,8 +173,8 @@ spawned and every native player path (camera, backpack, damage, triggers) alread
   client attacking): both machines with the same enemies all along (3 -> 10 with the drops -> 9 -> 2), the
   same ones dying at the same time, positions within 0-1.0; the client took the host's hitpoints and
   dropped its own hits; no crash in 60 s. Left: hits the client lands with nobody on the host to see them
-  (the host plays the client's Crash on the same pad, so they land there too unless positions diverge), the
-  knock-out / respawn of a player (co-op state 3) as a host event, enemies the host's camera never sees.
+  (the host plays the client's Crash on the same pad, so they land there too unless positions diverge),
+  enemies the host's camera never sees. (Knock-out / respawn: "4 players" below.)
 - **Same colour on both machines.** Both Crashes' drawables (`CCharacterObject`: Crash +0xE0 is the
   `CCharacterRenderBehaviour`, vtable 0x82015BC4, its +92 the drawable) hold the same palettes: normal
   (`crash_normal`) and jacked (`Crash_Player2`) of their variant (+4548; +4516 / +4532). At setup the normal
@@ -213,16 +213,45 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   P1 and the others on P2-P4 in slot order (`LocalIndex` / `SlotOf`); the players have the same names
   everywhere, so a host record of player index g is slot g. "CMI2" pad packets carry the slot; the host
   learns each client's address from them and passes them on to the other clients; each machine gives
-  slot g's pad to controller `LocalIndex(g)`. Colours by slot: even slots orange (normal palette), odd ones
-  pale (jacked), fixed (base and blend target the same palette).
+  slot g's pad to controller `LocalIndex(g)`.
+- **4 colours, by slot**: orange (slot 1, normal palette), pale (slot 2, jacked), blue (3), green (4), fixed
+  (base and blend target the same palette, so the jacked blend never moves it). Blue and green: after the
+  game's palette blend of the frame (`sub_822212C0`, hooked) the final palette (+0x11C8, 256 big-endian
+  ARGB words) of those players' drawables gets its fur turned: the saturated oranges (hue 5-45 degrees,
+  saturation > 0.5; skin, jeans and shoes are outside it) go to hue 215 / 115, saturation and value kept.
+- **Knock-out and back**: a player's death posts a `CActionResetPlayer`; its first run (`sub_8220D830`, the
+  only caller of the co-op knock-out `sub_82164F40` -> `sub_82164120` -> `sub_82154300`) puts a co-op
+  player into the other's backpack in co-op state 3 with a timer at +0x114 (`Crash::vf08` counts it down,
+  `sub_82152D28`, then state 0 = not joined), and has no Crash for an index >= 2 (P3/P4 got no action at
+  all and lay there for good). Online (or with `CRASH_MP_PLAYERS`) every player is knocked out the same way
+  instead, on that action or on its hitpoints reaching 0: it lies for the game's knock-out time (float at
+  0x82002328, 5 s), then its actor is reset (`sub_82090370`, actor +0x1C vtable +0x3C, what the game's
+  respawn calls: up again, full hitpoints; two values kept as `sub_8220D830` does) and teleported behind the
+  on-foot teammate with the lowest slot, 1.2 apart per slot (the same place on every machine).
+- **Players' hitpoints are the host's**: player records carry hitpoints as a fraction of the maximum (P1/P2
+  start at the game's 30, P3/P4 at the template's 90: they get P1's maximum; machines may differ with the
+  upgrades); the client drops its own hits on players and applies the host's fraction through
+  `AdjustHitpoints`, so a knock-out happens on every machine, except for a player already knocked out or
+  back for less than 1.5 s (the host's record may still say 0). A player's damageable is found before its
+  first hit among the pointers of the actor's behaviour controller (actor +0x1C; vtable 0x8201145C, its
+  actor at +28): it is not always inside the actor.
 - **Camera-relative sticks**: the game walks a player along `stick.x * right + stick.y * forward` of the view
   camera (`input::StickToWorld` `sub_821EBC70`, right = (forward.z, -forward.x), `sub_82253818`; forward =
   CRenderManager +356 VectorCamera +228). A remote stick only means the same direction under the same
   camera, so each pad packet carries the sender's camera forward and the receiver turns the left stick onto
   its own camera's axes.
+- **Fewer corrections**: player 1 is in play 500 ms after the level shows it and P2-P4 300 ms after being
+  shown (their transform holds the parking place, 57.4 45.5 -52.1, until then; a client snapped its P2 there
+  and back); no correction for a knocked-out player or one just back; moving within 1.6 of another player
+  (pushing: each machine sees the push a few frames apart) up to 2.0 is let go (the standing correction
+  evens it out); a correction to the same place that does not hold is tried 3 times, then left until the
+  host's record moves (`mp_m3_client`: 20 snaps in 60 s, 15 of them to one spot, now 6).
 - Seen (`mp4_host` + 3 clients, L1_E1): the 4 Crashes on foot on every machine, each moving its own and every
-  machine showing each slot in the same place (within 0.5-0.9), same colour per slot; 0-13 snaps per machine
-  in 40 s, when players bump into each other. A player that stands still (the host's record and the local
+  machine showing each slot in the same place (within 0.5-0.9), same colour per slot on every machine; 6-17
+  snaps per machine in 40 s (most at the start), errors after the spawn up to 1.7 and brief. Knock-out
+  (`--set dev_invincible=false --set dev_lua_file=tools/dev_lua/mp_ko.lua` on `mp4_host`, which kills P3 then
+  P2; `mp_ko` on one machine): the same two players down on all 4 machines, back 5 s later at the same
+  place (within 0.2) with 30 of 30. A player that stands still (the host's record and the local
   Crash both still for 0.5 s) is corrected past 0.25 instead of `CRASH_MP_SNAP`: one client kept its own
   player 0.9 off the host's for good; now standing players match within 0-0.22. The first try showed a remote P2 in T-pose, stuttering: it
   ignored its controller (state 0 had freed its input map), so the snaps pulled it every 250 ms.

@@ -57,6 +57,15 @@ namespace mp
     std::vector<uint32_t> ExtraCrashes();
     uint32_t PlayerCrash(uint32_t index);  // the Crash of player index 0-3 (0 if none)
     bool PlayerOnFoot(uint32_t index);     // in play: co-op state 2 and, for players 2-4, already shown
+    // Knocked out (lying down until it comes back next to a teammate) or back for less than 1.5 s: its
+    // hitpoints are this machine's (mp_players.cpp).
+    bool HitpointsHeld(uint32_t index);
+    // mp_net.cpp: the player's slot in the game (0 = the host); offline the index itself.
+    uint32_t PlayerSlot(uint32_t index);
+    // The player's hitpoints (-1 while AdjustHitpoints has not shown its damageable).
+    float PlayerHitpoints(uint32_t index);
+    float PlayerMaxHitpoints(uint32_t index);
+    void SetPlayerMaxHitpoints(uint32_t index, float value);  // and the hitpoints down to it
     void PlayersTick(PPCContext& ctx, uint8_t* base);
     // Online (or more than two players): nobody enters another player's backpack.
     bool NoBackpack();

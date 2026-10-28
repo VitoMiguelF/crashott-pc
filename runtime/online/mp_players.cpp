@@ -23,6 +23,12 @@
 // on foot (state 2), and an entry that still comes takes the game's own failure path (flags +0x110 bit 2:
 // collision back on, DidEnterBackpackFail). Skipping the entry alone left the Crash without collision on
 // the other's back: it fell through the floor and was knocked out.
+// A player's death posts a CActionResetPlayer; its first run (sub_8220D830) puts player 2 of a co-op game
+// into player 1's backpack, knocked out (co-op state 3, the timer at +0x114, then state 0: not joined).
+// Players 3 and 4 get no such action (they just lie there). Here every player is knocked out the same way
+// instead, on that action or on its hitpoints reaching 0: it lies for the game's knock-out time (the float at 0x82002328), then the actor is
+// reset (sub_82090370, what a respawn does: up again, full hitpoints) and put next to the teammate on foot
+// with the lowest slot (the same one on every machine).
 
 #include "mp.h"
 #include "../diagnostics.h"
@@ -43,6 +49,9 @@ extern "C" PPC_FUNC(__imp__sub_82153400);  // Crash::IsOkayToEnterBackpack
 extern "C" PPC_FUNC(__imp__sub_82153348);  // Crash::SetPlayerEnteringBackpack
 extern "C" PPC_FUNC(__imp__sub_82153B08);  // Crash::~Crash
 extern "C" PPC_FUNC(__imp__sub_82098A38);  // CAIManager: adds an AI target (a player actor)
+extern "C" PPC_FUNC(__imp__sub_8220D830);  // CActionResetPlayer: a player's death (vf01's first run)
+PPC_EXTERN_FUNC(sub_82090370);             // CActor: reset (vtable +0x3c), what a respawn does
+PPC_EXTERN_FUNC(sub_82142608);             // CActor::GetBehaviour
 PPC_EXTERN_FUNC(sub_82154A58);             // Crash: shows a player (behaviours on, collision, AI target), as leaving the backpack does
 
 namespace
@@ -68,9 +77,38 @@ namespace
         uint32_t crash = 0;
         uint8_t index = 0;
         uint64_t since = 0;
+        uint64_t shownAt = 0;  // its transform is the new place a frame later: in play 300 ms after
         bool onFoot = false;
     };
     std::vector<Extra> g_extras;  // players 2-4 (index 1-3) to be shown, in spawn order
+
+    constexpr uint32_t KNOCKOUT_SECONDS = 0x82002328;  // float: the co-op knock-out time
+    struct Knockout
+    {
+        uint32_t crash = 0;
+        uint32_t index = 0;
+        uint64_t until = 0;
+    };
+    std::vector<Knockout> g_knockouts;
+    uint64_t g_revivedAt[4] = {};
+
+    // Player 1 sits at the parking place of the hidden Crashes for the first frames of a level, until the
+    // level's spawn moves it: in play 500 ms after PlayersTick first sees it in a level.
+    uint32_t g_p1 = 0;
+    uint64_t g_p1Since = 0;
+
+    void KnockOut(uint32_t index, const char* why)
+    {
+        uint32_t crash = index < 4 ? mp::PlayerCrash(index) : 0;
+        if (!crash || std::any_of(g_knockouts.begin(), g_knockouts.end(), [crash](const Knockout& k) { return k.crash == crash; }))
+            return;
+        float seconds = LoadF(KNOCKOUT_SECONDS);
+        if (!(seconds >= 1.0f && seconds <= 10.0f))
+            seconds = 3.0f;
+        g_knockouts.push_back({crash, index, mp::NowMs() + uint64_t(seconds * 1000)});
+        Log("[mp] player %u (Crash %08X) knocked out (%s, hitpoints %.1f), back in %.1f s", index + 1, crash, why,
+            mp::PlayerHitpoints(index), seconds);
+    }
 
     bool Managed()
     {
@@ -162,7 +200,21 @@ PPC_FUNC(sub_82153B08)
     uint32_t crash = ctx.r3.u32;
     g_extras.erase(std::remove_if(g_extras.begin(), g_extras.end(), [crash](const Extra& e) { return e.crash == crash; }),
                    g_extras.end());
+    g_knockouts.erase(std::remove_if(g_knockouts.begin(), g_knockouts.end(), [crash](const Knockout& k) { return k.crash == crash; }),
+                      g_knockouts.end());
     __imp__sub_82153B08(ctx, base);
+}
+
+PPC_FUNC(sub_8220D830)
+{
+    if (!Managed())
+    {
+        __imp__sub_8220D830(ctx, base);
+        return;
+    }
+    uint32_t index = LoadBE32(ctx.r3.u32 + 4);
+    KnockOut(index, "reset action");
+    ctx.r3.u64 = 1;  // done, as the co-op path answers
 }
 
 // The first step of entering the backpack turns the Crash's collision off: online it never starts for a
@@ -251,8 +303,8 @@ namespace mp
             return false;
         for (const Extra& e : g_extras)
             if (e.crash == crash)
-                return e.onFoot && e.index < 4;
-        return true;
+                return e.onFoot && e.index < 4 && NowMs() - e.shownAt >= 300;
+        return !Managed() || (crash == g_p1 && NowMs() - g_p1Since >= 500);
     }
 
     uint32_t PlayerCrash(uint32_t index)
@@ -281,11 +333,95 @@ namespace mp
     // is on foot each is shown the way leaving the backpack shows a player (sub_82154A58 detaches it from
     // the backpack Crash's attacher, so that pointer is player 1 for the call), set on foot (co-op
     // state 2) and put next to player 1.
+    bool HitpointsHeld(uint32_t index)
+    {
+        for (const Knockout& k : g_knockouts)
+            if (k.index == index)
+                return true;
+        return index < 4 && g_revivedAt[index] && NowMs() - g_revivedAt[index] < 1500;
+    }
+
+    // A knocked-out player whose time is up: reset (the respawn's reset keeps two of the actor's values,
+    // behaviours 0xF / 0x11, when the first is above the threshold, as sub_8220D830 does) and put next to
+    // the teammate on foot with the lowest slot (itself, where it lies, when nobody is).
+    void Revive(PPCContext& ctx, uint8_t* base, const Knockout& k)
+    {
+        uint32_t physics = LoadBE32(k.crash + 0xDC), actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
+        if (!GuestPointer(actor))
+            return;
+        uint32_t target = 0, targetSlot = ~0u;
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            uint32_t crash = PlayerCrash(i);
+            if (!crash || crash == k.crash || !PlayerOnFoot(i) || HitpointsHeld(i))
+                continue;
+            if (PlayerSlot(i) < targetSlot)
+                targetSlot = PlayerSlot(i), target = crash;
+        }
+        uint32_t targetPhysics = LoadBE32((target ? target : k.crash) + 0xDC);
+        uint32_t targetActor = GuestPointer(targetPhysics) ? LoadBE32(targetPhysics + 96) : 0;
+        uint32_t xform = GuestPointer(targetActor) ? LoadBE32(targetActor + 44) : 0;
+        PPCContext call = ctx;
+        call.r3.u64 = actor;
+        call.r4.u64 = 0xF;
+        sub_82142608(call, base);
+        uint32_t kept = call.r3.u32;
+        call = ctx;
+        call.r3.u64 = actor;
+        call.r4.u64 = 0x11;
+        sub_82142608(call, base);
+        uint32_t kept2 = call.r3.u32;
+        bool keep = GuestPointer(kept) && GuestPointer(kept2) && LoadF(kept) > LoadF(0x82000DC8);
+        uint32_t values[2] = {keep ? LoadBE32(kept) : 0, keep ? LoadBE32(kept2) : 0};
+        call = ctx;
+        call.r3.u64 = actor;
+        call.r4.u64 = 0;
+        sub_82090370(call, base);
+        if (keep)
+        {
+            StoreBE32(kept, values[0]);
+            StoreBE32(kept2, values[1]);
+        }
+        g_revivedAt[k.index] = NowMs();
+        if (!GuestPointer(xform))
+            return;
+        // Behind the teammate's line, 1.2 apart per slot (not on the players who came up beside player 1, nor
+        // on another one back at the same time).
+        float x = LoadF(xform + 48) + (target ? 1.2f * (PlayerSlot(k.index) + 1) : 0.0f), y = LoadF(xform + 52) + 0.5f,
+              z = LoadF(xform + 56) - (target ? 1.5f : 0.0f);
+        bool moved = TeleportCrash(ctx, base, k.crash, x, y, z);
+        Log("[mp] player %u back at (%.1f, %.1f, %.1f)%s%s, hitpoints %.1f of %.1f", k.index + 1, x, y, z,
+            target ? "" : " (nobody on foot)", moved ? "" : ", not moved", PlayerHitpoints(k.index), PlayerMaxHitpoints(k.index));
+    }
+
     void PlayersTick(PPCContext& ctx, uint8_t* base)
     {
         if (!Managed() || !InLevel())
             return;
+        if (uint32_t p1 = PlayerCrash(0); p1 != g_p1)
+            g_p1 = p1, g_p1Since = NowMs();
         SpawnPlayers(ctx, base);
+        // Players 3 and 4 come with the template's maximum (90), players 1 and 2 with the game's (30 at the
+        // start, more with the upgrades): they get player 1's.
+        float p1Max = PlayerMaxHitpoints(0);
+        for (uint32_t i = 2; i < 4; ++i)
+            if (p1Max > 0 && PlayerOnFoot(i) && PlayerMaxHitpoints(i) > 0 && PlayerMaxHitpoints(i) != p1Max)
+            {
+                Log("[mp] player %u: maximum hitpoints %.0f -> %.0f (player 1's)", i + 1, PlayerMaxHitpoints(i), p1Max);
+                SetPlayerMaxHitpoints(i, p1Max);
+            }
+        for (uint32_t i = 0; i < 4; ++i)
+            if (PlayerOnFoot(i) && !HitpointsHeld(i) && PlayerHitpoints(i) > -0.5f && PlayerHitpoints(i) <= 0.0f)
+                KnockOut(i, "no hitpoints");
+        for (size_t i = 0; i < g_knockouts.size();)
+            if (NowMs() >= g_knockouts[i].until)
+            {
+                Knockout k = g_knockouts[i];
+                g_knockouts.erase(g_knockouts.begin() + i);
+                Revive(ctx, base, k);
+            }
+            else
+                ++i;
         if (g_extras.empty())
             return;
         uint32_t p1 = LoadBE32(CRASH_TABLE);
@@ -321,6 +457,7 @@ namespace mp
             float x = LoadF(p1Xform + 48) + 1.5f * e.index, y = LoadF(p1Xform + 52) + 0.5f, z = LoadF(p1Xform + 56);
             bool moved = TeleportCrash(ctx, base, e.crash, x, y, z);
             e.onFoot = true;
+            e.shownAt = NowMs();
             AddPlayer(LoadBE32(LoadBE32(e.crash + 0xDC) + 96));
             Log("[mp] player %u (Crash %08X) on foot at (%.1f, %.1f, %.1f)%s, controller %u%s", e.index + 1, e.crash, x, y,
                 z, moved ? "" : ", not moved", e.index, device ? "" : " (no such device)");

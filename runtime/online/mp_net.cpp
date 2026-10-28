@@ -87,6 +87,7 @@ namespace
     constexpr uint32_t CACTOR_VTABLE = 0x820007A4;
     // CDamageableBehaviour: its actor at +28, -> hitpoints at +64 (dev/dev_cheats.cpp)
     constexpr uint32_t BEHAVIOUR_ACTOR = 28, DAMAGEABLE_HITPOINTS = 64;
+    constexpr uint32_t DAMAGEABLE_VTABLE = 0x8201145C;  // CDamageableBehaviour
 
     // Heap pointers the game hands out: virtual (0x40000000..) or physical (0xA0000000..) memory.
     bool GuestPointer(uint32_t p) { return (p >= 0x40000000 && p < 0x7F000000) || (p >= 0xA0000000 && p < 0xC0000000); }
@@ -153,6 +154,9 @@ namespace
         // hitpoints when it comes up); client: the host's hitpoints being applied, damage dropped
         std::unordered_map<uint32_t, uint32_t> damageables;
         bool applyingHitpoints = false;
+        float recordHitpoints[4] = {-1, -1, -1, -1};
+        float lastSnapPos[4][3]{};  // client: the last correction's target, and how many went there in a row
+        uint32_t snapRepeats[4]{};  // trace: the host's last hitpoints (fraction) for each player
         uint64_t hitpointsApplied = 0, damageDropped = 0;
     };
 
@@ -289,6 +293,55 @@ namespace
         return d;
     }
 
+    // A player's damageable before it has taken a hit: one of the pointers of the actor's behaviour controller
+    // (actor +0x1C, what Lua calls m_BehaviourController.m_DamageableBehaviour), known by its vtable and
+    // its actor (+28).
+    uint32_t PlayerDamageable(Net& n, uint32_t actor)
+    {
+        if (uint32_t d = Damageable(n, actor))
+            return d;
+        uint32_t controller = GuestPointer(actor) ? LoadBE32(actor + 0x1C) : 0;
+        if (!GuestPointer(controller))
+            return 0;
+        for (uint32_t o = 0; o < 0x400; o += 4)
+            if (uint32_t d = LoadBE32(controller + o); GuestPointer(d) && LoadBE32(d) == DAMAGEABLE_VTABLE &&
+                                                      LoadBE32(d + BEHAVIOUR_ACTOR) == actor &&
+                                                      GuestPointer(LoadBE32(d + DAMAGEABLE_HITPOINTS)))
+            {
+                n.damageables[actor] = d;
+                return d;
+            }
+        return 0;
+    }
+
+    // The host's hitpoints for an actor it mirrors: its hits (and the deaths they bring) land here too.
+    void ApplyHitpoints(PPCContext& ctx, uint8_t* base, Net& n, uint32_t actor, const Record& r, uint64_t name, bool player = false)
+    {
+        uint32_t damageable = r.hitpoints < 0 ? 0 : player ? PlayerDamageable(n, actor) : Damageable(n, actor);
+        if (!damageable)
+            return;
+        float local = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)), wanted = r.hitpoints;
+        if (player)
+        {
+            uint32_t max = LoadBE32(damageable + 68);
+            if (!GuestPointer(max) || LoadF(max) <= 0)
+                return;
+            wanted = std::min(r.hitpoints, 1.0f) * LoadF(max);
+        }
+        if (local < 0 || std::abs(local - wanted) <= 0.01f)
+            return;
+        PPCContext call = ctx;
+        call.r3.u64 = damageable;
+        call.r5.u64 = 0;
+        call.f1.f64 = double(wanted) - local;
+        n.applyingHitpoints = true;
+        sub_82110448(call, base);
+        n.applyingHitpoints = false;
+        n.hitpointsApplied++;
+        if (mp::Trace())
+            Log("[mp] client: %08X hitpoints %.1f -> %.1f (host)", uint32_t(name), local, wanted);
+    }
+
     // A player's own physics keeps its position and puts the transform back every frame: a player is
     // moved through the physics. CPhysicsBehaviour::Teleport (sub_82142338, what the scripts use) sends
     // a CActionTeleport (message type 40) to the whole actor, and the Crash takes the other player
@@ -318,8 +371,9 @@ namespace
             if (!GuestPointer(xf))
                 continue;
             uint32_t crash = mp::PlayerCrash(i);
-            k += snprintf(line + k, sizeof(line) - k, " | P%u (%.1f, %.1f, %.1f) co-op %u", i + 1, LoadF(xf + 48),
-                          LoadF(xf + 52), LoadF(xf + 56), GuestPointer(crash) ? LoadBE32(crash + 300) : 9);
+            k += snprintf(line + k, sizeof(line) - k, " | P%u (%.1f, %.1f, %.1f) co-op %u hp %.0f (host %.2f)", i + 1, LoadF(xf + 48),
+                          LoadF(xf + 52), LoadF(xf + 56), GuestPointer(crash) ? LoadBE32(crash + 300) : 9,
+                          mp::PlayerHitpoints(i), N().recordHitpoints[i]);
         }
         Log("%s", line);
     }
@@ -460,8 +514,14 @@ namespace
             if (player == actor)
                 r.flags |= 1;
         for (uint32_t i = 0; i < 4; ++i)
-            if (mp::PlayerCrash(i) && PlayerActor(i) == actor && !mp::PlayerOnFoot(i))
-                r.flags |= 2;
+            if (mp::PlayerCrash(i) && PlayerActor(i) == actor)
+            {
+                if (!mp::PlayerOnFoot(i))
+                    r.flags |= 2;
+                // A player's hitpoints go as a fraction of its maximum (machines may have different ones).
+                float max = mp::PlayerMaxHitpoints(i), hp = mp::PlayerHitpoints(i);
+                r.hitpoints = max > 0 && hp >= 0 ? hp / max : -1.0f;
+            }
         return true;
     }
 
@@ -783,36 +843,45 @@ namespace
                     n.localMovedAt[index] = now;
                 }
                 bool still = now - n.recordMovedAt[index] >= 500 && now - n.localMovedAt[index] >= 500;
-                float limit = still ? 0.25f : n.snap;
-                if (!(r.flags & 2) && dx * dx + dy * dy + dz * dz > limit * limit && now - n.lastSnap[index] >= 250)
+                // Pushing against another player (within 1.6), each machine sees the push a few frames
+                // apart: up to 2.0 is let go while moving (the correction standing still evens it out).
+                bool contact = false;
+                for (uint32_t j = 0; j < n.players && !contact; ++j)
+                    if (uint32_t other = j != index ? PlayerActor(j) : 0; other && GuestPointer(LoadBE32(other + 44)))
+                    {
+                        uint32_t ox = LoadBE32(other + 44);
+                        float cx = LoadF(ox + 48) - here[0], cz = LoadF(ox + 56) - here[2];
+                        contact = cx * cx + cz * cz < 1.6f * 1.6f;
+                    }
+                float limit = still ? 0.25f : contact ? std::max(n.snap, 2.0f) : n.snap;
+                // A knocked-out player lies where it fell and comes back at the same place on every machine.
+                // A correction that does not hold (the place is taken here, or the player slides off it) is tried
+                // 3 times, then left until the host's record moves.
+                float* prev = n.lastSnapPos[index];
+                bool same = std::abs(prev[0] - r.m[9]) + std::abs(prev[1] - r.m[10]) + std::abs(prev[2] - r.m[11]) < 0.1f;
+                if (!(r.flags & 2) && !mp::HitpointsHeld(index) && dx * dx + dy * dy + dz * dz > limit * limit &&
+                    now - n.lastSnap[index] >= 250 && !(same && n.snapRepeats[index] >= 3))
                 {
                     targets[index] = {it->second, {r.m[9], r.m[10], r.m[11]}};
                     n.lastSnap[index] = mp::NowMs();
+                    n.snapRepeats[index] = same ? n.snapRepeats[index] + 1 : 1;
+                    prev[0] = r.m[9], prev[1] = r.m[10], prev[2] = r.m[11];
+                    if (mp::Trace())
+                        Log("[mp] P%u off by %.2f (%.1f, %.1f, %.1f here)", index + 1, std::sqrt(dx * dx + dy * dy + dz * dz),
+                            here[0], here[1], here[2]);
                 }
+                // The players' hitpoints are the host's too (so a knock-out comes on every machine), except
+                // while one is knocked out here or just back (the host's record may still say 0).
+                n.recordHitpoints[index] = r.hitpoints;
+                if (!mp::HitpointsHeld(index))
+                    ApplyHitpoints(ctx, base, n, it->second, r, name, true);
                 continue;
             }
             for (int row = 0; row < 4; ++row)
                 for (int c = 0; c < 3; ++c)
                     StoreF(xform + row * 16 + c * 4, r.m[row * 3 + c]);
             n.applied++;
-            // The host's hitpoints: its hits (and the deaths they bring) land here too.
-            if (uint32_t damageable = r.hitpoints >= 0 ? Damageable(n, it->second) : 0)
-            {
-                float local = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS));
-                if (local >= 0 && std::abs(local - r.hitpoints) > 0.01f)
-                {
-                    PPCContext call = ctx;
-                    call.r3.u64 = damageable;
-                    call.r5.u64 = 0;
-                    call.f1.f64 = double(r.hitpoints) - local;
-                    n.applyingHitpoints = true;
-                    sub_82110448(call, base);
-                    n.applyingHitpoints = false;
-                    n.hitpointsApplied++;
-                    if (mp::Trace())
-                        Log("[mp] client: %08X hitpoints %.1f -> %.1f (host)", uint32_t(name), local, r.hitpoints);
-                }
-            }
+            ApplyHitpoints(ctx, base, n, it->second, r, name);
         }
         for (const Target& t : targets)
             if (t.actor && TeleportPlayer(ctx, base, t.actor, t.pos[0], t.pos[1], t.pos[2]))
@@ -852,6 +921,32 @@ namespace mp
 {
     bool Online() { return Enabled() && N().role != Role::None; }
 
+    uint32_t PlayerSlot(uint32_t index) { return Online() ? SlotOf(N().slot, index) : index; }
+
+    float PlayerHitpoints(uint32_t index)
+    {
+        uint32_t damageable = PlayerDamageable(N(), PlayerActor(index));
+        return damageable ? LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)) : -1.0f;
+    }
+
+    void SetPlayerMaxHitpoints(uint32_t index, float value)
+    {
+        uint32_t damageable = PlayerDamageable(N(), PlayerActor(index));
+        uint32_t max = damageable ? LoadBE32(damageable + 68) : 0, hp = damageable ? LoadBE32(damageable + DAMAGEABLE_HITPOINTS) : 0;
+        if (!GuestPointer(max) || !GuestPointer(hp) || value <= 0)
+            return;
+        StoreF(max, value);
+        if (LoadF(hp) > value)
+            StoreF(hp, value);
+    }
+
+    float PlayerMaxHitpoints(uint32_t index)
+    {
+        uint32_t damageable = PlayerDamageable(N(), PlayerActor(index));
+        uint32_t max = damageable ? LoadBE32(damageable + 68) : 0;
+        return GuestPointer(max) ? LoadF(max) : -1.0f;
+    }
+
     bool TeleportCrash(PPCContext& ctx, uint8_t* base, uint32_t crash, float x, float y, float z)
     {
         uint32_t physics = GuestPointer(crash) ? LoadBE32(crash + 0xDC) : 0;
@@ -886,21 +981,22 @@ namespace mp
         if (!Enabled())
             return delta;
         Net& n = N();
-        if (n.role == Role::None)
-            return delta;
         uint32_t actor = LoadBE32(damageable + BEHAVIOUR_ACTOR);
         if (!GuestPointer(actor))
             return delta;
         n.damageables[actor] = damageable;
+        if (n.role == Role::None)
+            return delta;
         if (Trace() && delta < 0)
             Log("[mp] %s: %08X takes %.1f (hitpoints %.1f)%s", n.role == Role::Host ? "host" : "client", uint32_t(NameOf(actor)),
                 -delta, LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)), n.applyingHitpoints ? " from the host" : "");
         if (n.role != Role::Client || delta >= 0 || n.applyingHitpoints)
             return delta;
-        for (uint32_t player : PlayerActors())
-            if (player == actor)
-                return delta;  // the players' own hitpoints stay with each machine's game
-        // An actor the host mirrors takes its hits from the host's records only.
+        // A player the host mirrors, or an actor, takes its hits from the host's records only (a knocked-out
+        // player, or one just back, keeps this machine's).
+        for (uint32_t i = 0; i < 4; ++i)
+            if (PlayerActor(i) == actor && HitpointsHeld(i))
+                return delta;
         if (!n.latest.count(NameOf(actor)))
             return delta;
         n.damageDropped++;

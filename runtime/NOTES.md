@@ -2465,9 +2465,22 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   `CRASH_MP_SLOT` 1-3 (porta + vaga); cada máquina joga a sua vaga como P1 e as outras em P2-P4 na ordem;
   pacotes "CMI2" levam a vaga e a frente da câmera; o host repassa os controles dos clientes. O jogo anda
   relativo à câmera (sub_821EBC70: direita = (frente.z, -frente.x)), então o analógico remoto é girado da
-  câmera de quem mandou para a local. Cor por vaga (par laranja, ímpar clara). Visto: os 4 a pé em todas
+  câmera de quem mandou para a local. Cor por vaga: laranja, clara (jacked), azul e verde; azul e verde
+  giram o laranja do pelo (matiz 5-45°, saturação > 0,5) da paleta final do quadro (+0x11C8, depois do
+  `sub_822212C0`, que mistura a base com a jacked) para 215° / 115°. Nocaute: a morte posta um
+  `CActionResetPlayer` cujo `sub_8220D830` põe o jogador do co-op na mochila do outro (estado 3, timer em
+  +0x114) e não acha Crash para índice >= 2 (P3/P4 ficavam caídos para sempre); agora todo jogador (por
+  essa ação ou vida 0) fica caído o tempo do jogo (float em 0x82002328, 5 s), é resetado (`sub_82090370`,
+  o reset do respawn: de pé, vida cheia) e vai para trás do colega a pé de menor vaga, 1,2 por vaga. A vida
+  dos jogadores também é do host, como fração do máximo (P1/P2 começam com 30, P3/P4 com 90 do template e
+  recebem o máximo do P1); o damageable do jogador vem dos ponteiros do behaviour controller (ator +0x1C,
+  vtable 0x8201145C, ator em +28). Menos correções: P1 em jogo 500 ms depois de aparecer e P2-P4 300 ms
+  (antes o cliente puxava o P2 para o estacionamento e voltava), nenhuma para quem está nocauteado,
+  até 2,0 de folga encostado em outro jogador, e 3 tentativas no máximo para o mesmo alvo
+  (`mp_m3_client` 20 -> 6 em 60 s). Visto: os 4 a pé em todas
   as máquinas, cada vaga no mesmo lugar e com a mesma cor, 5-13 correções em 40 s; parado (registro e
   Crash local parados 0,5 s) corrige acima de 0,25 em vez de 1,0, então ninguém fica deslocado (antes um
-  cliente ficou 0,9 fora para sempre; agora 0-0,22). O T-pose do
+  cliente ficou 0,9 fora para sempre; agora 0-0,22). Nocaute nas 4 máquinas (`mp4_host` com
+  `mp_ko.lua`): os mesmos dois caem em todas e voltam 5 s depois no mesmo lugar (0,2) com 30 de 30. O T-pose do
   primeiro teste: o P2 em estado 0 tinha o mapa de controle liberado e ignorava o controle.
   Cortex/NGin/Tiny.
