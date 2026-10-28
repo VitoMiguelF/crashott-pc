@@ -74,11 +74,8 @@ int AskButtons(const char* title, const std::string& text, std::initializer_list
 // --- the game dump --------------------------------------------------------------------------
 // Asked for before the window opens (AskForDump, from WinMain): the screen is drawn with the art
 // of that dump, so without one it would open plain. A dump is compatible when it has the files the
-// install reads and the one default.xex the port is made for (the same check as tools/setup.py:
-// XEX_SHA256 and GAME_FILES there).
-
-const char* DUMP_XEX_SHA256 = "e76824b242c6c628738c373bdf052d456945d8e343eb934100617fd423e86373";
-const wchar_t* const DUMP_FILES[] = { L"default.xex", L"default.rcf", L"english.rcf", L"sound1.rcf", L"sound2.rcf" };
+// install reads and the one default.xex the port is made for (DUMP_FILES and DUMP_XEX_SHA256, in
+// launcher.cpp: the Android launcher checks the same).
 
 // The command line's code page (__argv, std::filesystem's narrow paths, Relaunch): a game folder with
 // accents goes through it as the ANSI string, not UTF-8.

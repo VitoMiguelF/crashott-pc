@@ -3,11 +3,14 @@
 // On-screen touch controls (Android; touch_controls.cpp, docs/internals/android_port.md "Touch
 // controls"): the game playable on a phone without a gamepad.
 //
-// - In gameplay: a floating left stick (a finger on the left of the screen puts its centre there),
+// - In gameplay: a floating left stick (a finger on the left of the screen puts its centre there;
+//   it stays there, the knob stopping at the edge),
 //   A / B / X / Y on the right in the pad's diamond, RT (block / dodge) and a spin button (the
 //   left stick going round with X tapped, like the keyboard's spin attack) beside it, START and
 //   BACK at the top right. A drag on the rest of the right half turns the camera (right stick).
 //   A finger may slide from one button to the next.
+//   The action buttons show Crash's shadow doing the action on a see-through fire plate (A jump,
+//   X punch, Y flying kick, B reaching for a mutant, RT guard, spin), drawn from shapes here.
 // - In the menus (the frontend's screens, the pause menu, the intro videos) nothing is drawn and
 //   the touch is the mouse: a tap selects and accepts, as a left click does on PC, and a tap on a
 //   prompt ("(B) BACK", "CONTINUE STORY (Y)") presses its button (prompt_icons.h ButtonAt). So do
@@ -29,6 +32,8 @@ namespace touch_controls
     // is not for the controls: the window then makes it the mouse (the menus).
     enum class Phase { Down, Move, Up };
     bool OnFinger(uint64_t finger, Phase phase, float x, float y);
+    // Every finger up (the app went to the background: Android may never send their ends).
+    void ReleaseAll();
 
     // Controller 0 as the game reads it (kernel/xam_input_imports.cpp, the pad alone, before the
     // keyboard), `poll` the game's own read: the controls' buttons and sticks on top.

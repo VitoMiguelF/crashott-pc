@@ -22,6 +22,7 @@
 #include <utility>
 
 extern "C" PPC_FUNC(__imp__sub_820B2E98);  // CMenuAction::vf05: the frontend tree's menu action, once per frame (this+24 = the menu)
+extern "C" PPC_FUNC(__imp__sub_820BE0C0);  // another menu action's update (this+24..36 = its menus; the overwrite question of NEW GAME)
 extern "C" PPC_FUNC(__imp__sub_821D5858);  // CConfirmMessage::vf03: a YES / NO question's update, once per frame (this+16 = its menu)
 PPC_EXTERN_FUNC(sub_822F2E40);  // Menu::SetSelection(menu, index)
 PPC_EXTERN_FUNC(sub_822F2F58);  // Menu: previous selectable item (returns 1 if it moved)
@@ -364,4 +365,24 @@ PPC_FUNC(sub_821D5858)
         return;
     g_confirmTime.store(plat::TickCountMs(), std::memory_order_relaxed);
     OnMenuUpdate(ctx, base, menu);
+}
+
+// Another menu action (NEW GAME's "overwrite this saved game?" NO / YES, which runs instead of the
+// slot screen's CMenuAction::vf05): four menus at this+24 / 28 / 32 / 36, the one of step s
+// (1..4, (this+8)+36) at this+20+4s reads UP / DOWN and A and is updated (its vf20) each frame.
+// It is the live menu while that step's menu is there; the action returns 1.
+PPC_FUNC(sub_820BE0C0)
+{
+    uint32_t action = ctx.r3.u32;
+    __imp__sub_820BE0C0(ctx, base);
+    uint32_t result = ctx.r3.u32;
+    uint32_t owner = LoadBE32(action + 8);
+    if (!LoadBE32(action + 20) || !owner)
+        return;
+    uint32_t step = LoadBE32(owner + 36);
+    uint32_t menu = step >= 1 && step <= 4 ? LoadBE32(action + 20 + 4 * step) : 0;
+    if (!menu || plat::TickCountMs() - g_confirmTime.load(std::memory_order_relaxed) <= 150)
+        return;
+    OnMenuUpdate(ctx, base, menu);
+    ctx.r3.u64 = result;
 }

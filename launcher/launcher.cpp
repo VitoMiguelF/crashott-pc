@@ -23,6 +23,11 @@
 // Linux (the Steam Deck first): the same screens on SDL3 (window, keyboard, mouse, pads) with
 // SDL_Renderer drawing Dear ImGui; processes by fork + exec, dialogs through zenity / kdialog
 // (plat::PickFolder) and SDL's message boxes, the system font from fontconfig. No UPDATE yet.
+//
+// Android: the same Linux code as libcrashlauncher.so, the app's first screen (LauncherActivity, in a
+// process of its own, android/java). The folders are the app's, as for the game
+// (android_main_android.cpp); PLAY asks LauncherActivity to start CrashActivity (the game, libmain.so)
+// and closes; the text is Android's Roboto; touches arrive as the mouse (SDL).
 
 #ifdef _WIN32
 #include <windows.h>
@@ -60,6 +65,9 @@
 #include "../runtime/platform/text_canvas.h"
 
 #include <SDL3/SDL.h>
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
 
 #include <cerrno>
 #include <fcntl.h>
@@ -176,7 +184,11 @@ namespace
     const int SETUP_TAB = int(TABS.size()) - 1;
     // The simple view (the default): the main options on one page; LIGHTING sets all of the
     // lighting remaster's at once (opt::LightingPreset).
+#ifdef __ANDROID__
+    const Tab SIMPLE{ { "OPTIONS", "OPÇÕES" }, { Item::Language, Item::Resolution, Item::Aspect, Item::FpsLimit, Item::Lighting } };  // no HD AI Remaster
+#else
     const Tab SIMPLE{ { "OPTIONS", "OPÇÕES" }, { Item::Language, Item::Resolution, Item::Aspect, Item::FpsLimit, Item::HdRemaster, Item::Lighting } };
+#endif
 
     // State.
     Values g_values, g_saved;
@@ -185,7 +197,13 @@ namespace
     bool g_capturing = false;          // CONTROLS: waiting for a key
     uint16_t g_captured = 0;           // set by the window procedure
     bool g_captureCancelled = false;
-    enum class Modal { None, Exit, Message, Update } g_modal = Modal::None;
+    enum class Modal { None, Exit, Message, Update, Import, Subtitles } g_modal = Modal::None;
+#ifdef __ANDROID__
+    void OpenImport();  // android_import.inc: the dump's folder asked for and copied into the app
+    void OpenBuild();   // android_import.inc: the game built on the phone from that dump
+    void OpenSubtitles();  // android_import.inc: the subtitles downloaded (SETUP > EXTRA DATA)
+    bool GameBuilt();
+#endif
     std::string g_message[2];
     bool g_quit = false;
     bool g_artLoaded = false, g_haveFonts = false;
@@ -453,6 +471,14 @@ namespace
         return count;
     }
 
+#if defined(CRASH_INSTALLER) || defined(__ANDROID__)
+    // A compatible dump: the files the install reads and the one default.xex the port is made for
+    // (the same check as tools/setup.py: XEX_SHA256 and GAME_FILES there). installer.inc,
+    // android_import.inc.
+    constexpr const char* DUMP_XEX_SHA256 = "e76824b242c6c628738c373bdf052d456945d8e343eb934100617fd423e86373";
+    constexpr const wchar_t* DUMP_FILES[] = { L"default.xex", L"default.rcf", L"english.rcf", L"sound1.rcf", L"sound2.rcf" };
+#endif
+
 #include "gpu_probe.inc"
 
     // While NGX's check runs, an NVIDIA GPU counts as able (most are RTX); then its answer.
@@ -539,7 +565,12 @@ namespace
         }
         case Item::ModsFolder: return { Narrow(paths::Mods().wstring()), T({ "One folder per mod (README, \"Mods\").", "Uma pasta por mod (README, \"Mods\")." }) };
         case Item::SavesFolder: return { Narrow(paths::UserData().wstring()), T({ "Your saves (content) and settings.toml.", "Seus saves (content) e o settings.toml." }) };
+#ifdef __ANDROID__
+        case Item::ExtraData: return { T({ "A / touch: download the subtitles (English + PT-BR).", "A / toque: baixar as legendas (inglês + PT-BR)." }),
+                                       T({ "Made from your own game; never share it.", "Feitos a partir do seu jogo; não compartilhe." }) };
+#else
         case Item::ExtraData: return { Narrow(paths::Data().wstring()), T({ "Made from your own game; never share it.", "Feitos a partir do seu jogo; não compartilhe." }) };
+#endif
         default: return opt::Help(item, g_values, OptionContext());
         }
     }
@@ -653,7 +684,12 @@ namespace
         }
         switch (item)
         {
+#ifdef __ANDROID__
+        case Item::GameFolder: OpenImport(); break;  // no folder to point at: the dump is copied into the app
+        case Item::ExtraData: OpenSubtitles(); break;
+#else
         case Item::GameFolder: ChooseGameFolder(); break;
+#endif
         case Item::ModsFolder: OpenFolder(paths::Mods()); break;
         case Item::SavesFolder: OpenFolder(paths::UserData()); break;
         default: Change(item, +1); break;
@@ -697,6 +733,10 @@ namespace
     {
         if (!paths::IsGameFolder(GameFolder()))
         {
+#ifdef __ANDROID__
+            OpenImport();
+            return false;
+#endif
             g_message[0] = T({ "Choose the game folder first", "Escolha a pasta do jogo primeiro" });
             g_message[1] = T({ "(SETUP tab, GAME FOLDER).", "(aba INSTALAÇÃO, PASTA DO JOGO)." });
             g_modal = Modal::Message;
@@ -705,9 +745,45 @@ namespace
             g_focusFirstRow = true;
             return false;
         }
+#ifdef __ANDROID__
+        if (!GameBuilt())
+        {
+            OpenBuild();
+            return false;
+        }
+#endif
         if (!(g_values == g_saved))
             Save();
-#ifndef _WIN32
+#if defined(__ANDROID__)
+        // The game is another activity of the app (CrashActivity, libmain.so): LauncherActivity.startGame.
+        JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+        jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
+        bool started = false;
+        if (env && activity)
+        {
+            jclass type = env->GetObjectClass(activity);
+            jmethodID start = type ? env->GetStaticMethodID(type, "startGame", "()V") : nullptr;
+            if (start)
+            {
+                env->CallStaticVoidMethod(type, start);
+                started = !env->ExceptionCheck();
+            }
+            env->ExceptionClear();
+            if (type)
+                env->DeleteLocalRef(type);
+            env->DeleteLocalRef(activity);
+        }
+        if (!started)
+        {
+            g_message[0] = T({ "Could not start the game", "Não foi possível abrir o jogo" });
+            g_message[1] = "(LauncherActivity.startGame)";
+            g_modal = Modal::Message;
+            return false;
+        }
+        Log("[launcher] started the game (CrashActivity)");
+        g_quit = true;
+        return true;
+#elif !defined(_WIN32)
         // CrashOTTDE in the installed layout (tools/make_dist.py --installed), else CrashRecomp.
         fs::path game = paths::ExeDir() / "CrashOTTDE";
         if (!Exists(game))
@@ -1585,9 +1661,19 @@ namespace
         }
     }
 
+#ifdef __ANDROID__
+#include "android_import.inc"
+#endif
+
     void DrawModal()
     {
         g_draw->AddRectFilled(ImVec2(0, 0), ImGui::GetIO().DisplaySize, IM_COL32(10, 4, 0, 150));
+#ifdef __ANDROID__
+        if (g_modal == Modal::Import)
+            return DrawImportModal();
+        if (g_modal == Modal::Subtitles)
+            return DrawSubtitlesModal();
+#endif
         float l = 300.0f, r = 980.0f, t = 250.0f, b = 470.0f, cx = VW * 0.5f;
         DrawFrame(l, t, r, b);
         if (g_modal == Modal::Exit)
@@ -2065,8 +2151,11 @@ static int RunLauncher(int argc, char** argv)
 #else
     const char* title = "Crash of the Titans: Definitive Edition";
 #endif
-    g_window = SDL_CreateWindow(title, int(VW * scale), int(VH * scale), SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
-                                                                         (screenshot.empty() ? 0 : SDL_WINDOW_HIDDEN));
+    SDL_WindowFlags windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (screenshot.empty() ? 0 : SDL_WINDOW_HIDDEN);
+#ifdef __ANDROID__
+    windowFlags |= SDL_WINDOW_FULLSCREEN;  // immersive: no status or navigation bar, as the game
+#endif
+    g_window = SDL_CreateWindow(title, int(VW * scale), int(VH * scale), windowFlags);
     g_renderer = g_window ? SDL_CreateRenderer(g_window, nullptr) : nullptr;
     if (!g_renderer)
     {
@@ -2118,6 +2207,12 @@ static int RunLauncher(int argc, char** argv)
         Log("[launcher] no game art (game folder %s)", paths::Game().empty() ? "not found" : "without the fonts");
     if (paths::Game().empty())  // SETUP first (shown in the advanced view; not saved)
         g_tab = SETUP_TAB, g_values.launcherAdvanced = g_saved.launcherAdvanced = true;
+#ifdef __ANDROID__
+    if (!paths::IsGameFolder(GameFolder()))
+        OpenImport();  // the first start: the dump is asked for at once
+    else if (!GameBuilt())
+        OpenBuild();   // a dump without a game built from it (a new APK): built now
+#endif
 #ifdef CRASH_INSTALLER
     InitInstaller();
 #endif
@@ -2269,6 +2364,23 @@ static int RunLauncher(int argc, char** argv)
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
     return RunLauncher(__argc, __argv);
+}
+#elif defined(__ANDROID__)
+// LauncherActivity loads libSDL3.so and this library and calls SDL_main on SDL's thread. The folders
+// are the app's external files folder, as for the game (android_main_android.cpp).
+extern "C" __attribute__((visibility("default"))) int SDL_main(int argc, char** argv)
+{
+    if (const char* external = SDL_GetAndroidExternalStoragePath())
+    {
+        setenv("CRASH_ANDROID_FILES", external, 1);
+        std::error_code error;
+        for (const char* folder : { "game", "userdata", "mods", "data", "languages" })
+            fs::create_directories(fs::path(external) / folder, error);
+    }
+    else
+        Log("[launcher] no external files folder: %s", SDL_GetError());
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    return RunLauncher(argc, argv);
 }
 #else
 int main(int argc, char** argv)

@@ -314,6 +314,15 @@ namespace gpu::window
             PostMessageW(window, WM_CHAR, c, 1);
     }
 
+    bool Suspended()
+    {
+        return false;
+    }
+
+    void WaitWhileSuspended()
+    {
+    }
+
     bool IsFocused()
     {
         HWND hwnd = HWND(g_window.load());

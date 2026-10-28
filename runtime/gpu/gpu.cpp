@@ -5,7 +5,9 @@
 #include "../diagnostics.h"
 #include "../kernel/input.h"
 #include "../kernel/memory.h"
+#include "../kernel/pc_input.h"
 #include "../kernel/threads.h"
+#include "window.h"
 
 #include <ppc_config.h>
 #include <ppc_context.h>
@@ -66,6 +68,7 @@ namespace
         bool* done;  // set (under g_interruptMutex) once delivered, if someone waits
     };
     std::deque<InterruptRequest> g_interruptQueue;
+    std::atomic<bool> g_gameHeld;  // HoldWhileSuspended: the game thread waits for the app's return
     std::condition_variable g_interruptDelivered;
     std::atomic<uint32_t> g_interruptCallback;
     std::atomic<uint32_t> g_interruptUserData;
@@ -229,6 +232,14 @@ namespace
                 }
             }
             lock.unlock();
+
+            // The game held in the background: no vblanks until it runs again.
+            if (g_gameHeld.load())
+            {
+                gpu::window::WaitWhileSuspended();
+                nextVblank = std::chrono::steady_clock::now() + VBLANK_PERIOD;
+                continue;
+            }
 
             auto now = std::chrono::steady_clock::now();
             if (now < nextVblank)
@@ -397,6 +408,27 @@ namespace gpu
                 plat::CpuRelax();
         }
         s_next += period;
+    }
+
+    void HoldWhileSuspended()
+    {
+        static uint32_t s_frames, s_settle;
+        if (!window::Suspended())
+        {
+            s_frames = s_settle = 0;
+            return;
+        }
+        // A few frames for the game to open its pause menu first (at most 2 s of them), then two
+        // more for it to settle there.
+        if (s_frames++ < 120 && (input::pc::BackgroundPausePending() || s_settle++ < 2))
+            return;
+        input::pc::CancelBackgroundPause();
+        Log("[gpu] game held in the background (frame %llu)", (unsigned long long)g_vdSwaps.load());
+        g_gameHeld = true;
+        window::WaitWhileSuspended();
+        g_gameHeld = false;
+        s_frames = s_settle = 0;
+        Log("[gpu] game running again");
     }
 
     uint64_t VblankCount()

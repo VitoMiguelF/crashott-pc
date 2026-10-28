@@ -58,6 +58,44 @@ namespace gpu::window
         uint32_t g_lastScan = 0;  // the set-1 scan code of the last key down, for the next text event
         float g_rawX = 0, g_rawY = 0;  // fractional mouse motion carried to the next event
 
+        // The app in the background (Suspended).
+        std::atomic<bool> g_suspended{ false };
+        std::mutex g_suspendMutex;
+        std::condition_variable g_suspendChanged;
+
+        // An event watch, not OnEvent: SDL runs it while it pumps the lifecycle, before its Android
+        // pump blocks for the whole pause (SDL_HINT_ANDROID_BLOCK_ON_PAUSE), so the game hears of it
+        // at once and not only when the app comes back.
+        bool SDLCALL LifecycleWatch(void*, SDL_Event* event)
+        {
+            switch (event->type)
+            {
+            case SDL_EVENT_WILL_ENTER_BACKGROUND:
+            case SDL_EVENT_DID_ENTER_BACKGROUND:
+                if (!g_suspended.exchange(true))
+                {
+                    Log("[gpu] the app went to the background: the game is paused");
+                    touch_controls::ReleaseAll();
+                    input::pc::RequestBackgroundPause();
+                }
+                break;
+            case SDL_EVENT_DID_ENTER_FOREGROUND:
+                if (g_suspended.load())
+                {
+                    {
+                        std::lock_guard lock(g_suspendMutex);
+                        g_suspended = false;
+                    }
+                    g_suspendChanged.notify_all();
+                    Log("[gpu] the app is back in the foreground");
+                }
+                break;
+            default:
+                break;
+            }
+            return true;
+        }
+
         uint32_t VirtualKey(SDL_Scancode scan)
         {
             return plat::VirtualKeyFromScancode(scan);
@@ -360,6 +398,17 @@ namespace gpu::window
         return g_window.load() && g_focused;
     }
 
+    bool Suspended()
+    {
+        return g_suspended.load();
+    }
+
+    void WaitWhileSuspended()
+    {
+        std::unique_lock lock(g_suspendMutex);
+        g_suspendChanged.wait(lock, [] { return !g_suspended.load(); });
+    }
+
     std::vector<const char*> VulkanSurfaceExtensions()
     {
 #if defined(__ANDROID__)
@@ -403,6 +452,7 @@ namespace gpu::window
             else
             {
                 g_setModeEvent = SDL_RegisterEvents(1);
+                SDL_AddEventWatch(LifecycleWatch, nullptr);
                 // The requested size is in 96-DPI units: scale by the display's content scale.
                 float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
                 if (scale <= 0.0f)
@@ -484,12 +534,25 @@ namespace gpu::window
             for (;;)
             {
                 SDL_Event event;
+#if defined(__ANDROID__)
+                // SDL's Android wait comes back at once over and over (a big core at 100% on the
+                // S20 FE, heat that lowers the GPU's clock): poll, then sleep a little.
+                bool any = false;
+                while (SDL_PollEvent(&event))
+                {
+                    OnEvent(window, event);
+                    any = true;
+                }
+                if (!any)
+                    SDL_Delay(4);
+#else
                 if (SDL_WaitEventTimeout(&event, 100))
                 {
                     do
                         OnEvent(window, event);
                     while (SDL_PollEvent(&event));
                 }
+#endif
                 uint64_t now = SDL_GetTicks();
                 if (now >= nextCursor)
                 {
