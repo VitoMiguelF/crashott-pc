@@ -1257,9 +1257,18 @@ Onde os nomes aparecem:
   python tools\image_to_elf.py
   analyzeHeadless private\ghidra CrashOTT -import private\image.elf -processor PowerPC:BE:64:A2ALT-32addr
   analyzeHeadless private\ghidra CrashOTT -process image.elf -noanalysis -scriptPath tools\ghidra -postScript ApplySymbols.java private\symbols\functions.csv
+  analyzeHeadless private\ghidra CrashOTT -process image.elf -noanalysis -scriptPath tools\ghidra -postScript ClassLayouts.java private\symbols fill
   analyzeHeadless private\ghidra CrashOTT -process image.elf -noanalysis -readOnly -scriptPath tools\ghidra -postScript DecompileScope.java private\decompiled CFrontendManager CObjective
   ```
-  `ApplySymbols.java` faz o mesmo que o `ghidra_apply_symbols.py` e ainda declara os `__savegprlr_N`/`__restgprlr_N`/`__savefpr_N`/`__restfpr_N` como funções `void`, para o `this` não se perder depois do prólogo. `DecompileScope.java` escreve um `private\decompiled\<Escopo>.c` por classe ou namespace (`CFrontendManager`: 104 funções, nenhuma falha), cada função com endereço e o comentário `[origem, confiança]`. Rode `ApplySymbols.java` de novo sempre que o `functions.csv` mudar.
+  `ApplySymbols.java` faz o mesmo que o `ghidra_apply_symbols.py` e ainda declara os `__savegprlr_N`/`__restgprlr_N`/`__savefpr_N`/`__restfpr_N` como funções `void`, para o `this` não se perder depois do prólogo. `ClassLayouts.java` deixa o C legível:
+  - divide a imagem nas seções do PE com as permissões delas (constantes do `.rdata` saem como valor: `0.0` em vez de `DAT_82000dc8`);
+  - dá a cada classe do RTTI uma struct com o tamanho de `classes.csv`, o `vftable` em `+0` e os campos com nome de `fields.csv` (os da classe e os das bases);
+  - torna os métodos `__thiscall` (`CDamageableBehaviour *this`; o Ghidra põe os parâmetros de ponto flutuante antes dele);
+  - com `fill`, deixa o decompilador acrescentar os campos que cada método usa (`field_0x58`, já com tipo).
+
+  Com isso `*(float **)(param_2 + 0x40)` vira `this->m_pHitpoints`. `DecompileScope.java` escreve um `private\decompiled\<Escopo>.c` por classe ou namespace (`CFrontendManager`: 104 funções, nenhuma falha), cada função com endereço e o comentário `[origem, confiança]`. Rode `ApplySymbols.java` e `ClassLayouts.java` de novo sempre que o `functions.csv` ou o `fields.csv` mudarem.
+
+  Os nomes dos campos (`private\symbols\fields.csv`, saída do `rtti_scan.py`) vêm dos acessores que os scripts usam (`CLedgeHangingBehaviour::GetLedgeSpeed` é `lfs f1,1248(r3); blr`, então `+0x4E0` é `m_LedgeSpeed`, `float`) e de `config/field_names.csv` (à mão, versionado: classe, deslocamento, tipo, nome, nota). Os tamanhos das classes (`classes.csv`) vêm do `li r3,N` antes do `operator new` cujo resultado vai para o construtor.
 - **IDA**: `File > Script file...` → `tools\ida_apply_symbols.py` (IDAPython), mesmo CSV. O IDA troca os caracteres inválidos por `_`; o nome original vai no comentário da função.
 
 Depois de regenerar o código (config novo, XenonRecomp atualizado) rode `rtti_scan.py` de novo: ele usa `generated\ppc\ppc_func_mapping.cpp` para saber onde cada função termina e avisa se alguma entrada de vtable não tem função gerada (função engolida, veja a seção anterior).

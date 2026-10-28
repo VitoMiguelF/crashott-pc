@@ -1,0 +1,7 @@
+# Hand-curated field names of game classes (class,offset,size,type,name,confidence,note), merged
+# into private/symbols/fields.csv by tools/rtti_scan.py with source "manual". type is a Ghidra
+# type name (float, float *, byte, bool, undefined4...). Our own names, no game bytes.
+class,offset,size,type,name,confidence,note
+CDamageableBehaviour,0x40,4,float *,m_pHitpoints,medium,current hitpoints; AdjustHitpoints adds the delta (dev/dev_cheats.cpp)
+CDamageableBehaviour,0x44,4,float *,m_pMaxHitpoints,medium,AdjustHitpoints clamps the hitpoints to it
+CDamageableBehaviour,0x48,4,float *,m_pHitpointsFraction,medium,AdjustHitpoints writes hitpoints / max (0 when dead)

@@ -37,6 +37,8 @@ static-init, thunk, callers...); --rtti-only skips that.
 Outputs (derived from your copy of the game: keep them in private/, do not publish):
   private/symbols/rtti.json      classes, bases, vtables, methods, per-function users
   private/symbols/functions.csv  address,name,source,confidence,note (one row per named function)
+  private/symbols/fields.csv     class,offset,size,type,name,source,confidence,note (named fields)
+  private/symbols/classes.csv    class,size,note (object sizes from operator new)
 
 The runtime loads functions.csv to print names in [fatal]/[crash]/[watchdog] reports
 (runtime/symbols.cpp). tools/annotate_ppc.py, tools/ghidra_apply_symbols.py and
@@ -665,8 +667,14 @@ def main():
     result = scan(image, funcs, load_imports(args.symbols))
     confidence = None
     if not args.rtti_only and generated:
-        confidence = name_functions.extend(result['functions'], image, generated, result['classes'], args.names)
+        prog = name_functions.Program(image, generated)
+        confidence = name_functions.extend(result['functions'], image, generated, result['classes'], args.names, prog)
     stats = write_outputs(result, args.out, generated, confidence)
+    if confidence is not None:
+        fields, class_sizes = name_functions.class_layouts(prog, result['functions'], result['classes'])
+        name_functions.write_layouts(args.out, fields, class_sizes)
+        print('class layouts         %d named fields in %d classes, %d class sizes (fields.csv, classes.csv)' % (
+            len(fields), len({f[0] for f in fields}), len(class_sizes)))
 
     print('type descriptors      %d (type_info vtable 0x%08X)' % (stats['type_descriptors'], result['type_info_vtable']))
     print('object locators       %d' % stats['complete_object_locators'])

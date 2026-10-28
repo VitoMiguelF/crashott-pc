@@ -32,6 +32,10 @@ from (source) and how much to trust it (confidence), so the guesses stay apart f
 
 Confidence: high (RTTI facts, curated names stated by the code, Lua tables), medium (inferred
 names), low (callers: only the system is known; constructors nobody allocates).
+
+class_layouts() then names fields for tools/ghidra/ClassLayouts.java: the script accessors that
+read or write one field of this (GetLedgeSpeed = lfs f1,1248(r3); blr) plus the hand-curated
+config/field_names.csv, and takes object sizes from the operator new before each constructor.
 """
 import collections
 import csv
@@ -441,15 +445,147 @@ def pass_callers(prog, names, sources):
     return out
 
 
+def find_allocators(prog, functions):
+    """operator new (config/function_names.csv) and the functions that only jump to it."""
+    allocators = {f for f, (n, _, _) in functions.items() if n == 'operator new'}
+    allocators |= {f for f in prog.starts if set(prog.tails[f]) & allocators and prog.ends[f] - f <= 8}
+    return allocators
+
+
+# ---------------------------------------------------------------------------------------------
+# Class layouts: field names from the script accessors, object sizes from operator new.
+
+BLR = 0x4E800020
+LOADS = {32: ('undefined4', 4), 34: ('byte', 1), 40: ('ushort', 2), 42: ('short', 2), 48: ('float', 4), 50: ('double', 8)}
+STORES = {36: ('undefined4', 4), 38: ('byte', 1), 44: ('ushort', 2), 52: ('float', 4), 54: ('double', 8)}
+FLOAT_OPS = {48, 50, 52, 54}
+
+
+def field_name(method):
+    """GetLedgeSpeed / SetLedgeSpeed -> m_LedgeSpeed; attack_special_min_number -> m_attack_special_min_number."""
+    for prefix in ('Get', 'Set'):
+        if method.startswith(prefix) and method[len(prefix):len(prefix) + 1].isupper():
+            return 'm_' + method[len(prefix):]
+    return 'm_' + method
+
+
+def accessor_field(prog, f):
+    """('get' | 'set', offset, type, size) when f only reads or writes one field of this (r3)."""
+    body = []
+    for _, w in prog.words(f):
+        if w == BLR:
+            break
+        body.append(w)
+        if len(body) > 10:
+            return None
+    else:
+        return None
+    if prog.calls[f] or prog.tails[f]:
+        return None
+    value_reg = lambda w: 1 if w >> 26 in FLOAT_OPS else 4
+    stores = [(w >> 26, sx16(w & 0xFFFF)) for w in body
+              if w >> 26 in STORES and (w >> 16) & 31 == 3 and (w >> 21) & 31 == value_reg(w)]
+    if stores:      # a setter (a clamp may store the value again: the first store is the field)
+        op, off = stores[0]
+        return ('set', off) + STORES[op]
+    w = body[0] if len(body) == 1 else 0
+    if w >> 26 in LOADS and (w >> 16) & 31 == 3 and (w >> 21) & 31 == (1 if w >> 26 in FLOAT_OPS else 3):
+        return ('get', sx16(w & 0xFFFF)) + LOADS[w >> 26]
+    return None
+
+
+def load_manual_fields(path):
+    if not os.path.exists(path):
+        return []
+    with open(path, newline='', encoding='utf-8') as fp:
+        lines = [l for l in fp if l.strip() and not l.startswith('#')]
+    return list(csv.DictReader(lines))
+
+
+def class_layouts(prog, functions, classes, manual_path=None):
+    """Field rows [class, offset, size, type, name, source, confidence, note] and {class: (size, note)}.
+
+    Fields: the accessors the scripts bind (GetLedgeSpeed = lfs f1,1248(r3); blr -> +1248
+    m_LedgeSpeed float), plus config/field_names.csv. Sizes: the `li r3,N` before the
+    operator new whose result goes to the class's constructor.
+    """
+    manual_path = manual_path or os.path.join(ROOT, 'config', 'field_names.csv')
+    class_names = {c['name'] for c in classes.values()}
+    found = collections.defaultdict(list)       # (class, offset) -> [(name, type, size, note)]
+    for f, (name, source, _) in functions.items():
+        scope = scope_of(name)
+        if source not in ('script-binding', 'manual') or scope not in class_names:
+            continue
+        acc = accessor_field(prog, f)
+        if acc:
+            kind, off, typ, size = acc
+            method = last_part(name)
+            if typ == 'byte' and kind == 'get' and method.startswith(('Is', 'Has', 'Can', 'Should')):
+                typ = 'bool'
+            found[(scope, off)].append((field_name(method), typ, size, '%s %s 0x%08X' % (kind, method, f)))
+    rows = {}
+    for (cls, off), uses in found.items():
+        best = collections.Counter(u[0] for u in uses).most_common(1)[0][0]
+        typ, size = next((u[1], u[2]) for u in uses if u[0] == best)
+        rows[(cls, off)] = [cls, off, size, typ, best, 'accessor', 'medium', '; '.join(sorted(u[3] for u in uses))]
+    for row in load_manual_fields(manual_path):
+        off = int(row['offset'], 0)
+        rows[(row['class'], off)] = [row['class'], off, int(row.get('size') or 4), row['type'], row['name'], 'manual',
+                                     row.get('confidence') or 'high', row.get('note', '')]
+
+    # Object sizes: in each caller of a constructor, the last `li r3,N` before the call to
+    # operator new that comes right before the constructor call.
+    allocators = find_allocators(prog, functions)
+    ctors = {f: scope_of(n) for f, (n, s, _) in functions.items()
+             if scope_of(n) and last_part(n) == last_part(scope_of(n)).split('<')[0]}
+    sizes = collections.defaultdict(collections.Counter)
+    for g in {c for f in ctors for c in prog.callers.get(f, ())}:
+        li_r3 = pending = None
+        for a, w in prog.words(g):
+            op = w >> 26
+            if op == 14 and (w >> 21) & 31 == 3 and (w >> 16) & 31 == 0:
+                li_r3 = sx16(w & 0xFFFF)
+            elif op == 18 and w & 1:
+                li = w & 0x03FFFFFC
+                if li & 0x02000000:
+                    li -= 0x04000000
+                t = (a + li) & 0xFFFFFFFF
+                if t in allocators:
+                    pending = li_r3
+                else:
+                    if pending and pending > 0 and t in ctors:
+                        sizes[ctors[t]][pending] += 1
+                    pending = None
+                li_r3 = None
+    class_sizes = {}
+    for cls, c in sizes.items():
+        size, n = c.most_common(1)[0]
+        class_sizes[cls] = (size, 'operator new(%d) right before the constructor (%d of %d call sites)' % (size, n, sum(c.values())))
+    return sorted(rows.values(), key=lambda r: (r[0], r[1])), class_sizes
+
+
+def write_layouts(out_dir, fields, class_sizes):
+    with open(os.path.join(out_dir, 'fields.csv'), 'w', newline='', encoding='utf-8') as fp:
+        w = csv.writer(fp)
+        w.writerow(['class', 'offset', 'size', 'type', 'name', 'source', 'confidence', 'note'])
+        for r in fields:
+            w.writerow([r[0], '0x%X' % r[1]] + r[2:])
+    with open(os.path.join(out_dir, 'classes.csv'), 'w', newline='', encoding='utf-8') as fp:
+        w = csv.writer(fp)
+        w.writerow(['class', 'size', 'note'])
+        for cls in sorted(class_sizes):
+            w.writerow([cls, '0x%X' % class_sizes[cls][0], class_sizes[cls][1]])
+
+
 # ---------------------------------------------------------------------------------------------
 
-def extend(functions, image, starts, classes, manual_path=None):
+def extend(functions, image, starts, classes, manual_path=None, prog=None):
     """Add the manual and propagated names to functions {address: (name, source, note)}.
 
     Returns {address: confidence} for every row. classes: rtti_scan's result['classes'].
     """
     manual_path = manual_path or os.path.join(ROOT, 'config', 'function_names.csv')
-    prog = Program(image, starts)
+    prog = prog or Program(image, starts)
     confidence = {f: SOURCE_CONFIDENCE.get(s, 'medium') for f, (_, s, _) in functions.items()}
 
     for f, (name, conf, note) in load_manual(manual_path).items():
@@ -484,9 +620,7 @@ def extend(functions, image, starts, classes, manual_path=None):
     add(pass_lua_tables(prog, functions), 'lua-table')
     add(pass_library_strings(prog, functions), 'lua-string')
     add(pass_script_bindings(prog, functions, class_names), 'script-binding')
-    # operator new (config/function_names.csv) and the functions that only jump to it.
-    allocators = {f for f, (n, _, _) in functions.items() if n == 'operator new'}
-    allocators |= {f for f in prog.starts if set(prog.tails[f]) & allocators and prog.ends[f] - f <= 8}
+    allocators = find_allocators(prog, functions)
     add(pass_constructors(prog, functions, primary, allocators), 'ctor')
     add(pass_static_init(prog, functions), 'static-init')
     for _ in range(50):
