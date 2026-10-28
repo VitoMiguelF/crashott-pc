@@ -31,6 +31,7 @@ import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.util.FillOutStructureHelper;
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.data.ArrayDataType;
 import ghidra.program.model.data.BooleanDataType;
 import ghidra.program.model.data.ByteDataType;
 import ghidra.program.model.data.DataType;
@@ -102,6 +103,8 @@ public class ClassLayouts extends GhidraScript {
     private DataType typeFor(String name) {
         name = name.trim();
         if (name.endsWith("*")) return new PointerDataType(typeFor(name.substring(0, name.length() - 1)), 4, dtm);
+        Structure cls = name.contains("::") || name.matches("C[A-Z]\\w*") ? structFor(name) : null;
+        if (cls != null) return cls;
         switch (name) {
             case "float": return FloatDataType.dataType;
             case "double": return DoubleDataType.dataType;
@@ -179,9 +182,9 @@ public class ClassLayouts extends GhidraScript {
             s.growStructure(need - (s.isNotYetDefined() ? 0 : s.getLength()));
         }
         DataTypeComponent existing = s.getComponentContaining(offset);
-        if (existing != null && existing.getDataType() != null && !existing.getDataType().getName().startsWith("undefined")
-                && existing.getFieldName() != null && existing.getOffset() == offset) {
-            return;   // already named (manual rows come first)
+        if (existing != null && existing.getOffset() == offset && existing.getFieldName() != null
+                && !existing.getFieldName().matches("field\\d*_0x[0-9a-f]+")) {
+            return;   // already named: the class's own rows come before its bases'; names from fill give way
         }
         try {
             s.replaceAtOffset(offset, dt, dt.getLength(), name, comment);
@@ -247,7 +250,12 @@ public class ClassLayouts extends GhidraScript {
                 for (Map<String, String> row : rows) {
                     String comment = row.get("source") + ", " + row.get("confidence") + (b[0].equals(cls) ? "" : ", from " + b[0])
                         + (row.get("note").isEmpty() ? "" : ": " + row.get("note"));
-                    setField(s, disp + Integer.decode(row.get("offset")), typeFor(row.get("type")), row.get("name"), comment);
+                    DataType dt = typeFor(row.get("type"));
+                    int span = row.get("size") == null || row.get("size").isEmpty() ? dt.getLength() : Integer.decode(row.get("size"));
+                    if (span > dt.getLength() && dt.getLength() > 0 && span % dt.getLength() == 0) {
+                        dt = new ArrayDataType(dt, span / dt.getLength(), dt.getLength(), dtm);   // float[16] for a 4x4 matrix
+                    }
+                    setField(s, disp + Integer.decode(row.get("offset")), dt, row.get("name"), comment);
                     fields++;
                 }
             }
