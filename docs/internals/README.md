@@ -22,4 +22,4 @@ second `PPC_FUNC` for the same address will not link. Extend the existing one.
 | [dev-tools.md](dev-tools.md) | In-game Lua, cheats/invincibility/teleport, the developer console, skins, the Lua decompiler |
 | [linux_port.md](linux_port.md) | The Linux / Steam Deck port: Windows dependencies, the platform layer (`runtime/platform`, SDL3 backends), build status, x86-only code |
 | [android_port.md](android_port.md) | The Android port plan: ARM64 (SIMDe/NEON, fences, FPCR, store emulation, 16 KB pages), Vulkan on Adreno/Mali, storage, touch, the APK built on the player's PC |
-| [mods-and-assets.md](mods-and-assets.md) | `.rcf` overlay and the 2 GB limit, HD AI Remaster constraints, model export facts |
+| [mods-and-assets.md](mods-and-assets.md) | `.rcf` overlay and the 2 GB limit, HD AI Remaster constraints, model export facts, the blue Snipe shots (package rewrite + quiver hooks) |

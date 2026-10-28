@@ -661,6 +661,14 @@ No Xbox 360 todo mojo é azul. Nos arquivos do jogo, os quatro tamanhos (pequeno
 
 Os arquivos do jogo não mudam, e **XBOX 360** volta ao original. Vale depois do reinício que a tela oferece ao sair. Capturas de antes e depois em `docs\capturas\antigas\mojo\` (perfil `mojo` do `run.toml`). Detalhes e depuração (`CRASH_MOJO_COLORS`, `CRASH_MOJO_DUMP`) em `runtime/NOTES.md`, "Cores do mojo".
 
+### Tiro do Snipe azul
+
+Um erro do próprio jogo, corrigido no port. O Snipe (Paraposa) tem duas cores: quando ele aparece, o jogo sorteia a paleta rosa ou a azul da mesma textura, então mais ou menos metade sai azul. O tiro (a pena, o rastro de faíscas, o impacto e a luz que ele joga em volta) é um objeto à parte, pintado de rosa uma vez só, e no jogo original o Snipe azul também atira rosa.
+
+O port cria em memória, ao abrir o jogo, uma cópia azul do tiro dentro do pacote dele (`Weapons_Projectile_ParafoxProjectile.p3d`), com o azul da própria paleta azul do Snipe, e faz o Snipe azul usar essa cópia. O Snipe rosa continua atirando rosa, a colisão e o dano do tiro não mudam, e os arquivos do jogo não são alterados. Está sempre ligado; `CRASH_SNIPE_COLORS=0` mostra o original. Os brilhos nas mãos do Snipe nos ataques pesado e especial continuam rosa (são outro efeito).
+
+Teste: perfil `snipe_azul` (`CRASH_FORCE_SKIN_VARIANT=1` faz todo Snipe nascer azul). Capturas de antes e depois em `docs\capturas\snipe_azul\`. Detalhes em `runtime/NOTES.md`, "Snipe azul atirando rosa".
+
 ### Câmera livre (experimental)
 
 **SETTINGS > DEFINITIVE EDITION > CÂMERA LIVRE (EXPERIMENTAL)** (`[camera] free_camera = true`, desligada por padrão) troca as câmeras do jogo, quase todas fixas por volume de câmera, por uma câmera de terceira pessoa como a dos jogos atuais. Vale na hora, inclusive no meio da fase.

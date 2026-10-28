@@ -120,6 +120,7 @@ int main(int argc, char** argv)
     settings::EnableHdRemaster();
     settings::RegisterFrontendPatches();
     settings::RegisterMojoPatches();
+    settings::RegisterSnipePatches();
     settings::RegisterLanguagePack();
     // Subtitles of that language (<data>/subtitles, languages\<id>\subtitles.txt), if any.
     subtitles::Init();

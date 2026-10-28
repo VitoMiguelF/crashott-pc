@@ -1040,3 +1040,17 @@ dev_console = [
 ]
 input = [["@gameplay_ready"], [2.4, "SHOT"], [4.4, "SHOT"], [6.6, "SHOT"], [8.6, "SHOT"], [10.5, "SHOT"], [13, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready", "console_cmd"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['challenge texts kept for the levels', 'in level: Ratnicians defeated \(Chiratta\) 2/200', 'in level: Spikes jacked 1/50', 'in level: Voodoo Bunnies defeated \(Rabbit\) 1/200'] }
+
+[profiles.snipe_azul]
+description = "Snipe azul atirando azul (runtime/settings/snipe_colors.cpp): no L1_E2 o Crash vai até a primeira luta com Snipes (tools/dev_lua/snipe_azul.lua); CRASH_FORCE_SKIN_VARIANT=1 faz todo Snipe nascer azul; os tiros azuis precisam acertar o Crash (dano bloqueado no log)"
+test = true
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E2"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_file = "tools/dev_lua/snipe_azul.lua"
+env = { CRASH_FORCE_SKIN_VARIANT = "1" }
+input = [["@gameplay_ready"], [5, "SHOT"], [7, "SHOT"], [9, "SHOT"], [11, "SHOT"], [13, "SHOT"], [15, "SHOT"], [17, "SHOT"], [19, "SHOT"], [21, "SHOT"], [23, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "dev_lua_1"], log_absent = ['\[fatal\]', '\[crash\]', 'lua error', 'erro:'], log_contains = ['blue Snipe shots: package.c4ec64ea.p3d .* chunks copied', "blue Snipe shots: a blue Snipe's quiver makes", 'invincible: blocked .* damage'] }
