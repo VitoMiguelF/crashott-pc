@@ -43,6 +43,7 @@
 #include "../kernel/input.h"
 #include "../kernel/memory.h"
 #include "../paths.h"
+#include "../settings/challenge_counters.h"
 #include "../settings/direct_boot.h"
 #include "../settings/prompt_icons.h"
 #include "../settings/quit_game.h"
@@ -4585,6 +4586,8 @@ float4 main(float4 position : SV_Position) : SV_Target
         subtitles::Draw(g_backBufferWidth, g_backBufferHeight);
         // The "hold to skip" prompt of the cutscenes and videos (skip_cinematics.h).
         cutscenes::Draw(g_backBufferWidth, g_backBufferHeight);
+        // The skin challenges' counters in a level (challenge_counters.h).
+        settings::challenges::Draw(g_backBufferWidth, g_backBufferHeight);
         // The on-screen touch controls (Android, touch_controls.h).
         touch_controls::Draw(g_backBufferWidth, g_backBufferHeight);
 

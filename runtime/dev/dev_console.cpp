@@ -202,7 +202,7 @@ namespace dev::console
         };
         const Command COMMANDS[] = {
             { "help", "help [comando]", "lista os comandos, ou explica um" },
-            { "unlock", "unlock all | unlock skin <nome>", "desbloqueia tudo (20 skins + Crash_Hulk, fases, golpes) ou uma skin" },
+            { "unlock", "unlock all | unlock levels | unlock skin <nome>", "desbloqueia tudo (20 skins + Crash_Hulk, fases, golpes), so as fases (as skins ficam trancadas) ou uma skin" },
             { "mojo", "mojo <n>", "da n de mojo (o HUD acompanha)" },
             { "god", "god [on|off]", "invencibilidade (o HP nao desce; poços ainda matam)" },
             { "tp", "tp <x> <y> <z>", "teleporta o jogador 1 (y = altura; veja pos)" },
@@ -231,7 +231,7 @@ namespace dev::console
                 return CommandNames();
             std::string command = Lower(words[0]);
             if (command == "unlock")
-                return index == 1 ? std::vector<std::string>{ "all", "skin" }
+                return index == 1 ? std::vector<std::string>{ "all", "levels", "skin" }
                        : index == 2 && words.size() > 1 && Lower(words[1]) == "skin" ? skins::Names()
                                                                                       : std::vector<std::string>{};
             if (command == "skin")
@@ -488,6 +488,14 @@ namespace dev::console
                     {
                         skins::UnlockHulk(true);
                         Reply("unlock all: 20 skins do jogo, fases e golpes (objetivos do jogo) + Crash_Hulk no menu de skins", Tone::Ok);
+                        Reply("  (o jogo grava no save quando ele salvar)", Tone::Dim);
+                    }
+                }
+                else if (what == "levels")
+                {
+                    if (ConsoleLua(ctx, base, "dev.unlock_levels()"))
+                    {
+                        Reply("unlock levels: as fases e episodios (objetivo do jogo); skins e golpes continuam como estao", Tone::Ok);
                         Reply("  (o jogo grava no save quando ele salvar)", Tone::Dim);
                     }
                 }
