@@ -1162,6 +1162,19 @@ env = { CRASH_MP = "1", CRASH_MP_TRACE = "1", CRASH_MP_PLAYERS = "4" }
 input = [["@gameplay_ready"], [3, "SHOT"], [5, "P3_LS", 1, 0, 2.0], [5, "P2_LS", -1, 0, 2.0], [6, "SHOT"], [7, "P4_LS", 0, -1, 2.0], [8, "LS", 0, 1, 1.5], [9, "SHOT"], [10, "P3_A"], [10.2, "SHOT"], [13, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] prototype on'] }
 
+[profiles.mp_cores]
+description = "Multijogador: as 12 cores do Crash (mp_colors.cpp) em 4 jogadores locais na vila L1_E1, 4 cores por vez (CRASH_MP_COLORS, troca a cada 8 s); capturas de cada grupo"
+test = false
+timeout = 32
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_PLAYERS = "4", CRASH_MP_COLORS = "orange,red,pink,purple,blue,cyan,green,yellow,brown,white,gray,black", CRASH_MP_COLORS_EVERY = "8000" }
+input = [["@gameplay_ready"], [6.5, "SHOT"], [14, "SHOT"], [22, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] player 4 \(slot 4\): \w+'] }
+
 [profiles.mp_ko]
 description = "Multijogador (protótipo): 4 jogadores locais na vila L1_E1, o P3 e depois o P2 são nocauteados (tools/dev_lua/mp_ko.lua); mostra o nocaute e a volta de cada um"
 test = false

@@ -29,6 +29,7 @@
 //   [lighting] the lighting remaster (gpu/lighting.h), all off by default: ssao = "off" | "low" |
 //             "high", gi = true|false, gi_intensity = 0..200 (%), contact_shadows = true|false,
 //             soft_shadows = true|false (the game's stencil shadows with a wider filter)
+//   [multiplayer] color = "orange" | "red" | ... (the Crash's colour in a session, online/mp_colors.h)
 //   [dev]     console = true|false (the developer console, dev/dev_console.h), hulk_skin =
 //             true|false (the unused Crash_Hulk skin unlocked by the console, dev/dev_skins.cpp)
 //   [launcher] view = "simple" | "advanced" (the launcher's last view; the game ignores it)
@@ -177,6 +178,10 @@ namespace settings
         int giIntensity = 100;            // gi_intensity: % (0..200)
         bool contactShadows = false;      // contact_shadows: short shadows towards the game's key light
         bool softShadows = false;         // soft_shadows: wider rotated-disk filter on the game's stencil shadows
+        // [multiplayer] color: the player's Crash colour in a session (online/mp_colors.h), an id
+        // ("orange", "red", "pink", "purple", "blue", "cyan", "green", "yellow", "brown", "white",
+        // "gray", "black"); chosen in the MULTIPLAYER screens, live
+        std::string mpColour = "orange";
         // [dev]: developer tools (dev/dev_console.h), live
         bool devConsole = false;  // console: the developer console (the key left of 1, or F10)
         bool hulkSkin = false;    // hulk_skin: the unused Crash_Hulk skin is in the skin menu (console "unlock skin hulk")

@@ -33,6 +33,7 @@
 // stay within CRASH_MP_LEASH of each other (Leash, UpdateLocalPlayer).
 
 #include "mp.h"
+#include "mp_colors.h"
 #include "mp_lobby.h"
 #include "mp_nat.h"
 #include "../diagnostics.h"
@@ -77,7 +78,6 @@ extern "C" PPC_FUNC(__imp__sub_82092668);  // CActorManager::vf10 (actors' updat
 extern "C" PPC_FUNC(__imp__sub_82099058);  // CAIManager::vf10
 extern "C" PPC_FUNC(__imp__sub_8220AC38);  // CObjectiveManager::vf10
 extern "C" PPC_FUNC(__imp__sub_822210E0);  // CCharacterObject::~CCharacterObject
-extern "C" PPC_FUNC(__imp__sub_822212C0);  // character drawable: the palette of this frame (+0x11C8)
 PPC_EXTERN_FUNC(sub_82110448);             // CDamageableBehaviour::AdjustHitpoints(this, f1 = delta, r5 = damager)
 PPC_EXTERN_FUNC(sub_820972D0);             // CActionTeleport::CActionTeleport(msg, const Vector*, flags)
 PPC_EXTERN_FUNC(sub_82097348);             // its destructor
@@ -508,53 +508,6 @@ namespace
         Log("%s", line);
     }
 
-    // Drawables whose fur hue is turned (degrees; < 0 none), by FixLooks.
-    std::unordered_map<uint32_t, float>& Tints()
-    {
-        static std::unordered_map<uint32_t, float> tints;
-        return tints;
-    }
-    std::mutex& TintMutex()
-    {
-        static std::mutex mutex;
-        return mutex;
-    }
-
-    // Crash's fur: the saturated oranges of the normal palette (hue 5-45 degrees, saturation > 0.5; the
-    // skin, the jeans and the shoes are outside it) go to `hue`, saturation and value kept.
-    void TintPalette(uint32_t palette, float hue)
-    {
-        uint8_t* words = g_memory.Translate(palette);
-        for (int e = 0; e < 256; ++e)
-        {
-            uint8_t* c = words + e * 4;  // big-endian ARGB
-            float r = c[1] / 255.0f, g = c[2] / 255.0f, b = c[3] / 255.0f;
-            float mx = std::max({r, g, b}), mn = std::min({r, g, b}), delta = mx - mn;
-            if (mx <= 0 || delta / mx <= 0.5f)
-                continue;
-            float h = mx == r ? 60.0f * std::fmod((g - b) / delta, 6.0f) : mx == g ? 60.0f * ((b - r) / delta + 2) : 60.0f * ((r - g) / delta + 4);
-            if (h < 0)
-                h += 360;
-            if (h < 5 || h > 45)
-                continue;
-            float sat = delta / mx, v = mx, nh = std::fmod(hue + (h - 25.0f), 360.0f) / 60.0f;
-            float x = v * sat * (1 - std::abs(std::fmod(nh, 2.0f) - 1)), cc = v * sat, m = v - cc;
-            float rgb[3];
-            int sector = int(nh) % 6;
-            switch (sector)
-            {
-            case 0: rgb[0] = cc, rgb[1] = x, rgb[2] = 0; break;
-            case 1: rgb[0] = x, rgb[1] = cc, rgb[2] = 0; break;
-            case 2: rgb[0] = 0, rgb[1] = cc, rgb[2] = x; break;
-            case 3: rgb[0] = 0, rgb[1] = x, rgb[2] = cc; break;
-            case 4: rgb[0] = x, rgb[1] = 0, rgb[2] = cc; break;
-            default: rgb[0] = cc, rgb[1] = 0, rgb[2] = x; break;
-            }
-            for (int k = 0; k < 3; ++k)
-                c[1 + k] = uint8_t(std::clamp((rgb[k] + m) * 255.0f + 0.5f, 0.0f, 255.0f));
-        }
-    }
-
     // The jacked palette pointers FixLooks replaced (by drawable: its field and the original value). The
     // drawable releases both of its palettes when it goes: with a replaced one the normal palette was
     // released twice and a level's unload crashed (_purecall in ~CCharacterObject, online, 3 players).
@@ -572,40 +525,41 @@ namespace
     // normal palette of its variant (+4548; palettes at +4516 normal / +4532 jacked) into its base
     // (+348, sub_8222C2D8) at setup, and blends it every frame toward the jacked one by +0x15D0
     // (sub_822212C0; player 2's stays at the jacked end) into the palette it draws with (+0x11C8, 256
-    // ARGB words). Here each player's colour follows its slot, fixed (base and blend target the same):
-    // slot 2 the jacked palette (pale), the others the normal one, and slots 3 / 4 get the normal one's
-    // orange fur turned blue / green after every blend (TintPalette). Done once per drawable (a new
-    // level makes new ones).
-    void FixLooks(PPCContext& ctx, uint8_t* base, Net& n)
+    // ARGB words). Here each player's colour is its slot's (mp_colors.h: the lobby's roster, or the
+    // defaults), fixed (base and blend target the same): white = the jacked palette (pale), the others
+    // the normal one, recoloured after every blend (mp_colors.cpp) unless orange. Done once per
+    // drawable (a new level makes new ones) and again when the slot's colour changes (the host's
+    // lobby at the HUB). Also for the local prototype with more than 2 players (CRASH_MP_PLAYERS).
+    void FixLooks(PPCContext& ctx, uint8_t* base, Net& n, uint32_t players)
     {
-        for (uint32_t i = 0; i < n.players; ++i)
+        for (uint32_t i = 0; i < players; ++i)
         {
             uint32_t crash = mp::PlayerCrash(i);
             uint32_t render = crash ? LoadBE32(crash + 0xE0) : 0;
             uint32_t d = GuestPointer(render) && LoadBE32(render) == 0x82015BC4 ? LoadBE32(render + 92) : 0;
-            if (!GuestPointer(d) || !mp::PlayerOnFoot(i) || d == n.lookDone[i])
+            uint32_t slot = SlotOf(n.slot, i), colour = mp::colors::ForSlot(slot);
+            if (!GuestPointer(d) || !mp::PlayerOnFoot(i) || (d == n.lookDone[i] && mp::colors::PaintedWith(d) == int(colour)))
                 continue;
-            uint32_t variant = LoadBE32(d + 4548) & 3;
-            uint32_t normal = LoadBE32(d + 4516 + variant * 4), jacked = LoadBE32(d + 4532 + variant * 4);
+            uint32_t variant = LoadBE32(d + 4548) & 3, field = d + 4532 + variant * 4;
+            uint32_t normal = LoadBE32(d + 4516 + variant * 4), jacked = LoadBE32(field);
+            auto& replaced = ReplacedPalettes();
+            if (auto it = replaced.find(d); it != replaced.end())
+                jacked = it->second.second;  // painted before: its own jacked palette
             if (!GuestPointer(normal) || !GuestPointer(jacked))
                 continue;
-            uint32_t slot = SlotOf(n.slot, i);
-            bool pale = slot == 1;
-            uint32_t look = pale ? jacked : normal;
+            uint32_t look = mp::colors::UsesJacked(colour) ? jacked : normal;
             PPCContext call = ctx;
             call.r3.u64 = d + 348;
             call.r4.u64 = look + 16;
             sub_8222C2D8(call, base);
             if (look != jacked)
-                ReplacedPalettes()[d] = { d + 4532 + variant * 4, jacked };
-            StoreBE32(d + 4532 + variant * 4, look);
+                replaced[d] = { field, jacked };
+            else
+                replaced.erase(d);
+            StoreBE32(field, look);
             n.lookDone[i] = d;
-            {
-                std::lock_guard<std::mutex> lock(TintMutex());
-                Tints()[d] = slot == 2 ? 215.0f : slot == 3 ? 115.0f : -1.0f;
-            }
-            static const char* names[] = {"orange", "pale (jacked)", "blue", "green"};
-            Log("[mp] player %u (slot %u): %s", i + 1, slot + 1, names[slot & 3]);
+            mp::colors::Paint(d, colour);
+            Log("[mp] player %u (slot %u): %s", i + 1, slot + 1, mp::colors::Get(colour).id);
         }
     }
 
@@ -1437,12 +1391,14 @@ namespace mp
         }
         if (n.role != Role::None && inLevel)
         {
-            FixLooks(ctx, base, n);
+            FixLooks(ctx, base, n, n.players);
             LocalCamera(ctx, base, n);
             DepartedPlayers(ctx, base, n);
             UpdateLocalPlayer(ctx, base, n);
             CorrectRemotePlayers(ctx, base, n);
         }
+        else if (inLevel && mp::Players() > 2)
+            FixLooks(ctx, base, n, mp::Players());
         if (n.role == Role::Host)
             HostTick(ctx, base, n);
         else if (n.role == Role::Client)
@@ -1479,33 +1435,6 @@ PPC_FUNC(sub_8220AC38)
     __imp__sub_8220AC38(ctx, base);
 }
 
-// After the game blends a character's palette for the frame: the players of slots 3 / 4 get their fur
-// colour (FixLooks).
-PPC_FUNC(sub_822212C0)
-{
-    uint32_t drawable = ctx.r3.u32;
-    __imp__sub_822212C0(ctx, base);
-    if (!mp::Enabled())
-        return;
-    float hue = -1;
-    {
-        std::lock_guard<std::mutex> lock(TintMutex());
-        auto it = Tints().find(drawable);
-        if (it != Tints().end())
-            hue = it->second;
-    }
-    if (hue < 0)
-        return;
-    // Still a player's (an old level's drawable may have been freed and its memory reused).
-    for (uint32_t i = 0; i < 4; ++i)
-        if (uint32_t crash = mp::PlayerCrash(i))
-            if (uint32_t render = LoadBE32(crash + 0xE0); GuestPointer(render) && LoadBE32(render + 92) == drawable)
-            {
-                TintPalette(drawable + 0x11C8, hue);
-                return;
-            }
-}
-
 // CCharacterObject::~CCharacterObject (r3 = the drawable): its own jacked palette back before it
 // releases its palettes (ReplacedPalettes).
 PPC_FUNC(sub_822210E0)
@@ -1517,10 +1446,7 @@ PPC_FUNC(sub_822210E0)
         StoreBE32(it->second.first, it->second.second);
         replaced.erase(it);
     }
-    {
-        std::lock_guard<std::mutex> lock(TintMutex());
-        Tints().erase(drawable);
-    }
+    mp::colors::Forget(drawable);
     __imp__sub_822210E0(ctx, base);
 }
 

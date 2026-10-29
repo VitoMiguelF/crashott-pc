@@ -6,6 +6,7 @@
 
 #include "mp_menu.h"
 #include "mp.h"
+#include "mp_colors.h"
 #include "mp_lobby.h"
 #include "../diagnostics.h"
 #include "../gpu/overlay.h"
@@ -234,11 +235,41 @@ namespace mp::menu
             return text;
         }
 
+        // ---- the player's colour (mp_colors.h) ----------------------------------------------------
+
+        // The Root screen's last row: COLOR  < BLUE >, left / right (or A) change it.
+        constexpr int ROOT_COLOUR_ROW = 2;
+
+        std::string ColourRowText()
+        {
+            const colors::Colour& c = colors::Get(colors::Mine());
+            return std::string(T("COLOR", "COR")) + ":  \xC2\xBA " + T(c.en, c.pt) + " \xC2\xBB";
+        }
+
+        // A sample of the colour's fur: a square at (x, y) in virtual units, with a dark edge.
+        void DrawSwatch(const View& v, float x, float y, float size, uint32_t colour)
+        {
+            uint8_t rgb[3];
+            colors::Swatch(colour, rgb);
+            g_canvas.Fill(v.IX(x), v.IY(y), v.IX(x + size), v.IY(y + size), { 30, 14, 0, 255 });
+            g_canvas.Fill(v.IX(x + 2.0f), v.IY(y + 2.0f), v.IX(x + size - 2.0f), v.IY(y + size - 2.0f), { rgb[0], rgb[1], rgb[2], 255 });
+        }
+
+        // Left / right (A: right) on the player's colour; true if pressed.
+        bool StepColour(uint16_t pressed, bool acceptToo)
+        {
+            int change = (pressed & XINPUT_GAMEPAD_DPAD_LEFT) ? -1
+                         : (pressed & XINPUT_GAMEPAD_DPAD_RIGHT) || (acceptToo && (pressed & (XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_START))) ? 1 : 0;
+            if (change)
+                colors::Step(change);
+            return change != 0;
+        }
+
         std::vector<std::string> Rows()
         {
             switch (g_screen)
             {
-            case Screen::Root: return { T("HOST GAME", "CRIAR PARTIDA"), T("FIND GAME", "ENCONTRAR PARTIDA") };
+            case Screen::Root: return { T("HOST GAME", "CRIAR PARTIDA"), T("FIND GAME", "ENCONTRAR PARTIDA"), ColourRowText() };
             case Screen::HostMode: return { T("NEW GAME", "NOVO JOGO"), T("LOAD GAME", "CARREGAR JOGO") };
             case Screen::FindMode: return { T("SERVER LIST", "LISTA DE PARTIDAS"), T("ENTER CODE", "DIGITAR CÓDIGO") };
             default: return {};
@@ -322,12 +353,19 @@ namespace mp::menu
                 bool selected = host && g_lobbyModal && g_row == int(i) && p.slot != 0;
                 const TextStyle& style = selected || (p.me && !host) ? pal.selected : pal.normal;
                 Draw(v, FontId::Small, line, 400.0f, y, LIST_CELL, style, 0.0f, 420.0f);
+                if (p.colour < colors::Count())
+                    DrawSwatch(v, 362.0f, y + 2.0f, LIST_CELL - 4.0f, p.colour);
                 std::string right = p.slot == 0 ? std::string("HOST") : std::to_string(p.pingMs) + " ms";
                 if (p.me && p.slot != 0)
                     right = std::string(T("YOU", "VOCÊ")) + "  " + right;
                 Draw(v, FontId::Small, right, 880.0f, y, LIST_CELL, style, 1.0f);
                 if (host && p.slot != 0)
                     AddZone(380.0f, y - 6.0f, 900.0f, y + LIST_CELL + 6.0f, Hit::Row, int(i), true);
+                else if (p.me)  // the player's own row: left / right half change its colour
+                {
+                    AddZone(340.0f, y - 6.0f, 640.0f, y + LIST_CELL + 6.0f, Hit::RowLeft, int(i));
+                    AddZone(640.0f, y - 6.0f, 900.0f, y + LIST_CELL + 6.0f, Hit::RowRight, int(i));
+                }
                 y += LIST_PITCH;
             }
         }
@@ -369,7 +407,14 @@ namespace mp::menu
                     float y = ROWS_Y + 40.0f + i * ROW_PITCH;
                     float right = Draw(v, FontId::Large, rows[i], VIRTUAL_W * 0.5f, y, ROW_CELL, int(i) == g_row ? pal.selected : pal.normal, 0.5f);
                     float left = VIRTUAL_W - right;
-                    AddZone(left - 20.0f, y - 6.0f, right + 20.0f, y + ROW_CELL + 6.0f, Hit::Row, int(i));
+                    if (g_screen == Screen::Root && int(i) == ROOT_COLOUR_ROW)
+                    {
+                        DrawSwatch(v, right + 16.0f, y + 2.0f, ROW_CELL - 4.0f, colors::Mine());
+                        AddZone(left - 20.0f, y - 6.0f, VIRTUAL_W * 0.5f, y + ROW_CELL + 6.0f, Hit::RowLeft, int(i));
+                        AddZone(VIRTUAL_W * 0.5f, y - 6.0f, right + 60.0f, y + ROW_CELL + 6.0f, Hit::RowRight, int(i));
+                    }
+                    else
+                        AddZone(left - 20.0f, y - 6.0f, right + 20.0f, y + ROW_CELL + 6.0f, Hit::Row, int(i));
                 }
                 std::string help = g_screen == Screen::Root
                                        ? T("Up to 4 players: one hosts, the others find the game in the list (same network) or by its code.",
@@ -441,7 +486,8 @@ namespace mp::menu
                                                                "O host está numa fase: você entra na próxima que ele começar.")
                                                            : T("Waiting for the host to start a level...", "Esperando o host começar uma fase...") });
                 }
-                DrawHelp(v, pal, { T("B: leave", "B: sair") }, HELP_Y + 40.0f);
+                DrawHelp(v, pal, { lobby::GetState() == lobby::State::Joined ? T("Left / right: your color    B: leave", "Esquerda / direita: sua cor    B: sair")
+                                                                             : T("B: leave", "B: sair") }, HELP_Y + 40.0f);
                 break;
             }
             case Screen::Message:
@@ -494,7 +540,8 @@ namespace mp::menu
                     AddZone(380.0f, y - 6.0f, 900.0f, y + LIST_CELL + 6.0f, Hit::Row, players + row, row == ROW_CLOSE);
                 y += LIST_PITCH;
             }
-            std::string help = g_row < players ? T("A: kick", "A: expulsar") : T("A / left / right: change", "A / esquerda / direita: mudar");
+            std::string help = g_row == 0 ? T("Left / right: your color", "Esquerda / direita: sua cor")
+                               : g_row < players ? T("A: kick", "A: expulsar") : T("A / left / right: change", "A / esquerda / direita: mudar");
             std::string back = std::string("\xC2\xB2 ") + T("BACK", "VOLTAR");
             float end = Draw(v, FontId::Small, back, 390.0f, bottom - 62.0f, HELP_CELL, pal.help);
             AddZone(380.0f, bottom - 70.0f, end + 10.0f, bottom - 62.0f + HELP_CELL + 8.0f, Hit::Back);
@@ -796,6 +843,8 @@ namespace mp::menu
             case Screen::Root:
                 if (back)
                     Close(true);
+                else if (g_row == ROOT_COLOUR_ROW)
+                    StepColour(pressed, true);
                 else if (accept)
                     Go(g_row == 0 ? Screen::HostMode : Screen::FindMode);
                 break;
@@ -886,6 +935,8 @@ namespace mp::menu
                     lobby::Leave();
                     Go(Screen::Root, 1);
                 }
+                else if (state == lobby::State::Joined && StepColour(pressed, false))
+                    break;
                 else if (state == lobby::State::Failed)
                 {
                     lobby::Reason reason = lobby::LastReason();
@@ -937,7 +988,9 @@ namespace mp::menu
             if (g_row < players)
             {
                 std::vector<lobby::Player> list = lobby::Players();
-                if (accept && list[size_t(g_row)].slot != 0)
+                if (list[size_t(g_row)].me)
+                    StepColour(pressed, true);  // the host's own row: its colour
+                else if (accept)
                     lobby::Kick(list[size_t(g_row)].slot);
                 return;
             }

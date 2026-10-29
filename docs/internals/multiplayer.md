@@ -225,11 +225,9 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   everywhere, so a host record of player index g is slot g. "CMI2" pad packets carry the slot; the host
   learns each client's address from them and passes them on to the other clients; each machine gives
   slot g's pad to controller `LocalIndex(g)`.
-- **4 colours, by slot**: orange (slot 1, normal palette), pale (slot 2, jacked), blue (3), green (4), fixed
-  (base and blend target the same palette, so the jacked blend never moves it). Blue and green: after the
-  game's palette blend of the frame (`sub_822212C0`, hooked) the final palette (+0x11C8, 256 big-endian
-  ARGB words) of those players' drawables gets its fur turned: the saturated oranges (hue 5-45 degrees,
-  saturation > 0.5; skin, jeans and shoes are outside it) go to hue 215 / 115, saturation and value kept.
+- **Colours**: each slot's Crash gets its player's colour ("Colours" below); without a lobby (the local
+  `CRASH_MP_PLAYERS` prototype, `CRASH_MP_ROLE` tests) slot 1 orange, 2 white, 3 blue, 4 green (then red,
+  purple, yellow, pink), or `CRASH_MP_COLORS`.
 - **Knock-out and back**: a player's death posts a `CActionResetPlayer`; its first run (`sub_8220D830`, the
   only caller of the co-op knock-out `sub_82164F40` -> `sub_82164120` -> `sub_82154300`) puts a co-op
   player into the other's backpack in co-op state 3 with a timer at +0x114 (`Crash::vf08` counts it down,
@@ -325,6 +323,44 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   panel and the lobby. Left: a client plays without the host's save (its own progress: mojo 0, upgrades), follows a start only
   from its menus / HUB (not from inside another level); the host's NEW GAME leaves the opening level to CONTINUE
   STORY at the HUB.
+
+## Colours
+
+Each player picks the colour of its Crash (`online/mp_colors.cpp`); 12 of them, in the look of the game's own
+promotional art with a crowd of coloured Crashes (coral red, salmon pink, violet, indigo blue, leaf green,
+golden yellow: soft, nothing neon, the fur's shading and shine kept): ORANGE (the normal palette), RED, PINK,
+PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale fur), GRAY, BLACK.
+
+- **How it is painted**: the character drawable (`CCharacterObject`, "Same colour on both machines" above) gets
+  as its base (+348, `sub_8222C2D8`) and as its blend target (the jacked slot +4532) the same palette: the jacked
+  one for WHITE, the normal one for the others, so the game's per-frame blend (`sub_822212C0`) never moves it.
+  After that blend (`sub_822212C0` hooked in `mp_colors.cpp`) the final palette (+0x11C8, 256 big-endian ARGB
+  words) of a player's drawable gets its fur recoloured: the oranges of hue 5-45 degrees with saturation
+  above 0.5, or above 0.3 under value 0.55 (the darker fur of the back and neck; the skin, lighter and duller, the
+  jeans and the shoes are outside it) go to the colour's hue (their spread around 25 degrees scaled), saturation times a factor, and value through `vMin + (vMax - vMin) * v^gamma`. Black (value
+  0.03-0.30, a little blue, saturation 0.22), gray (saturation 0.08) and brown (value up to 0.56) come from the
+  value curve, not the hue; the curve keeps the light-to-dark order of the palette, so the fur keeps its
+  volume. The recipes are a table at the top of `mp_colors.cpp`. Seen (`mp_cores`): all 12 on 4 players at the
+  village, skin, jeans and shoes untouched; WHITE is P2's whole look (pale fur, green shorts). Left: the tufts on
+  top of the head stay dark brown (outside the hue / saturation test). `FixLooks` (`mp_net.cpp`) paints once per
+  drawable and again when its slot's colour changes; the original jacked pointer goes back before the
+  drawable is deleted (`~CCharacterObject` hook), also after a repaint.
+- **Choosing**: MULTIPLAYER's first screen has a third row, COLOR / COR `< BLUE >` with a sample of the fur
+  (left / right / A, or a click on its halves); in the lobby the player's own row changes it with left / right
+  (the host's lobby at the HUB: its row; a client waiting in LOBBY: left / right anywhere). The roster shows
+  every player's sample before its number. Saved at once in `settings.toml`, `[multiplayer] color = "blue"`
+  (`settings::Values::mpColour`; an unknown id is orange). `CRASH_MP_COLOR=<id>` overrides it for a run (not saved).
+- **Protocol** (version 5): HELLO and every PING carry the colour the client wants (1 byte, the index in the
+  table); the ROSTER carries each player's colour (1 byte after its ping). The host resolves them
+  (`ResolveColours`, `mp_lobby.cpp`) before every roster and when a PING or its own setting changes one:
+  **no two players share a colour** — a player who already has the colour it asked for keeps it; the others,
+  in slot order, get theirs if it is free, else the next free one after it in the table (logged "the one asked
+  for is taken"). A player bumped that way gets its own back as soon as it is free. In the menus left / right
+  skip the colours the others have. The colours are per slot (`colors::SetSlotColours`, host: resolved,
+  client: from the roster), so every machine paints every slot the same; 12 colours >= 8 slots
+  (`colors::MAX_SLOTS`), so there is always a free one.
+- **Tests**: `CRASH_MP_COLORS=<id>,...` gives the slots their colours without a lobby, `CRASH_MP_COLORS_EVERY=<ms>`
+  moves them along the list (profile `mp_cores`: the 12 colours on 4 local players, 3 screenshots).
 
 ## Internet (no server of ours)
 
@@ -426,5 +462,5 @@ arrays). So up to 4 players, all native Crashes, no puppets:
 | Milestone | Work | Effort |
 |---|---|---|
 | M2 client input drives a Crash on the host | **first slice done** (the host's native P2 on the client's pad, both players on foot from the start, physics teleports, above); input mirroring for animation and local prediction, above); players 3-4 as native Crashes on their own controllers, 4 machines, above; left: snap against time-aligned records over real latency | 1-2 weeks left |
-| M3 combat / enemies / level change, up to 4 | **first slice done** (same enemies on both machines, host hitpoints and deaths, above); fight-tree node sync (animation), spawn/despawn and death events, jacking titans (titan = host actor ridden by a puppet), objectives/cinematics/level change as host events, palettes for 5 colours, death/respawn per player | 5-8 weeks |
-| M4 lobby, colour select, internet | **first slice done** (MULTIPLAYER menu, LAN list, code, password, kick, options, "Lobby" above); left: colour select (Scrooby screens or our own overlay), protocol versioning / reliability layer, STUN hole punching + TURN relay on a small VPS, reconnect | 3-4 weeks (+ VPS) |
+| M3 combat / enemies / level change, up to 4 | **first slice done** (same enemies on both machines, host hitpoints and deaths, above); fight-tree node sync (animation), spawn/despawn and death events, jacking titans (titan = host actor ridden by a puppet), objectives/cinematics/level change as host events, death/respawn per player | 5-8 weeks |
+| M4 lobby, colour select, internet | **first slice done** (MULTIPLAYER menu, LAN list, code, password, kick, options, "Lobby" above); colour select done ("Colours"); left: protocol versioning / reliability layer, STUN hole punching + TURN relay on a small VPS, reconnect | 3-4 weeks (+ VPS) |
