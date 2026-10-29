@@ -30,6 +30,7 @@
 
 #include "save_screens.h"
 #include "direct_boot.h"
+#include "keyboard.h"
 #include "menu_art.h"
 #include "menu_mouse.h"
 #include "pc_frontend.h"
@@ -108,48 +109,11 @@ namespace settings::save_screens
         // Virtual 1280x720 screen (the game's image, fitted into the window), where the wheel was:
         // between the name (y ~150) and the game's hints (y ~580).
         constexpr float VIRTUAL_W = 1280.0f, VIRTUAL_H = 720.0f;
-        constexpr float KEY_W = 50.0f, KEY_H = 46.0f, PITCH_X = 56.0f, PITCH_Y = 52.0f, KEYS_TOP = 296.0f;
-        constexpr float WIDE_W = 248.0f, WIDE_GAP = 12.0f;
-        constexpr char32_t KEY_ERASE = 1, KEY_DONE = 2;
-
-        struct Key
-        {
-            char32_t c;  // the character, or KEY_ERASE / KEY_DONE
-            int row;
-            float x, y, w, h;
-        };
-
-        std::vector<Key> MakeKeys()
-        {
-            static const char* ROWS[] = { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM" };
-            std::vector<Key> keys;
-            for (int row = 0; row < 4; row++)
-            {
-                int n = int(strlen(ROWS[row]));
-                float left = VIRTUAL_W * 0.5f - ((n - 1) * PITCH_X + KEY_W) * 0.5f;
-                for (int i = 0; i < n; i++)
-                    keys.push_back({ char32_t(ROWS[row][i]), row, left + i * PITCH_X, KEYS_TOP + row * PITCH_Y, KEY_W, KEY_H });
-            }
-            float left = VIRTUAL_W * 0.5f - WIDE_W - WIDE_GAP * 0.5f, y = KEYS_TOP + 4 * PITCH_Y;
-            keys.push_back({ KEY_ERASE, 4, left, y, WIDE_W, KEY_H });
-            keys.push_back({ KEY_DONE, 4, left + WIDE_W + WIDE_GAP, y, WIDE_W, KEY_H });
-            return keys;
-        }
-        const std::vector<Key>& Keys()
-        {
-            static const std::vector<Key> keys = MakeKeys();
-            return keys;
-        }
-        int KeyOf(char32_t c)
-        {
-            const std::vector<Key>& keys = Keys();
-            for (size_t i = 0; i < keys.size(); i++)
-            {
-                if (keys[i].c == c)
-                    return int(i);
-            }
-            return -1;
-        }
+        constexpr float KEYS_TOP = 296.0f;  // the keyboard (keyboard.h) from here
+        constexpr char32_t KEY_ERASE = keyboard::ERASE, KEY_DONE = keyboard::DONE;
+        using keyboard::Keys;
+        using keyboard::KeyOf;
+        using keyboard::Step;
 
         // ---- shared with the render thread ---------------------------------------------------------
         enum class Mode : uint8_t { None, Keyboard, SlotPrompt, Confirm };
@@ -478,35 +442,32 @@ namespace settings::save_screens
                 TypeChar(ctx, base, action, c);
         }
 
-        // Up / down: the key in that row nearest in x; left / right: around the row.
-        int Step(int key, int dx, int dy)
+        // The page comes in about a second after the screen starts (while the previous one goes out): the
+        // keyboard waits for it, as its title and the game's hints do. The page object (the action's +20) gets
+        // its word +84 (an opaque colour) when it shows: read at the start (already opaque coming back to
+        // the screen), then watched; at most 2.5 s.
+        uint32_t g_pageWord = 0;
+        uint64_t g_keyboardSince = 0;
+        bool g_pageShown = false;
+
+        uint32_t PageWord(uint32_t action)
         {
-            const std::vector<Key>& keys = Keys();
-            const Key& from = keys[size_t(key)];
-            if (dx)
+            uint32_t page = LoadBE32(action + 20);
+            return page >= 0x40000000 ? LoadBE32(page + 84) : 0;
+        }
+
+        bool PageShown(uint32_t action)
+        {
+            if (g_pageShown)
+                return true;
+            uint32_t word = PageWord(action);
+            uint64_t now = plat::TickCountMs();
+            if ((word != g_pageWord && word >> 24 == 0xFF) || now - g_keyboardSince > 2500)
             {
-                std::vector<int> row;
-                for (size_t i = 0; i < keys.size(); i++)
-                {
-                    if (keys[i].row == from.row)
-                        row.push_back(int(i));
-                }
-                auto at = std::find(row.begin(), row.end(), key) - row.begin();
-                return row[size_t((at + dx + int(row.size())) % int(row.size()))];
+                g_pageShown = true;
+                Log("[saves] name entry: the page shows (%llu ms): the keyboard too", (unsigned long long)(now - g_keyboardSince));
             }
-            int target = (from.row + dy + 5) % 5;
-            float cx = from.x + from.w * 0.5f;
-            int best = key;
-            float bestDistance = 1e9f;
-            for (size_t i = 0; i < keys.size(); i++)
-            {
-                if (keys[i].row != target)
-                    continue;
-                float d = std::fabs(keys[i].x + keys[i].w * 0.5f - cx);
-                if (d < bestDistance)
-                    bestDistance = d, best = int(i);
-            }
-            return best;
+            return g_pageShown;
         }
 
         void StartKeyboard()
@@ -541,10 +502,20 @@ namespace settings::save_screens
             if (!g_keyboardOn || action != g_nameAction)
             {
                 g_nameAction = action;
+                g_pageWord = PageWord(action);
+                g_keyboardSince = plat::TickCountMs();
+                g_pageShown = g_pageWord >> 24 == 0xFF;
                 StartKeyboard();
             }
             g_keyboardTime = plat::TickCountMs();
             HideWheel(ctx, base, action);
+            if (!PageShown(action))
+            {
+                TakePressed();
+                input::pc::TakeTypedText();
+                Publish({});
+                return;
+            }
 
             uint16_t pressed = TakePressed();
             std::u32string typed = input::pc::TakeTypedText();
@@ -912,14 +883,10 @@ namespace settings::save_screens
         // The frontend's colours on its cloth (settings_menu.cpp, CLOTH) and over a message frame
         // (DIMMED, the pause menu's).
         constexpr TextStyle KEY_NORMAL{ { 214, 120, 14, 255 }, { 70, 28, 0, 255 } };
-        constexpr TextStyle KEY_SELECTED{ { 150, 218, 212, 255 }, { 30, 104, 110, 255 } };
-        constexpr TextStyle KEY_OFF{ { 132, 84, 26, 255 }, { 84, 42, 2, 110 } };
         constexpr TextStyle MSG_TEXT{ { 238, 226, 196, 255 }, { 52, 28, 4, 255 } };
         constexpr TextStyle MSG_ITEM{ { 232, 160, 0, 255 }, { 104, 48, 8, 255 } };
         constexpr TextStyle MSG_SELECTED{ { 144, 216, 232, 255 }, { 24, 104, 128, 255 } };
         constexpr TextStyle MSG_WARNING{ { 255, 128, 72, 255 }, { 96, 24, 0, 255 } };
-        constexpr Color PLATE{ 92, 44, 4, 70 }, PLATE_EDGE{ 70, 28, 0, 120 };
-        constexpr Color PLATE_SELECTED{ 250, 236, 200, 120 }, PLATE_SELECTED_EDGE{ 30, 104, 110, 220 };
         constexpr Color FRAME{ 236, 222, 190, 190 }, DIM{ 14, 8, 0, 150 };
 
         menu_art::Canvas g_canvas;
@@ -954,41 +921,6 @@ namespace settings::save_screens
             return left + width;
         }
 
-        // A rounded plate (the keys), antialiased; cached by size and colour.
-        const menu_art::Image& Plate(int w, int h, int radius, Color fill, Color edge, int edgeWidth)
-        {
-            static std::map<std::tuple<int, int, int, uint32_t, uint32_t, int>, menu_art::Image> cache;
-            auto pack = [](Color c) { return uint32_t(c.r) | uint32_t(c.g) << 8 | uint32_t(c.b) << 16 | uint32_t(c.a) << 24; };
-            auto [it, inserted] = cache.try_emplace({ w, h, radius, pack(fill), pack(edge), edgeWidth });
-            menu_art::Image& image = it->second;
-            if (!inserted)
-                return image;
-            image.w = w, image.h = h;
-            image.px.assign(size_t(w) * h, 0);
-            auto distance = [&](float x, float y) {
-                // Signed distance to the rounded rectangle's border (negative inside).
-                float qx = std::fabs(x - w * 0.5f) - (w * 0.5f - radius), qy = std::fabs(y - h * 0.5f) - (h * 0.5f - radius);
-                float ox = std::max(qx, 0.0f), oy = std::max(qy, 0.0f);
-                return std::sqrt(ox * ox + oy * oy) + std::min(std::max(qx, qy), 0.0f) - radius;
-            };
-            for (int y = 0; y < h; y++)
-            {
-                for (int x = 0; x < w; x++)
-                {
-                    float d = distance(x + 0.5f, y + 0.5f);
-                    float cover = std::clamp(0.5f - d, 0.0f, 1.0f);
-                    if (cover <= 0.0f)
-                        continue;
-                    float t = std::clamp(-d - edgeWidth + 0.5f, 0.0f, 1.0f);  // 0 on the edge, 1 inside
-                    float a = (edge.a * (1.0f - t) + fill.a * t) / 255.0f * cover;
-                    float r = edge.r * (1.0f - t) + fill.r * t, g = edge.g * (1.0f - t) + fill.g * t, b = edge.b * (1.0f - t) + fill.b * t;
-                    auto p = [&](float c) { return uint32_t(std::lround(c * a)); };
-                    image.px[size_t(y) * w + x] = p(r) | p(g) << 8 | p(b) << 16 | uint32_t(std::lround(a * 255.0f)) << 24;
-                }
-            }
-            return image;
-        }
-
         void AddZone(float x0, float y0, float x1, float y1, Zone zone, int index = 0)
         {
             g_newZones.push_back({ x0, y0, x1, y1, zone, index });
@@ -996,33 +928,10 @@ namespace settings::save_screens
 
         void DrawKeyboard(const View& v, const Visual& vis)
         {
-            const std::vector<Key>& keys = Keys();
             bool full = vis.length >= NAME_CHARS, empty = vis.length == 0;
-            for (size_t i = 0; i < keys.size(); i++)
-            {
-                const Key& key = keys[i];
-                bool selected = int(i) == vis.key;
-                int px = v.IX(key.x), py = v.IY(key.y), pw = v.IX(key.x + key.w) - px, ph = v.IY(key.y + key.h) - py;
-                int radius = std::max(2, int(std::lround(9.0f * v.s))), edge = std::max(1, int(std::lround(2.0f * v.s)));
-                g_canvas.Blit(Plate(pw, ph, radius, selected ? PLATE_SELECTED : PLATE, selected ? PLATE_SELECTED_EDGE : PLATE_EDGE, edge), px, py);
-                AddZone(key.x - 3.0f, key.y - 3.0f, key.x + key.w + 3.0f, key.y + key.h + 3.0f, Zone::Key, int(i));
-                bool off = key.c == KEY_ERASE ? empty : key.c == KEY_DONE ? empty : full;
-                const TextStyle& style = selected ? KEY_SELECTED : off ? KEY_OFF : KEY_NORMAL;
-                std::string label;
-                float cell;
-                if (key.c == KEY_ERASE || key.c == KEY_DONE)
-                {
-                    // The game's own words for X and Y on this screen (ERASE / DONE).
-                    label = key.c == KEY_ERASE ? T(vis.portuguese, "ERASE", "APAGAR") : T(vis.portuguese, "DONE", "PRONTO");
-                    cell = selected ? 34.0f : 30.0f;
-                }
-                else
-                {
-                    label = std::string(1, char(key.c));
-                    cell = selected ? 44.0f : 38.0f;
-                }
-                Text(v, FontId::Large, label, key.x + key.w * 0.5f, key.y + (key.h - cell) * 0.5f + 1.0f, cell, style, 0.5f);
-            }
+            keyboard::Draw(g_canvas, v.s, v.ox, v.oy, KEYS_TOP, vis.key, vis.portuguese,
+                           [&](char32_t c) { return c == KEY_ERASE || c == KEY_DONE ? !empty : !full; },
+                           [&](int key, float x0, float y0, float x1, float y1) { AddZone(x0, y0, x1, y1, Zone::Key, key); });
         }
 
         // The prompt on the slot screen: X DELETE, on the line of the game's B BACK / SELECT A.

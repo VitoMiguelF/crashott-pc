@@ -386,8 +386,11 @@ sized by them (pads, positions, snaps, hitpoints, camera interests, knock-outs),
   (`CRASH_MP_PORT`), clients any. The invite code is the host's address in 7 Crockford base-32 letters
   (`XXXX-XXX`; 10, `XXXXX-XXXXX`, with a port other than 47810): its public one once "Internet" below found
   it, its LAN one otherwise. HELLO carries the password hashed (FNV-1a 64, protocol version 2).
-- Text entry: letters and digits typed on the keyboard (`input::pc::SetTextEntry`), keys on the screen (mouse /
-  touch), or the D-pad (up / down the letter, left / right the cursor, X erases).
+- Text entry (the code, a password, the name): NEW GAME's name entry keyboard (`settings/keyboard.h`: digits and
+  QWERTY on the game's rounded keys, ERASE / DONE), the D-pad from key to key, A the highlighted key, X erases,
+  Y / START / DONE confirm, with X ERASE / DONE Y over the options screen's own B BACK / SELECT A; letters and
+  digits typed on the keyboard (`input::pc::SetTextEntry`) and taps on the keys too. A key the field cannot
+  take now (full, or not in a code: U) is dimmed. Test profiles confirm with START (A types a key now).
 - Mouse and touch (Android's menus are touch as a mouse): a click on a row chooses it, on the game's B BACK /
   SELECT A hints is that button, on an option's left / right half changes it, on the HUB panel opens the lobby;
   kicking needs a second tap on the player. On Android the default name is the device's model.

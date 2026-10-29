@@ -2586,3 +2586,9 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   mudam a cor (no visual da tela: título COR, setas do jogo giradas, dica entre VOLTAR e VESTIR SKIN) e a
   prévia já vem pintada; o host volta ao HUB com o lobby aberto, o cliente volta à espera (saída 91). A skin
   vai aos outros pelo lobby.
+- **Teclados iguais e SAVE NAME** (2026-10-29): o teclado do NOVO JOGO virou `settings/keyboard.*` e os campos do
+  MULTIPLAYER (código, senha, nome) usam o mesmo (QWERTY, ERASE/DONE, D-pad entre teclas, A tecla, X apaga, Y
+  pronto, dicas X APAGAR / PRONTO Y no estilo do jogo). O teclado do NOVO JOGO esperava nada e aparecia ~1 s
+  antes da página (o menu principal ainda saindo): agora espera a página aparecer (palavra +84 do objeto da
+  página, +20 da ação, vira uma cor opaca; 2,5 s no máximo). O título ENTER YOUR NAME (frontend 0xE194) virou
+  SAVE NAME em todos os idiomas do jogo (`pc_frontend.cpp` PC_TEXTS) e NOME DO JOGO SALVO em pt-br.

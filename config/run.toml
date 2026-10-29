@@ -1438,7 +1438,7 @@ userdata_mode = "copy"
 skip_intros = true
 env = { CRASH_MP_NAME = "CODIGO", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
 input = [
-    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "A"], [13.5, "SHOT"],
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "START"], [13.5, "SHOT"],
     ["@gameplay_ready"], [3, "SHOT"], [8, "START"], [9, "SHOT"], [9.3, "DOWN"], [9.6, "DOWN"], [10, "A"], [11, "SHOT"], [14, "SHOT"], [17, "SHOT"], [21, "SHOT"], [27, "SHOT"], [33, "SHOT"], [40, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] joined', 'the client.s menu in the level', 'client at the HUB: to the main menu'] }
@@ -1453,7 +1453,7 @@ userdata_mode = "copy"
 skip_intros = true
 env = { CRASH_MP_NAME = "FICA", CRASH_MP_CODE = "1ZG0-001", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "0,1080,1920,1080" }
 input = [
-    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "A"], [13.5, "SHOT"],
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "START"], [13.5, "SHOT"],
     ["@gameplay_ready"], [3, "SHOT"], [12, "SHOT"], [21, "SHOT"], [24, "SHOT"], [26, "SHOT"], [28, "SHOT"], [31, "SHOT"], [35, "SHOT"], [40, "SHOT"], [50, "SHOT"], [56, "SHOT"], [62, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] joined', 'left the session: out of the level', 'back in the lobby'] }
@@ -1468,7 +1468,7 @@ userdata_mode = "copy"
 skip_intros = true
 env = { CRASH_MP_NAME = "LISTA", CRASH_MP_PASSWORD = "CRASH", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
 input = [
-    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "SHOT"], [6.8, "A"], [12, "SHOT"], [12.5, "A"], [13.5, "SHOT"], [14, "A"], [16, "SHOT"], [24, "SHOT"],
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "SHOT"], [6.8, "A"], [12, "SHOT"], [12.5, "A"], [13.5, "SHOT"], [14, "START"], [16, "SHOT"], [24, "SHOT"],
     ["@gameplay_ready"], [3, "SHOT"], [5, "LS", -1, 0, 2.0], [8, "SHOT"], [12, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] joined', '\[mp\] menu: following the host', '\[mp\] net: client'] }
@@ -1483,7 +1483,7 @@ userdata_mode = "copy"
 skip_intros = true
 env = { CRASH_MP_NAME = "CODIGO", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_PASSWORD = "CRASH", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "0,1080,1920,1080" }
 input = [
-    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "A"], [13.5, "SHOT"], [14, "A"], [16, "SHOT"], [24, "SHOT"],
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "START"], [13.5, "SHOT"], [14, "START"], [16, "SHOT"], [24, "SHOT"],
     ["@gameplay_ready"], [3, "SHOT"], [5, "LS", 0, 1, 2.0], [8, "SHOT"], [12, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] joined', '\[mp\] menu: following the host', '\[mp\] net: client'] }
@@ -1530,7 +1530,7 @@ userdata_mode = "copy"
 skip_intros = true
 env = { CRASH_MP_NAME = "CENA1", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
 input = [
-    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"],
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "START"],
     ["@cinematic"], [1, "B", 2.0], [3.5, "SHOT"],
     ["@cinematic_done"], [2, "SHOT"], [6, "SHOT"], [12, "SHOT"],
 ]
@@ -1546,7 +1546,7 @@ userdata_mode = "copy"
 skip_intros = true
 env = { CRASH_MP_NAME = "CENA2", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "0,1080,1920,1080" }
 input = [
-    ["@main_menu"], [3, "DOWN"], [3.5, "DOWN"], [4.5, "A"], [6, "DOWN"], [6.5, "A"], [7.3, "DOWN"], [7.8, "A"], [9, "SHOT"],
+    ["@main_menu"], [3, "DOWN"], [3.5, "DOWN"], [4.5, "A"], [6, "DOWN"], [6.5, "A"], [7.3, "DOWN"], [7.8, "A"], [9, "SHOT"], [13, "START"],
     ["@cinematic_done"], [2, "SHOT"], [3, "LS", 1, 0, 2.0], [6, "SHOT"], [12, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["cinematic", "cinematic_done"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['the host skipped the cutscene of node', 'after the cutscene: player'] }
@@ -1602,6 +1602,20 @@ userdata_mode = "copy"
 skip_intros = true
 env = { CRASH_MP_NAME = "CLIENTE", CRASH_MP_CODE = "3Z000-03EP2", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
 input = [
-    ["@main_menu"], [3, "DOWN"], [3.5, "DOWN"], [4.5, "A"], [6, "DOWN"], [6.5, "A"], [7.3, "DOWN"], [7.8, "A"], [11, "SHOT"], [12, "A"], [16, "SHOT"], [20, "Y"], [25, "SHOT"], [26, "RIGHT"], [28, "SHOT"], [29, "DOWN"], [30, "SHOT"], [31, "A"], [32.5, "LEFT"], [33, "A"], [38, "SHOT"], [42, "SHOT"],
+    ["@main_menu"], [3, "DOWN"], [3.5, "DOWN"], [4.5, "A"], [6, "DOWN"], [6.5, "A"], [7.3, "DOWN"], [7.8, "A"], [11, "SHOT"], [12, "START"], [16, "SHOT"], [20, "Y"], [25, "SHOT"], [26, "RIGHT"], [28, "SHOT"], [29, "DOWN"], [30, "SHOT"], [31, "A"], [32.5, "LEFT"], [33, "A"], [38, "SHOT"], [42, "SHOT"],
 ]
 expect = { exit = ["timeout"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SKIN AND COLOR: the skin screen', 'SKIN AND COLOR: back to the wait', 'menu opened at the lobby'] }
+
+[profiles.nome_entrada]
+description = "NEW GAME: rajada de capturas na entrada da tela do nome (o teclado aparecia antes do resto da tela) e a tela parada"
+test = false
+fps_limit = 60
+timeout = 22
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+input = [
+    ["@main_menu"], [1.5, "A"], [1.55, "SHOT"], [1.7, "SHOT"], [1.85, "SHOT"], [2.0, "SHOT"], [2.15, "SHOT"], [2.3, "SHOT"], [2.5, "SHOT"], [2.8, "SHOT"], [3.2, "SHOT"],
+    ["@name_entry"], [3, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["name_entry"] }

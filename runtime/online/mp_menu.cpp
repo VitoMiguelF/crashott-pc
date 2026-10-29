@@ -17,6 +17,7 @@
 #include "../kernel/pc_input.h"
 #include "../kernel/xinput_types.h"
 #include "../platform/platform.h"
+#include "../settings/keyboard.h"
 #include "../settings/menu_art.h"
 #include "../settings/settings.h"
 #include "../settings/settings_menu.h"
@@ -45,6 +46,7 @@ namespace mp::menu
         using settings::menu_art::FontId;
         using settings::menu_art::TextStyle;
         namespace art = settings::menu_art;
+        namespace keyboard = settings::keyboard;
 
         // The frontend's nodes and exits (Frontend.bfig; docs/internals/multiplayer.md).
         constexpr uint32_t NODE_MAIN_MENU = 70, NODE_OPTIONS = 99, NODE_NEW_GAME_FADE = 322, NODE_HUB = 575, NODE_IN_GAME = 630;
@@ -142,6 +144,7 @@ namespace mp::menu
         bool g_portuguese = false;
         std::string g_field;      // the code, password or name being typed
         size_t g_cursor = 0;
+        int g_key = 0;  // the keyboard's highlighted key (settings/keyboard.h)
         std::string g_joinTarget;  // what the password is for (a code or an address)
         std::string g_message;
         Screen g_afterMessage = Screen::Root;
@@ -383,31 +386,46 @@ namespace mp::menu
         }
         constexpr float FIELD_CELL = 46.0f;
 
-        // Keys for the mouse / touch: the field's letters, ERASE and OK, 10 a row from `top`.
-        constexpr float KEY_W = 64.0f, KEY_H = 46.0f, KEY_PITCH_X = 70.0f, KEY_PITCH_Y = 52.0f;
-
-        float KeysWidth() { return 10 * KEY_PITCH_X - (KEY_PITCH_X - KEY_W); }
-        float KeysHeight(bool code)
+        // The field's letters and length (the screen typing it).
+        const char* FieldLetters() { return g_screen == Screen::Code ? CODE_LETTERS : PASSWORD_LETTERS; }
+        size_t FieldMaximum()
         {
-            int count = int(strlen(code ? CODE_LETTERS : PASSWORD_LETTERS)) + 2;
-            return ((count + 9) / 10) * KEY_PITCH_Y - (KEY_PITCH_Y - KEY_H);
+            return g_screen == Screen::Code ? CODE_LENGTH : g_screen == Screen::Name ? NAME_LENGTH : PASSWORD_LENGTH;
         }
 
-        void DrawKeys(const View& v, const Palette& pal, float top, bool code)
+        // A character as the field takes it: upper case, and in a code O / I / L as 0 / 1 (0 if it takes none).
+        char FieldChar(char32_t c)
         {
-            std::string letters = code ? CODE_LETTERS : PASSWORD_LETTERS;
-            int count = int(letters.size()) + 2;
-            float left = VIRTUAL_W * 0.5f - KeysWidth() * 0.5f;
-            for (int i = 0; i < count; i++)
-            {
-                float x = left + (i % 10) * KEY_PITCH_X, y = top + (i / 10) * KEY_PITCH_Y;
-                bool erase = i == count - 2, ok = i == count - 1;
-                float w = KEY_W;
-                g_canvas.Fill(v.IX(x), v.IY(y), v.IX(x + w), v.IY(y + KEY_H), { 0, 0, 0, 70 });
-                std::string label = erase ? std::string("\xC2\xB3") : ok ? std::string("OK") : std::string(1, letters[size_t(i)]);
-                Draw(v, FontId::Small, label, x + w * 0.5f, y + 7.0f, 32.0f, ok ? pal.selected : pal.normal, 0.5f, w - 6.0f);
-                AddZone(x, y, x + w, y + KEY_H, erase ? Hit::Erase : ok ? Hit::Confirm : Hit::Key, erase || ok ? 0 : letters[size_t(i)]);
-            }
+            char ch = char(toupper(int(c)));
+            if (FieldLetters() == CODE_LETTERS)
+                ch = ch == 'O' ? '0' : ch == 'I' || ch == 'L' ? '1' : ch;
+            return c < 128 && strchr(FieldLetters(), ch) ? ch : 0;
+        }
+
+        // The keys (NEW GAME's name entry keyboard) from `top`; a key that does nothing now is dimmed.
+        void DrawKeys(const View& v, float top)
+        {
+            bool full = g_field.size() >= FieldMaximum(), empty = g_field.empty();
+            keyboard::Draw(g_canvas, v.s, v.ox, v.oy, top, g_key, g_portuguese,
+                           [&](char32_t c) {
+                               return c == keyboard::ERASE || c == keyboard::DONE ? !empty : !full && FieldChar(c) != 0;
+                           },
+                           [&](int key, float x0, float y0, float x1, float y1) {
+                               char32_t c = keyboard::Keys()[size_t(key)].c;
+                               AddZone(x0, y0, x1, y1, c == keyboard::ERASE ? Hit::Erase : c == keyboard::DONE ? Hit::Confirm : Hit::Key, int(c));
+                           });
+        }
+
+        // X ERASE / DONE Y as the name entry's, over the options screen's own B BACK / SELECT A.
+        void DrawTypingHints(const View& v, const Palette& pal)
+        {
+            constexpr float Y = 592.0f, CELL = 36.0f, LEFT = 262.0f, RIGHT = 1012.0f;
+            std::string erase = std::string("\xC2\xB3 ") + T("ERASE", "APAGAR"), done = std::string(T("DONE", "PRONTO")) + " \xC2\xB4";
+            float end = Draw(v, FontId::Large, erase, LEFT, Y, CELL, pal.normal);
+            AddZone(LEFT - 10.0f, Y - 6.0f, end + 10.0f, Y + CELL + 6.0f, Hit::Erase);
+            float start = RIGHT - Width(FontId::Large, done, CELL);
+            Draw(v, FontId::Large, done, RIGHT, Y, CELL, pal.normal, 1.0f);
+            AddZone(start - 10.0f, Y - 6.0f, RIGHT + 10.0f, Y + CELL + 6.0f, Hit::Confirm);
         }
 
         void DrawHelp(const View& v, const Palette& pal, const std::vector<std::string>& lines, float y = HELP_Y)
@@ -514,15 +532,14 @@ namespace mp::menu
             Draw(v, FontId::Small, ok, VIRTUAL_W * 0.5f, y + 14.0f, SUB_CELL, DIMMED.selected, 0.5f);
         }
 
-        // A field typed on the cloth (the code, a password, the name): what it is, the field, the keys, the help.
-        void DrawTyping(const View& v, const Palette& pal, const std::string& about, bool code, const std::string& confirm)
+        // A field typed on the cloth (the code, a password, the name): what it is, the field, the keys and the
+        // hints, as NEW GAME's name entry.
+        void DrawTyping(const View& v, const Palette& pal, const std::string& about, bool code)
         {
             Draw(v, FontId::Small, about, VIRTUAL_W * 0.5f, SUB_Y + 4.0f, SUB_CELL, pal.help, 0.5f, 980.0f);
             DrawField(v, pal, ROWS_Y - 40.0f, code);
-            DrawKeys(v, pal, ROWS_Y + 30.0f, code);
-            DrawHelp(v, pal, { T("Type it, touch the keys, or D-pad up / down: letter, left / right: move, X: erase",
-                                 "Digite, toque nas teclas, ou direcional cima / baixo: letra, esquerda / direita: mover, X: apagar"),
-                               confirm }, HELP_Y + 4.0f);
+            DrawKeys(v, ROWS_Y + 26.0f);
+            DrawTypingHints(v, pal);
         }
 
         void RasterizeFull(const View& v, int width, int height)
@@ -596,16 +613,13 @@ namespace mp::menu
                 break;
             }
             case Screen::Code:
-                DrawTyping(v, pal, T("The host's code (in its HUB panel)", "O código do host (no painel do HUB dele)"), true,
-                           T("A / Enter / OK: join    B: back", "A / Enter / OK: entrar    B: voltar"));
+                DrawTyping(v, pal, T("The host's code (in its HUB panel)", "O código do host (no painel do HUB dele)"), true);
                 break;
             case Screen::Password:
-                DrawTyping(v, pal, T("This game has a password", "Esta partida tem senha"), false,
-                           T("A / Enter / OK: join    B: back", "A / Enter / OK: entrar    B: voltar"));
+                DrawTyping(v, pal, T("This game has a password", "Esta partida tem senha"), false);
                 break;
             case Screen::Name:
-                DrawTyping(v, pal, T("Your name in the games online (A-Z, 0-9, up to 12)", "O seu nome nas partidas online (A-Z, 0-9, até 12)"), false,
-                           T("A / Enter / OK: save    B: back", "A / Enter / OK: salvar    B: voltar"));
+                DrawTyping(v, pal, T("Your name in the games online (A-Z, 0-9, up to 12)", "O seu nome nas partidas online (A-Z, 0-9, até 12)"), false);
                 break;
             case Screen::Waiting:
             {
@@ -651,8 +665,8 @@ namespace mp::menu
             constexpr float TITLE = 38.0f;
             std::string title = T("PASSWORD", "SENHA");
             std::string back = std::string("\xC2\xB2 ") + T("BACK", "VOLTAR"), note = T("Empty = no password", "Vazia = sem senha");
-            float keysH = KeysHeight(false);
-            float contentW = std::max({ KeysWidth(), Width(FontId::Large, title, TITLE), FooterWidth(back, note) });
+            float keysH = keyboard::HEIGHT;
+            float contentW = std::max({ 10 * keyboard::PITCH_X, Width(FontId::Large, title, TITLE), FooterWidth(back, note) });
             Box box = FitBox(contentW, TITLE + 16.0f + FIELD_CELL + 20.0f + keysH + 16.0f + HELP_CELL, VIRTUAL_W * 0.5f, 0.5f, -1.0f);
             DrawBox(v, box);
             float y = box.Top();
@@ -660,7 +674,7 @@ namespace mp::menu
             y += TITLE + 16.0f;
             DrawField(v, pal, y, false);
             y += FIELD_CELL + 20.0f;
-            DrawKeys(v, pal, y, false);
+            DrawKeys(v, y);
             y += keysH + 16.0f;
             DrawBoxFooter(v, box, y, back, note, pal.help, pal.info);
         }
@@ -949,69 +963,60 @@ namespace mp::menu
             Go(Screen::Waiting);
         }
 
-        // The field: typed letters and the pad's letter cycling.
-        // Returns true when it was confirmed (A / Enter).
+        // The field, as NEW GAME's name entry: typed letters (keyboard, taps), the D-pad from key to key, A the
+        // highlighted key, X erases the last letter, Y / START (or DONE) confirm. True when confirmed.
         bool EditField(uint16_t pressed, const char* letters, size_t maximum)
         {
+            (void)letters;
             bool confirm = false;
+            auto type = [&](char32_t c) {
+                if (char ch = FieldChar(c); ch && g_field.size() < maximum)
+                {
+                    g_field += ch;
+                    g_dirty = true;
+                }
+            };
+            auto erase = [&] {
+                if (!g_field.empty())
+                {
+                    g_field.pop_back();
+                    g_dirty = true;
+                }
+            };
             std::u32string typed = input::pc::TakeTypedText() + g_tapped;
             g_tapped.clear();
             for (char32_t c : typed)
             {
                 if (c == U'\r')
-                {
                     confirm = true;
-                    continue;
-                }
-                char ch = char(toupper(int(c)));
-                if (ch == 'O' && letters == CODE_LETTERS)
-                    ch = '0';
-                if ((ch == 'I' || ch == 'L') && letters == CODE_LETTERS)
-                    ch = '1';
-                if (!strchr(letters, ch) || g_field.size() >= maximum)
-                    continue;
-                g_cursor = std::min(g_cursor, g_field.size());
-                if (g_cursor < g_field.size() && g_cursor + 1 == maximum)
-                    g_field.erase(g_field.begin() + g_cursor);  // a full field: the last letter is replaced
-                g_field.insert(g_field.begin() + g_cursor, ch);
-                g_cursor = std::min(g_cursor + 1, maximum - 1);
-                g_dirty = true;
-            }
-            size_t count = strlen(letters);
-            auto cycle = [&](int direction) {
-                if (g_cursor >= g_field.size())
-                {
-                    if (g_field.size() >= maximum)
-                        return;
-                    g_field.push_back(direction > 0 ? letters[0] : letters[count - 1]);
-                    return;
-                }
-                const char* at = strchr(letters, g_field[g_cursor]);
-                size_t index = at ? size_t(at - letters) : 0;
-                g_field[g_cursor] = letters[(index + count + direction) % count];
-            };
-            if (pressed & XINPUT_GAMEPAD_DPAD_UP)
-                cycle(1);
-            if (pressed & XINPUT_GAMEPAD_DPAD_DOWN)
-                cycle(-1);
-            if ((pressed & XINPUT_GAMEPAD_DPAD_RIGHT) && g_cursor < g_field.size() && g_cursor + 1 < maximum)
-                g_cursor++;
-            if ((pressed & XINPUT_GAMEPAD_DPAD_LEFT) && g_cursor > 0)
-                g_cursor--;
-            // X (Backspace): the letter under the cursor, or the last one.
-            if ((pressed & XINPUT_GAMEPAD_X) && !g_field.empty())
-            {
-                g_dirty = true;
-                if (g_cursor >= g_field.size())
-                {
-                    g_field.pop_back();
-                    g_cursor = g_field.size();
-                }
+                else if (c == U'\b')
+                    erase();
                 else
-                    g_field.erase(g_field.begin() + g_cursor);
+                {
+                    if (int key = keyboard::KeyOf(char32_t(toupper(int(c)))); key >= 0)
+                        g_key = key;
+                    type(c);
+                }
             }
-            if (pressed & (XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_START))
+            if (pressed & XINPUT_GAMEPAD_DPAD_LEFT) g_key = keyboard::Step(g_key, -1, 0);
+            if (pressed & XINPUT_GAMEPAD_DPAD_RIGHT) g_key = keyboard::Step(g_key, 1, 0);
+            if (pressed & XINPUT_GAMEPAD_DPAD_UP) g_key = keyboard::Step(g_key, 0, -1);
+            if (pressed & XINPUT_GAMEPAD_DPAD_DOWN) g_key = keyboard::Step(g_key, 0, 1);
+            if (pressed & XINPUT_GAMEPAD_A)
+            {
+                char32_t c = keyboard::Keys()[size_t(g_key)].c;
+                if (c == keyboard::ERASE)
+                    erase();
+                else if (c == keyboard::DONE)
+                    confirm = true;
+                else
+                    type(c);
+            }
+            if (pressed & XINPUT_GAMEPAD_X)
+                erase();
+            if (pressed & (XINPUT_GAMEPAD_Y | XINPUT_GAMEPAD_START))
                 confirm = true;
+            g_cursor = g_field.size();
             return confirm;
         }
 
@@ -1029,6 +1034,7 @@ namespace mp::menu
                 if (c != '-' && (screen != Screen::Name || isalnum(uint8_t(c))))
                     g_field += c;
             g_cursor = g_field.size();
+            g_key = keyboard::KeyOf('A');
             Go(screen);
         }
 

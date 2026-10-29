@@ -3,8 +3,10 @@
 // The save screens of the main menu as a PC game (save_screens.cpp; README "Nome e saves no PC",
 // runtime/NOTES.md "Teclado do nome e apagar saves"):
 //
-// - NEW GAME > ENTER YOUR NAME: the game's letter wheel is replaced by an on-screen QWERTY
-//   keyboard drawn in the game's style (its fonts and colours) where the wheel was. D-pad / stick
+// - NEW GAME > SAVE NAME (the game's ENTER YOUR NAME, renamed in pc_frontend.cpp's texts: the name is the
+//   save's): the game's letter wheel is replaced by an on-screen QWERTY keyboard (keyboard.h, shared with the
+//   MULTIPLAYER fields) drawn in the game's style (its fonts and colours) where the wheel was, from when the
+//   page shows (about a second after the screen starts, while the main menu goes out). D-pad / stick
 //   move between the keys, A types the highlighted one, X erases, Y or START is DONE, B goes back
 //   (the game's own hints). The mouse points at keys and clicks them; a physical keyboard types
 //   directly (letters and digits), with Enter = DONE, Backspace = erase and Esc = back. Every key

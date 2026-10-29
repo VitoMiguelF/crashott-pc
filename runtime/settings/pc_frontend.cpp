@@ -410,6 +410,19 @@ namespace settings
         };
 
         const PcText PC_TEXTS[] = {
+            // NEW GAME's name entry: the name is the save's (the slot list shows it), not the player's.
+            { "frontend", 0xE194, 'E', u"NAME", u"SAVE NAME" },
+            { "frontend", 0xE194, 'F', u"NOM", u"NOM DE LA SAUVEGARDE" },
+            { "frontend", 0xE194, 'G', u"NAMEN", u"NAME DES SPIELSTANDS" },
+            { "frontend", 0xE194, 'S', u"NOMBRE", u"NOMBRE DE LA PARTIDA" },
+            { "frontend", 0xE194, 'I', u"NOME", u"NOME DEL SALVATAGGIO" },
+            { "frontend", 0xE194, 'D', u"NAAM", u"NAAM VAN DE SPELOPSLAG" },
+            { "frontend", 0xE194, 'A', u"NAVN", u"NAVN P\u00C5 GEMT SPIL" },
+            { "frontend", 0xE194, 'N', u"NAVN", u"NAVN P\u00C5 LAGRET SPILL" },
+            { "frontend", 0xE194, 'W', u"NAMN", u"NAMN P\u00C5 SPARAT SPEL" },
+            { "frontend", 0xE194, 'H', u"NIME", u"TALLENNUKSEN NIMI" },
+            { "frontend", 0xE194, 'R', u"\u041F\u0421\u0415\u0412\u0414\u041E\u041D\u0418\u041C",
+              u"\u0418\u041C\u042F \u0421\u041E\u0425\u0420\u0410\u041D\u0415\u041D\u0418\u042F" },
             { "frontend", 0x1737, 'E', u"Xbox", u"Accessing Crash of the Titans save game files. Please do not turn off your PC." },
             { "frontend", 0x1737, 'F', u"Xbox", u"Accès aux données Crash of the Titans. Ne pas éteindre le PC." },
             { "frontend", 0x1737, 'G', u"Xbox", u"Zugriff auf CRASH OF THE TITANS-Speicherdaten. Bitte den PC nicht ausschalten." },

@@ -110,7 +110,7 @@ Nomes escolhidos em 2026-10-25, juntando duas palavras como no inglês. Gênero:
 | Press Start | Pressione START |
 | choose game slot / empty | escolha o espaço de jogo / vazio |
 | choose difficulty: easy / normal / hard | escolha a dificuldade: fácil / normal / difícil |
-| enter your name | digite seu nome |
+| enter your name | digite seu nome (o título do NOVO JOGO é SAVE NAME / NOME DO JOGO SALVO) |
 | save / load / autosave | salvar / carregar / salvamento automático |
 | Save successful / Load successful | Jogo salvo. / Jogo carregado. |
 | Save failed / Load failed | Falha ao salvar / Falha ao carregar |
