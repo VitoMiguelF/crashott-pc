@@ -124,6 +124,7 @@ namespace settings::menu
         std::atomic<bool> g_releasing{ false };
         std::atomic<uint64_t> g_backUntil{ 0 };  // B for the game until then (closing)
         std::atomic<bool> g_fromMainMenu{ true };  // where RequestOpen came from (the restart warning)
+        std::atomic<bool> g_overGame{ false };     // RequestOpenOverGame: no game screen behind to leave
 
         // During a game the screen opens with the pause menu's OPTIONS, over the game's in-game
         // options screen (InGameOptions in Frontend.bfig), which it hides: its CO-OP, INVERT AXIS
@@ -780,7 +781,7 @@ namespace settings::menu
             g_closedAt = plat::TickCountMs();
             // The game leaves the options screen with its own transition (ExitBack): the PS2
             // options screen of the main menu's SETTINGS, or the in-game options.
-            if (leaveScreen)
+            if (leaveScreen && !g_overGame)
                 g_backUntil = g_closedAt + BACK_PRESS_MS;
             Log("[settings] screen closed%s", leaveScreen ? "" : " (the game left its options screen)");
         }
@@ -978,7 +979,7 @@ namespace settings::menu
             }
             // In a game: the game left its options screen by itself (it should not: its input is
             // blocked while the settings are open).
-            if (InGame() && g_frontendNode != g_optionsNode && !g_restartAt)
+            if (InGame() && !g_overGame && g_frontendNode != g_optionsNode && !g_restartAt)
             {
                 Close(false);
                 return true;  // fading out
@@ -1124,6 +1125,16 @@ namespace settings::menu
             return;
         }
         g_fromMainMenu = fromMainMenu;
+        g_overGame = false;
+        g_requested = true;
+    }
+
+    void RequestOpenOverGame()
+    {
+        if (!g_available)
+            return;
+        g_fromMainMenu = false;
+        g_overGame = true;
         g_requested = true;
     }
 

@@ -17,6 +17,7 @@
 #include "../platform/platform.h"
 #include "../settings/menu_art.h"
 #include "../settings/settings.h"
+#include "../settings/settings_menu.h"
 
 #include <algorithm>
 #include <atomic>
@@ -29,6 +30,8 @@
 
 PPC_EXTERN_FUNC(sub_820F5D58);  // Frontend:StartLevel(index)
 extern "C" PPC_FUNC(__imp__sub_820F8918);  // Frontend:PauseGame(paused)
+extern "C" PPC_FUNC(__imp__sub_821DAAB0);  // CFrontendManager::HaveBothPlayersJoinedGame
+extern "C" PPC_FUNC(__imp__sub_821DB680);  // CFrontendManager::UpdateInputAndCheats
 
 namespace mp::menu
 {
@@ -92,6 +95,7 @@ namespace mp::menu
         constexpr Color DIM_TOP{ 14, 8, 0, 200 }, DIM_BOTTOM{ 8, 4, 0, 220 };
 
         enum class Screen { Root, HostMode, FindMode, Servers, Code, Password, Waiting, Message, Lobby, HostPassword, LevelMenu };
+        enum LevelMenuRow { ROW_RESUME, ROW_SETTINGS, ROW_QUIT, LEVEL_MENU_ROWS };  // a client's menu in a level
 
         // Between the threads.
         std::atomic<bool> g_requested{ false };
@@ -499,14 +503,18 @@ namespace mp::menu
         void RasterizeLevelMenu(const View& v)
         {
             const Palette& pal = DIMMED;
-            DrawFrame(v, 340.0f, 220.0f, 940.0f, 470.0f);
-            Draw(v, FontId::Large, "MULTIPLAYER", VIRTUAL_W * 0.5f, 246.0f, 38.0f, pal.title, 0.5f);
-            float right = Draw(v, FontId::Large, T("QUIT TO THE MAIN MENU", "SAIR PARA O MENU PRINCIPAL"), VIRTUAL_W * 0.5f, 320.0f, ROW_CELL,
-                               pal.selected, 0.5f, 540.0f);
-            AddZone(VIRTUAL_W - right - 20.0f, 314.0f, right + 20.0f, 320.0f + ROW_CELL + 6.0f, Hit::Row, 0);
+            DrawFrame(v, 340.0f, 180.0f, 940.0f, 540.0f);
+            Draw(v, FontId::Large, "MULTIPLAYER", VIRTUAL_W * 0.5f, 206.0f, 38.0f, pal.title, 0.5f);
+            const char* rows[LEVEL_MENU_ROWS] = { T("RESUME", "CONTINUAR"), T("SETTINGS", "CONFIGURAÇÕES"), T("QUIT TO THE MAIN MENU", "SAIR PARA O MENU PRINCIPAL") };
+            for (int row = 0; row < LEVEL_MENU_ROWS; row++)
+            {
+                float y = 270.0f + row * ROW_PITCH;
+                float right = Draw(v, FontId::Large, rows[row], VIRTUAL_W * 0.5f, y, ROW_CELL, row == g_row ? pal.selected : pal.normal, 0.5f, 540.0f);
+                AddZone(VIRTUAL_W - right - 20.0f, y - 6.0f, right + 20.0f, y + ROW_CELL + 6.0f, Hit::Row, row);
+            }
             std::string back = std::string("\xC2\xB2 ") + T("BACK TO THE GAME", "VOLTAR AO JOGO");
-            float end = Draw(v, FontId::Small, back, 400.0f, 410.0f, HELP_CELL, pal.help);
-            AddZone(390.0f, 402.0f, end + 10.0f, 410.0f + HELP_CELL + 8.0f, Hit::Back);
+            float end = Draw(v, FontId::Small, back, 400.0f, 470.0f, HELP_CELL, pal.help);
+            AddZone(390.0f, 462.0f, end + 10.0f, 470.0f + HELP_CELL + 8.0f, Hit::Back);
         }
 
         // The HUB panel's size in virtual units.
@@ -952,11 +960,22 @@ namespace mp::menu
             }
         }
 
-        // A client's START in a level: QUIT TO THE MAIN MENU (A) or back to the game (B / START).
+        // A client's START in a level: RESUME, SETTINGS or QUIT TO THE MAIN MENU (A); B / START resume too.
         void UpdateLevelMenu(uint16_t pressed)
         {
-            if (pressed & (XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_BACK | XINPUT_GAMEPAD_START))
+            if (pressed & XINPUT_GAMEPAD_DPAD_UP)
+                g_row = (g_row + LEVEL_MENU_ROWS - 1) % LEVEL_MENU_ROWS;
+            if (pressed & XINPUT_GAMEPAD_DPAD_DOWN)
+                g_row = (g_row + 1) % LEVEL_MENU_ROWS;
+            if ((pressed & (XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_BACK | XINPUT_GAMEPAD_START)) ||
+                ((pressed & XINPUT_GAMEPAD_A) && g_row == ROW_RESUME))
                 Close(false);
+            else if ((pressed & XINPUT_GAMEPAD_A) && g_row == ROW_SETTINGS)
+            {
+                Close(false);
+                settings::menu::RequestOpenOverGame();  // the settings screen, over the game too
+                Log("[mp] menu: client: settings");
+            }
             else if (pressed & XINPUT_GAMEPAD_A)
             {
                 g_quitLevel = true;
@@ -1301,4 +1320,29 @@ PPC_FUNC(sub_820F8918)
         return;
     }
     __imp__sub_820F8918(ctx, base);
+}
+
+// CFrontendManager::HaveBothPlayersJoinedGame: the frontend's two-player variants ask it, the pause's page
+// (COND TwoPlayer / OnePlayer, sub_820F6420, chosen once when the pause opens) and its exits (node 1081 in
+// sub_820F9BA8). In a session the host gets the one-player pause (RESUME, OPTIONS, EXIT LEVEL: save and exit,
+// the clients back to the lobby) instead of the two-player one with DROP OUT. Not for UpdateInputAndCheats
+// (sub_821DB680): there "not both joined" lets another controller drop in as player 2.
+static thread_local bool t_inputUpdate = false;
+
+PPC_FUNC(sub_821DB680)
+{
+    t_inputUpdate = true;
+    __imp__sub_821DB680(ctx, base);
+    t_inputUpdate = false;
+}
+
+PPC_FUNC(sub_821DAAB0)
+{
+    mp::lobby::State state = mp::lobby::GetState();
+    if (!t_inputUpdate && (state == mp::lobby::State::Hosting || state == mp::lobby::State::Joined))
+    {
+        ctx.r3.u64 = 0;
+        return;
+    }
+    __imp__sub_821DAAB0(ctx, base);
 }

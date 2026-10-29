@@ -2513,7 +2513,11 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
 - **Sair da fase, pausa, quem sai** (`mp_menu.cpp`, `mp_players.cpp`, `mp_net.cpp`; perfis `mp_quit_host` +
   `mp_quit_c` + `mp_quit_c2`, `mp_tres_sair`): numa sessão o jogo nunca pausa (`PauseGame(true)`, `sub_820F8918`,
   ignorado no nó 638: a pausa do host, tutoriais etc. ficam por cima da fase rodando). O START do cliente (saída
-  651) abre o menu dele por cima do jogo, com só SAIR PARA O MENU PRINCIPAL: sai sem salvar (1114 -> HUB) e do
+  651) abre o menu dele por cima do jogo (CONTINUAR / CONFIGURAÇÕES / SAIR PARA O MENU PRINCIPAL; as configurações
+  abrem sobre o jogo rodando, `RequestOpenOverGame`). O host tem a pausa de 1 jogador (RESUME GAME / OPTIONS /
+  SAVE AND EXIT, sem DROP OUT): numa sessão o `HaveBothPlayersJoinedGame` (`sub_821DAAB0`) responde não ao
+  frontend (página da pausa no `sub_820F6420`, saídas no `sub_820F9BA8`), mas não ao `UpdateInputAndCheats`
+  (lá "não estão os dois" deixa outro controle entrar como P2). SAIR sai sem salvar (1114 -> HUB) e do
   HUB vai ao menu inicial; só o host salva. O EXIT LEVEL do host (DROP OUT vira EXIT LEVEL online) leva os
   clientes de volta ao lobby (HUB -> menu inicial -> espera do lobby); o host de volta ao menu inicial fecha a
   sessão (O HOST SAIU). Quem some do roster sai da fase em todas as máquinas: os behaviours que o

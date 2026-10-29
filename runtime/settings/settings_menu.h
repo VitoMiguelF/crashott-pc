@@ -32,6 +32,9 @@ namespace settings::menu
     // From the game thread (the hook): opens the screen at the next frame. `fromMainMenu` false
     // (opened during a game) adds "progress that was not saved will be lost" to the restart question.
     void RequestOpen(bool fromMainMenu = true);
+    // A multiplayer client's menu in a level (online/mp_menu.cpp): over the running game, with no options
+    // screen of the game behind it (nothing pressed for the game when it closes).
+    void RequestOpenOverGame();
 
     bool IsOpen();
 

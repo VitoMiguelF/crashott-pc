@@ -1385,7 +1385,7 @@ input = [
 expect = { exit = ["timeout"], events = ["main_menu", "hub", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] hosting on', 'PauseGame\(true\) skipped', 'left the session: out of the level'] }
 
 [profiles.mp_quit_c]
-description = "Cliente do mp_quit_host pelo código: entra na fase do host e sai pelo START (o menu do cliente: SAIR PARA O MENU PRINCIPAL, o jogo não para): volta ao menu inicial sem salvar"
+description = "Cliente do mp_quit_host pelo código: entra na fase do host e sai pelo START (o menu do cliente: CONTINUAR / CONFIGURAÇÕES / SAIR PARA O MENU PRINCIPAL, o jogo não para): volta ao menu inicial sem salvar"
 test = false
 timeout = 110
 fps_limit = 60
@@ -1395,7 +1395,7 @@ skip_intros = true
 env = { CRASH_MP_NAME = "CODIGO", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
 input = [
     ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "A"], [13.5, "SHOT"],
-    ["@gameplay_ready"], [3, "SHOT"], [8, "START"], [9, "SHOT"], [10, "A"], [11, "SHOT"], [14, "SHOT"], [17, "SHOT"], [21, "SHOT"], [27, "SHOT"], [33, "SHOT"], [40, "SHOT"],
+    ["@gameplay_ready"], [3, "SHOT"], [8, "START"], [9, "SHOT"], [9.3, "DOWN"], [9.6, "DOWN"], [10, "A"], [11, "SHOT"], [14, "SHOT"], [17, "SHOT"], [21, "SHOT"], [27, "SHOT"], [33, "SHOT"], [40, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] joined', 'the client.s menu in the level', 'client at the HUB: to the main menu'] }
 

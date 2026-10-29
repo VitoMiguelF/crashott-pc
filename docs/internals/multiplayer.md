@@ -321,10 +321,16 @@ arrays). So up to 4 players, all native Crashes, no puppets:
 
 - **No pause in a session** (`mp_menu.cpp`): `Frontend:PauseGame(true)` (`sub_820F8918`, CUberManager vf13) is
   skipped while the frontend is on GameRunning (node 638): the host's pause screen, the tutorials and the other
-  screens it opens show over the running level, and the other machines go on with it.
+  screens it opens show over the running level, and the other machines go on with it. The host gets the
+  one-player pause (RESUME GAME, OPTIONS, SAVE AND EXIT; no DROP OUT): in a session
+  `CFrontendManager::HaveBothPlayersJoinedGame` (`sub_821DAAB0`) says no to the frontend (the pause's page,
+  COND TwoPlayer / OnePlayer in `sub_820F6420`, chosen once when the pause opens, and its exits in
+  `sub_820F9BA8`), but not to `UpdateInputAndCheats` (`sub_821DB680`), where "not both joined" lets another
+  controller drop in as player 2.
 - **A client's START** (exit 651, ExitPause, from node 638) is refused and opens the client's own menu over the
-  game (`Screen::LevelMenu`, the game's pad neutral while open): QUIT TO THE MAIN MENU (A), B / START back to the
-  game. QUIT leaves the level the no-save way (1114 -> 1115 -> 1116 -> the HUB, the save screens' exits replaced
+  game (`Screen::LevelMenu`, the game's pad neutral while open): RESUME, SETTINGS (the settings screen over
+  the running game, `settings::menu::RequestOpenOverGame`: no B for the game when it closes) and QUIT TO THE
+  MAIN MENU; B / START resume. QUIT leaves the level the no-save way (1114 -> 1115 -> 1116 -> the HUB, the save screens' exits replaced
   by 1179) and goes on from the HUB to the main menu (598), leaving the session: only the host keeps a save.
 - **The host's EXIT LEVEL** (pause; DROP OUT is EXIT LEVEL online, 1098 -> 1099) saves and goes to its HUB; the
   roster's in-level flag goes off and every client leaves the level the same no-save way, then from its HUB to
