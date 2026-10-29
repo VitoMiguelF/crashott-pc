@@ -1360,7 +1360,7 @@ input = [["@gameplay_ready"], [4, "SHOT"], [7, "SHOT"], [10, "SHOT"], [12, "X"],
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
 
 [profiles.mp_lobby_host]
-description = "MULTIPLAYER pelo menu principal: CRIAR PARTIDA > CARREGAR JOGO (slot 1) até o HUB, com senha (CRASH_MP_PASSWORD); espera mp_lobby_c1 (lista da rede) e mp_lobby_c2 (código), abre o lobby (BACK) e começa a fase (Y): os clientes entram junto. Janelas em quadrantes"
+description = "MULTIPLAYER pelo menu principal: CRIAR PARTIDA > CARREGAR JOGO (slot 1) até o HUB, com senha (CRASH_MP_PASSWORD); espera mp_lobby_c1 (lista da rede) e mp_lobby_c2 (código), o lobby abre sozinho no HUB e CONTINUAR HISTÓRIA (A) começa a fase: os clientes entram junto. Janelas em quadrantes"
 test = false
 timeout = 100
 fps_limit = 60
@@ -1372,7 +1372,7 @@ input = [
     ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3, "SHOT"], [3.5, "A"], [5, "SHOT"], [5.5, "A"], [6.3, "SHOT"], [6.8, "DOWN"], [7.3, "A"],
     ["@save_slots"], [1.5, "A"],
     ["@load_complete"], [1, "A"],
-    ["@hub"], [2, "SHOT"], [16, "SHOT"], [17, "BACK"], [18, "SHOT"], [18.5, "DOWN"], [19, "SHOT"], [20, "B"], [21, "SHOT"], [22, "Y"],
+    ["@hub"], [2, "SHOT"], [16, "SHOT"], [18.5, "DOWN"], [19, "SHOT"], [20, "UP"], [21, "SHOT"], [22, "A"],
     ["@gameplay_ready"], [3, "SHOT"], [5, "LS", 1, 0, 2.0], [8, "SHOT"], [12, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "hub", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] hosting on', '\[lobby\] level .* started with 3 player', '\[mp\] net: host'] }
@@ -1405,7 +1405,7 @@ input = [
     ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [6.8, "DOWN"], [7.3, "A"],
     ["@save_slots"], [1.5, "A"],
     ["@load_complete"], [1, "A"],
-    ["@hub"], [2, "SHOT"], [14, "SHOT"], [15, "Y"],
+    ["@hub"], [2, "SHOT"], [14, "SHOT"], [15, "A"],
     ["@gameplay_ready"], [3, "SHOT"], [12, "SHOT"], [20, "SHOT"], [22, "START"], [23, "SHOT"], [23.5, "DOWN"], [24, "DOWN"], [24.5, "SHOT"], [25, "A"], [26, "SHOT"], [26.5, "LEFT"], [27, "A"], [28, "SHOT"], [31, "SHOT"], [33, "A"], [36, "SHOT"], [38, "A"], [41, "SHOT"],
     ["@hub#2"], [3, "SHOT"], [5, "BACK"], [6.5, "UP"], [7, "SHOT"], [7.5, "A"], [9, "SHOT"],
 ]
@@ -1424,7 +1424,7 @@ input = [
     ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [6.8, "DOWN"], [7.3, "A"],
     ["@save_slots"], [1.5, "A"],
     ["@load_complete"], [1, "A"],
-    ["@hub"], [2, "SHOT"], [10, "SHOT"], [11, "BACK"], [12.5, "SHOT"], [13, "UP"], [13.5, "A"], [16, "SHOT"],
+    ["@hub"], [2, "SHOT"], [10, "SHOT"], [12.5, "SHOT"], [13, "UP"], [13.2, "UP"], [13.5, "A"], [16, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[nat\] UPnP', '\[nat\] port mapping|LAN only'] }
 
@@ -1514,7 +1514,7 @@ skip_intros = true
 env = { CRASH_MP_NAME = "HOST", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_MENU_AUTOPILOT = "96:A:2000,96:Y:1500,105:A+:1500,154:A+:1500,165:DOWN:1500,165:A:1000,320:A+:1000", CRASH_RESTART_WINDOW = "0,0,1920,1080" }
 input = [
     ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [7, "A"],
-    ["@hub"], [2, "SHOT"], [18, "SHOT"], [19, "Y"],
+    ["@hub"], [2, "SHOT"], [18, "SHOT"], [19, "A"],
     ["@cinematic"], [4, "SHOT"], [5, "B", 1.5], [7, "SHOT"],
     ["@cinematic_done"], [2, "SHOT"], [3, "LS", 0, 1, 2.0], [6, "SHOT"], [12, "SHOT"],
 ]
@@ -1588,9 +1588,9 @@ skip_intros = true
 env = { CRASH_MP_NAME = "HOST", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_MENU_AUTOPILOT = "96:A:2000,96:Y:1500,105:A+:1500,154:A+:1500,165:DOWN:1500,165:A:1000,320:A+:1000" }
 input = [
     ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [7, "A"],
-    ["@hub"], [3, "BACK"], [4, "SHOT"], [4.5, "DOWN"], [5, "A"], [9, "SHOT"], [10, "RIGHT"], [12, "SHOT"], [13, "DOWN"], [14, "SHOT"], [15, "DOWN"], [16, "SHOT"], [17, "A"], [18.5, "SHOT"], [19, "LEFT"], [19.5, "A"], [23, "SHOT"], [24, "SHOT"],
+    ["@hub"], [4, "SHOT"], [4.3, "DOWN"], [4.6, "DOWN"], [5, "A"], [9, "SHOT"], [10, "RIGHT"], [12, "SHOT"], [13, "DOWN"], [14, "SHOT"], [15, "DOWN"], [16, "SHOT"], [17, "A"], [18.5, "SHOT"], [19, "LEFT"], [19.5, "A"], [23, "SHOT"], [24, "SHOT"],
 ]
-expect = { exit = ["timeout"], events = ["hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SKIN AND COLOR: the skin screen', 'lobby opened again at the HUB'] }
+expect = { exit = ["timeout"], events = ["hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SKIN AND COLOR: the skin screen', 'lobby opened at the HUB \(after SKIN AND COLOR\)'] }
 
 [profiles.mp_skin_cor_c]
 description = "SKIN E COR do cliente (com mp_lobby_host_new): entra pelo código, Y na espera abre a tela de skins do jogo, direita troca a skin, baixo a cor, SIM confirma e volta para a espera do lobby"

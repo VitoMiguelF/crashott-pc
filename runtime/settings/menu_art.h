@@ -59,6 +59,10 @@ namespace settings::menu_art
     // Waits up to `waitMs` for the loading to finish; true if the fonts are there.
     bool Ready(int waitMs);
     const Image* GetArt(Art art);  // nullptr if missing
+    // The frontend's backdrop, the yellow cloth of the main menu (the weave, its folds, the light map and the
+    // foliage in the corners), W x H opaque pixels (0xAABBGGRR), `s` = pixels per 1280 x 720 unit. The launcher's
+    // background and the host's own lobby (online/mp_menu.cpp). Uses Scaled (ClearCache after, if it is a one-off).
+    std::vector<uint32_t> ComposeBackdrop(int W, int H, float s);
 
     struct TextStyle
     {

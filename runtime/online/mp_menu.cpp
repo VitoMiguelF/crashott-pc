@@ -78,6 +78,11 @@ namespace mp::menu
         constexpr uint32_t FRONTEND_SKIN_TO_DISPLAY = 16640;  // CFrontendManager: the skin the skin screen starts on
         constexpr int32_t SAVE_EXITS[] = { 1090, 1091, 1177, 1178, 1185, 1186, 1199, 1200 };
         constexpr uint32_t MANAGERS = 0x824A7A24, LEVEL_INDEX = 24;
+        // The levels (settings/direct_boot.cpp): managers +156 (count +316), a level's name at +32; the first 20 are the
+        // story's (index 20 is the hidden SoundTest). The save's unlocked ones (the HUB's Level_Timeline: what it lets
+        // the player replay) are a list of 20 level indices at 0x824A8070, -1 = free (sub_82213940 looks one up).
+        constexpr uint32_t LEVELS = 156, LEVEL_COUNT = 316, LEVEL_NAME = 32, STORY_LEVELS = 20, UNLOCKED_LEVELS = 0x824A8070;
+        constexpr int32_t EXIT_CONTINUE_STORY = 604;  // the HUB's Y: StartNextLevel
 
         constexpr float VIRTUAL_W = 1280.0f, VIRTUAL_H = 720.0f;
         constexpr float TITLE_Y = 18.0f, TITLE_CELL = 44.0f, SUB_Y = 84.0f, SUB_CELL = 30.0f;
@@ -139,6 +144,12 @@ namespace mp::menu
         // SKIN AND COLOR: asked (the next frontend condition takes the skin screen), showing (from the host's
         // HUB or a client's wait), its colour box drawn; the host's lobby again at the HUB after it.
         std::atomic<bool> g_pickerRequest{ false }, g_picker{ false }, g_pickerShown{ false }, g_reopenLobby{ false };
+        // The host's choice in its lobby at the HUB, for the game thread (OverrideExit at the HUB): a level index,
+        // GO_STORY (CONTINUE STORY) or GO_NONE; and when it was made (the lobby does not open again meanwhile).
+        constexpr int32_t GO_NONE = -2, GO_STORY = -1;
+        std::atomic<int32_t> g_hostGo{ GO_NONE };
+        std::atomic<uint64_t> g_hostGoAt{ 0 };
+        int g_levelPick = -1;  // the level shown on the lobby's LEVEL row (an index of the game's levels)
         bool g_cutsceneHold = false;  // game thread: at a cutscene's start (lobby::HoldAtCutscene) since the last other node
         std::atomic<bool> g_pickerHost{ false };
         void OpenPicker(bool host);
@@ -458,14 +469,6 @@ namespace mp::menu
 
         constexpr float ROSTER_GAP = 24.0f;
 
-        float RosterWidth(const std::vector<lobby::Player>& players, float cell)
-        {
-            float widest = 0.0f;
-            for (const lobby::Player& p : players)
-                widest = std::max(widest, cell + 4.0f + Width(FontId::Small, RosterName(p), cell) + ROSTER_GAP + Width(FontId::Small, RosterRight(p), cell));
-            return widest;
-        }
-
         void DrawRoster(const View& v, const Palette& pal, float y, bool host, const Box* box = nullptr, float cell = LIST_CELL,
                         float pitch = LIST_PITCH)
         {
@@ -495,16 +498,57 @@ namespace mp::menu
             }
         }
 
-        // Lobby (host, at the HUB): its rows after the players.
-        enum LobbyRow { ROW_LOOK, ROW_PASSWORD, ROW_MAX_PLAYERS, ROW_KNOCK_OUT, ROW_CLOSE, LOBBY_ROWS };
+        // Lobby (host, at the HUB, in place of the game's HUB menu): its rows after the players. CONTINUE STORY and
+        // LEVEL (the save's unlocked levels, 1-20) start the level for everybody.
+        enum LobbyRow { ROW_STORY, ROW_LEVEL, ROW_LOOK, ROW_PASSWORD, ROW_MAX_PLAYERS, ROW_KNOCK_OUT, ROW_CLOSE, LOBBY_ROWS };
 
         int LobbyPlayerRows() { return int(lobby::Players().size()); }
+
+        // The save's unlocked story levels (indices, in order).
+        std::vector<int> UnlockedLevels()
+        {
+            std::vector<int> levels;
+            for (uint32_t i = 0; i < STORY_LEVELS; i++)
+                if (int32_t level = int32_t(LoadBE32(UNLOCKED_LEVELS + 4 * i)); level >= 0 && level < int32_t(STORY_LEVELS) &&
+                                                                                std::find(levels.begin(), levels.end(), level) == levels.end())
+                    levels.push_back(level);
+            std::sort(levels.begin(), levels.end());
+            return levels;
+        }
+
+        std::string LevelName(int index)
+        {
+            uint32_t count = LoadBE32(MANAGERS + LEVEL_COUNT);
+            uint32_t level = index >= 0 && uint32_t(index) < count && count <= 64 ? LoadBE32(MANAGERS + LEVELS + 4 * uint32_t(index)) : 0;
+            uint32_t name = level >= 0x40000000 ? LoadBE32(level + LEVEL_NAME) : 0;
+            return name >= 0x40000000 ? std::string(reinterpret_cast<const char*>(g_memory.Translate(name))) : std::string();
+        }
+
+        // The LEVEL row's level: the one picked if still unlocked, else the last unlocked (-1: none yet).
+        int PickedLevel()
+        {
+            std::vector<int> levels = UnlockedLevels();
+            if (levels.empty())
+                return -1;
+            if (std::find(levels.begin(), levels.end(), g_levelPick) == levels.end())
+                g_levelPick = levels.back();
+            return g_levelPick;
+        }
 
         std::string LobbyRowText(int row)
         {
             lobby::Options o = lobby::GetOptions();
             switch (row)
             {
+            case ROW_STORY: return T("CONTINUE STORY", "CONTINUAR HISTÓRIA");
+            case ROW_LEVEL:
+            {
+                int level = PickedLevel();
+                if (level < 0)
+                    return T("LEVEL:  NONE DONE YET", "FASE:  NENHUMA FEITA AINDA");
+                std::string name = LevelName(level);
+                return std::string(T("LEVEL", "FASE")) + ":  \xC2\xBA " + std::to_string(level + 1) + (name.empty() ? "" : "  " + name) + " \xC2\xBB";
+            }
             case ROW_LOOK: return T("SKIN AND COLOR", "SKIN E COR");
             case ROW_PASSWORD:
                 return std::string(T("PASSWORD", "SENHA")) + ":  " + (lobby::Password().empty() ? T("NONE", "NENHUMA") : lobby::Password());
@@ -686,60 +730,75 @@ namespace mp::menu
             DrawBoxFooter(v, box, y, back, note, pal.help, pal.info);
         }
 
-        // Host, at the HUB: the lobby (modal) over the dimmed HUB. With many players the rows get closer
-        // so the box (whose frame takes a quarter of its height) stays on the screen.
+        // The main menu's cloth over the whole screen (art::ComposeBackdrop), made again only at another size.
+        void DrawCloth(const View& v, int width, int height)
+        {
+            static art::Image cloth;
+            if (cloth.w != width || cloth.h != height)
+            {
+                cloth.w = width, cloth.h = height;
+                cloth.px = art::ComposeBackdrop(width, height, v.s);
+                art::ClearCache();  // its scaled copies of the art are not needed again
+            }
+            g_canvas.Blit(cloth, 0, 0);
+        }
+
+        // Host, at the HUB: its own menu in place of the game's HUB menu (nothing of it shows), laid out as the other
+        // MULTIPLAYER screens on the main menu's cloth: the code, the players, CONTINUE STORY / LEVEL and the session's
+        // options. With many players the lines get closer so everything fits above the help.
         void RasterizeLobby(const View& v, int width, int height)
         {
-            const Palette& pal = DIMMED;
-            g_canvas.FillGradient(0, 0, width, height, DIM_TOP, DIM_BOTTOM);  // the HUB's own texts behind
+            DrawCloth(v, width, height);
+            const Palette& pal = CLOTH;
             if (g_screen == Screen::HostPassword)
             {
-                RasterizeHostPassword(v, pal);
+                RasterizeHostPassword(v, DIMMED);
                 return;
             }
-            constexpr float TITLE = 38.0f, CODE = 26.0f, NET = 22.0f, MAX_CONTENT_H = 450.0f;
+            constexpr float NET = 22.0f, TOP = ROWS_Y - 20.0f, BOTTOM = HELP_Y - 12.0f;
             std::vector<lobby::Player> list = lobby::Players();
-            int players = int(list.size()), rows = players + LOBBY_ROWS;
+            int players = int(list.size());
             std::string code = lobby::InviteCode(), local = lobby::LocalCode();
             std::string codeLine = std::string(T("Code ", "Código ")) + code +
                                    (code != local ? std::string(T("   LAN ", "   rede local ")) + local : "   " + lobby::Address());
-            std::string net = lobby::InternetText(g_portuguese);
-            std::string back = std::string("\xC2\xB2 ") + T("BACK", "VOLTAR");
-            std::string help = g_row < players ? (list[size_t(g_row)].me ? T("Left / right: your color", "Esquerda / direita: sua cor") : T("A: kick", "A: expulsar"))
-                                               : T("A / left / right: change", "A / esquerda / direita: mudar");
-            float fixed = TITLE + 12.0f + CODE + 6.0f + NET + 16.0f + 4.0f + HELP_CELL;
-            float pitch = std::clamp((MAX_CONTENT_H - fixed) / rows, 30.0f, LIST_PITCH), cell = std::min(LIST_CELL, pitch - 8.0f);
-            float contentW = std::max({ Width(FontId::Large, "MULTIPLAYER", TITLE), Width(FontId::Small, codeLine, CODE),
-                                        Width(FontId::Small, net, NET), RosterWidth(list, cell),
-                                        FooterWidth(back, T("A / left / right: change", "A / esquerda / direita: mudar")) });
-            for (int row = 0; row < LOBBY_ROWS; row++)
-                contentW = std::max(contentW, Width(FontId::Small, LobbyRowText(row), cell));
-            contentW = std::clamp(contentW, 480.0f, 760.0f);
-            Box box = FitBox(contentW, fixed + rows * pitch, VIRTUAL_W * 0.5f, 0.5f, -1.0f);
-            DrawBox(v, box);
-            float cx = VIRTUAL_W * 0.5f, y = box.Top();
-            Draw(v, FontId::Large, "MULTIPLAYER", cx, y, TITLE, pal.title, 0.5f, box.Room(y, TITLE));
-            y += TITLE + 12.0f;
-            Draw(v, FontId::Small, codeLine, cx, y, CODE, pal.info, 0.5f, box.Room(y, CODE));
-            y += CODE + 6.0f;
-            Draw(v, FontId::Small, net, cx, y, NET, pal.help, 0.5f, box.Room(y, NET));
-            y += NET + 16.0f;
-            DrawRoster(v, pal, y, true, &box, cell, pitch);
-            y += players * pitch;
+            Draw(v, FontId::Large, "MULTIPLAYER", VIRTUAL_W * 0.5f, TITLE_Y, TITLE_CELL, pal.title, 0.5f, 980.0f);
+            Draw(v, FontId::Small, codeLine, VIRTUAL_W * 0.5f, SUB_Y, SUB_CELL, pal.info, 0.5f, 980.0f);
+            Draw(v, FontId::Small, lobby::InternetText(g_portuguese), VIRTUAL_W * 0.5f, SUB_Y + SUB_CELL + 6.0f, NET, pal.help, 0.5f, 980.0f);
+            // The players, then the rows (in the larger font, as the other screens' rows).
+            float listPitch = std::clamp((BOTTOM - TOP) * 0.4f / std::max(players, 1), 28.0f, LIST_PITCH);
+            float listCell = std::min(LIST_CELL, listPitch - 6.0f);
+            DrawRoster(v, pal, TOP, true, nullptr, listCell, listPitch);
+            float y = TOP + players * listPitch + 10.0f;
+            float pitch = std::clamp((BOTTOM - y) / float(LOBBY_ROWS), 32.0f, ROW_PITCH), cell = std::min(ROW_CELL, pitch - 8.0f);
+            float cx = VIRTUAL_W * 0.5f;
             for (int row = 0; row < LOBBY_ROWS; row++)
             {
-                float left = box.Left(y, cell), right = box.Right(y, cell);
-                Draw(v, FontId::Small, LobbyRowText(row), cx, y, cell, g_row == players + row ? pal.selected : pal.normal, 0.5f, right - left);
+                float right = Draw(v, FontId::Large, LobbyRowText(row), cx, y, cell, g_row == players + row ? pal.selected : pal.normal, 0.5f, 900.0f);
+                float left = VIRTUAL_W - right;
                 if (row == ROW_MAX_PLAYERS || row == ROW_KNOCK_OUT)
                 {
                     AddZone(left - 20.0f, y - 6.0f, cx, y + cell + 6.0f, Hit::RowLeft, players + row);
                     AddZone(cx, y - 6.0f, right + 20.0f, y + cell + 6.0f, Hit::RowRight, players + row);
                 }
+                else if (row == ROW_LEVEL)
+                {
+                    // The ends change the level, the middle plays it.
+                    float third = (right - left) / 3.0f;
+                    AddZone(left - 20.0f, y - 6.0f, left + third, y + cell + 6.0f, Hit::RowLeft, players + row);
+                    AddZone(left + third, y - 6.0f, right - third, y + cell + 6.0f, Hit::Row, players + row, true);
+                    AddZone(right - third, y - 6.0f, right + 20.0f, y + cell + 6.0f, Hit::RowRight, players + row);
+                }
                 else
                     AddZone(left - 20.0f, y - 6.0f, right + 20.0f, y + cell + 6.0f, Hit::Row, players + row, row == ROW_CLOSE);
                 y += pitch;
             }
-            DrawBoxFooter(v, box, y + 4.0f, back, help, pal.help, pal.info);
+            std::string help = g_row < players ? (list[size_t(g_row)].me ? T("Left / right: your color", "Esquerda / direita: sua cor") : T("A: kick", "A: expulsar"))
+                             : g_row == players + ROW_STORY ? T("A: play the next level with everybody", "A: jogar a próxima fase com todos")
+                             : g_row == players + ROW_LEVEL ? T("Left / right: a level you finished   A: play it with everybody",
+                                                                "Esquerda / direita: uma fase que você já passou   A: jogar com todos")
+                             : g_row == players + ROW_CLOSE ? T("A: close the session (the HUB goes on alone)", "A: encerrar a sessão (o HUB segue sozinho)")
+                                                            : T("A / left / right: change", "A / esquerda / direita: mudar");
+            DrawHelp(v, pal, { help });
         }
 
         // A client's menu in a level, over the game (which goes on).
@@ -1226,6 +1285,15 @@ namespace mp::menu
             }
         }
 
+        // The host's lobby at the HUB: CONTINUE STORY or a level goes to the game thread (OverrideExit at the HUB).
+        void HostGo(int32_t go)
+        {
+            g_hostGoAt = plat::TickCountMs();
+            g_hostGo = go;
+            Log("[mp] menu: the host starts %s", go == GO_STORY ? "the story" : ("level " + std::to_string(go + 1) + " " + LevelName(go)).c_str());
+            Close(false);
+        }
+
         // The host's lobby at the HUB.
         void UpdateLobby(uint16_t pressed)
         {
@@ -1241,11 +1309,7 @@ namespace mp::menu
                 }
                 return;
             }
-            if (pressed & (XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_BACK))
-            {
-                Close(false);
-                return;
-            }
+            // (B: nothing. The lobby is the host's HUB: no way back to the game's own menu.)
             if (pressed & XINPUT_GAMEPAD_DPAD_UP)
                 g_row = (g_row + rows - 1) % rows;
             if (pressed & XINPUT_GAMEPAD_DPAD_DOWN)
@@ -1264,7 +1328,21 @@ namespace mp::menu
             }
             int row = g_row - players;
             lobby::Options o = lobby::GetOptions();
-            if (row == ROW_LOOK && accept)
+            int side = (pressed & XINPUT_GAMEPAD_DPAD_LEFT) ? -1 : (pressed & XINPUT_GAMEPAD_DPAD_RIGHT) ? 1 : 0;
+            if (row == ROW_STORY && accept)
+                HostGo(GO_STORY);
+            else if (row == ROW_LEVEL && side)
+            {
+                std::vector<int> levels = UnlockedLevels();
+                if (!levels.empty())
+                {
+                    int at = int(std::find(levels.begin(), levels.end(), PickedLevel()) - levels.begin());
+                    g_levelPick = levels[size_t((at + side + int(levels.size())) % int(levels.size()))];
+                }
+            }
+            else if (row == ROW_LEVEL && accept && PickedLevel() >= 0)
+                HostGo(PickedLevel());
+            else if (row == ROW_LOOK && accept)
                 OpenPicker(true);
             else if (row == ROW_PASSWORD && accept)
                 BeginField(Screen::HostPassword, lobby::Password());
@@ -1433,15 +1511,18 @@ namespace mp::menu
                 Log("[mp] menu: the client's menu in the level (the game goes on)");
             }
             bool panel = PanelWanted(), picker = PickerWanted();
-            // The host back at the HUB from SKIN AND COLOR: its lobby again.
-            if (!g_open && panel && g_reopenLobby.exchange(false))
+            // The host at the HUB: its lobby in place of the game's HUB menu (also back from SKIN AND COLOR or a
+            // level), but not while a level it chose is starting.
+            bool starting = g_hostGo.load() != GO_NONE || now - g_hostGoAt.load() < 3000;
+            if (!g_open && panel && !picker && !g_releasing && !g_closing && !starting)
             {
+                bool again = g_reopenLobby.exchange(false);
                 g_palette = &DIMMED;
                 g_lobbyModal = true;
-                Go(Screen::Lobby, 0);
+                Go(Screen::Lobby, LobbyPlayerRows() + (again ? ROW_LOOK : ROW_STORY));
                 Open();
                 g_openedAt = now - OPEN_DELAY_MS;
-                Log("[mp] lobby opened again at the HUB (after SKIN AND COLOR)");
+                Log("[mp] lobby opened at the HUB%s", again ? " (after SKIN AND COLOR)" : "");
             }
             if (!g_open && !g_releasing && !g_closing && !panel && !picker)
             {
@@ -1732,7 +1813,25 @@ namespace mp::menu
                 lobby::HostLevelStarted(int32_t(LoadBE32(MANAGERS + LEVEL_INDEX)));
             else if (node == NODE_HUB && lobby::HostInGame())
                 lobby::HostBackInMenus();
+            // The host's choice in its lobby: CONTINUE STORY (the HUB's own Y), or a level (StartLevel + SkipToLevel,
+            // as a client follows the host).
+            if (node == NODE_HUB && exit < 0 && !g_open)
+            {
+                int32_t go = g_hostGo.exchange(GO_NONE);
+                if (go == GO_STORY)
+                    return EXIT_CONTINUE_STORY;
+                if (go >= 0)
+                {
+                    PPCContext call = ctx;
+                    call.r3.u64 = tree;
+                    call.r4.s64 = go;
+                    sub_820F5D58(call, base);
+                    return EXIT_SKIP_TO_LEVEL;
+                }
+            }
         }
+        else
+            g_hostGo = GO_NONE;
         // The cutscenes start together (lobby::HoldAtCutscene): the level's start (InGame once loaded: its intro
         // cutscene or the game) and a cutscene's way in (GameRunning's exit through Cinematics to it, the one the
         // conditions give: "node 638 exit 657"; not the jacking one) wait there until every machine of the session

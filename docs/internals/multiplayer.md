@@ -373,10 +373,15 @@ sized by them (pads, positions, snaps, hitpoints, camera interests, knock-outs),
   `FadeIn` -> 575, the HUB), instead of 323 (`StartLevelByName(L1_E1)`); exit 380 (`GotoGameState(LEVEL_SELECT)`)
   got there too but stayed black (no fade in). A loaded game reaches the HUB by itself (308 -> 309 -> 575). A
   client waits in LOBBY (the host, the players, their ping); B leaves.
-- **At the HUB** (node 575) the host has a panel at the top right: players, the invite code; BACK (hidden from
-  the game) opens the lobby: A on a player kicks that player, PASSWORD (typed), MAX PLAYERS 2-8 (5-8 marked EXPERIMENTAL), KNOCK-OUT TIME 3 / 5 / 10 s
-  (the knock-out of "4 players", instead of the game's float), CLOSE SESSION. Y (CONTINUE STORY) or any level
-  start of the HUB goes on as usual: when the host reaches InGame (node 630) its level index (managers +24) goes
+- **At the HUB** (node 575) the host gets its own menu instead of the game's HUB menu (2026-10-29: the lobby opens
+  by itself there and covers the whole screen with the main menu's cloth, `menu_art::ComposeBackdrop`, the
+  launcher's background; B does nothing, there is no way back to the HUB's grid): the code, the players (A on a
+  player kicks that player), CONTINUE STORY (the HUB's own exit 604, `StartNextLevel`), LEVEL < n > (the save's
+  unlocked story levels, the list of 20 level indices at 0x824A8070 the HUB's `Level_Timeline` reads, -1 = free;
+  A plays it: `Frontend:StartLevel` + SkipToLevel 51, as a client follows), SKIN AND COLOR, PASSWORD (typed),
+  MAX PLAYERS 2-8 (5-8 marked EXPERIMENTAL), KNOCK-OUT TIME 3 / 5 / 10 s (the knock-out of "4 players", instead
+  of the game's float), CLOSE SESSION (the HUB then goes on alone). The choice is made on the render thread and
+  taken by the game thread at the HUB's next condition (`g_hostGo`). When the host reaches InGame (node 630) its level index (managers +24) goes
   to the clients in the roster; each one, on its options screen / main menu / HUB, calls `Frontend:StartLevel`
   (`sub_820F5D58`) with it and takes SkipToLevel (exit 51), as the console's `level` does. Joining is refused
   while the host is in a level; the roster's player count is fixed then.
@@ -397,7 +402,7 @@ sized by them (pads, positions, snaps, hitpoints, camera interests, knock-outs),
   digits typed on the keyboard (`input::pc::SetTextEntry`) and taps on the keys too. A key the field cannot
   take now (full, or not in a code: U) is dimmed. Test profiles confirm with START (A types a key now).
 - Mouse and touch (Android's menus are touch as a mouse): a click on a row chooses it, on the game's B BACK /
-  SELECT A hints is that button, on an option's left / right half changes it, on the HUB panel opens the lobby;
+  SELECT A hints is that button, on an option's left / right half changes it (LEVEL: its ends change the level, its middle plays it);
   kicking needs a second tap on the player. On Android the default name is the device's model.
 - PC + Android: the same protocol (one UDP socket, `net::Broadcast` with SO_BROADCAST); a Windows host needs the
   firewall to let the game take UDP 47810 (the prompt on the first HOST GAME, private networks).

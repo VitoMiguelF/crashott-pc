@@ -21,8 +21,9 @@
 // to the HUB without saving), and from the HUB goes on to the main menu: its own EXIT LEVEL (or a
 // closed session) ends there, the host's EXIT LEVEL (or the host back at its HUB) opens the lobby again.
 //
-// At the HUB the host sees a panel with the code and the players; BACK opens the lobby there: kick a
-// player, the password, the maximum of players, the knock-out time, close the session. The host's
+// At the HUB the host sees its own menu in place of the game's HUB menu (on the main menu's cloth, nothing of
+// the HUB behind): the code, the players (kick), CONTINUE STORY, LEVEL (the save's unlocked levels, 1-20),
+// SKIN AND COLOR, the password, the maximum of players, the knock-out time, close the session. The host's
 // level start (InGame, node 630, from the HUB) is what the clients follow.
 
 #include <cstdint>

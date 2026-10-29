@@ -1136,91 +1136,6 @@ namespace
             width, height, pending.size(), regular.c_str());
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Backdrop: the main menu's cloth (FE_Background_*: weave, folds, light map, foliage), drawn
-    // on the CPU at the window's size.
-
-    std::vector<uint32_t> ComposeBackdrop(int W, int H, float s)
-    {
-        std::vector<float> rgb(size_t(W) * H * 3);
-        for (int y = 0; y < H; y++)
-        {
-            float t = float(y) / std::max(1, H - 1);
-            float r = 255 - 14 * t, g = 204 - 58 * t, b = 66 - 34 * t;
-            for (int x = 0; x < W; x++)
-            {
-                float* p = &rgb[(size_t(y) * W + x) * 3];
-                p[0] = r, p[1] = g, p[2] = b;
-            }
-        }
-        auto luminance = [](uint32_t p) { return float(p & 0xFF) / 255.0f; };  // grey images: R = G = B
-        if (const ma::Image* weave = ma::GetArt(ma::Art::BackdropWeave))
-        {
-            int tile = std::max(16, int(std::lround(256 * s)));
-            const ma::Image& w = ma::Scaled(*weave, tile, tile);
-            double mean = 0;
-            for (uint32_t p : w.px) mean += luminance(p);
-            mean /= std::max<size_t>(1, w.px.size());
-            for (int y = 0; y < H; y++)
-                for (int x = 0; x < W; x++)
-                {
-                    float k = 1.0f + 1.1f * (luminance(w.px[size_t(y % tile) * tile + x % tile]) - float(mean));
-                    float* p = &rgb[(size_t(y) * W + x) * 3];
-                    p[0] *= k, p[1] *= k, p[2] *= k;
-                }
-        }
-        if (const ma::Image* fold = ma::GetArt(ma::Art::BackdropFold))
-        {
-            const ma::Image& f = ma::Scaled(*fold, W, H);
-            for (size_t i = 0; i < f.px.size(); i++)
-            {
-                float v = luminance(f.px[i]);
-                float* p = &rgb[i * 3];
-                p[0] = p[0] * (0.86f + 0.3f * v) + 40 * v, p[1] = p[1] * (0.86f + 0.3f * v) + 30 * v, p[2] = p[2] * (0.86f + 0.3f * v);
-            }
-        }
-        if (const ma::Image* light = ma::GetArt(ma::Art::LightMap))
-        {
-            const ma::Image& l = ma::Scaled(*light, W, H);
-            for (size_t i = 0; i < l.px.size(); i++)
-            {
-                float k = 1.1f - 0.34f * luminance(l.px[i]);
-                float* p = &rgb[i * 3];
-                p[0] *= k, p[1] *= k, p[2] *= k;
-            }
-        }
-        // Foliage silhouettes in the corners, in a darker orange.
-        auto foliage = [&](ma::Art art, bool bottom) {
-            const ma::Image* leaf = ma::GetArt(art);
-            if (!leaf)
-                return;
-            int size = int(std::lround(H * 0.62f));
-            for (int side = 0; side < 2; side++)
-            {
-                const ma::Image& img = ma::Scaled(*leaf, size, size, side == 1);
-                int ox = side ? W - size : 0, oy = bottom ? H - size : 0;
-                for (int y = 0; y < size; y++)
-                    for (int x = 0; x < size; x++)
-                    {
-                        int px = ox + x, py = oy + y;
-                        if (px < 0 || py < 0 || px >= W || py >= H)
-                            continue;
-                        float a = float(img.px[size_t(y) * size + x] >> 24) / 255.0f * 0.36f;
-                        float* p = &rgb[(size_t(py) * W + px) * 3];
-                        p[0] += (196 - p[0]) * a, p[1] += (92 - p[1]) * a, p[2] += (12 - p[2]) * a;
-                    }
-            }
-        };
-        foliage(ma::Art::FoliageTop, false);
-        foliage(ma::Art::FoliageBottom, true);
-        std::vector<uint32_t> out(size_t(W) * H);
-        for (size_t i = 0; i < out.size(); i++)
-        {
-            auto c = [&](int k) { return uint32_t(std::clamp(rgb[i * 3 + k], 0.0f, 255.0f)); };
-            out[i] = c(0) | (c(1) << 8) | (c(2) << 16) | 0xFF000000u;
-        }
-        return out;
-    }
 
     // ---------------------------------------------------------------------------------------------
     // Drawing helpers (virtual units)
@@ -2279,7 +2194,7 @@ static int RunLauncher(int argc, char** argv)
         {
             if (g_backdrop.view)
                 ReleaseTexture(g_backdrop.view);
-            std::vector<uint32_t> px = ComposeBackdrop(dw, dh, std::min(dw / VW, dh / VH));
+            std::vector<uint32_t> px = ma::ComposeBackdrop(dw, dh, std::min(dw / VW, dh / VH));
             ma::ClearCache();  // the scaled copies are only needed for this backdrop
             g_backdrop.view = MakeTexture(px.data(), dw, dh);
             g_backdropW = dw, g_backdropH = dh;
