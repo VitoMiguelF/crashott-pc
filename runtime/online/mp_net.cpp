@@ -32,6 +32,7 @@
 
 #include "mp.h"
 #include "mp_lobby.h"
+#include "mp_nat.h"
 #include "../diagnostics.h"
 #include "../kernel/xinput_types.h"
 #include "../kernel/kernel.h"
@@ -141,6 +142,7 @@ namespace
         bool wasInLevel = false;
         sockaddr_in peer{};       // client: the host
         sockaddr_in clients[4]{};  // host: each client's address (slot 1-3), learnt from its pads
+        bool lobbyClient[4]{};     // host: that address came from the lobby: pads from elsewhere are dropped
         uint32_t slot = 0, players = 2;
         int hz = 30;
         bool suppressAi = false, suppressObjectives = false;
@@ -181,13 +183,23 @@ namespace
 
     uint32_t Get32(const uint8_t* p);
 
-    // Lobby packets on the I/O thread, the rest queued for the game thread (at most 4096: a game
-    // thread that stopped reading, in the menus, keeps only the newest).
+    bool SameAddress(const sockaddr_in& a, const sockaddr_in& b)
+    {
+        return a.sin_addr.s_addr == b.sin_addr.s_addr && a.sin_port == b.sin_port;
+    }
+
+    // Lobby packets on the I/O thread, STUN answers to mp_nat, the rest queued for the game thread (at
+    // most 4096: a game thread that stopped reading, in the menus, keeps only the newest). An address
+    // sending more than 600 packets in a second (a game sends ~100) is not heard for the rest of it.
     void IoLoop(Net* n)
     {
         std::vector<uint8_t> buffer(2048);
+        std::unordered_map<uint64_t, uint32_t> counts;
+        uint64_t second = 0;
         while (n->ioRun.load())
         {
+            if (mp::NowMs() / 1000 != second)
+                second = mp::NowMs() / 1000, counts.clear();
             fd_set set;
             FD_ZERO(&set);
             FD_SET(n->sock, &set);
@@ -202,6 +214,11 @@ namespace
                                            reinterpret_cast<sockaddr*>(&from), &fromSize));
                     if (got <= 0)
                         break;
+                    uint64_t sender = uint64_t(from.sin_addr.s_addr) << 16 | from.sin_port;
+                    if (++counts[sender] > 600 || counts.size() > 4096)
+                        continue;
+                    if (mp::nat::OnPacket(buffer.data(), size_t(got)))
+                        continue;
                     if (got >= 4 && Get32(buffer.data()) == mp::lobby::MAGIC)
                     {
                         mp::lobby::OnPacket(ntohl(from.sin_addr.s_addr), ntohs(from.sin_port), buffer.data(), size_t(got));
@@ -717,6 +734,8 @@ namespace
             return;
         {
             std::lock_guard<std::mutex> lock(n.padMutex);
+            if (n.role == Role::Host && n.lobbyClient[slot] && !SameAddress(from, n.clients[slot]))
+                return;  // not that player's machine
             if (sequence <= n.padSequence[slot] && n.padSequence[slot] - sequence < 1000)
                 return;  // late or duplicated
             n.padSequence[slot] = sequence;
@@ -866,6 +885,8 @@ namespace
             int got = 0;
             if (!PopPacket(n, buffer, sizeof(buffer), got, from))
                 break;
+            if (!SameAddress(from, n.peer))
+                continue;  // only the host's (it passes the other clients' pads on)
             if (got < int(HEADER) || Get32(buffer) != MAGIC)
             {
                 ReceivePad(n, buffer, got, from);
@@ -1398,6 +1419,8 @@ namespace mp::net
         bool changed = was != n.role || n.slot != slot || n.players != players;
         n.slot = slot;
         n.players = std::clamp<uint32_t>(players, 1, 4);
+        if (n.role != ::Role::Host)
+            memset(n.lobbyClient, 0, sizeof(n.lobbyClient));
         if (role == Role::Client)
         {
             n.peer = {};
@@ -1420,6 +1443,7 @@ namespace mp::net
         n.clients[slot].sin_family = AF_INET;
         n.clients[slot].sin_addr.s_addr = htonl(ip);
         n.clients[slot].sin_port = htons(uint16_t(port));
+        n.lobbyClient[slot] = true;
     }
 
     void SendTo(uint32_t ip, int port, const void* data, size_t size)

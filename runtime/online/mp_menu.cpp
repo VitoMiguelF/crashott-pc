@@ -156,7 +156,7 @@ namespace mp::menu
 
         constexpr const char* CODE_LETTERS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
         constexpr const char* PASSWORD_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        constexpr size_t CODE_LENGTH = 10, PASSWORD_LENGTH = 12;
+        constexpr size_t SHORT_CODE_LENGTH = 7, CODE_LENGTH = 10, PASSWORD_LENGTH = 12;  // codes: mp_lobby.h
 
         const char* T(const char* en, const char* pt) { return g_portuguese ? pt : en; }
 
@@ -261,17 +261,17 @@ namespace mp::menu
             }
         }
 
-        // The field being typed: the code as XXXXX-XXXXX, the password as is; '_' where letters are
-        // missing, the one under the cursor in the selected colour.
+        // The field being typed: the code as XXXX-XXX (XXXXX-XXXXX once it has more than 7 letters), the
+        // password as is; '_' where letters are missing, the one under the cursor in the selected colour.
         void DrawField(const View& v, const Palette& pal, float y, bool code)
         {
-            size_t length = code ? CODE_LENGTH : std::max(g_field.size() + 1, size_t(6));
+            size_t length = code ? (g_field.size() > SHORT_CODE_LENGTH ? CODE_LENGTH : SHORT_CODE_LENGTH) : std::max(g_field.size() + 1, size_t(6));
             length = std::min(length, code ? CODE_LENGTH : PASSWORD_LENGTH);
             float cell = 46.0f, pitch = 36.0f, dash = code ? 26.0f : 0.0f;
             float total = length * pitch + dash, x = VIRTUAL_W * 0.5f - total * 0.5f;
             for (size_t i = 0; i < length; i++)
             {
-                if (code && i == 5)
+                if (code && i == (length == SHORT_CODE_LENGTH ? 4u : 5u))
                 {
                     Draw(v, FontId::Large, "-", x + dash * 0.5f, y, cell, pal.info, 0.5f);
                     x += dash;
@@ -472,12 +472,14 @@ namespace mp::menu
                 Draw(v, FontId::Small, T("Empty = no password", "Vazia = sem senha"), 950.0f, 466.0f, HELP_CELL, pal.info, 1.0f);
                 return;
             }
-            float top = 90.0f, bottom = top + 200.0f + (players + int(LOBBY_ROWS)) * LIST_PITCH;
+            float top = 80.0f, bottom = top + 230.0f + (players + int(LOBBY_ROWS)) * LIST_PITCH;
             DrawFrame(v, 300.0f, top, 980.0f, bottom);
             Draw(v, FontId::Large, "MULTIPLAYER", VIRTUAL_W * 0.5f, top + 26.0f, 38.0f, pal.title, 0.5f);
-            Draw(v, FontId::Small, std::string(T("Code ", "Código ")) + lobby::InviteCode() + "   " + lobby::Address(), VIRTUAL_W * 0.5f, top + 74.0f,
-                 26.0f, pal.info, 0.5f);
-            float y = top + 116.0f;
+            std::string code = lobby::InviteCode(), local = lobby::LocalCode();
+            Draw(v, FontId::Small, std::string(T("Code ", "Código ")) + code + (code != local ? std::string(T("   LAN ", "   rede local ")) + local : "   " + lobby::Address()),
+                 VIRTUAL_W * 0.5f, top + 74.0f, 26.0f, pal.info, 0.5f, 620.0f);
+            Draw(v, FontId::Small, lobby::InternetText(g_portuguese), VIRTUAL_W * 0.5f, top + 104.0f, 22.0f, pal.help, 0.5f, 620.0f);
+            float y = top + 146.0f;
             DrawRoster(v, pal, y, true);
             y += players * LIST_PITCH;
             for (int row = 0; row < LOBBY_ROWS; row++)
@@ -519,7 +521,7 @@ namespace mp::menu
 
         // The HUB panel's size in virtual units.
         constexpr float PANEL_L = 900.0f, PANEL_T = 14.0f, PANEL_R = 1268.0f, PANEL_PAD = 50.0f;
-        float PanelBottom(size_t players) { return PANEL_T + 100.0f + players * 30.0f + 64.0f; }
+        float PanelBottom(size_t players) { return PANEL_T + 126.0f + players * 30.0f + 64.0f; }
 
         void RasterizePanel(const View& v)
         {
@@ -532,7 +534,9 @@ namespace mp::menu
                  pal.title, 0.0f, 280.0f);
             y += 34.0f;
             Draw(v, FontId::Small, lobby::InviteCode(), x, y, 28.0f, pal.selected);
-            y += 40.0f;
+            y += 34.0f;
+            Draw(v, FontId::Small, lobby::InternetText(g_portuguese), x, y, 20.0f, pal.help, 0.0f, PANEL_R - PANEL_PAD - x);
+            y += 32.0f;
             for (const lobby::Player& p : players)
             {
                 Draw(v, FontId::Small, std::to_string(p.slot + 1) + " " + p.name, x, y, 24.0f, pal.normal, 0.0f, 200.0f);
@@ -858,8 +862,8 @@ namespace mp::menu
                 }
                 if (EditField(pressed, CODE_LETTERS, CODE_LENGTH))
                 {
-                    if (g_field.size() < CODE_LENGTH)
-                        ShowMessage(T("THE CODE HAS 10 LETTERS", "O CÓDIGO TEM 10 LETRAS"), Screen::Code);
+                    if (g_field.size() != SHORT_CODE_LENGTH && g_field.size() != CODE_LENGTH)
+                        ShowMessage(T("THE CODE HAS 7 LETTERS", "O CÓDIGO TEM 7 LETRAS"), Screen::Code);
                     else
                         Join(g_field, "");
                 }

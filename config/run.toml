@@ -1384,6 +1384,23 @@ input = [
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "hub", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] hosting on', 'PauseGame\(true\) skipped', 'left the session: out of the level'] }
 
+[profiles.mp_nat_host]
+description = "Internet sem servidor (online/mp_nat.h): host como o mp_lobby_host com CRASH_MP_NAT = 1 (UPnP no roteador + STUN); espera o resultado no HUB, mostra o código e o status e fecha a sessão (o mapeamento da porta sai)"
+test = false
+timeout = 70
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAT = "1", CRASH_MP_NAME = "HOST", CRASH_SCREENSHOT_OVERLAY = "1" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [6.8, "DOWN"], [7.3, "A"],
+    ["@save_slots"], [1.5, "A"],
+    ["@load_complete"], [1, "A"],
+    ["@hub"], [2, "SHOT"], [10, "SHOT"], [11, "BACK"], [12.5, "SHOT"], [13, "UP"], [13.5, "A"], [16, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[nat\] UPnP', '\[nat\] port mapping|LAN only'] }
+
 [profiles.mp_quit_c]
 description = "Cliente do mp_quit_host pelo código: entra na fase do host e sai pelo START (o menu do cliente: CONTINUAR / CONFIGURAÇÕES / SAIR PARA O MENU PRINCIPAL, o jogo não para): volta ao menu inicial sem salvar"
 test = false
@@ -1407,7 +1424,7 @@ fps_limit = 60
 audio = false
 userdata_mode = "copy"
 skip_intros = true
-env = { CRASH_MP_NAME = "FICA", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "0,1080,1920,1080" }
+env = { CRASH_MP_NAME = "FICA", CRASH_MP_CODE = "1ZG0-001", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "0,1080,1920,1080" }
 input = [
     ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "A"], [13.5, "SHOT"],
     ["@gameplay_ready"], [3, "SHOT"], [12, "SHOT"], [21, "SHOT"], [24, "SHOT"], [26, "SHOT"], [28, "SHOT"], [31, "SHOT"], [35, "SHOT"], [40, "SHOT"], [50, "SHOT"], [56, "SHOT"], [62, "SHOT"],

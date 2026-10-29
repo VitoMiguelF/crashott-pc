@@ -2,6 +2,7 @@
 
 #include "mp_lobby.h"
 #include "mp.h"
+#include "mp_nat.h"
 #include "../diagnostics.h"
 
 #include <algorithm>
@@ -30,7 +31,7 @@ namespace mp::lobby
 {
     namespace
     {
-        constexpr uint32_t VERSION = 1;
+        constexpr uint32_t VERSION = 2;  // 2: the password goes hashed (PasswordHash)
         constexpr uint64_t RESEND_MS = 500, TIMEOUT_MS = 6000, DISCOVER_MS = 1000, SERVER_TTL_MS = 3500, JOIN_TIMEOUT_MS = 6000;
 
         enum Type : uint8_t { DISCOVER = 1, ANNOUNCE, HELLO, WELCOME, DENY, ROSTER, PING, PONG, LEAVE };
@@ -180,6 +181,17 @@ namespace mp::lobby
             return found;
         }
 
+        // The password as HELLO carries it: FNV-1a 64 in hex, not the text (UDP is readable on the way).
+        std::string PasswordHash(const std::string& password)
+        {
+            uint64_t h = 0xCBF29CE484222325ull;
+            for (char c : "crash-mp:" + password)
+                h = (h ^ uint8_t(c)) * 0x100000001B3ull;
+            char text[17];
+            snprintf(text, sizeof(text), "%016llx", (unsigned long long)h);
+            return text;
+        }
+
         // The roster as the menu shows it (host side).
         std::vector<Player> HostRoster(const Session& s)
         {
@@ -300,7 +312,7 @@ namespace mp::lobby
                     }
                 Reason refuse = version != VERSION ? Reason::Version
                                 : s.inGame ? Reason::Started
-                                : !s.password.empty() && password != s.password ? Reason::Password
+                                : !s.password.empty() && password != PasswordHash(s.password) ? Reason::Password
                                 : Count(s) >= s.options.maxPlayers ? Reason::Full
                                 : Reason::None;
                 if (refuse != Reason::None)
@@ -526,7 +538,7 @@ namespace mp::lobby
                     w.Put32(VERSION);
                     w.Put32(s.token);
                     w.PutStr(LocalName());
-                    w.PutStr(s.joinPassword);
+                    w.PutStr(s.joinPassword.empty() ? std::string() : PasswordHash(s.joinPassword));
                     Send(s.hostIp, s.hostPort, w);
                 }
                 return;
@@ -610,6 +622,7 @@ namespace mp::lobby
             for (const char* c = password; *c; c++)
                 g_s.password += char(std::toupper(uint8_t(*c)));
         ApplyHost(g_s);
+        nat::Open(net::LocalPort(), g_s.localIp);  // the internet code, once the router and STUN answer
         Log("[lobby] hosting on %s, code %s", FormatAddress(g_s.localIp, net::LocalPort()).c_str(),
             EncodeCode(g_s.localIp, net::LocalPort()).c_str());
         return true;
@@ -684,6 +697,8 @@ namespace mp::lobby
                 Send(g_s.hostIp, g_s.hostPort, w);
             }
             if (g_s.state == State::Hosting)
+                nat::Close();
+            if (g_s.state == State::Hosting)
                 for (uint32_t slot = 1; slot < MAX_PLAYERS; ++slot)
                     if (g_s.members[slot].used)
                         Deny(g_s, g_s.members[slot].ip, g_s.members[slot].port, g_s.members[slot].token, Reason::HostLeft);
@@ -738,11 +753,33 @@ namespace mp::lobby
     std::string InviteCode()
     {
         std::lock_guard<std::mutex> lock(g_mutex);
+        uint32_t ip;
+        int port;
+        if (g_s.state == State::Hosting && nat::PublicAddress(ip, port))
+            return EncodeCode(ip, port);
         if (g_s.state == State::Hosting)
             return EncodeCode(g_s.localIp, net::LocalPort());
         if (g_s.state == State::Joined || g_s.state == State::Joining)
             return EncodeCode(g_s.hostIp, g_s.hostPort);
         return {};
+    }
+
+    std::string LocalCode()
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return g_s.state == State::Hosting ? EncodeCode(g_s.localIp, net::LocalPort()) : std::string();
+    }
+
+    const char* InternetText(bool pt)
+    {
+        switch (nat::GetState())
+        {
+        case nat::State::Working: return pt ? "Internet: verificando..." : "Internet: checking...";
+        case nat::State::Open: return pt ? "Internet: aberta" : "Internet: open";
+        case nat::State::Unknown: return pt ? "Internet: abra a porta UDP 47810 no roteador" : "Internet: forward UDP port 47810 on the router";
+        case nat::State::Closed: return pt ? "Internet: sua rede não permite (use uma VPN)" : "Internet: your network does not allow it (use a VPN)";
+        default: return "";
+        }
     }
 
     std::string Address()
@@ -856,14 +893,17 @@ namespace mp::lobby
         constexpr char ALPHABET[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";  // Crockford
     }
 
+    // 7 letters (XXXX-XXX) for the address alone on the default port, 10 (XXXXX-XXXXX) with the port.
     std::string EncodeCode(uint32_t ip, int port)
     {
-        uint64_t value = (uint64_t(ip) << 16) | uint16_t(port);
+        bool shortCode = port == DEFAULT_PORT;
+        int digits = shortCode ? 7 : 10;
+        uint64_t value = shortCode ? ip : (uint64_t(ip) << 16) | uint16_t(port);
         std::string out;
-        for (int i = 9; i >= 0; --i)
+        for (int i = digits - 1; i >= 0; --i)
         {
             out += ALPHABET[(value >> (i * 5)) & 31];
-            if (i == 5)
+            if (i == digits / 2 && i)
                 out += '-';
         }
         return out;
@@ -901,6 +941,12 @@ namespace mp::lobby
                 return false;
             value = (value << 5) | uint64_t(at - ALPHABET);
             ++digits;
+        }
+        if (digits == 7 && value <= 0xFFFFFFFFull)
+        {
+            ip = uint32_t(value);
+            port = DEFAULT_PORT;
+            return ip != 0;
         }
         if (digits != 10)
             return false;

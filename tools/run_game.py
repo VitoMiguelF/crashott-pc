@@ -455,6 +455,9 @@ def environment(settings, run_dir, profile=None):
         env["CRASH_AUDIO_DUMP_SECONDS"] = str(settings.get("audio_dump_seconds", 60))
     if settings.get("log_imports"):
         env["CRASH_LOG_IMPORTS"] = ",".join(settings["log_imports"])
+    # A test's MULTIPLAYER host neither asks the router for a port (UPnP) nor the internet for its address
+    # (STUN) unless its profile sets CRASH_MP_NAT = "1" (online/mp_nat.h).
+    env["CRASH_MP_NAT"] = "0"
     for key, value in settings.get("env", {}).items():
         env[key] = str(value)
     # fps_limit = N: this run's frame limit (tests/userdata_base has none). The menu tests set it: at

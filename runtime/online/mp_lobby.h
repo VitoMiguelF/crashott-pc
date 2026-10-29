@@ -13,9 +13,10 @@
 //   PING/PONG client <-> host every 0.5 s (round trip shown in the roster); 6 s of silence drops one
 //   LEAVE     client -> host
 //
-// An invite code is the host's LAN address and port in 10 letters (Crockford base 32, "XXXXX-XXXXX");
-// an address ("192.168.0.10" or "192.168.0.10:47810") works where a code does. Over the internet the
-// host needs the port forwarded (or a VPN such as a virtual LAN): there is no relay server.
+// An invite code is the host's address in 7 letters ("XXXX-XXX", Crockford base 32; 10 letters,
+// "XXXXX-XXXXX", with a port other than 47810); an address ("192.168.0.10" or "192.168.0.10:47810")
+// works where a code does. The host's code is its public address once its router forwards the port
+// (UPnP) or STUN found one (mp_nat.h), its LAN address otherwise; there is no relay server.
 //
 //   CRASH_MP_NAME=<name>      the player's name (default: the OS user's, on Android the device's model;
 //                             A-Z 0-9, 12 letters)
@@ -70,7 +71,9 @@ namespace mp::lobby
     Reason LastReason();
     const char* ReasonText(Reason reason, bool portuguese);
     std::vector<Player> Players();
-    std::string InviteCode();  // the host's (or the joined host's) code
+    std::string InviteCode();  // the host's (or the joined host's) code: the internet one when there is one
+    std::string LocalCode();   // host: the code of its LAN address
+    const char* InternetText(bool portuguese);  // host: whether the internet can reach it (mp_nat.h)
     std::string Address();     // "192.168.0.10:47810"
     std::string LocalName();
     void Kick(uint32_t slot);

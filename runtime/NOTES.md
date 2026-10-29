@@ -2531,4 +2531,15 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   KeBugCheck agora loga o backtrace do host. Visto: as 3 janelas sem crash; o cliente sai pelo menu e vai ao
   menu inicial, o Crash dele some no host e no outro cliente; o host sai, o outro cliente volta ao lobby e
   vê O HOST SAIU quando o host fecha a sessão.
-
+- **Internet sem servidor** (`online/mp_nat.cpp`; perfil `mp_nat_host`; `CRASH_MP_NAT=0` desliga, o
+  `run_game.py` faz isso nos testes de rede local): ao abrir a sessão o host pergunta o endereço público ao STUN
+  (Google, depois Cloudflare) pelo próprio socket do jogo e mapeia a UDP 47810 no roteador por UPnP (SSDP saindo
+  pelo IP da rede local, `Host:` com o IP do roteador: o MiniUPnPd responde 404 a um nome). Com dois roteadores
+  (modem da operadora + roteador próprio) o de dentro devolve IP externo vazio: o modem é achado por ICMP de TTL
+  2, o IP WAN do roteador de dentro pelo record-route de um ping ao modem (`IcmpSendEcho`, só Windows), e o
+  modem também mapeia. Código de convite de 7 letras (`XXXX-XXX`, IP na porta 47810; 10 com outra porta), o
+  público quando há. Status no painel/lobby: aberta / abra a porta UDP 47810 / sua rede não permite (CGNAT).
+  Segurança: senha vai em hash (FNV-1a, versão 2 do protocolo), pads só do endereço do lobby, cliente só ouve o
+  host, mais de 600 pacotes/s de um endereço são descartados; os mapeamentos saem ao fechar a sessão. Visto: TP-Link
+  (192.168.0.1) atrás do modem Vivo (192.168.15.1): "open to the internet", os dois mapeamentos removidos.
+  Falta: entrar de fora da rede de verdade.

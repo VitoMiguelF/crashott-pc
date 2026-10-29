@@ -298,8 +298,9 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   6 s of silence drops a player (or the host). Slots stay 0..n-1 in join order while no level runs; the session
   sets `mp::Players()` and the mirror's role / slot / addresses (`mp::net::SetRole`, `SetClientAddress`), so a
   level started from the lobby is the `CRASH_MP_ROLE` prototype with the lobby's players. Host port 47810
-  (`CRASH_MP_PORT`), clients any. The invite code is the host's LAN address and port in 10 Crockford base-32
-  letters (`XXXXX-XXXXX`); over the internet the host needs the port forwarded or a virtual LAN (no relay).
+  (`CRASH_MP_PORT`), clients any. The invite code is the host's address in 7 Crockford base-32 letters
+  (`XXXX-XXX`; 10, `XXXXX-XXXXX`, with a port other than 47810): its public one once "Internet" below found
+  it, its LAN one otherwise. HELLO carries the password hashed (FNV-1a 64, protocol version 2).
 - Text entry: letters and digits typed on the keyboard (`input::pc::SetTextEntry`), keys on the screen (mouse /
   touch), or the D-pad (up / down the letter, left / right the cursor, X erases).
 - Mouse and touch (Android's menus are touch as a mouse): a click on a row chooses it, on the game's B BACK /
@@ -316,6 +317,28 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   panel and the lobby. Left: a client plays without the host's save (its own progress: mojo 0, upgrades), follows a start only
   from its menus / HUB (not from inside another level); the host's NEW GAME leaves the opening level to CONTINUE
   STORY at the HUB.
+
+## Internet (no server of ours)
+
+- **The host's port** (`online/mp_nat.cpp`, on its own thread when the session opens; `CRASH_MP_NAT=0` skips it,
+  as `run_game.py` does for the LAN tests): STUN (`stun.l.google.com`, then `stun.cloudflare.com`) on the game's
+  own socket gives the public address (the answer comes through the I/O thread, `nat::OnPacket`); UPnP IGD maps
+  UDP 47810 on the router: SSDP M-SEARCH sent from the LAN address (`IP_MULTICAST_IF`: Windows otherwise picks a
+  virtual adapter), the description and SOAP with `Host:` the router's address (MiniUPnPd answers 404 to a
+  name), `AddPortMapping` (lease 2 h, 0 on error 725, the next port on 718).
+- **Two routers** (an operator's modem and a router of one's own, common here): the inner MiniUPnPd answers an
+  empty `GetExternalIPAddress` (its WAN address is private); the modem above is found with an ICMP echo of TTL
+  2 towards the STUN server (Time Exceeded from it) and the inner router's WAN address with an echo to the modem
+  carrying the IP record-route option (`IcmpSendEcho`, no admin needed; Windows only); SSDP unicast to the modem,
+  then its `AddPortMapping` to that WAN address. Open = mapped and the router's public address equals STUN's.
+- **States** on the HUB panel and the lobby: checking / open / "forward UDP port 47810 on the router" (STUN
+  gave a public address, no UPnP) / "your network does not allow it (use a VPN)" (no public address: CGNAT).
+  Closing the session deletes the mappings (both routers) on a thread; a stale Open never deletes a newer one.
+- **Hardening**: the host takes pads only from the address the lobby gave each slot; a client only from the
+  host; more than 600 packets a second from one address are dropped for that second.
+- Seen (`mp_nat_host`, TP-Link MiniUPnPd 2.2.2 behind the operator's MiniUPnPd 2.2.0): "routers 192.168.0.1 +
+  192.168.15.1 via 192.168.15.3, external = STUN's: open to the internet", both mappings removed at close. Not
+  yet joined from outside the network.
 
 ## Leaving a level, the pause, players who leave
 
