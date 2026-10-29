@@ -6,10 +6,10 @@
 //
 //   DISCOVER  client -> broadcast (the LAN) and 127.0.0.1: who hosts here?
 //   ANNOUNCE  host -> that client: its name, players, maximum, password or not, in a level or not
-//   HELLO     client -> host: a token (random), the player's name, the password and the colour it
-//             wants (mp_colors.h), every 0.5 s
+//   HELLO     client -> host: a token (random), the player's name, the password, the colour it
+//             wants (mp_colors.h) and its skin (mp_skins.cpp), every 0.5 s
 //   WELCOME   host -> client: its slot (1-7); DENY: full, wrong password, kicked, in a level, version
-//   ROSTER    host -> clients, every 0.5 s: the players (slot, token, name, ping, colour), the options and the
+//   ROSTER    host -> clients, every 0.5 s: the players (slot, token, name, ping, colour, skin), the options and the
 //             level the host started (a counter: a client follows each new one once) and the cutscenes
 //             it skipped (a counter and the cutscene's frontend node)
 //   PING/PONG client <-> host every 0.5 s (round trip shown in the roster; PING also carries the colour
@@ -49,6 +49,7 @@ namespace mp::lobby
         uint32_t pingMs = 0;
         bool me = false;
         uint8_t colour = 0xFF;  // mp_colors.h (0xFF: none yet)
+        uint32_t skin = 0;      // its Crash skin, the template hash (mp_skins.cpp; 0: none yet)
     };
 
     struct Server

@@ -49,6 +49,7 @@
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
 #include "../settings/settings.h"
+#include "../online/mp.h"
 
 #include <atomic>
 #include <cctype>
@@ -450,6 +451,7 @@ PPC_FUNC(sub_8224E068)
     }
     if (g_hulkHash && LoadBE32(CURRENT_SKIN) == g_hulkHash)
         HoldNormalCrash(ctx, base);
+    mp::skins::LevelLoad(ctx, base);  // online: the other players' skins too
     __imp__sub_8224E068(ctx, base);
     g_inLevel = true;
 }
@@ -457,6 +459,7 @@ PPC_FUNC(sub_8224E068)
 // CStreamManager::vf04, the level unload.
 PPC_FUNC(sub_8224FAD8)
 {
+    mp::skins::LevelUnload(ctx, base);
     __imp__sub_8224FAD8(ctx, base);
     g_inLevel = false;
 }

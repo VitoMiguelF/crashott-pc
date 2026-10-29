@@ -432,8 +432,7 @@ PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale f
   Crash's nor a known skin's gets the fur test only if 64+ of its entries are fur. ORANGE keeps the skin's
   own look, WHITE is its P2 version. `tools/mp_skin_colours.py preview out.png` draws every costume through
   the 12 colours (the same arithmetic): every costume takes the colour, the shorts stay blue. Checked only
-  that way, not in the game. Skins are per machine (not sent in the lobby): another machine shows its own
-  skin choice, not this player's.
+  that way, not in the game.
 - **Choosing**: MULTIPLAYER's first screen has a third row, COLOR / COR `< BLUE >` with a sample of the fur
   (left / right / A, or a click on its halves); in the lobby the player's own row changes it with left / right
   (the host's lobby at the HUB: its row; a client waiting in LOBBY: left / right anywhere). The roster shows
@@ -450,6 +449,16 @@ PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale f
   (`colors::MAX_SLOTS`), so there is always a free one.
 - **Tests**: `CRASH_MP_COLORS=<id>,...` gives the slots their colours without a lobby, `CRASH_MP_COLORS_EVERY=<ms>`
   moves them along the list (profile `mp_cores`: the 12 colours on 4 local players, 3 screenshots).
+
+- **Each player's skin** (`online/mp_skins.cpp`, lobby protocol 7): the game has one skin, the current
+  template hash (0x824A8270): a level load loads its template, every `CActionSpawnPlayer` keeps it (+8, set by
+  its constructor) and spawns it (`CActionSpawnActor` `sub_822102B0` -> `GenerateObject` with +8; the player
+  number at +104), and `Crash:CheckSkinType` (`sub_821534A0`, the skin's weapon) compares with it, so every
+  machine showed every player in its own skin. Now each player's skin (its machine's current one, what it
+  wore at its HUB) goes in HELLO / PING to the host and in the ROSTER to everybody; the level load
+  (`dev_skins.cpp`'s CStreamManager::vf05 hook) also loads the other players' templates (only wearable skins'
+  hashes; released at vf04), the spawn of player n puts the skin of the slot it is here at +8, and
+  CheckSkinType compares with the skin that Crash was spawned with. Not seen in the game yet.
 
 ## Internet (no server of ours)
 

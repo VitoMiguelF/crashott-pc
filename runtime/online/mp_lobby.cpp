@@ -32,8 +32,9 @@ namespace mp::lobby
 {
     namespace
     {
-        constexpr uint32_t VERSION = 6;  // 2: the password goes hashed (PasswordHash); 3: cutscene skips in the roster; 4: positions in the pads;
-                                         // 5: up to 8 players; 6: the players' colours (HELLO / PING: asked for, ROSTER: given)
+        constexpr uint32_t VERSION = 7;  // 2: the password goes hashed (PasswordHash); 3: cutscene skips in the roster; 4: positions in the pads;
+                                         // 5: up to 8 players; 6: the players' colours (HELLO / PING: asked for, ROSTER: given);
+                                         // 7: the players' skins (HELLO / PING / ROSTER)
         constexpr uint64_t RESEND_MS = 500, TIMEOUT_MS = 6000, DISCOVER_MS = 1000, SERVER_TTL_MS = 3500, JOIN_TIMEOUT_MS = 6000;
         constexpr uint64_t SKIP_KEEP_MS = 20000;  // a client still not at the cutscene the host skipped: forgotten after this
 
@@ -49,6 +50,7 @@ namespace mp::lobby
             uint64_t seenAt = 0;
             uint32_t pingMs = 0;
             uint8_t wanted = 0, colour = colors::NONE;  // the colour the player asked for, and the one it has
+            uint32_t skin = 0;  // its Crash skin (mp_skins.cpp)
         };
 
         struct Session
@@ -205,7 +207,7 @@ namespace mp::lobby
             std::vector<Player> out;
             for (uint32_t slot = 0; slot < MAX_PLAYERS; ++slot)
                 if (s.members[slot].used)
-                    out.push_back({ slot, s.members[slot].name, s.members[slot].pingMs, slot == 0, s.members[slot].colour });
+                    out.push_back({ slot, s.members[slot].name, s.members[slot].pingMs, slot == 0, s.members[slot].colour, s.members[slot].skin });
             return out;
         }
 
@@ -269,6 +271,10 @@ namespace mp::lobby
             for (uint32_t slot = 0; slot < MAX_PLAYERS; ++slot)
                 colours[slot] = s.members[slot].used ? s.members[slot].colour : colors::NONE;
             colors::SetSlotColours(colours, MAX_PLAYERS);
+            uint32_t skins[MAX_PLAYERS];
+            for (uint32_t slot = 0; slot < MAX_PLAYERS; ++slot)
+                skins[slot] = s.members[slot].used ? s.members[slot].skin : 0;
+            mp::skins::SetSlotSkins(skins, MAX_PLAYERS);
             return changed;
         }
 
@@ -293,6 +299,7 @@ namespace mp::lobby
                 w.PutStr(m.name);
                 w.Put16(std::min<uint32_t>(m.pingMs, 65535));
                 w.Put8(m.colour);
+                w.Put32(m.skin);
             }
             w.Put32(s.skipId);
             w.Put32(s.skipNode);
@@ -321,6 +328,7 @@ namespace mp::lobby
             s.state = State::Failed;
             s.reason = reason;
             colors::ClearSlotColours();
+            mp::skins::ClearSlotSkins();
             Log("[lobby] %s", ReasonText(reason, false));
         }
 
@@ -348,6 +356,7 @@ namespace mp::lobby
                 if (!r.ok || !token)
                     return;
                 uint8_t wanted = uint8_t(r.Get8());  // (an older version has none: refused below)
+                uint32_t skin = r.Get32();
                 for (uint32_t slot = 1; slot < MAX_PLAYERS; ++slot)
                     if (s.members[slot].used && s.members[slot].token == token)
                     {
@@ -375,6 +384,7 @@ namespace mp::lobby
                 if (slot >= MAX_PLAYERS)
                     return;
                 s.members[slot] = { true, token, name.empty() ? "CRASH" : name, ip, port, now, 0, wanted };
+                s.members[slot].skin = skin;
                 Log("[lobby] %s joined from %s as player %u", s.members[slot].name.c_str(), FormatAddress(ip, port).c_str(), slot + 1);
                 Writer w(WELCOME, s.sessionId);
                 w.Put32(token);
@@ -399,6 +409,7 @@ namespace mp::lobby
             {
                 uint32_t sent = r.Get32(), rtt = r.Get32();
                 uint8_t wanted = uint8_t(r.Get8());
+                uint32_t skin = r.Get32();
                 if (r.ok)
                     m.pingMs = rtt;
                 Writer w(PONG, s.sessionId);
@@ -410,6 +421,11 @@ namespace mp::lobby
                     m.wanted = wanted;  // the player picked another colour in its lobby
                     if (ResolveColours(s))
                         SendRoster(s);
+                }
+                if (r.ok && skin != m.skin)
+                {
+                    m.skin = skin;  // the player wore another skin at its HUB
+                    SendRoster(s);
                 }
             }
             else if (type == LEAVE)
@@ -443,6 +459,11 @@ namespace mp::lobby
             }
             if (ResolveColours(s))
                 changed = true;  // the host picked another colour
+            if (uint32_t skin = mp::skins::Local(); skin != s.members[0].skin)
+            {
+                s.members[0].skin = skin;  // the host wore another skin
+                changed = true;
+            }
             if (changed || now - s.lastRoster >= RESEND_MS)
                 SendRoster(s);
         }
@@ -522,6 +543,7 @@ namespace mp::lobby
                     p.name = r.GetStr();
                     p.pingMs = r.Get16();
                     p.colour = uint8_t(r.Get8());
+                    p.skin = r.Get32();
                     p.me = token == s.token;
                     if (p.me)
                         mySlot = p.slot;
@@ -540,6 +562,11 @@ namespace mp::lobby
                         if (p.slot < MAX_PLAYERS)
                             colours[p.slot] = p.colour;
                     colors::SetSlotColours(colours, MAX_PLAYERS);
+                    uint32_t skins[MAX_PLAYERS] = {};
+                    for (const Player& p : roster)
+                        if (p.slot < MAX_PLAYERS)
+                            skins[p.slot] = p.skin;
+                    mp::skins::SetSlotSkins(skins, MAX_PLAYERS);
                 }
                 // A cutscene the host skipped: this machine skips it when it plays it (or already does).
                 if (skipId != s.seenSkipId)
@@ -617,6 +644,7 @@ namespace mp::lobby
                     w.PutStr(LocalName());
                     w.PutStr(s.joinPassword.empty() ? std::string() : PasswordHash(s.joinPassword));
                     w.Put8(colors::Mine());
+                    w.Put32(mp::skins::Local());
                     Send(s.hostIp, s.hostPort, w);
                 }
                 return;
@@ -636,6 +664,7 @@ namespace mp::lobby
                     w.Put32(uint32_t(now));
                     w.Put32(s.pingMs);
                     w.Put8(colors::Mine());
+                    w.Put32(mp::skins::Local());
                     Send(s.hostIp, s.hostPort, w);
                 }
             }
@@ -726,6 +755,7 @@ namespace mp::lobby
         g_s.state = State::Hosting;
         g_s.sessionId = Random32();
         g_s.members[0] = { true, 0, LocalName(), 0, 0, NowMs(), 0, uint8_t(colors::Mine()) };
+        g_s.members[0].skin = mp::skins::Local();
         g_s.localIp = LocalIp();
         if (const char* password = getenv("CRASH_MP_PASSWORD"))  // tests
             for (const char* c = password; *c; c++)
@@ -814,6 +844,7 @@ namespace mp::lobby
             close = g_s.state != State::Off;
             g_s = {};
             colors::ClearSlotColours();
+            mp::skins::ClearSlotSkins();
         }
         if (close)
         {

@@ -87,6 +87,19 @@ namespace mp
     // Online (or more than two players): nobody enters another player's backpack.
     bool NoBackpack();
 
+    // mp_skins.cpp: every player in its own skin (the game has one, the current skin's template hash).
+    namespace skins
+    {
+        uint32_t Local();  // this machine's skin (its template hash)
+        // The lobby (any thread): each slot's skin hash (0 = none), from the roster.
+        void SetSlotSkins(const uint32_t* skins, uint32_t count);
+        void ClearSlotSkins();
+        uint32_t SlotSkin(uint32_t slot);
+        // dev/dev_skins.cpp's CStreamManager hooks: the other players' templates come and go with a level.
+        void LevelLoad(PPCContext& ctx, uint8_t* base);
+        void LevelUnload(PPCContext& ctx, uint8_t* base);
+    }
+
     // mp_net.cpp
     void NetTick(PPCContext& ctx, uint8_t* base);
     // The UDP socket, opened by CRASH_MP_ROLE at startup or by the lobby (mp_lobby.cpp). One I/O thread

@@ -2572,3 +2572,8 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   8 s o alvo sem ninguém atrás dele cede). Visto: `mp_oito_crash` (8 Crashes numa máquina, P5-P8 andando cada
   um no seu controle) e 5 máquinas (o P5 no mesmo lugar em todas). Falta: nocaute por queda dos 5-8 cai no
   P3/P4 do jogo, lobby com 8 nomes não cabe (mp-menus), cores 5-8 (mp-colors), nunca com 6-8 máquinas nem Android.
+- **Skin de cada jogador** (`online/mp_skins.cpp`, protocolo 7): a skin atual de cada máquina vai pelo lobby
+  (HELLO/PING/ROSTER); no carregamento da fase cada máquina carrega também os templates das skins dos outros
+  (liberados na saída), o `CActionSpawnPlayer` de cada jogador recebe a skin do slot dele (+8) e o
+  `Crash:CheckSkinType` (arma da skin) compara com a skin com que aquele Crash nasceu. Junção das branches
+  mp-menus, mp-8players e mp-colors em online-coop (2026-10-29). Ainda não visto no jogo.
