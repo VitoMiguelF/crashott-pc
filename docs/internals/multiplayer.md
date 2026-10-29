@@ -345,6 +345,16 @@ PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale f
   top of the head stay dark brown (outside the hue / saturation test). `FixLooks` (`mp_net.cpp`) paints once per
   drawable and again when its slot's colour changes; the original jacked pointer goes back before the
   drawable is deleted (`~CCharacterObject` hook), also after a repaint.
+- **Skins** (`dev/dev_skins.cpp`): each skin package has palettes of its own (`crash_normal.bmp` /
+  `Crash_Player2.bmp`, chunks 0x19006: 256 BGRA entries). The fur test is applied to whatever palette the
+  drawable has, so a palette is recoloured only when at least 64 of its 256 entries are fur (`MIN_FUR_ENTRIES`).
+  Counted offline on the packages: Crash 132; Battler, Bratgirl, Chiratta, Parafox, Roller, Shellephant, Spike
+  89-160 (their whole costume takes the colour, it looks right); Grizzly 61, Koala 55, Rabbit 49, Valentine 48,
+  Shurtle 47 and Monkey, Stinky, Ratcicle, Scorporilla, Eelectric, Sludge, Skeleton (0-23) keep their look
+  (recoloured they only got specks or patches). WHITE is always the jacked palette, i.e. the skin's own P2
+  version. Crash_Hulk has no palettes and is not painted. Checked with an offline preview (each skin's
+  costume texture through the 12 recipes, the same code in Python), not in the game. Skins are per machine
+  (not sent in the lobby), so another machine shows its own skin choice, not this player's.
 - **Choosing**: MULTIPLAYER's first screen has a third row, COLOR / COR `< BLUE >` with a sample of the fur
   (left / right / A, or a click on its halves); in the lobby the player's own row changes it with left / right
   (the host's lobby at the HUB: its row; a client waiting in LOBBY: left / right anywhere). The roster shows

@@ -95,14 +95,16 @@ namespace
             rgb[k] += m;
     }
 
+    // Crash's fur: the saturated oranges of the normal palette, and its darker, duller browns (the
+    // back and the neck); the skin (light, less saturated), the jeans and the shoes are outside it.
+    bool IsFur(float h, float s, float v) { return v > 0 && h >= 5 && h <= 45 && s > (v < 0.55f ? 0.3f : 0.5f); }
+
     // One fur colour through a recipe (bytes in, bytes out). False: not the fur (kept).
     bool Recolour(const Recipe& recipe, uint8_t c[3])
     {
         float h, s, v;
         ToHsv(c[0] / 255.0f, c[1] / 255.0f, c[2] / 255.0f, h, s, v);
-        // Crash's fur: the saturated oranges of the normal palette, and its darker, duller browns (the
-        // hair's tufts); the skin (light, less saturated), the jeans and the shoes are outside it.
-        if (v <= 0 || h < 5 || h > 45 || s <= (v < 0.55f ? 0.3f : 0.5f))
+        if (!IsFur(h, s, v))
             return false;
         float rgb[3];
         ToRgb(recipe.hue + (h - 25.0f) * recipe.spread, std::clamp(s * recipe.sat, 0.0f, 1.0f),
@@ -112,10 +114,27 @@ namespace
         return true;
     }
 
+    // Skins (dev_skins.cpp) have palettes of their own (each package's crash_normal / Crash_Player2).
+    // Crash's has 132 fur entries of 256; the skins whose costume is mostly orange / brown 89-160
+    // (Battler, Bratgirl, Chiratta, Parafox, Roller, Shellephant, Spike: the whole costume takes the
+    // colour), the others 61 or less, where only specks or patches would change (Grizzly, Shurtle,
+    // Koala, Rabbit, Valentine, Stinky) or nothing. Below this a palette keeps its own look.
+    constexpr int MIN_FUR_ENTRIES = 64;
+
     // The final palette of a drawable (256 big-endian ARGB words).
     void TintPalette(uint32_t palette, const Recipe& recipe)
     {
         uint8_t* words = g_memory.Translate(palette);
+        int fur = 0;
+        for (int e = 0; e < 256; ++e)
+        {
+            const uint8_t* c = words + e * 4 + 1;
+            float h, s, v;
+            ToHsv(c[0] / 255.0f, c[1] / 255.0f, c[2] / 255.0f, h, s, v);
+            fur += IsFur(h, s, v);
+        }
+        if (fur < MIN_FUR_ENTRIES)
+            return;
         for (int e = 0; e < 256; ++e)
             Recolour(recipe, words + e * 4 + 1);
     }
