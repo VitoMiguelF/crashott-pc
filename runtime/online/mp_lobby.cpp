@@ -582,41 +582,71 @@ namespace mp::lobby
 
     // ---- menu side -------------------------------------------------------------------------------
 
-    std::string LocalName()
+    namespace
     {
-        static std::string name = [] {
-            std::string raw;
-            if (const char* env = getenv("CRASH_MP_NAME"))
-                raw = env;
-#ifdef _WIN32
-            if (raw.empty())
-            {
-                char user[64] = {};
-                DWORD size = sizeof(user);
-                if (GetUserNameA(user, &size))
-                    raw = user;
-            }
-#elif defined(__ANDROID__)
-            if (raw.empty())
-            {
-                char model[PROP_VALUE_MAX] = {};  // no user name on Android: the device's model (SM-X920)
-                if (__system_property_get("ro.product.model", model) > 0)
-                    raw = model;
-            }
-#else
-            if (raw.empty() && getenv("USER"))
-                raw = getenv("USER");
-#endif
+        // A-Z 0-9 and spaces, 12 letters.
+        std::string CleanName(const std::string& raw)
+        {
             std::string out;
             for (char c : raw)
                 if (std::isalnum(uint8_t(c)) || c == ' ')
                     out += char(std::toupper(uint8_t(c)));
             if (out.size() > 12)
                 out.resize(12);
-            return out.empty() ? std::string("CRASH") : out;
-        }();
-        return name;
+            return out;
+        }
+
+        // CRASH_MP_NAME, else the OS user's (the device's model on Android).
+        std::string DefaultName()
+        {
+            static std::string name = [] {
+                std::string raw;
+                if (const char* env = getenv("CRASH_MP_NAME"))
+                    raw = env;
+#ifdef _WIN32
+                if (raw.empty())
+                {
+                    char user[64] = {};
+                    DWORD size = sizeof(user);
+                    if (GetUserNameA(user, &size))
+                        raw = user;
+                }
+#elif defined(__ANDROID__)
+                if (raw.empty())
+                {
+                    char model[PROP_VALUE_MAX] = {};  // no user name on Android: the device's model (SM-X920)
+                    if (__system_property_get("ro.product.model", model) > 0)
+                        raw = model;
+                }
+#else
+                if (raw.empty() && getenv("USER"))
+                    raw = getenv("USER");
+#endif
+                std::string out = CleanName(raw);
+                return out.empty() ? std::string("CRASH") : out;
+            }();
+            return name;
+        }
+
+        std::mutex g_nameMutex;
+        std::string g_localName;  // SetLocalName's (the MULTIPLAYER screens: the saved one)
     }
+
+    std::string LocalName()
+    {
+        std::lock_guard<std::mutex> lock(g_nameMutex);
+        return g_localName.empty() ? DefaultName() : g_localName;
+    }
+
+    void SetLocalName(const std::string& name)
+    {
+        std::string clean = CleanName(name);
+        std::lock_guard<std::mutex> lock(g_nameMutex);
+        if (clean != g_localName)
+            Log("[lobby] player name: %s", clean.empty() ? "(default)" : clean.c_str());
+        g_localName = clean;
+    }
+
 
     bool Host()
     {

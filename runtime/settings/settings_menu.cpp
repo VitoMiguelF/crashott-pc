@@ -375,26 +375,7 @@ namespace settings::menu
         // inside), mirrored into the four corners; the straight part is stretched.
         void DrawFrame(const View& v, float x0, float y0, float x1, float y1)
         {
-            const menu_art::Image* corner = menu_art::GetArt(menu_art::Art::MessageFrame);
-            int left = v.IX(x0), top = v.IY(y0), right = v.IX(x1), bottom = v.IY(y1);
-            if (!corner)
-            {
-                g_canvas.Fill(left, top, right, bottom, { 0, 0, 0, 150 });
-                return;
-            }
-            int halfW = (right - left) / 2, halfH = (bottom - top) / 2;
-            float k = float(halfH) / float(corner->h);
-            int curl = std::min(corner->w / 3, corner->w);  // the curl is in the left third
-            int curlW = std::min(int(std::lround(curl * k)), halfW);
-            for (int q = 0; q < 4; q++)
-            {
-                bool flipX = q & 1, flipY = q & 2;
-                int qx = flipX ? right - halfW : left, qy = flipY ? bottom - halfH : top;
-                const menu_art::Image& c = menu_art::Scaled(*corner, 0, 0, curl, corner->h, curlW, halfH, flipX, flipY);
-                const menu_art::Image& edge = menu_art::Scaled(*corner, curl, 0, corner->w - curl, corner->h, halfW - curlW, halfH, flipX, flipY);
-                g_canvas.Blit(c, flipX ? qx + halfW - curlW : qx, qy, g_palette->frame);
-                g_canvas.Blit(edge, flipX ? qx : qx + curlW, qy, g_palette->frame);
-            }
+            menu_art::DrawMessageFrame(g_canvas, v.IX(x0), v.IY(y0), v.IX(x1), v.IY(y1), g_palette->frame, { 0, 0, 0, 150 });
         }
 
         // Volume-style sliders: ten stars (FE_star_open, bright when filled, dark when empty), as the
@@ -469,30 +450,39 @@ namespace settings::menu
         // game's message boxes, where the rows are.
         void DrawRestartDialog(const View& v, const Palette& pal)
         {
-            constexpr float BOX_L = 230.0f, BOX_R = 1050.0f, BOX_T = 184.0f, LINE = 42.0f, CELL = 30.0f;
+            constexpr float BOX_T = 184.0f, LINE = 42.0f, CELL = 30.0f, GAP = 10.0f, MAX_W = 1180.0f;
             bool warn = !g_fromMainMenu;
-            int lines = 4 + (warn ? 1 : 0);
-            float boxB = BOX_T + 34.0f + LINE * lines + 26.0f;
-            DrawFrame(v, BOX_L, BOX_T, BOX_R, boxB);
-            float maxW = BOX_R - BOX_L - 90.0f, y = BOX_T + 30.0f, cx = VIRTUAL_W * 0.5f;
-            auto line = [&](const std::string& text, const TextStyle& style) {
-                Draw(v, FontId::Small, text, cx, y, CELL, style, 0.5f, maxW);
-                y += LINE;
+            std::vector<std::pair<std::string, const TextStyle*>> lines = {
+                { T({ "Some options only apply after a restart:", "Algumas opções só valem depois de reiniciar:" }), &pal.help },
+                { RestartItems(), &pal.selected },
             };
-            line(T({ "Some options only apply after a restart:", "Algumas opções só valem depois de reiniciar:" }), pal.help);
-            line(RestartItems(), pal.selected);
             if (warn)
-                line(T({ "Progress that was not saved will be lost.", "O progresso não salvo será perdido." }), pal.warning);
-            if (g_restartAt)
-            {
-                line(T({ "Restarting...", "Reiniciando..." }), pal.help);
-                return;
-            }
-            line(T({ "Restart the game now?", "Reiniciar o jogo agora?" }), pal.help);
-            // A / B with the game's button icons (\xC2\xB1 = A, \xC2\xB2 = B).
+                lines.push_back({ T({ "Progress that was not saved will be lost.", "O progresso não salvo será perdido." }), &pal.warning });
+            lines.push_back({ g_restartAt ? T({ "Restarting...", "Reiniciando..." }) : T({ "Restart the game now?", "Reiniciar o jogo agora?" }),
+                              &pal.help });
+            // A / B with the game's button icons (\xC2\xB1 = A, \xC2\xB2 = B), under the question.
             std::string yes = std::string("\xC2\xB1 ") + T({ "RESTART", "REINICIAR" });
             std::string no = std::string("\xC2\xB2 ") + T({ "LATER", "DEPOIS" });
             float gap = 70.0f, yesW = Width(FontId::Small, yes, CELL), noW = Width(FontId::Small, no, CELL);
+            // The box fits the lines, clear of its frame's border and curls (menu_art::FrameSideInset).
+            float contentW = g_restartAt ? 0.0f : yesW + gap + noW;
+            for (const auto& [text, style] : lines)
+                contentW = std::max(contentW, Width(FontId::Small, text, CELL));
+            int count = int(lines.size()) + (g_restartAt ? 0 : 1);
+            float boxW, boxH;
+            menu_art::FrameOuterSize(contentW, LINE * (count - 1) + CELL, GAP, boxW, boxH);
+            boxW = std::min(boxW, MAX_W);
+            float boxL = (VIRTUAL_W - boxW) * 0.5f, boxR = boxL + boxW, boxB = BOX_T + boxH;
+            DrawFrame(v, boxL, BOX_T, boxR, boxB);
+            float y = BOX_T + menu_art::FrameTopInset(BOX_T, boxB) + GAP, cx = VIRTUAL_W * 0.5f;
+            for (const auto& [text, style] : lines)
+            {
+                float maxW = boxW - 2.0f * (menu_art::FrameSideInset(boxL, BOX_T, boxR, boxB, y, y + CELL) + GAP);
+                Draw(v, FontId::Small, text, cx, y, CELL, *style, 0.5f, maxW);
+                y += LINE;
+            }
+            if (g_restartAt)
+                return;
             float left = cx - (yesW + gap + noW) * 0.5f;
             Draw(v, FontId::Small, yes, left, y, CELL, pal.selected);
             Draw(v, FontId::Small, no, left + yesW + gap, y, CELL, pal.normal);
@@ -661,7 +651,8 @@ namespace settings::menu
             // Help, in one of the game's message boxes.
             DrawFrame(v, PANEL_L, HELP_Y, PANEL_R, HELP_Y + HELP_H);
             auto [help1, help2] = Help(SelectedItem());
-            float helpMax = PANEL_R - PANEL_L - 70.0f;
+            // Clear of the frame's curls (menu_art::FrameSideInset).
+            float helpMax = PANEL_R - PANEL_L - 2.0f * (menu_art::FrameSideInset(PANEL_L, HELP_Y, PANEL_R, HELP_Y + HELP_H, HELP_Y + 12.0f, HELP_Y + 12.0f + 2.0f * HELP_CELL + 4.0f) + 10.0f);
             Draw(v, FontId::Small, help1, VIRTUAL_W * 0.5f, HELP_Y + 12.0f, HELP_CELL, pal.help, 0.5f, helpMax);
             Draw(v, FontId::Small, help2, VIRTUAL_W * 0.5f, HELP_Y + 12.0f + HELP_CELL + 4.0f, HELP_CELL, pal.help, 0.5f, helpMax);
 
