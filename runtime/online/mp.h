@@ -4,7 +4,8 @@
 // a session is opened from the main menu's MULTIPLAYER (mp_lobby.h); with it off the game runs unchanged.
 //
 //   CRASH_MP=1                 turns the prototype on
-//   CRASH_MP_STREAM=<mode>     vanilla | union | all: which rooms stay loaded (mp_stream.cpp)
+//   CRASH_MP_STREAM=<mode>     vanilla | union | all: which rooms stay loaded (mp_stream.cpp; a
+//                              MULTIPLAYER session: union unless set)
 //   CRASH_MP_ANCHOR=x,y,z;...  positions that count as players for the room choice (mp_stream.cpp)
 //   CRASH_MP_TRACE=1|<ms>      rooms + players once a second (or every <ms>), and every player that
 //                              moves more than 10 units in one frame ("[mp] stream ...", "[mp] actor ...")
@@ -70,6 +71,9 @@ namespace mp
     float PlayerMaxHitpoints(uint32_t index);
     void SetPlayerMaxHitpoints(uint32_t index, float value);  // and the hitpoints down to it
     void PlayersTick(PPCContext& ctx, uint8_t* base);
+    // A cutscene ended (settings/skip_cinematics.cpp): online, shortly after, every player is put next to
+    // the host's (the game places players 1 and 2; players 3-4 would stay where they were).
+    void CinematicDone();
     // A player who left the session: hidden, without collision nor AI target, out of play (on every machine).
     void RemovePlayer(PPCContext& ctx, uint8_t* base, uint32_t index);
     // Online (or more than two players): nobody enters another player's backpack.

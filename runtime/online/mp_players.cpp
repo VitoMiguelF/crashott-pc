@@ -99,6 +99,7 @@ namespace
     std::vector<Knockout> g_knockouts;
     std::vector<uint32_t> g_departed;  // the Crashes of players who left the session (RemovePlayer)
     uint64_t g_revivedAt[4] = {};
+    uint64_t g_gatherAt = 0;  // CinematicDone: when the players go next to the host's (0 = not due)
 
     // Player 1 sits at the parking place of the hidden Crashes for the first frames of a level, until the
     // level's spawn moves it: in play 500 ms after PlayersTick first sees it in a level.
@@ -488,6 +489,39 @@ namespace mp
         Log("[mp] player %u (Crash %08X) left the session: out of the level", index + 1, crash);
     }
 
+    void CinematicDone()
+    {
+        if (Managed())
+            g_gatherAt = NowMs() + 500;  // after the game's own placing of players 1 and 2
+    }
+
+    // After a cutscene the game puts players 1 and 2 where the level goes on; players 3 and 4 stayed where
+    // they were (the parking place, when they came up during the level's opening one: out of everybody's
+    // sight, and their room kept current). Every player in play goes next to the host's, 1.2 apart per
+    // slot behind its line, the same place on every machine.
+    void Gather(PPCContext& ctx, uint8_t* base)
+    {
+        g_gatherAt = 0;
+        uint32_t host = 4;
+        for (uint32_t i = 0; i < 4; ++i)
+            if (PlayerCrash(i) && PlayerSlot(i) == 0)
+                host = i;
+        uint32_t hostCrash = host < 4 ? PlayerCrash(host) : 0;
+        uint32_t physics = hostCrash ? LoadBE32(hostCrash + 0xDC) : 0, actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
+        uint32_t xform = GuestPointer(actor) ? LoadBE32(actor + 44) : 0;
+        if (!GuestPointer(xform))
+            return;
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            if (i == host || !PlayerOnFoot(i) || HitpointsHeld(i))
+                continue;
+            float x = LoadF(xform + 48) + 1.2f * PlayerSlot(i), y = LoadF(xform + 52) + 0.5f, z = LoadF(xform + 56) - 1.5f;
+            bool moved = TeleportCrash(ctx, base, PlayerCrash(i), x, y, z);
+            Log("[mp] after the cutscene: player %u (slot %u) next to the host's at (%.1f, %.1f, %.1f)%s", i + 1, PlayerSlot(i) + 1, x, y, z,
+                moved ? "" : ", not moved");
+        }
+    }
+
     void PlayersTick(PPCContext& ctx, uint8_t* base)
     {
         if (!Managed() || !InLevel())
@@ -516,6 +550,8 @@ namespace mp
             }
             else
                 ++i;
+        if (g_gatherAt && NowMs() >= g_gatherAt)
+            Gather(ctx, base);
         if (g_extras.empty())
             return;
         uint32_t p1 = LoadBE32(CRASH_TABLE);

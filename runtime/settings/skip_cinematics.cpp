@@ -20,6 +20,10 @@
 // The videos: CMoviePlayerBehaviour::PlayMovie(index) (sub_8214ABD0, hooked in direct_boot.cpp,
 // which calls NoteMovie) starts one, its callback (CMovieCallback::vf00, sub_8214B210) runs when it
 // ends and starts the next. The game skips a video on a START press: the skip presses it.
+//
+// Online (a MULTIPLAYER session) only the host skips a cutscene: its skip goes to the clients in the
+// lobby's roster (the cutscene's frontend node) and each skips that cutscene when it plays it; when a
+// cutscene ends every player is put next to the host's (mp::CinematicDone).
 
 #include "skip_cinematics.h"
 #include "direct_boot.h"
@@ -33,6 +37,8 @@
 #include "../kernel/memory.h"
 #include "../kernel/pc_input.h"
 #include "../subtitles/subtitles.h"
+#include "../online/mp.h"
+#include "../online/mp_lobby.h"
 #include "../platform/platform.h"
 #include "../gpu/window.h"
 
@@ -60,6 +66,7 @@ namespace
     // a master cinematic action that plays while the frontend is elsewhere (638 GameRunning) is a
     // scripted sequence inside the gameplay (L5_E1 loops some every 5-8 s), not a cutscene.
     constexpr uint32_t NODE_LEVEL_INTRO = 633, NODE_CINEMATICS = 655, NODE_CINEMATICS_END = 1051;
+    bool CutsceneNode(uint32_t node) { return node == NODE_LEVEL_INTRO || (node >= NODE_CINEMATICS && node <= NODE_CINEMATICS_END); }
 
     // A cutscene is playing while its update ran in state 3 this recently.
     constexpr uint64_t PLAYING_GRACE_MS = 400;
@@ -209,6 +216,11 @@ namespace cutscenes
         }
         uint64_t now = plat::TickCountMs();
         Kind kind = g_enabled.load() ? CurrentKind(now) : Kind::None;
+        // A client of a MULTIPLAYER session doesn't skip cutscenes (the host's skip comes instead): no
+        // prompt, and the game doesn't see the buttons either.
+        bool clientCutscene = CurrentKind(now) == Kind::Cutscene && mp::lobby::IsClient();
+        if (clientCutscene)
+            kind = Kind::None;
 
         // Input of any kind brings the prompt back.
         bool touched = pad.wButtons != previous.wButtons || std::abs(pad.sThumbLX - previous.sThumbLX) > 8000 ||
@@ -272,6 +284,8 @@ namespace cutscenes
             // The game doesn't see them meanwhile (a video would skip at the first press).
             pad.wButtons &= ~SKIP_BUTTONS;
         }
+        if (clientCutscene)
+            pad.wButtons &= ~SKIP_BUTTONS;
         if (heldMask)
         {
             if (!(raw & heldMask) && !KeyboardOrMouseHeld())
@@ -309,7 +323,11 @@ PPC_FUNC(sub_821B92E8)
     if (now != STATE_PLAYING && g_action.load() == action)
         g_action = 0;
     if (now == STATE_DONE)
+    {
         boot::Event("cinematic_done");
+        if (CutsceneNode(g_frontendNode.load()))
+            mp::CinematicDone();
+    }
 }
 
 // vf05 (update): the cutscene playing (the prompt), and its end when skipped.
@@ -317,13 +335,19 @@ PPC_FUNC(sub_821BA100)
 {
     uint32_t action = ctx.r3.u32;
     uint32_t node = g_frontendNode.load();
-    bool cutsceneNode = node == NODE_LEVEL_INTRO || (node >= NODE_CINEMATICS && node <= NODE_CINEMATICS_END);
+    bool cutsceneNode = CutsceneNode(node);
     if (LoadBE32(action + ACTION_STATE) == STATE_PLAYING && cutsceneNode)
     {
         g_action = action;
         g_actionSeen = plat::TickCountMs();
         g_movie = -1;  // a video can't be playing under a cutscene
         bool skip = g_skipAction.load() == action;
+        if (!skip && mp::lobby::TakeCutsceneSkip(node))
+        {
+            boot::Event("cinematic_skipped", "by the host");
+            subtitles::EndCutscenes();
+            skip = true;
+        }
         if (!skip && boot::SkipCinematics())
         {
             if (action != g_autoAction)
@@ -342,6 +366,7 @@ PPC_FUNC(sub_821BA100)
             g_skipAction = 0;
             g_autoAction = 0;
             g_action = 0;
+            mp::lobby::HostSkippedCutscene(node);  // a host's skip goes to its clients
             PPCContext call = ctx;
             call.r3.u64 = action;
             call.r4.u64 = STATE_END;

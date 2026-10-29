@@ -31,8 +31,9 @@ namespace mp::lobby
 {
     namespace
     {
-        constexpr uint32_t VERSION = 2;  // 2: the password goes hashed (PasswordHash)
+        constexpr uint32_t VERSION = 3;  // 2: the password goes hashed (PasswordHash); 3: cutscene skips in the roster
         constexpr uint64_t RESEND_MS = 500, TIMEOUT_MS = 6000, DISCOVER_MS = 1000, SERVER_TTL_MS = 3500, JOIN_TIMEOUT_MS = 6000;
+        constexpr uint64_t SKIP_KEEP_MS = 20000;  // a client still not at the cutscene the host skipped: forgotten after this
 
         enum Type : uint8_t { DISCOVER = 1, ANNOUNCE, HELLO, WELCOME, DENY, ROSTER, PING, PONG, LEAVE };
 
@@ -59,6 +60,7 @@ namespace mp::lobby
             bool inGame = false;
             int32_t startLevel = -1;
             uint32_t startId = 0;
+            uint32_t skipId = 0, skipNode = 0;  // the cutscenes the host skipped (a counter) and the last one's node
             uint64_t lastRoster = 0;
             // client
             uint32_t token = 0, hostIp = 0;
@@ -70,6 +72,8 @@ namespace mp::lobby
             uint32_t pingMs = 0, seenStartId = 0;
             bool firstRoster = true, inGameHost = false, hostLeftLevel = false;
             int32_t pendingStart = -1;
+            uint32_t seenSkipId = 0, pendingSkipNode = 0;  // a skip of the host's not done here yet
+            uint64_t pendingSkipAt = 0;
             // searching
             struct Found
             {
@@ -250,6 +254,8 @@ namespace mp::lobby
                 w.PutStr(m.name);
                 w.Put16(std::min<uint32_t>(m.pingMs, 65535));
             }
+            w.Put32(s.skipId);
+            w.Put32(s.skipNode);
             for (uint32_t slot = 1; slot < MAX_PLAYERS; ++slot)
                 if (s.members[slot].used)
                     Send(s.members[slot].ip, s.members[slot].port, w);
@@ -471,9 +477,20 @@ namespace mp::lobby
                         s.hostName = p.name;
                     roster.push_back(p);
                 }
+                uint32_t skipId = r.Get32(), skipNode = r.Get32();
                 if (!r.ok)
                     return;
                 s.roster = roster;
+                // A cutscene the host skipped: this machine skips it when it plays it (or already does).
+                if (skipId != s.seenSkipId)
+                {
+                    if (s.seenSkipId || !s.firstRoster)
+                    {
+                        s.pendingSkipNode = skipNode, s.pendingSkipAt = now;
+                        Log("[lobby] the host skipped the cutscene of node %u", skipNode);
+                    }
+                    s.seenSkipId = skipId;
+                }
                 if (s.inGameHost && !inGame)
                 {
                     s.hostLeftLevel = true;
@@ -872,6 +889,33 @@ namespace mp::lobby
         levelIndex = g_s.pendingStart;
         g_s.pendingStart = -1;
         return true;
+    }
+
+    void HostSkippedCutscene(uint32_t node)
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_s.state != State::Hosting)
+            return;
+        g_s.skipId++;
+        g_s.skipNode = node;
+        SendRoster(g_s);
+    }
+
+    bool TakeCutsceneSkip(uint32_t node)
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_s.pendingSkipNode || NowMs() - g_s.pendingSkipAt > SKIP_KEEP_MS)
+            return g_s.pendingSkipNode = 0, false;
+        if (g_s.pendingSkipNode != node)
+            return false;
+        g_s.pendingSkipNode = 0;
+        return true;
+    }
+
+    bool IsClient()
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return g_s.state == State::Joined;
     }
 
     bool TakeHostLeftLevel()

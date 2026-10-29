@@ -9,7 +9,8 @@
 //   HELLO     client -> host: a token (random), the player's name and the password, every 0.5 s
 //   WELCOME   host -> client: its slot (1-3); DENY: full, wrong password, kicked, in a level, version
 //   ROSTER    host -> clients, every 0.5 s: the players (slot, token, name, ping), the options and the
-//             level the host started (a counter: a client follows each new one once)
+//             level the host started (a counter: a client follows each new one once) and the cutscenes
+//             it skipped (a counter and the cutscene's frontend node)
 //   PING/PONG client <-> host every 0.5 s (round trip shown in the roster); 6 s of silence drops one
 //   LEAVE     client -> host
 //
@@ -88,6 +89,11 @@ namespace mp::lobby
     void HostBackInMenus();
     bool TakeStart(int32_t& levelIndex);  // client: a level the host started, once
     bool TakeHostLeftLevel();            // client: the host went back to its menus, once
+    // Cutscenes (settings/skip_cinematics.cpp): only the host skips one; its skip (the frontend node of
+    // the cutscene) goes to the clients in the roster, and each skips that cutscene when it plays it.
+    void HostSkippedCutscene(uint32_t node);
+    bool TakeCutsceneSkip(uint32_t node);  // client: the host skipped this one (once; kept 20 s)
+    bool IsClient();                       // joined to a host
     uint32_t KnockOutSeconds();          // 0 = the game's own
 
     // Codes.

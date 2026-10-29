@@ -20,6 +20,7 @@ namespace
     {
         bool enabled = false;
         mp::StreamMode stream = mp::StreamMode::Vanilla;
+        bool streamSet = false;  // CRASH_MP_STREAM given
         bool trace = false;
         uint32_t traceMs = 1000;
     };
@@ -30,8 +31,9 @@ namespace
             Config c;
             const char* on = getenv("CRASH_MP");
             c.enabled = on && *on && strcmp(on, "0") != 0;
-            if (const char* s = getenv("CRASH_MP_STREAM"))
+            if (const char* s = getenv("CRASH_MP_STREAM"); s && *s)
             {
+                c.streamSet = true;
                 if (!strcmp(s, "union"))
                     c.stream = mp::StreamMode::Union;
                 else if (!strcmp(s, "all"))
@@ -90,7 +92,14 @@ namespace mp
         if (g_session.exchange(open) != open)
             Log("[mp] session %s", open ? "open: the prototype is on" : "closed");
     }
-    StreamMode Stream() { return Get().stream; }
+    // A session keeps every player's room and the rooms next to it loaded on every machine: with the
+    // game's set (the current room and its neighbours) a player away from the others had no floor, and
+    // one player standing in a room kept it current for everybody.
+    StreamMode Stream()
+    {
+        const Config& c = Get();
+        return !c.streamSet && g_session.load(std::memory_order_relaxed) ? StreamMode::Union : c.stream;
+    }
     bool Trace() { return Get().trace; }
 
     uint32_t Players()

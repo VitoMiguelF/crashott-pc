@@ -1475,3 +1475,51 @@ input = [
     ["@hub"], [2, "SHOT"], [3, "BACK"], [4, "SHOT"], [4.5, "B"], [6, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] hosting on', 'hosted new game: to the HUB', '\[mp\] lobby opened at the HUB'] }
+
+[profiles.mp_cine_host]
+description = "Cena de abertura online: CRIAR PARTIDA > NOVO JOGO até o HUB, espera mp_cine_c1 e mp_cine_c2 (código), CONTINUE STORY (Y) leva os 3 ao L1_E1 com a cena de abertura; o host segura B e pula: os clientes pulam junto e todos aparecem ao lado do host. Janelas em quadrantes"
+test = false
+timeout = 130
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "HOST", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_MENU_AUTOPILOT = "96:A:2000,96:Y:1500,105:A+:1500,154:A+:1500,165:DOWN:1500,165:A:1000,320:A+:1000", CRASH_RESTART_WINDOW = "0,0,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [7, "A"],
+    ["@hub"], [2, "SHOT"], [18, "SHOT"], [19, "Y"],
+    ["@cinematic"], [4, "SHOT"], [5, "B", 1.5], [7, "SHOT"],
+    ["@cinematic_done"], [2, "SHOT"], [3, "LS", 0, 1, 2.0], [6, "SHOT"], [12, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["hub", "cinematic", "cinematic_skipped"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] level .* started with 3 player', 'after the cutscene: player'] }
+
+[profiles.mp_cine_c1]
+description = "Cliente do mp_cine_host pelo CÓDIGO (127.0.0.1): segura B na cena de abertura (o cliente não pula: a cena só acaba quando o host pula)"
+test = false
+timeout = 130
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "CENA1", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"],
+    ["@cinematic"], [1, "B", 2.0], [3.5, "SHOT"],
+    ["@cinematic_done"], [2, "SHOT"], [6, "SHOT"], [12, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["cinematic", "cinematic_done"], log_absent = ['\[fatal\]', '\[crash\]', 'event cinematic_skipped .*held'], log_contains = ['the host skipped the cutscene of node', 'event cinematic_skipped .*by the host', 'after the cutscene: player'] }
+
+[profiles.mp_cine_c2]
+description = "Segundo cliente do mp_cine_host pelo CÓDIGO: o 3º jogador (azul), que nascia durante a cena e ficava no lugar onde foi estacionado"
+test = false
+timeout = 130
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "CENA2", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "0,1080,1920,1080" }
+input = [
+    ["@main_menu"], [3, "DOWN"], [3.5, "DOWN"], [4.5, "A"], [6, "DOWN"], [6.5, "A"], [7.3, "DOWN"], [7.8, "A"], [9, "SHOT"],
+    ["@cinematic_done"], [2, "SHOT"], [3, "LS", 1, 0, 2.0], [6, "SHOT"], [12, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["cinematic", "cinematic_done"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['the host skipped the cutscene of node', 'after the cutscene: player'] }

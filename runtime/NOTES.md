@@ -2543,3 +2543,12 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   host, mais de 600 pacotes/s de um endereço são descartados; os mapeamentos saem ao fechar a sessão. Visto: TP-Link
   (192.168.0.1) atrás do modem Vivo (192.168.15.1): "open to the internet", os dois mapeamentos removidos.
   Falta: entrar de fora da rede de verdade.
+- **Mapa, jogador invisível, cenas** (teste PC + S20/S25/Tab, 2026-10-28): numa sessão o streaming é `union`
+  em todas as máquinas (as rooms de cada jogador + vizinhas; o jogo recalcula o conjunto todo quadro). Com o
+  do jogo, o 3º jogador (azul), parado onde foi estacionado ao nascer durante a cena de abertura, segurava a
+  room atual; a room do host não carregava no tablet, o jogador branco caía sem chão e era nocauteado a cada
+  2 s, e o mapa só ficava certo com todos juntos. Ao fim de uma cena (estado 7 num nó de cena) todos vão para
+  o lado do host (`mp::CinematicDone`); o host pula a cena e o pulo vai no ROSTER (versão 3 do protocolo) para
+  os clientes, que não podem pular. O ouvinte do som fica entre a câmera e o objeto que ela segue
+  (`GameListenerSettings.targetFollowWeight`): o som errado com os jogadores longe deve ser o das rooms não
+  carregadas. Perfis `mp_cine_*` ainda não passam (o roteiro dos clientes acaba antes de entrarem).

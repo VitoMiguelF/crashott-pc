@@ -60,6 +60,14 @@ Tests (L1_E1, an anchor in R1 standing for a remote player, P1 teleported R2 -> 
 | union | P1 reaches R4 and R5 and stands on the floor; resident = R1, R2 (anchor) + R5, R6 (P1), renders fine |
 | all | all 8 rooms resident at once, no crash / out of memory; also L2_E1 (10 rooms, the max) and L5_E2 (4 Light + 3 Tiny) |
 
+**A MULTIPLAYER session uses union on every machine** (`mp::Stream`, unless `CRASH_MP_STREAM` says otherwise).
+The game asks for the resident set every frame while idle (`sub_822502A8`: the room check, then
+`sub_82250200(current)` and a load when the load list is not empty), so union follows the players as they
+move. With the game's set, a PC + 2 Android session broke: the third player stood in the room where it had
+been parked and kept it current, the room the host walked into never loaded on a client, whose player fell
+there (no floor) and was knocked out again every 2 s next to the host; the map looked wrong unless everybody
+stood together.
+
 **Recommended policy:** the host keeps the **union** (every player's room + its adjacent rooms; `all` fits in
 memory for the levels tried, so it is the safe fallback). The current room (fog, sky, ocean) stays the
 game's choice. A client streams around **its own** player (vanilla on its machine) and should skip the
@@ -378,6 +386,14 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   tree's "GoStraightToBackpack" (`sub_820A0160`) asks `sub_821551B0`, true while the Crash's cached "okay to
   enter the backpack" (+272 bit 0x80, `sub_82154E78`) is on, and only SetPlayerEnteringBackpack (skipped online)
   cleared it: the hook clears it for the Crashes on foot.
+- **Cutscenes**: only the host skips one (`settings/skip_cinematics.cpp`: a client gets no prompt and the game
+  doesn't see its skip buttons). The host's skip goes in the roster (a counter and the cutscene's frontend
+  node, protocol version 3); a client skips that cutscene when it plays it (kept 20 s for a client still
+  behind). When a cutscene ends (state 7 on a cutscene node; the scripted sequences inside the gameplay don't
+  count) every player in play goes next to the host's 500 ms later (`mp::CinematicDone`, 1.2 apart per slot):
+  the game places players 1 and 2, and players 3-4, spawned during the level's opening cutscene, stayed at the
+  parking place (57.4 45.5 -52.1), out of everybody's sight: "the blue Crash was invisible". Profiles
+  `mp_cine_host` + `mp_cine_c1` + `mp_cine_c2` (not passing yet: the clients' scripts end before they join).
 - Test: `mp_quit_host` + `mp_quit_c` + `mp_quit_c2` (three windows, the code client quits by its menu, the host
   leaves, then closes the session); `mp_tres_sair` (local, 3 players, EXIT LEVEL to the HUB).
 
