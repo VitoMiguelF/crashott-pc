@@ -1267,6 +1267,45 @@ env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SLOT = "3", CRASH_MP_
 input = [["@gameplay_ready"], [4, "SHOT"], [7.5, "LS", 0.7, -0.7, 2.0], [10, "LS", -1, 0, 1.5], [12, "X"], [9, "SHOT"], [12, "SHOT"], [15, "SHOT"], [19, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
 
+[profiles.mp3_far_host]
+description = "Multijogador 3 jogadores (protótipo, porta 47910): o host anda para longe até sair da câmera dos clientes (mp3_far_c1, mp3_far_c2) e volta; nos clientes o Crash dele tem que continuar animado"
+test = false
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_PLAYERS = "3", CRASH_MP_PORT = "47910", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "0,0,1920,1080" }
+input = [["@gameplay_ready"], [4, "SHOT"], [6, "LS", 0, 1, 7.0], [10, "SHOT"], [14, "SHOT"], [16, "LS", 0, -1, 7.0], [21, "SHOT"], [23.5, "SHOT"], [25, "LS", 1, 0, 3.0], [26, "SHOT"], [27, "A"], [30, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: host', 'spawning players 3-3: ok'] }
+
+[profiles.mp3_far_c1]
+description = "Cliente 1 (jogador 2) do mp3_far_host, parado: o Crash do host sai da câmera e volta"
+test = false
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SLOT = "1", CRASH_MP_PLAYERS = "3", CRASH_MP_PORT = "47910", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
+input = [["@gameplay_ready"], [4, "SHOT"], [10, "SHOT"], [14, "SHOT"], [21, "SHOT"], [23.5, "SHOT"], [26, "SHOT"], [27.5, "SHOT"], [30, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
+
+[profiles.mp3_far_c2]
+description = "Cliente 2 (jogador 3) do mp3_far_host, parado"
+test = false
+timeout = 45
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SLOT = "2", CRASH_MP_PLAYERS = "3", CRASH_MP_PORT = "47910", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "0,1080,1920,1080" }
+input = [["@gameplay_ready"], [4, "SHOT"], [10, "SHOT"], [14, "SHOT"], [21, "SHOT"], [23.5, "SHOT"], [26, "SHOT"], [27.5, "SHOT"], [30, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[mp\] net: client', '\[mp\] client: '] }
+
 [profiles.mp_m3_host]
 description = "Multijogador M3 (protótipo): host do L1_E1 com os 2 jogadores levados ao primeiro combate (CRASH_MP_TELEPORT, 2 Chirattas); rode junto com mp_m3_client"
 test = false
@@ -1310,6 +1349,70 @@ input = [
     ["@gameplay_ready"], [3, "SHOT"], [5, "LS", 1, 0, 2.0], [8, "SHOT"], [12, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["main_menu", "hub", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] hosting on', '\[lobby\] level .* started with 3 player', '\[mp\] net: host'] }
+
+[profiles.mp_tres_sair]
+description = "Sair de uma fase com 3 Crashes (CRASH_MP_PLAYERS=3, sem rede): pausa > EXIT LEVEL > CONTINUE até o HUB; a descarga da fase com o terceiro Crash não pode cair"
+test = false
+timeout = 40
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_file = "tools/dev_lua/mp_three.lua"
+env = { CRASH_MP = "1", CRASH_MP_TRACE = "1", CRASH_MP_PLAYERS = "3" }
+input = [["@gameplay_ready"], [4, "SHOT"], [6, "START"], [7, "DOWN"], [7.5, "DOWN"], [8, "DOWN"], [8.5, "SHOT"], [9, "A"], [10, "LEFT"], [10.5, "SHOT"], [11, "A"], [13, "SHOT"], [16, "A"], [19, "A"], [20, "SHOT"], [22, "A"], [25, "A"], [27, "SHOT"], [32, "SHOT"], [37, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "hub"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_quit_host]
+description = "Saída de uma partida do MULTIPLAYER: host como o mp_lobby_host (CARREGAR JOGO, HUB, Y) com o mp_quit_c e o mp_quit_c2 pelo código; a pausa não para o jogo; o mp_quit_c sai (o Crash dele some), o host sai da fase (salva, HUB: o mp_quit_c2 volta ao lobby) e fecha a sessão no lobby do HUB"
+test = false
+timeout = 110
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "HOST", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "0,0,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [6.8, "DOWN"], [7.3, "A"],
+    ["@save_slots"], [1.5, "A"],
+    ["@load_complete"], [1, "A"],
+    ["@hub"], [2, "SHOT"], [14, "SHOT"], [15, "Y"],
+    ["@gameplay_ready"], [3, "SHOT"], [12, "SHOT"], [20, "SHOT"], [22, "START"], [23, "SHOT"], [23.5, "DOWN"], [24, "DOWN"], [24.5, "SHOT"], [25, "A"], [26, "SHOT"], [26.5, "LEFT"], [27, "A"], [28, "SHOT"], [31, "SHOT"], [33, "A"], [36, "SHOT"], [38, "A"], [41, "SHOT"],
+    ["@hub#2"], [3, "SHOT"], [5, "BACK"], [6.5, "UP"], [7, "SHOT"], [7.5, "A"], [9, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "hub", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] hosting on', 'PauseGame\(true\) skipped', 'left the session: out of the level'] }
+
+[profiles.mp_quit_c]
+description = "Cliente do mp_quit_host pelo código: entra na fase do host e sai pelo START (o menu do cliente: SAIR PARA O MENU PRINCIPAL, o jogo não para): volta ao menu inicial sem salvar"
+test = false
+timeout = 110
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "CODIGO", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "A"], [13.5, "SHOT"],
+    ["@gameplay_ready"], [3, "SHOT"], [8, "START"], [9, "SHOT"], [10, "A"], [11, "SHOT"], [14, "SHOT"], [17, "SHOT"], [21, "SHOT"], [27, "SHOT"], [33, "SHOT"], [40, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] joined', 'the client.s menu in the level', 'client at the HUB: to the main menu'] }
+
+[profiles.mp_quit_c2]
+description = "Segundo cliente do mp_quit_host pelo código, que fica na fase: o Crash do mp_quit_c some quando ele sai; quando o host sai da fase (EXIT LEVEL) volta, sem salvar, ao lobby (menu inicial > MULTIPLAYER), e quando o host fecha a sessão o lobby avisa O HOST SAIU"
+test = false
+timeout = 110
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "FICA", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "0,1080,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5, "DOWN"], [5.5, "A"], [6.3, "DOWN"], [6.8, "A"], [8, "SHOT"], [12, "A"], [13.5, "SHOT"],
+    ["@gameplay_ready"], [3, "SHOT"], [12, "SHOT"], [21, "SHOT"], [24, "SHOT"], [26, "SHOT"], [28, "SHOT"], [31, "SHOT"], [35, "SHOT"], [40, "SHOT"], [50, "SHOT"], [56, "SHOT"], [62, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu", "gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] joined', 'left the session: out of the level', 'back in the lobby'] }
 
 [profiles.mp_lobby_c1]
 description = "Cliente do mp_lobby_host pela LISTA DE PARTIDAS (a rede): ENCONTRAR PARTIDA > LISTA, a partida com senha (preenchida por CRASH_MP_PASSWORD), espera no lobby e entra na fase que o host começar"

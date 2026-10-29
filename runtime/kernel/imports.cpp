@@ -2,6 +2,7 @@
 #include "../cpu/ppc_registers.h"
 #include "memory.h"
 #include "../diagnostics.h"
+#include "../diagnostics_host.h"
 
 #include <ppc_config.h>
 #include <ppc_context.h>
@@ -67,6 +68,11 @@ namespace
                 if (const char* format = GuestString(ctx.r3.u32))
                     Log("    DbgPrint format: \"%s\"", format);
             }
+        }
+        if (strncmp(stats.name, "KeBugCheck", 10) == 0)
+        {
+            diag::LogGuestRegisters(&ctx);  // the game's fatal error: where it came from
+            diag::LogHostBacktrace();
         }
 
         ctx.r3.u64 = 0;

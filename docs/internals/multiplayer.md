@@ -317,6 +317,41 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   from its menus / HUB (not from inside another level); the host's NEW GAME leaves the opening level to CONTINUE
   STORY at the HUB.
 
+## Leaving a level, the pause, players who leave
+
+- **No pause in a session** (`mp_menu.cpp`): `Frontend:PauseGame(true)` (`sub_820F8918`, CUberManager vf13) is
+  skipped while the frontend is on GameRunning (node 638): the host's pause screen, the tutorials and the other
+  screens it opens show over the running level, and the other machines go on with it.
+- **A client's START** (exit 651, ExitPause, from node 638) is refused and opens the client's own menu over the
+  game (`Screen::LevelMenu`, the game's pad neutral while open): QUIT TO THE MAIN MENU (A), B / START back to the
+  game. QUIT leaves the level the no-save way (1114 -> 1115 -> 1116 -> the HUB, the save screens' exits replaced
+  by 1179) and goes on from the HUB to the main menu (598), leaving the session: only the host keeps a save.
+- **The host's EXIT LEVEL** (pause; DROP OUT is EXIT LEVEL online, 1098 -> 1099) saves and goes to its HUB; the
+  roster's in-level flag goes off and every client leaves the level the same no-save way, then from its HUB to
+  the main menu, where the lobby opens again at the wait (exit 91 + the SETTINGS marker): the host's next level
+  is followed from there. The host back at the main menu after its HUB closes the session (DENY host left):
+  the clients' lobby says THE HOST LEFT; a client still in a level goes to the main menu.
+- **A player who leaves** (gone from the roster: LEAVE, or 6 s of silence) is taken out of the level on every
+  machine (`mp::RemovePlayer`): the behaviours `sub_82154A58` turned on when it was shown (Crash +224, +180,
+  +220, +208, +216, +212, +244, +240, +228, +236) get vf11(0), the physics' collision off (`sub_82143698`),
+  +272 bit 0x10 off, its AI target removed (`CAIManager::RemoveTarget` -> `sub_82098E68`); it is out of play
+  for the knock-outs, snaps and colours.
+- **Unloading a level with 3-4 players** crashed three ways, all fixed: (1) the P3/P4 spawn objective, made by
+  `dev::RunLua` outside the level's script, was resettable: the level's end reset it, its `CActionSpawnPlayer`
+  (`sub_822116C0` -> `CActionSpawnActor` `sub_822102B0`) ran again with the template's name already freed
+  (`GenerateObject` gsub on nil, then a null call): now `NewObjective(name, "", true)` (not resettable);
+  (2) players 1 and 2 going before an extra Crash released the players' shared object (0x8249D78C) the extra
+  then used (`CActor::PrepareForDelete`): the ~Crash hook keeps the extra in the other table entry meanwhile;
+  (3) online, a replaced jacked palette pointer made the drawable release its normal palette twice
+  (`_purecall` in `~CCharacterObject`, reached from `CActor::PrepareForDelete` before ~Crash): put back in a
+  `~CCharacterObject` hook (`sub_822210E0`). KeBugCheck now logs the host backtrace (guest callers by name).
+- **Off the camera** a remote player was sent to the backpack every frame (no animation, no hits): the fight
+  tree's "GoStraightToBackpack" (`sub_820A0160`) asks `sub_821551B0`, true while the Crash's cached "okay to
+  enter the backpack" (+272 bit 0x80, `sub_82154E78`) is on, and only SetPlayerEnteringBackpack (skipped online)
+  cleared it: the hook clears it for the Crashes on foot.
+- Test: `mp_quit_host` + `mp_quit_c` + `mp_quit_c2` (three windows, the code client quits by its menu, the host
+  leaves, then closes the session); `mp_tres_sair` (local, 3 players, EXIT LEVEL to the HUB).
+
 ## Recommended architecture
 
 - **One real player per machine, the others native Crashes on its inputs** (up to 4, the game's limit):

@@ -139,7 +139,7 @@ PPC_FUNC(sub_822E29D8)
     float marker;
     if (MarkerArgument(ctx.r3.u32, marker))
     {
-        if (marker == SETTINGS_MARKER && g_multiplayerPending.exchange(false))
+        if (marker == SETTINGS_MARKER && (g_multiplayerPending.exchange(false) || mp::menu::ReopensLobby()))
         {
             Log("[mp] main menu MULTIPLAYER selected");
             mp::menu::RequestOpen();

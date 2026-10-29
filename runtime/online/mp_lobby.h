@@ -84,6 +84,7 @@ namespace mp::lobby
     void HostLevelStarted(int32_t levelIndex);
     void HostBackInMenus();
     bool TakeStart(int32_t& levelIndex);  // client: a level the host started, once
+    bool TakeHostLeftLevel();            // client: the host went back to its menus, once
     uint32_t KnockOutSeconds();          // 0 = the game's own
 
     // Codes.

@@ -4,7 +4,7 @@
 local streamer = objectManager:lookupObject(":Streamer")
 for _, name in ipairs({"ref_Crash", "ref_Crash_P2", "ref_Crash_P3", "ref_Crash_P4"}) do
   local a = streamer:GetActorByName(name)
-  if a ~= nil then
+  if a ~= nil and a ~= NULL_OBJECT and a.GetTransformRow then
     local v = a:GetTransformRow(3)
     devprint("mp actor " .. name .. " at " .. v.x .. " " .. v.y .. " " .. v.z)
   else
@@ -13,5 +13,5 @@ for _, name in ipairs({"ref_Crash", "ref_Crash_P2", "ref_Crash_P3", "ref_Crash_P
 end
 @gameplay_ready+12
 local a = objectManager:lookupObject(":Streamer"):GetActorByName("ref_Crash_P3")
-if a ~= nil then local v = a:GetTransformRow(3) devprint("mp actor ref_Crash_P3 later at " .. v.x .. " " .. v.y .. " " .. v.z) end
+if a ~= nil and a ~= NULL_OBJECT and a.GetTransformRow then local v = a:GetTransformRow(3) devprint("mp actor ref_Crash_P3 later at " .. v.x .. " " .. v.y .. " " .. v.z) end
 dev.pos(0)

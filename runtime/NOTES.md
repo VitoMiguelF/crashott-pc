@@ -2510,4 +2510,21 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   PARTIDA > NOVO JOGO (nome, NORMAL, slot 1) direto ao HUB do save novo, com painel e lobby. Falta: o cliente joga sem
   o save do host (mojo 0, melhorias dele), só segue um início pelos menus / HUB (não de dentro de outra fase),
   e o NOVO JOGO do host deixa a fase de abertura para o CONTINUE STORY do HUB.
+- **Sair da fase, pausa, quem sai** (`mp_menu.cpp`, `mp_players.cpp`, `mp_net.cpp`; perfis `mp_quit_host` +
+  `mp_quit_c` + `mp_quit_c2`, `mp_tres_sair`): numa sessão o jogo nunca pausa (`PauseGame(true)`, `sub_820F8918`,
+  ignorado no nó 638: a pausa do host, tutoriais etc. ficam por cima da fase rodando). O START do cliente (saída
+  651) abre o menu dele por cima do jogo, com só SAIR PARA O MENU PRINCIPAL: sai sem salvar (1114 -> HUB) e do
+  HUB vai ao menu inicial; só o host salva. O EXIT LEVEL do host (DROP OUT vira EXIT LEVEL online) leva os
+  clientes de volta ao lobby (HUB -> menu inicial -> espera do lobby); o host de volta ao menu inicial fecha a
+  sessão (O HOST SAIU). Quem some do roster sai da fase em todas as máquinas: os behaviours que o
+  `sub_82154A58` liga recebem vf11(0), colisão desligada, alvo da IA removido (`sub_82098E68`). Crashes ao
+  descarregar a fase com 3+ jogadores: o objetivo do spawn do P3/P4 (feito pelo RunLua fora do script da
+  fase) era resetável e o fim da fase rodava o `CActionSpawnPlayer` de novo com o nome já liberado (gsub em
+  nil): agora `NewObjective(nome, "", true)`; o objeto compartilhado dos jogadores (0x8249D78C) segue vivo
+  enquanto um Crash extra existir; online a paleta trocada volta no `~CCharacterObject` (`sub_822210E0`),
+  não no ~Crash (o `PrepareForDelete` apaga o drawable antes: `_purecall`). Fora da câmera o jogador remoto
+  ia à mochila todo quadro (sem animação, sem golpes): o cache +272 bit 0x80 é limpo no `sub_821551B0`.
+  KeBugCheck agora loga o backtrace do host. Visto: as 3 janelas sem crash; o cliente sai pelo menu e vai ao
+  menu inicial, o Crash dele some no host e no outro cliente; o host sai, o outro cliente volta ao lobby e
+  vê O HOST SAIU quando o host fecha a sessão.
 

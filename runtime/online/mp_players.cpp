@@ -37,6 +37,8 @@
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
 
+#include <ppc_config.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -49,16 +51,20 @@ extern "C" PPC_FUNC(__imp__sub_82154D10);  // Crash::EnterOtherPlayersBackpack
 extern "C" PPC_FUNC(__imp__sub_82153400);  // Crash::IsOkayToEnterBackpack
 extern "C" PPC_FUNC(__imp__sub_82153348);  // Crash::SetPlayerEnteringBackpack
 extern "C" PPC_FUNC(__imp__sub_82153B08);  // Crash::~Crash
+extern "C" PPC_FUNC(__imp__sub_821551B0);  // should the player's fight tree go straight to the backpack
 extern "C" PPC_FUNC(__imp__sub_82098A38);  // CAIManager: adds an AI target (a player actor)
 extern "C" PPC_FUNC(__imp__sub_8220D830);  // CActionResetPlayer: a player's death (vf01's first run)
 PPC_EXTERN_FUNC(sub_82090370);             // CActor: reset (vtable +0x3c), what a respawn does
 PPC_EXTERN_FUNC(sub_82142608);             // CActor::GetBehaviour
+PPC_EXTERN_FUNC(sub_82143698);             // CPhysicsBehaviour: collision on / off
+PPC_EXTERN_FUNC(sub_82098E68);             // CAIManager: removes an AI target (RemoveTarget)
 PPC_EXTERN_FUNC(sub_82154A58);             // Crash: shows a player (behaviours on, collision, AI target), as leaving the backpack does
 
 namespace
 {
     constexpr uint32_t CRASH_TABLE = 0x8249D778;     // Crash* [2], by player index
     constexpr uint32_t BACKPACK_CRASH = 0x8249D780;  // right after it
+    constexpr uint32_t MANAGERS_TABLE = 0x824A7A24;  // CUberManager: manager n at +(n + 7) * 4 (2 = AI, 7 = input)
     constexpr uint32_t COOP_STATE = 0x8245FA9C;      // int [2], per player index
     constexpr uint32_t AUTO_JOIN = 0x8245FA98;       // byte: player index, -1 = nobody
 
@@ -91,6 +97,7 @@ namespace
         uint64_t until = 0;
     };
     std::vector<Knockout> g_knockouts;
+    std::vector<uint32_t> g_departed;  // the Crashes of players who left the session (RemovePlayer)
     uint64_t g_revivedAt[4] = {};
 
     // Player 1 sits at the parking place of the hidden Crashes for the first frames of a level, until the
@@ -124,13 +131,13 @@ namespace
         return size_t(std::count_if(g_extras.begin(), g_extras.end(), [](const Extra& e) { return e.index >= 2; }));
     }
 
-    // CInputManager (manager 7: 0x824A7A24 + (7 + 7) * 4): its CInputDevices at +8..+12, one per
+    // CInputManager (manager 7: MANAGERS_TABLE + (7 + 7) * 4): its CInputDevices at +8..+12, one per
     // controller (device +0x10 = the controller number, 0-3).
     constexpr uint32_t INPUT_DEVICE_VTABLE = 0x8201DC54;
 
     uint32_t Device(uint32_t controller)
     {
-        uint32_t input = LoadBE32(0x824A7A24 + (7 + 7) * 4);
+        uint32_t input = LoadBE32(MANAGERS_TABLE + (7 + 7) * 4);
         if (!GuestPointer(input))
             return 0;
         for (uint32_t p = LoadBE32(input + 8); GuestPointer(p) && p < LoadBE32(input + 12); p += 4)
@@ -205,7 +212,28 @@ PPC_FUNC(sub_82153B08)
                    g_extras.end());
     g_knockouts.erase(std::remove_if(g_knockouts.begin(), g_knockouts.end(), [crash](const Knockout& k) { return k.crash == crash; }),
                       g_knockouts.end());
+    g_departed.erase(std::remove(g_departed.begin(), g_departed.end(), crash), g_departed.end());
+    // When both entries of the table are empty the destructor releases the players' shared object
+    // (0x8249D78C, vf1). A level's unload destroyed players 1 and 2 before the third Crash, which then
+    // used it (a crash leaving any level with 3+ players): while an extra Crash is alive the other entry
+    // holds it, so the last Crash to go releases the object.
+    uint32_t index = *g_memory.Translate(crash + 292);
+    uint32_t keep = 0;
+    if (index < 2 && LoadBE32(CRASH_TABLE + index * 4) == crash && !LoadBE32(CRASH_TABLE + (index ^ 1) * 4))
+        for (const Extra& e : g_extras)
+            if (e.index >= 2 && GuestPointer(e.crash))
+            {
+                keep = e.crash;
+                break;
+            }
+    if (keep)
+    {
+        StoreBE32(CRASH_TABLE + (index ^ 1) * 4, keep);
+        Log("[mp] Crash %08X (player %u) goes before extra Crash %08X: the shared object stays", crash, index + 1, keep);
+    }
     __imp__sub_82153B08(ctx, base);
+    if (keep)
+        StoreBE32(CRASH_TABLE + (index ^ 1) * 4, 0);
 }
 
 PPC_FUNC(sub_8220D830)
@@ -229,6 +257,7 @@ PPC_FUNC(sub_82153348)
         static int logged;
         if (logged++ < 3)
             Log("[mp] Crash %08X: entering the backpack skipped (online)", ctx.r3.u32);
+        *g_memory.Translate(ctx.r3.u32 + 272) &= ~0x80;  // the original clears the cached "okay" too
         return;
     }
     __imp__sub_82153348(ctx, base);
@@ -245,6 +274,23 @@ PPC_FUNC(sub_82153400)
             Log("[mp] Crash %08X kept out of the backpack (online)", crash);
         ctx.r3.u64 = 0;
     }
+}
+
+// The fight tree sends a player straight to the backpack ("GoStraightToBackpack", sub_820A0160) while its
+// Crash's cached "okay to enter the backpack" (+272 bit 0x80, set by sub_82154E78 before the Crash was
+// on foot) is on; only SetPlayerEnteringBackpack, skipped above, clears it. So a player went into the
+// EnterBackpack node every frame (no animation, no hits; on the host whenever it left the camera).
+// Online the cache is cleared for the Crashes on foot first.
+PPC_FUNC(sub_821551B0)
+{
+    if (mp::NoBackpack())
+        for (uint32_t index = 0; index < 2; ++index)
+        {
+            uint32_t crash = LoadBE32(CRASH_TABLE + index * 4);
+            if (GuestPointer(crash) && LoadBE32(crash + 300) == 2)
+                *g_memory.Translate(crash + 272) &= ~0x80;
+        }
+    __imp__sub_821551B0(ctx, base);
 }
 
 PPC_FUNC(sub_82154D10)
@@ -283,12 +329,14 @@ namespace
         if (mp::NowMs() - p1Since < 500)
             return;
         spawnedFor = p1;
-        std::string code = "dev.objective(\"mp_spawn_players\", function(o)";
+        // Not resetable: the level's end resets the objectives, and this one (made outside the level's
+        // script, so not unloaded with it) would spawn the players again from names already freed.
+        std::string code = "local o = NewObjective(\"mp_spawn_players\", \"\", true)";
         for (uint32_t n = 3; n <= mp::Players(); ++n)
             if (!mp::PlayerCrash(n - 1))
                 code += " o:DO_SpawnPlayer(" + std::to_string(n) + ", \"ref_Crash_P" + std::to_string(n) +
                         "\", \"PlayerSpawnPosition\", \"\")";
-        code += " end)";
+        code += " o:Done()";
         std::string error;
         bool ok = dev::RunLua(ctx, base, code.c_str(), "mp_spawn_players", &error);
         Log("[mp] spawning players 3-%u: %s", mp::Players(), ok ? "ok" : error.c_str());
@@ -302,7 +350,7 @@ namespace mp
     bool PlayerOnFoot(uint32_t index)
     {
         uint32_t crash = PlayerCrash(index);
-        if (!crash || LoadBE32(crash + 300) != 2)
+        if (!crash || LoadBE32(crash + 300) != 2 || std::find(g_departed.begin(), g_departed.end(), crash) != g_departed.end())
             return false;
         for (const Extra& e : g_extras)
             if (e.crash == crash)
@@ -395,6 +443,49 @@ namespace mp
         bool moved = TeleportCrash(ctx, base, k.crash, x, y, z);
         Log("[mp] player %u back at (%.1f, %.1f, %.1f)%s%s, hitpoints %.1f of %.1f", k.index + 1, x, y, z,
             target ? "" : " (nobody on foot)", moved ? "" : ", not moved", PlayerHitpoints(k.index), PlayerMaxHitpoints(k.index));
+    }
+
+    // A player who left the session goes out of the level, on every machine: what showing it turned on
+    // (sub_82154A58: the Crash's behaviours, its physics' collision, the AI target) is turned off again, so
+    // nobody sees, hits or chases it, and it is out of play (PlayerOnFoot: no knock-out, snap or colour).
+    void RemovePlayer(PPCContext& ctx, uint8_t* base, uint32_t index)
+    {
+        uint32_t crash = PlayerCrash(index);
+        if (!crash || std::find(g_departed.begin(), g_departed.end(), crash) != g_departed.end())
+            return;
+        g_departed.push_back(crash);
+        g_knockouts.erase(std::remove_if(g_knockouts.begin(), g_knockouts.end(), [crash](const Knockout& k) { return k.crash == crash; }),
+                          g_knockouts.end());
+        for (uint32_t offset : {224u, 180u, 220u, 208u, 216u, 212u, 244u, 240u, 228u, 236u})
+        {
+            uint32_t behaviour = LoadBE32(crash + offset);
+            uint32_t vtable = GuestPointer(behaviour) ? LoadBE32(behaviour) : 0;
+            uint32_t function = vtable >= 0x82000000 && vtable < 0x82600000 ? LoadBE32(vtable + 44) : 0;  // vf11
+            PPCFunc* setEnabled = function >= PPC_CODE_BASE && function < PPC_CODE_BASE + PPC_CODE_SIZE ? PPC_LOOKUP_FUNC(base, function) : nullptr;
+            if (!setEnabled)
+                continue;
+            PPCContext call = ctx;
+            call.r3.u64 = behaviour;
+            call.r4.u64 = 0;
+            setEnabled(call, base);
+            if (offset == 220)
+            {
+                call = ctx;
+                call.r3.u64 = behaviour;
+                call.r4.u64 = 0;
+                sub_82143698(call, base);  // the physics' collision
+            }
+        }
+        *g_memory.Translate(crash + 272) &= ~0x10;
+        uint32_t ai = LoadBE32(MANAGERS_TABLE + (2 + 7) * 4), actor = LoadBE32(crash + 156);
+        if (GuestPointer(ai) && GuestPointer(actor))
+        {
+            PPCContext call = ctx;
+            call.r3.u64 = ai;
+            call.r4.u64 = actor;
+            sub_82098E68(call, base);
+        }
+        Log("[mp] player %u (Crash %08X) left the session: out of the level", index + 1, crash);
     }
 
     void PlayersTick(PPCContext& ctx, uint8_t* base)

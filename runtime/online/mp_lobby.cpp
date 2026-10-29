@@ -67,7 +67,7 @@ namespace mp::lobby
             std::vector<Player> roster;
             uint64_t joinedAt = 0, lastHello = 0, lastPing = 0, heardAt = 0;
             uint32_t pingMs = 0, seenStartId = 0;
-            bool firstRoster = true, inGameHost = false;
+            bool firstRoster = true, inGameHost = false, hostLeftLevel = false;
             int32_t pendingStart = -1;
             // searching
             struct Found
@@ -462,6 +462,11 @@ namespace mp::lobby
                 if (!r.ok)
                     return;
                 s.roster = roster;
+                if (s.inGameHost && !inGame)
+                {
+                    s.hostLeftLevel = true;
+                    Log("[lobby] the host left the level");
+                }
                 s.inGameHost = inGame;
                 // Slot and player count follow the host's while it is in the menus (fixed in a level).
                 if (!inGame && (mySlot != s.slot || count != s.rosterPlayers || s.firstRoster))
@@ -830,6 +835,12 @@ namespace mp::lobby
         levelIndex = g_s.pendingStart;
         g_s.pendingStart = -1;
         return true;
+    }
+
+    bool TakeHostLeftLevel()
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        return std::exchange(g_s.hostLeftLevel, false);
     }
 
     uint32_t KnockOutSeconds()

@@ -17,6 +17,10 @@ namespace diag
     // ---- given by the OS backend ----
     // "nearest guest function ..." for the exe's code, "<module>+0xOFFSET" otherwise.
     void DescribeHostAddress(uintptr_t address, char* buffer, size_t size);
+    // The calling thread's host stack, one "[diag]   #n <DescribeHostAddress>" line per frame: the guest
+    // callers where the guest backtrace has none (the recompiled code keeps LR out of the stack).
+    // Windows only for now.
+    void LogHostBacktrace();
     // Registered after the demand-commit handler, so faults it resolves never get here.
     void InstallHostCrashHandlers();
     // Ends the process at once with `code` (no atexit, no destructors).

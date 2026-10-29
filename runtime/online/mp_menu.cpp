@@ -28,6 +28,7 @@
 #include <vector>
 
 PPC_EXTERN_FUNC(sub_820F5D58);  // Frontend:StartLevel(index)
+extern "C" PPC_FUNC(__imp__sub_820F8918);  // Frontend:PauseGame(paused)
 
 namespace mp::menu
 {
@@ -41,6 +42,20 @@ namespace mp::menu
         // The frontend's nodes and exits (Frontend.bfig; docs/internals/multiplayer.md).
         constexpr uint32_t NODE_MAIN_MENU = 70, NODE_OPTIONS = 99, NODE_NEW_GAME_FADE = 322, NODE_HUB = 575, NODE_IN_GAME = 630;
         constexpr int32_t EXIT_NEW_GAME = 88, EXIT_LOAD_GAME = 89, EXIT_FIRST_LEVEL = 323, EXIT_TO_HUB = 309, EXIT_SKIP_TO_LEVEL = 51;
+        // Leaving a level: the pause screen (two-player menu: RESUME, OPTIONS, DROP OUT, EXIT LEVEL), its
+        // EXIT LEVEL after the confirmation (save and exit -> EpisodeComplete), the level's end screens'
+        // exits to the save screens, the end screen's own way to the HUB without saving, and the HUB's
+        // EXIT GAME to the main menu; 91 = the main menu's SETTINGS (the MULTIPLAYER screens' way in).
+        // Without a save (a client) the pause is NoSavePauseScreen, whose EXIT LEVEL goes to the HUB
+        // without a save screen (1114 -> EpisodeComplete 1115 -> ExitContinue 1116 -> LoadingHUBScreen).
+        constexpr uint32_t NODE_GAME_RUNNING = 638, NODE_PAUSE = 1081, NODE_LEAVING_LEVEL = 1088;
+        constexpr uint32_t NODE_PAUSE_NO_SAVE = 1109, NODE_LEAVING_LEVEL_NO_SAVE = 1115;
+        constexpr int32_t EXIT_DROP_OUT = 1098, EXIT_LEAVE_LEVEL = 1099, EXIT_SAVE_AND_EXIT = 1087;
+        constexpr int32_t EXIT_DROP_OUT_NO_SAVE = 1123, EXIT_LEAVE_LEVEL_NO_SAVE = 1124, EXIT_EXIT_NO_SAVE = 1114;
+        constexpr int32_t EXIT_CONTINUE_NO_SAVE = 1116;
+        constexpr int32_t EXIT_HUB_WITHOUT_SAVING = 1179, EXIT_HUB_TO_MAIN_MENU = 598, EXIT_SETTINGS = 91;
+        constexpr int32_t EXIT_PAUSE = 651;  // GameRunning's START: PauseScreen (PauseGame(true))
+        constexpr int32_t SAVE_EXITS[] = { 1090, 1091, 1177, 1178, 1185, 1186, 1199, 1200 };
         constexpr uint32_t MANAGERS = 0x824A7A24, LEVEL_INDEX = 24;
 
         constexpr float VIRTUAL_W = 1280.0f, VIRTUAL_H = 720.0f;
@@ -76,7 +91,7 @@ namespace mp::menu
         constexpr Color FRAME{ 236, 222, 190, 200 };
         constexpr Color DIM_TOP{ 14, 8, 0, 200 }, DIM_BOTTOM{ 8, 4, 0, 220 };
 
-        enum class Screen { Root, HostMode, FindMode, Servers, Code, Password, Waiting, Message, Lobby, HostPassword };
+        enum class Screen { Root, HostMode, FindMode, Servers, Code, Password, Waiting, Message, Lobby, HostPassword, LevelMenu };
 
         // Between the threads.
         std::atomic<bool> g_requested{ false };
@@ -87,6 +102,18 @@ namespace mp::menu
         std::atomic<int32_t> g_forceExit{ -1 };  // host: NEW / LOAD GAME, taken from the options screen
         std::atomic<bool> g_hostNewGame{ false };  // a hosted new game goes to the HUB
         std::atomic<bool> g_started{ false };   // client: the level start was taken
+        // Client: in a level the host started (until the main menu); leaving it (None, Quit: its own
+        // QUIT or a closed session, to the main menu; ToLobby: the host went back to its HUB, the client
+        // back to the lobby's wait).
+        enum class Leaving { None, Quit, ToLobby };
+        std::atomic<bool> g_clientInLevel{ false };
+        std::atomic<Leaving> g_leaving{ Leaving::None };
+        // Client in a level: START opens LevelMenu (the game goes on), whose QUIT leaves the level.
+        std::atomic<bool> g_levelMenuRequested{ false };
+        std::atomic<bool> g_quitLevel{ false };
+        std::atomic<bool> g_hostReachedHub{ false };  // host: back at the main menu after it, the session closes
+        std::atomic<bool> g_resumeLobby{ false };  // at the main menu: open the lobby again
+        std::atomic<bool> g_resumeOpen{ false };   // the SETTINGS marker opens it at the lobby
         std::atomic<uint32_t> g_node{ UINT32_MAX };
         std::atomic<bool> g_panelShown{ false };  // the HUB panel is on screen
 
@@ -102,7 +129,7 @@ namespace mp::menu
         uint16_t g_previousButtons = 0, g_heldButton = 0;
         uint64_t g_heldSince = 0, g_lastRepeat = 0;
         uint64_t g_openedAt = 0, g_closedAt = 0, g_lastDraw = 0;
-        bool g_closing = false, g_lobbyModal = false;
+        bool g_closing = false, g_lobbyModal = false, g_levelModal = false;
         bool g_dirty = true;
         art::Canvas g_canvas;
         std::vector<uint32_t> g_pixels, g_faded;
@@ -468,6 +495,20 @@ namespace mp::menu
             Draw(v, FontId::Small, help, 890.0f, bottom - 62.0f, HELP_CELL, pal.info, 1.0f);
         }
 
+        // A client's menu in a level, over the game (which goes on).
+        void RasterizeLevelMenu(const View& v)
+        {
+            const Palette& pal = DIMMED;
+            DrawFrame(v, 340.0f, 220.0f, 940.0f, 470.0f);
+            Draw(v, FontId::Large, "MULTIPLAYER", VIRTUAL_W * 0.5f, 246.0f, 38.0f, pal.title, 0.5f);
+            float right = Draw(v, FontId::Large, T("QUIT TO THE MAIN MENU", "SAIR PARA O MENU PRINCIPAL"), VIRTUAL_W * 0.5f, 320.0f, ROW_CELL,
+                               pal.selected, 0.5f, 540.0f);
+            AddZone(VIRTUAL_W - right - 20.0f, 314.0f, right + 20.0f, 320.0f + ROW_CELL + 6.0f, Hit::Row, 0);
+            std::string back = std::string("\xC2\xB2 ") + T("BACK TO THE GAME", "VOLTAR AO JOGO");
+            float end = Draw(v, FontId::Small, back, 400.0f, 410.0f, HELP_CELL, pal.help);
+            AddZone(390.0f, 402.0f, end + 10.0f, 410.0f + HELP_CELL + 8.0f, Hit::Back);
+        }
+
         // The HUB panel's size in virtual units.
         constexpr float PANEL_L = 900.0f, PANEL_T = 14.0f, PANEL_R = 1268.0f, PANEL_PAD = 50.0f;
         float PanelBottom(size_t players) { return PANEL_T + 100.0f + players * 30.0f + 64.0f; }
@@ -618,9 +659,10 @@ namespace mp::menu
         {
             if (Typing())
                 input::pc::SetTextEntry(false);
-            g_closing = !g_lobbyModal;  // the lobby at the HUB just goes (the panel is back)
+            g_closing = !g_lobbyModal && !g_levelModal;  // the lobby at the HUB just goes (the panel is back)
             g_open = false;
             g_lobbyModal = false;
+            g_levelModal = false;
             g_releasing = true;
             g_closedAt = plat::TickCountMs();
             if (back)
@@ -910,6 +952,19 @@ namespace mp::menu
             }
         }
 
+        // A client's START in a level: QUIT TO THE MAIN MENU (A) or back to the game (B / START).
+        void UpdateLevelMenu(uint16_t pressed)
+        {
+            if (pressed & (XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_BACK | XINPUT_GAMEPAD_START))
+                Close(false);
+            else if (pressed & XINPUT_GAMEPAD_A)
+            {
+                g_quitLevel = true;
+                Log("[mp] menu: client: quit to the main menu");
+                Close(false);
+            }
+        }
+
         bool PanelWanted()
         {
             return g_node == NODE_HUB && lobby::GetState() == lobby::State::Hosting && !lobby::HostInGame();
@@ -921,13 +976,25 @@ namespace mp::menu
             uint64_t now = plat::TickCountMs();
             if (g_requested.exchange(false) && !g_open)
             {
-                if (lobby::GetState() != lobby::State::Off)
+                bool resume = g_resumeOpen.exchange(false) && lobby::GetState() == lobby::State::Joined;
+                if (!resume && lobby::GetState() != lobby::State::Off)
                     lobby::Leave();  // a session left behind (the host went back to the main menu)
                 g_palette = &CLOTH;
                 g_lobbyModal = false;
-                Go(Screen::Root);
+                Go(resume ? Screen::Waiting : Screen::Root);
                 Open();
-                Log("[mp] menu opened");
+                Log("[mp] menu opened%s", resume ? " at the lobby (back from the host's level)" : "");
+            }
+            if (!g_open && g_levelMenuRequested.exchange(false))
+            {
+                g_portuguese = settings::Get().language.rfind("pt", 0) == 0;
+                g_palette = &DIMMED;
+                g_lobbyModal = false;
+                g_levelModal = true;
+                Go(Screen::LevelMenu);
+                Open();
+                g_openedAt = now - OPEN_DELAY_MS;
+                Log("[mp] menu: the client's menu in the level (the game goes on)");
             }
             bool panel = PanelWanted();
             if (!g_open && !g_releasing && !g_closing && !panel)
@@ -969,6 +1036,11 @@ namespace mp::menu
                 Close(false);  // the level started, or the session closed
                 return true;
             }
+            if (g_levelModal && (!g_clientInLevel || g_leaving != Leaving::None))
+            {
+                Close(false);  // leaving the level anyway
+                return true;
+            }
             if (now - g_openedAt < OPEN_DELAY_MS)
             {
                 g_previousButtons = buttons;
@@ -978,7 +1050,9 @@ namespace mp::menu
             uint16_t pressed = Pressed(buttons) | MouseButtons();
             if (pressed || !g_tapped.empty())
                 g_dirty = true;
-            if (g_lobbyModal)
+            if (g_levelModal)
+                UpdateLevelMenu(pressed);
+            else if (g_lobbyModal)
                 UpdateLobby(pressed);
             else
                 UpdateFull(pressed);
@@ -1002,6 +1076,8 @@ namespace mp::menu
             View v = MakeView(width, height);
             if (g_open && g_lobbyModal)
                 RasterizeLobby(v, width, height);
+            else if (g_open && g_levelModal)
+                RasterizeLevelMenu(v);
             else if (g_open || g_closing)
             {
                 if (!g_lobbyModal)
@@ -1025,6 +1101,8 @@ namespace mp::menu
         }
         g_requested = true;
     }
+
+    bool ReopensLobby() { return g_resumeOpen; }
 
     bool BlocksGameInput()
     {
@@ -1060,6 +1138,93 @@ namespace mp::menu
             Log("[mp] menu: hosted new game: to the HUB (exit %d instead of %d)", EXIT_TO_HUB, exit);
             return EXIT_TO_HUB;
         }
+        // Client in a level: START opens its own menu over the game instead of the game's pause.
+        if (g_clientInLevel && state == lobby::State::Joined && node == NODE_GAME_RUNNING && exit == EXIT_PAUSE)
+        {
+            if (!g_open && !g_releasing && g_leaving == Leaving::None)
+                g_levelMenuRequested = true;
+            return -1;
+        }
+        // The host back at the main menu after its HUB: the session closes (the clients go to theirs).
+        if (state == lobby::State::Hosting)
+        {
+            if (node == NODE_HUB)
+                g_hostReachedHub = true;
+            else if (node == NODE_MAIN_MENU && g_hostReachedHub.exchange(false))
+            {
+                Log("[mp] menu: the host is back at the main menu: the session closes");
+                lobby::Leave();
+                state = lobby::GetState();
+            }
+        }
+        // Pause in a session: the game's DROP OUT leaves the player out of a co-op level (a black screen
+        // waiting for B); online it is EXIT LEVEL (with the game's confirmation).
+        if ((exit == EXIT_DROP_OUT || exit == EXIT_DROP_OUT_NO_SAVE) && (state == lobby::State::Hosting || state == lobby::State::Joined))
+        {
+            Log("[mp] menu: DROP OUT is EXIT LEVEL online");
+            exit = exit == EXIT_DROP_OUT ? EXIT_LEAVE_LEVEL : EXIT_LEAVE_LEVEL_NO_SAVE;
+        }
+        // Host: EXIT LEVEL takes the clients to the HUB at once (the host saves and goes to its HUB).
+        if (state == lobby::State::Hosting && node == NODE_PAUSE && exit == EXIT_SAVE_AND_EXIT)
+            lobby::HostBackInMenus();
+        // Client: only the host keeps a save. Out of a level by the end screen's way to the HUB (no save
+        // screen), then from the HUB to the main menu: after its own QUIT (or a closed session) the main menu
+        // itself, after the host's return to its HUB the lobby's wait (the host's next level is followed from there).
+        if (g_clientInLevel)
+        {
+            for (int32_t save : SAVE_EXITS)
+                if (exit == save)
+                {
+                    Log("[mp] menu: client: no save (exit %d -> %d)", exit, EXIT_HUB_WITHOUT_SAVING);
+                    exit = EXIT_HUB_WITHOUT_SAVING;
+                }
+            Leaving leaving = g_leaving;
+            if (leaving == Leaving::None)
+            {
+                if (exit == EXIT_SAVE_AND_EXIT || exit == EXIT_EXIT_NO_SAVE || g_quitLevel.exchange(false))
+                    leaving = Leaving::Quit;
+                else if (state != lobby::State::Joined)
+                    leaving = Leaving::Quit;  // the session closed (the host quit, a time-out)
+                else if (lobby::TakeHostLeftLevel() || (node == NODE_HUB && !lobby::HostInGame()))
+                    leaving = Leaving::ToLobby;
+                if (leaving != Leaving::None)
+                {
+                    g_leaving = leaving;
+                    // No more host records on the level being unloaded (its actors go away).
+                    net::SetRole(net::Role::None, 0, 1, 0, 0);
+                    Log("[mp] menu: client leaving the level (%s)", leaving == Leaving::Quit ? "to the main menu" : "back to the lobby");
+                }
+            }
+            if (leaving != Leaving::None)
+            {
+                if ((node == NODE_GAME_RUNNING || node == NODE_PAUSE || node == NODE_PAUSE_NO_SAVE) && exit < 0)
+                    return EXIT_EXIT_NO_SAVE;  // its music / pause / stats clean-up, then the end screen
+                if (node == NODE_LEAVING_LEVEL)
+                    return EXIT_HUB_WITHOUT_SAVING;
+                if (node == NODE_LEAVING_LEVEL_NO_SAVE)
+                    return EXIT_CONTINUE_NO_SAVE;
+                if (node == NODE_HUB)
+                {
+                    g_clientInLevel = false;
+                    g_leaving = Leaving::None;
+                    if (leaving == Leaving::ToLobby && lobby::GetState() == lobby::State::Joined)
+                        g_resumeLobby = true;
+                    else
+                        lobby::Leave();
+                    Log("[mp] menu: client at the HUB: to the main menu%s (exit %d)", g_resumeLobby ? " and the lobby" : "",
+                        EXIT_HUB_TO_MAIN_MENU);
+                    return EXIT_HUB_TO_MAIN_MENU;
+                }
+            }
+        }
+        // The lobby over the options screen, as from the MULTIPLAYER item (a level the host starts
+        // meanwhile is followed from there).
+        if (node == NODE_MAIN_MENU && g_resumeLobby.exchange(false) && lobby::GetState() == lobby::State::Joined)
+        {
+            g_resumeOpen = true;
+            Log("[mp] menu: back in the lobby (exit %d)", EXIT_SETTINGS);
+            return EXIT_SETTINGS;
+        }
         // Host: the level start the clients follow, and the way back.
         if (state == lobby::State::Hosting)
         {
@@ -1079,6 +1244,10 @@ namespace mp::menu
                 call.r4.s64 = level;
                 sub_820F5D58(call, base);
                 g_started = true;
+                g_clientInLevel = true;
+                g_leaving = Leaving::None;
+                g_quitLevel = false;
+                lobby::TakeHostLeftLevel();  // an older one
                 Log("[mp] menu: following the host into level %d (StartLevel + SkipToLevel from node %u)", level, node);
                 return EXIT_SKIP_TO_LEVEL;
             }
@@ -1096,7 +1265,7 @@ namespace mp::menu
         float t = 1.0f;
         if (g_closing && !g_open)
             t = 1.0f - float(now - g_closedAt) / FADE_OUT_MS;
-        else if (g_open && !g_lobbyModal)
+        else if (g_open && !g_lobbyModal && !g_levelModal)
             t = (float(now - g_openedAt) - OPEN_DELAY_MS) / FADE_IN_MS;
         t = std::clamp(t, 0.0f, 1.0f);
         if (t <= 0.0f)
@@ -1115,4 +1284,21 @@ namespace mp::menu
         }
         gpu::overlay::DrawBitmap(width, height, pixels, int(width), int(height), 0, 0, version, gpu::overlay::BITMAP_MULTIPLAYER);
     }
+}
+
+// Frontend:PauseGame(paused) (r4): in a session the game never stops. Its pause (the host's), the
+// tutorials and the other screens GameRunning opens show over the running level: the other machines go
+// on with it.
+PPC_FUNC(sub_820F8918)
+{
+    mp::lobby::State state = mp::lobby::GetState();
+    bool session = state == mp::lobby::State::Hosting || state == mp::lobby::State::Joined;
+    if (ctx.r4.u8 && session && mp::menu::g_node == mp::menu::NODE_GAME_RUNNING)
+    {
+        static int logged;
+        if (logged++ < 3)
+            Log("[mp] menu: PauseGame(true) skipped: the session goes on");
+        return;
+    }
+    __imp__sub_820F8918(ctx, base);
 }

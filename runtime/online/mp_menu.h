@@ -13,6 +13,12 @@
 //   LOBBY         a client's wait: the host, the players and their ping, until the host starts a level;
 //                 then StartLevel(that level) + SkipToLevel (51) from where the client is
 //
+// In a level the game never pauses in a session (PauseGame(true) skipped): the host's pause shows over
+// the running level, and a client's START opens its own menu instead (QUIT TO THE MAIN MENU only).
+// Leaving a level: DROP OUT is EXIT LEVEL online. A client never saves (the save screens' exits go
+// to the HUB without saving), and from the HUB goes on to the main menu: its own EXIT LEVEL (or a
+// closed session) ends there, the host's EXIT LEVEL (or the host back at its HUB) opens the lobby again.
+//
 // At the HUB the host sees a panel with the code and the players; BACK opens the lobby there: kick a
 // player, the password, the maximum of players, the knock-out time, close the session. The host's
 // level start (InGame, node 630, from the HUB) is what the clients follow.
@@ -25,6 +31,8 @@ namespace mp::menu
 {
     // Game thread (the marker hook, frontend_hooks.cpp): MULTIPLAYER chosen on the main menu.
     void RequestOpen();
+    // The SETTINGS marker opens these screens (at the lobby): a client back from the host's level.
+    bool ReopensLobby();
 
     // The game must see a neutral controller (a screen open, or its buttons still held).
     bool BlocksGameInput();

@@ -69,6 +69,8 @@ namespace diag
                  address - reinterpret_cast<uintptr_t>(known ? info.dli_fbase : nullptr));
     }
 
+    void LogHostBacktrace() {}
+
     void InstallHostCrashHandlers()
     {
         plat::SetUnhandledFaultHandler(CrashHandler);

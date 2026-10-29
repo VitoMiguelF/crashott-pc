@@ -70,6 +70,8 @@ namespace mp
     float PlayerMaxHitpoints(uint32_t index);
     void SetPlayerMaxHitpoints(uint32_t index, float value);  // and the hitpoints down to it
     void PlayersTick(PPCContext& ctx, uint8_t* base);
+    // A player who left the session: hidden, without collision nor AI target, out of play (on every machine).
+    void RemovePlayer(PPCContext& ctx, uint8_t* base, uint32_t index);
     // Online (or more than two players): nobody enters another player's backpack.
     bool NoBackpack();
 

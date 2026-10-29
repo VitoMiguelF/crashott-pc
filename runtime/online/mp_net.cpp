@@ -72,6 +72,7 @@ static bool SetNonBlocking(socket_t s) { return fcntl(s, F_SETFL, fcntl(s, F_GET
 extern "C" PPC_FUNC(__imp__sub_82092668);  // CActorManager::vf10 (actors' update)
 extern "C" PPC_FUNC(__imp__sub_82099058);  // CAIManager::vf10
 extern "C" PPC_FUNC(__imp__sub_8220AC38);  // CObjectiveManager::vf10
+extern "C" PPC_FUNC(__imp__sub_822210E0);  // CCharacterObject::~CCharacterObject
 extern "C" PPC_FUNC(__imp__sub_822212C0);  // character drawable: the palette of this frame (+0x11C8)
 PPC_EXTERN_FUNC(sub_82110448);             // CDamageableBehaviour::AdjustHitpoints(this, f1 = delta, r5 = damager)
 PPC_EXTERN_FUNC(sub_820972D0);             // CActionTeleport::CActionTeleport(msg, const Vector*, flags)
@@ -523,6 +524,17 @@ namespace
         }
     }
 
+    // The jacked palette pointers FixLooks replaced (by drawable: its field and the original value). The
+    // drawable releases both of its palettes when it goes: with a replaced one the normal palette was
+    // released twice and a level's unload crashed (_purecall in ~CCharacterObject, online, 3 players).
+    // Put back by the ~CCharacterObject hook below (CActor::PrepareForDelete deletes the drawable
+    // before ~Crash runs).
+    std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>>& ReplacedPalettes()
+    {
+        static std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> replaced;
+        return replaced;
+    }
+
     // Each player keeps its colour on every machine. The game draws player 1 with the Crash template's
     // normal palette and player 2 with its jacked one ("Crash_Player2.bmp"): the character drawable
     // (CCharacterObject: Crash +0xE0 is the CCharacterRenderBehaviour, its +92 the drawable) copies the
@@ -553,6 +565,8 @@ namespace
             call.r3.u64 = d + 348;
             call.r4.u64 = look + 16;
             sub_8222C2D8(call, base);
+            if (look != jacked)
+                ReplacedPalettes()[d] = { d + 4532 + variant * 4, jacked };
             StoreBE32(d + 4532 + variant * 4, look);
             n.lookDone[i] = d;
             {
@@ -561,6 +575,24 @@ namespace
             }
             static const char* names[] = {"orange", "pale (jacked)", "blue", "green"};
             Log("[mp] player %u (slot %u): %s", i + 1, slot + 1, names[slot & 3]);
+        }
+    }
+
+    // The players of a session (the lobby's roster) who are gone from it: their Crashes go out of the
+    // level (RemovePlayer). Not for a session without a lobby (CRASH_MP_ROLE tests: no roster).
+    void DepartedPlayers(PPCContext& ctx, uint8_t* base, Net& n)
+    {
+        mp::lobby::State state = mp::lobby::GetState();
+        if (state != mp::lobby::State::Hosting && state != mp::lobby::State::Joined)
+            return;
+        std::vector<mp::lobby::Player> roster = mp::lobby::Players();
+        if (roster.empty())
+            return;
+        for (uint32_t i = 1; i < n.players && i < 4; ++i)
+        {
+            uint32_t slot = SlotOf(n.slot, i);
+            if (std::none_of(roster.begin(), roster.end(), [slot](const mp::lobby::Player& p) { return p.slot == slot; }))
+                mp::RemovePlayer(ctx, base, i);
         }
     }
 
@@ -1240,6 +1272,7 @@ namespace mp
         {
             FixLooks(ctx, base, n);
             LocalCamera(ctx, base, n);
+            DepartedPlayers(ctx, base, n);
         }
         if (n.role == Role::Host)
             HostTick(ctx, base, n);
@@ -1302,6 +1335,24 @@ PPC_FUNC(sub_822212C0)
                 TintPalette(drawable + 0x11C8, hue);
                 return;
             }
+}
+
+// CCharacterObject::~CCharacterObject (r3 = the drawable): its own jacked palette back before it
+// releases its palettes (ReplacedPalettes).
+PPC_FUNC(sub_822210E0)
+{
+    uint32_t drawable = ctx.r3.u32;
+    auto& replaced = ReplacedPalettes();
+    if (auto it = replaced.find(drawable); it != replaced.end())
+    {
+        StoreBE32(it->second.first, it->second.second);
+        replaced.erase(it);
+    }
+    {
+        std::lock_guard<std::mutex> lock(TintMutex());
+        Tints().erase(drawable);
+    }
+    __imp__sub_822210E0(ctx, base);
 }
 
 namespace mp::net

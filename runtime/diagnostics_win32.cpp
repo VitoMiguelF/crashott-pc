@@ -121,6 +121,18 @@ namespace diag
         snprintf(buffer, size, "%s+0x%zX (outside the recompiled code)", name ? name + 1 : path, address - reinterpret_cast<uintptr_t>(module));
     }
 
+    void LogHostBacktrace()
+    {
+        void* frames[32];
+        USHORT count = RtlCaptureStackBackTrace(1, 32, frames, nullptr);
+        for (USHORT i = 0; i < count; ++i)
+        {
+            char where[512];
+            DescribeHostAddress(reinterpret_cast<uintptr_t>(frames[i]), where, sizeof(where));
+            Log("[diag]   #%u %s", i, where);
+        }
+    }
+
     void InstallHostCrashHandlers()
     {
         AddVectoredExceptionHandler(0, CrashHandler);
