@@ -96,12 +96,22 @@ int main(int argc, char** argv)
     // the texts of the language pack chosen there, if any (after the SETTINGS label patch).
     settings::LoadLanguagePacks(paths::Languages());
     settings::Load(vfs::UserDataDir());
-    // [video] gpu_diagnostics: the log also goes to userdata\crashrecomp_log.txt (for a bug report).
-    if (settings::Get().gpuDiagnostics)
+    // [video] gpu_diagnostics: the log also goes to userdata\crashrecomp_log.txt (for a bug report). Always on
+    // Android, where logcat's ring is gone minutes later (userdata is in the app's external files: adb pull
+    // reads it); the last run's stays as crashrecomp_log_prev.txt (a crash, then the app opened again).
+#ifdef __ANDROID__
+    constexpr bool ALWAYS_LOG_FILE = true;
+#else
+    constexpr bool ALWAYS_LOG_FILE = false;
+#endif
+    if (settings::Get().gpuDiagnostics || ALWAYS_LOG_FILE)
     {
         std::filesystem::path logFile = vfs::UserDataDir() / "crashrecomp_log.txt";
+        std::error_code ignored;
+        if (ALWAYS_LOG_FILE)
+            std::filesystem::rename(logFile, vfs::UserDataDir() / "crashrecomp_log_prev.txt", ignored);
         SetLogFile(logFile.wstring().c_str());
-        Log("[main] gpu_diagnostics: the log is also written to %s", logFile.string().c_str());
+        Log("[main] the log is also written to %s", logFile.string().c_str());
     }
     // First run: the game folder picked in the dialog goes to settings.toml ([paths] game).
     if (paths::GameChosenNow())
