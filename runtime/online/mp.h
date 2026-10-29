@@ -12,9 +12,11 @@
 //   CRASH_MP_ROLE=<role>       host | client: the M1 mirror over UDP (mp_net.cpp)
 //   CRASH_MP_PORT=<n>          UDP port (default 47810); CRASH_MP_PEER=<ip> the host for a client
 //   CRASH_MP_HZ=<n>            snapshots per second sent by the host (default 30)
-//   CRASH_MP_PLAYERS=<n>       2-4 players (the game's limit is 4: controllers, AI targets); with more
-//                              than 2, players 3 and 4 are spawned on every machine (mp_players.cpp)
-//   CRASH_MP_SLOT=<n>          client: its player, 1-3 (default 1); the host is 0
+//   CRASH_MP_PLAYERS=<n>       2-8 players; with more than 2, players 3-8 are spawned on every machine
+//                              (mp_players.cpp). Past 4 (the game's own limit: controllers, AI targets)
+//                              it is experimental: players 5-8 get controllers of ours and take turns
+//                              as the AI's 4 targets
+//   CRASH_MP_SLOT=<n>          client: its player, 1-7 (default 1); the host is 0
 //   CRASH_MP_SNAP=<units>      a remote player further than this from where its machine says is put back (1.0)
 //   CRASH_MP_TELEPORT=x,y,z    host, tests: both players put there once they are on foot
 //   CRASH_MP_LEASH=<units>     how far apart the players may go (default 15; 0 = no limit; mp_net.cpp)
@@ -29,9 +31,14 @@ namespace mp
 {
     enum class StreamMode { Vanilla, Union, All };
 
+    // Players in a session: up to 8. The game itself holds 4 (4 controllers, 4 AI targets); players 5-8
+    // are experimental (mp_players.cpp: controllers 4-7 of ours, AI targets taken in turns).
+    constexpr uint32_t MAX_PLAYERS = 8;
+    constexpr uint32_t GAME_PLAYERS = 4;
+
     bool Enabled();  // CRASH_MP=1, or a MULTIPLAYER session open
     bool Online();  // host or client (CRASH_MP_ROLE or a session): the level starts with every player in play
-    uint32_t Players();  // a session's player count (1-4), else CRASH_MP_PLAYERS (2-4)
+    uint32_t Players();  // a session's player count (1-8), else CRASH_MP_PLAYERS (2-8)
     // mp_lobby.cpp: a session opened from the menu turns the prototype on (and off when it closes) and
     // sets the player count the next level starts with.
     void SetSession(bool open, uint32_t players);
@@ -57,11 +64,11 @@ namespace mp
     uint32_t RoomAt(PPCContext& ctx, uint8_t* base, uint32_t position);  // room holding a position
     std::string RoomLabel(uint32_t room);
 
-    // mp_players.cpp: the Crashes beyond the game's two (player index >= 2, DO_SpawnPlayer(3..5)); each
+    // mp_players.cpp: the Crashes beyond the game's two (player index >= 2, DO_SpawnPlayer(3..8)); each
     // one is put on foot next to player 1 (PlayersTick, every frame on the game thread).
     std::vector<uint32_t> ExtraCrashes();
-    uint32_t PlayerCrash(uint32_t index);  // the Crash of player index 0-3 (0 if none)
-    bool PlayerOnFoot(uint32_t index);     // in play: co-op state 2 and, for players 2-4, already shown
+    uint32_t PlayerCrash(uint32_t index);  // the Crash of player index 0-7 (0 if none)
+    bool PlayerOnFoot(uint32_t index);     // in play: co-op state 2 and, for players 2-8, already shown
     // Knocked out (lying down until it comes back next to a teammate) or back for less than 1.5 s: its
     // hitpoints are this machine's (mp_players.cpp).
     bool HitpointsHeld(uint32_t index);
@@ -73,7 +80,7 @@ namespace mp
     void SetPlayerMaxHitpoints(uint32_t index, float value);  // and the hitpoints down to it
     void PlayersTick(PPCContext& ctx, uint8_t* base);
     // A cutscene ended (settings/skip_cinematics.cpp): online, shortly after, every player is put next to
-    // the host's (the game places players 1 and 2; players 3-4 would stay where they were).
+    // the host's (the game places players 1 and 2; players 3-8 would stay where they were).
     void CinematicDone();
     // A player who left the session: hidden, without collision nor AI target, out of play (on every machine).
     void RemovePlayer(PPCContext& ctx, uint8_t* base, uint32_t index);

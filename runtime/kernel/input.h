@@ -63,6 +63,11 @@ namespace input
     // which its replay waits for.
     void NoteEvent(const char* name);
 
+    // Controllers 4-7, beyond the four XInput users (online/mp_players.cpp: players 5-8 of a session, 5-8
+    // is experimental): CRASH_INPUT_SCRIPT's P5_..P8_ entries and the remote player that controller plays
+    // (online/mp.h RemotePad). `gamepad` is a 12-byte XINPUT_GAMEPAD; false if nothing is there.
+    bool ReadExtraController(uint32_t user, void* gamepad);
+
     // A read the game made from its own files (kernel/file_imports.cpp): `level` = default.rcf,
     // whose read bursts mark the loads the replay synchronizes on.
     void NoteGameRead(uint64_t offset, uint64_t bytes, bool level);

@@ -7,7 +7,7 @@
 //   DISCOVER  client -> broadcast (the LAN) and 127.0.0.1: who hosts here?
 //   ANNOUNCE  host -> that client: its name, players, maximum, password or not, in a level or not
 //   HELLO     client -> host: a token (random), the player's name and the password, every 0.5 s
-//   WELCOME   host -> client: its slot (1-3); DENY: full, wrong password, kicked, in a level, version
+//   WELCOME   host -> client: its slot (1-7); DENY: full, wrong password, kicked, in a level, version
 //   ROSTER    host -> clients, every 0.5 s: the players (slot, token, name, ping), the options and the
 //             level the host started (a counter: a client follows each new one once) and the cutscenes
 //             it skipped (a counter and the cutscene's frontend node)
@@ -33,7 +33,8 @@ namespace mp::lobby
 {
     constexpr uint32_t MAGIC = 0x434D4C31;  // "CML1"
     constexpr int DEFAULT_PORT = 47810;
-    constexpr uint32_t MAX_PLAYERS = 4;
+    constexpr uint32_t MAX_PLAYERS = 8;     // mp::MAX_PLAYERS
+    constexpr uint32_t STABLE_PLAYERS = 4;  // more is experimental (the menu says so)
 
     enum class State { Off, Hosting, Searching, Joining, Joined, Failed };
     enum class Reason : uint8_t { None, Full, Password, Kicked, Started, Version, NoAnswer, HostLeft, PortTaken };
@@ -58,7 +59,7 @@ namespace mp::lobby
     // The game options the host sets in the lobby (sent in the roster).
     struct Options
     {
-        uint32_t maxPlayers = MAX_PLAYERS;  // 2-4
+        uint32_t maxPlayers = STABLE_PLAYERS;  // 2-8; 5-8 experimental
         uint32_t knockOutSeconds = 5;       // 3, 5 or 10: how long a knocked-out player lies
     };
 

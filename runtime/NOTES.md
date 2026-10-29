@@ -2558,3 +2558,17 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   Coleira (`CRASH_MP_LEASH`, 15 unidades, 0 desliga): passando do limite a partir do meio dos outros, o
   analógico perde a parte que afasta (o pad enviado já vai assim); quem ficar a mais do dobro por 1,5 s volta
   ao lado do companheiro de menor slot, movido pela própria máquina. Câmera continua individual.
+- **8 jogadores (experimental, branch `mp-8players`, 2026-10-29)**: MÁXIMO DE JOGADORES vai até 8 no lobby
+  (padrão 4; 5-8 com EXPERIMENTAL), protocolo 5, arrays por `mp::MAX_PLAYERS` (8). Crashes 5-8 pelo mesmo
+  `DO_SpawnPlayer(5..8, "ref_Crash_P5..P8")`; nosso índice é 4-7, mas o byte que o jogo lê (+292) é 2 ou 3
+  (`GameIndex`): as flags por jogador do CGameDatabase (+32 + índice) só têm 4 bytes, o 5º escreveria no int
+  de +36. Controles 4-7: cópia do controle 0 (entradas de 60 bytes, callbacks limpos) + CInputDevice feito pelo
+  construtor do jogo (`sub_821ECDD0(this, 1, 40, n)`) e ligado por `sub_821EC1C8`, fora das listas do jogo;
+  depois do `CInputManager::vf10` o pad (`input::ReadExtraController`: `P5_..P8_` do script ou `mp::RemotePad`)
+  passa pelas entradas (`sub_8228A110`) e o dispositivo é atualizado (`sub_821ED160`). Na fase os heaps do jogo
+  estão cheios (o histórico nulo de uma entrada crashava em `sub_821ECC78` lendo 0x4): dispositivo e partes
+  em `GuestAlloc`, feitos uma vez. Alvos da IA: o CAIManager só tem 4; com mais de 4 jogadores eles se
+  revezam (`BalanceAiTargets`: quem está caído cede, vaga livre vai para quem espera há mais tempo, a cada
+  8 s o alvo sem ninguém atrás dele cede). Visto: `mp_oito_crash` (8 Crashes numa máquina, P5-P8 andando cada
+  um no seu controle) e 5 máquinas (o P5 no mesmo lugar em todas). Falta: nocaute por queda dos 5-8 cai no
+  P3/P4 do jogo, lobby com 8 nomes não cabe (mp-menus), cores 5-8 (mp-colors), nunca com 6-8 máquinas nem Android.

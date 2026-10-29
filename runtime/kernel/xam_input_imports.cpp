@@ -138,9 +138,9 @@ namespace
     // trigger at any position: LS=0.5/-1 (x/y, -1..1), RS=x/y, LT=0.7, RT=1 (0..1), e.g.
     // 146000:LS=0.3/1:3000. A time can be relative to a test event (settings/direct_boot.h):
     // gameplay_ready+2500:A (ms after the first gameplay_ready), level_ready#2+0:SHOT (the second
-    // one); an entry waits for its event. SHOT saves a screenshot. A P2_ / P3_ / P4_ prefix on a
-    // button, stick or trigger presses it on a virtual controller 1 / 2 / 3 instead, connected from
-    // boot (local co-op tests without a second pad): gameplay_ready+1000:P2_START, P2_LS=1/0. The
+    // one); an entry waits for its event. SHOT saves a screenshot. A P2_ .. P8_ prefix on a
+    // button, stick or trigger presses it on a virtual controller 1 .. 7 instead, connected from
+    // boot (local co-op tests without a second pad; 4-7 only through ReadExtraController): gameplay_ready+1000:P2_START, P2_LS=1/0. The
     // replay on the game clock (CRASH_REPLAY) is in input_record.cpp.
     struct ScriptedPress
     {
@@ -179,7 +179,7 @@ namespace
             size_t length = strcspn(name, ",:");
             const char* next = name + length;
             uint32_t user = 0;
-            if (length > 3 && toupper(uint8_t(name[0])) == 'P' && name[1] >= '2' && name[1] <= '4' && name[2] == '_')
+            if (length > 3 && toupper(uint8_t(name[0])) == 'P' && name[1] >= '2' && name[1] <= '8' && name[2] == '_')
             {
                 user = uint32_t(name[1] - '1');
                 name += 3;
@@ -495,6 +495,26 @@ namespace input
     void NoteGameRead(uint64_t bytes, bool level)
     {
         (level ? g_levelBytes : g_otherBytes) += bytes;
+    }
+
+    bool ReadExtraController(uint32_t user, void* gamepad)
+    {
+        XINPUT_STATE state{};
+        bool connected = false;
+        if (user >= 4 && user < 8)
+        {
+            if (ScriptedPad(user))
+            {
+                ScriptedState(state, ClockNow(), user);
+                connected = true;
+            }
+            if (mp::RemotePad(user, &state.Gamepad))
+                connected = true;
+            if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput() || mp::menu::BlocksGameInput())
+                state.Gamepad = {};
+        }
+        memcpy(gamepad, &state.Gamepad, sizeof(XINPUT_GAMEPAD));
+        return connected;
     }
 
     uint16_t MenuButtons()

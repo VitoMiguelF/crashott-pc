@@ -346,7 +346,9 @@ namespace mp::menu
                 return std::string(T("PASSWORD", "SENHA")) + ":  " + (lobby::Password().empty() ? T("NONE", "NENHUMA") : lobby::Password());
             // \xC2\xBA / \xC2\xBB: the game's < > icons.
             case ROW_MAX_PLAYERS:
-                return std::string(T("MAX PLAYERS", "MÁXIMO DE JOGADORES")) + ":  \xC2\xBA " + std::to_string(o.maxPlayers) + " \xC2\xBB";
+                // Past the game's 4: experimental (mp_players.cpp, players 5-8).
+                return std::string(T("MAX PLAYERS", "MÁXIMO DE JOGADORES")) + ":  \xC2\xBA " + std::to_string(o.maxPlayers) + " \xC2\xBB" +
+                       (o.maxPlayers > lobby::STABLE_PLAYERS ? "  EXPERIMENTAL" : "");
             case ROW_KNOCK_OUT:
                 return std::string(T("KNOCK-OUT TIME", "TEMPO NOCAUTEADO")) + ":  \xC2\xBA " + std::to_string(o.knockOutSeconds) + " s \xC2\xBB";
             default: return T("CLOSE SESSION", "ENCERRAR SESSÃO");
