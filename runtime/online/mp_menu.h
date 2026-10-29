@@ -50,4 +50,11 @@ namespace mp::menu
 
     // Render thread, once per presented frame (gpu/xenos_renderer.cpp): input and drawing.
     void Draw(uint32_t width, uint32_t height);
+
+    // SKIN AND COLOR (the host's lobby, a client's wait): the game's own skin screen (SkinSelectionScreen,
+    // node 1058, with its 3D preview) opened from the lobby. While it shows, every wearable skin but
+    // Crash_Hulk is there (dev/dev_skins.cpp's next / previous and unlocked hooks), and the preview wears
+    // this player's colour (mp_colors.cpp): PreviewColour, -1 when it does not show.
+    bool PickerOpen();
+    int PreviewColour();
 }

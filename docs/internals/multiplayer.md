@@ -471,6 +471,21 @@ PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale f
   hashes; released at vf04), the spawn of player n puts the skin of the slot it is here at +8, and
   CheckSkinType compares with the skin that Crash was spawned with. Not seen in the game yet.
 
+- **SKIN AND COLOR** (`mp_menu.cpp`, the host's lobby row and a client's Y / tap at the wait): the game's own skin
+  screen (`SkinSelectionScreen`, node 1058, with its 3D preview) from the lobby. The frontend takes an exit of
+  any node, so the title screen's ExitSpecial (67) goes there from the HUB or the options screen, after the
+  skin to start on goes in the frontend manager +16640 (what the HUB doll's `Frontend:SetSkinToDisplay` does;
+  writing the preview's own struct at 0x82497508 instead made it skip the template load and crash). While it
+  shows, its left / right go through every wearable skin but Crash_Hulk (`dev_skins.cpp`'s next / previous
+  `sub_822159F8` and unlocked `sub_82215900` hooks), up / down (or a tap on the arrows) change the colour, drawn
+  in the screen's own look (the COLOR title as the skin's name, the menus' arrow turned a quarter,
+  `menu_art::DrawIconTurned`, the hint between BACK and WEAR SKIN), and the preview wears it
+  (`mp_colors.cpp` `PaintPreview`: base palette jacked for WHITE, a Tint after the blend). The host's
+  ExitConfirmed / ExitBack go to its HUB as usual and the lobby opens again; a client's go to the wait instead
+  (exit 91 with the SETTINGS marker), wearing the skin through the frontend's `SelectSkin` (the menus' scene
+  loads as a level, so `dev::skins::Select` is told to). The skin then goes to the others in PING / ROSTER.
+  `mp_skin_cor` (host), `mp_skin_cor_c` (a client, with `mp_lobby_host_new`).
+
 ## Internet (no server of ours)
 
 - **The host's port** (`online/mp_nat.cpp`, on its own thread when the session opens; `CRASH_MP_NAT=0` skips it,

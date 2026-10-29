@@ -3,6 +3,7 @@
 #include "mp_colors.h"
 #include "mp.h"
 #include "mp_lobby.h"
+#include "mp_menu.h"
 #include "../diagnostics.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
@@ -18,6 +19,7 @@
 #include <vector>
 
 extern "C" PPC_FUNC(__imp__sub_822212C0);  // character drawable: the palette of this frame (+0x11C8)
+PPC_EXTERN_FUNC(sub_8222C2D8);             // character drawable (+348): sets its base palette
 
 namespace
 {
@@ -207,6 +209,21 @@ namespace
         uint32_t colour;
         int skin = -2;  // FindSkin's, -2 not looked yet
     };
+    // The skin screen's 3D preview while MULTIPLAYER's SKIN AND COLOR shows it (mp_menu.h PreviewColour), by
+    // drawable: its normal palette (a new skin's drawable may take an old one's address), whether its base is
+    // the jacked palette (WHITE) and its skin (FindSkin, from its first frame). Game thread.
+    struct Preview
+    {
+        uint32_t normal = 0;
+        bool jacked = false;
+        int skin = -1;
+    };
+    std::unordered_map<uint32_t, Preview> g_previews;
+
+    // The preview in the player's colour, as a player's Crash: the base is the jacked palette for WHITE and the
+    // normal one for the others (so the game's blend gives it), and a Tint recolours this frame's palette.
+    void PaintPreview(PPCContext& ctx, uint8_t* base, uint32_t drawable, uint32_t colour);
+
     std::mutex g_paintMutex;
     std::unordered_map<uint32_t, Painted> g_painted;  // by drawable
 
@@ -370,6 +387,13 @@ PPC_FUNC(sub_822212C0)
 {
     uint32_t drawable = ctx.r3.u32;
     __imp__sub_822212C0(ctx, base);
+    if (int colour = mp::menu::PreviewColour(); colour >= 0)
+    {
+        PaintPreview(ctx, base, drawable, uint32_t(colour));
+        return;
+    }
+    if (!g_previews.empty())
+        g_previews.clear();
     if (!mp::Enabled())
         return;
     Painted painted{ 0, -2 };
@@ -399,4 +423,33 @@ PPC_FUNC(sub_822212C0)
                 TintPalette(drawable + 0x11C8, RECIPES[painted.colour], painted.skin);
                 return;
             }
+}
+
+namespace
+{
+    void PaintPreview(PPCContext& ctx, uint8_t* base, uint32_t drawable, uint32_t colour)
+    {
+        const Recipe& recipe = RECIPES[std::min(colour, COUNT - 1)];
+        uint32_t variant = LoadBE32(drawable + 4548) & 3;
+        uint32_t normal = LoadBE32(drawable + 4516 + variant * 4), jacked = LoadBE32(drawable + 4532 + variant * 4);
+        if (!GuestPointer(normal) || !GuestPointer(jacked))
+            return;
+        Preview& p = g_previews[drawable];
+        if (p.normal != normal)
+        {
+            p = { normal, false, FindSkin(g_memory.Translate(drawable + 0x11C8)) };
+            Log("[mp] skin screen preview %08X: %s palette", drawable, p.skin >= 0 ? SKINS[p.skin].name : "Crash's (or unknown)");
+        }
+        bool wantJacked = recipe.kind == Kind::Jacked;
+        if (p.jacked != wantJacked)
+        {
+            PPCContext call = ctx;
+            call.r3.u64 = drawable + 348;
+            call.r4.u64 = (wantJacked ? jacked : normal) + 16;
+            sub_8222C2D8(call, base);
+            p.jacked = wantJacked;
+        }
+        if (recipe.kind == Kind::Tint)
+            TintPalette(drawable + 0x11C8, recipe, p.skin);
+    }
 }

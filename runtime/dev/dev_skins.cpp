@@ -50,8 +50,11 @@
 #include "../kernel/memory.h"
 #include "../settings/settings.h"
 #include "../online/mp.h"
+#include "../online/mp_menu.h"
 
+#include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <cctype>
 #include <cstring>
 #include <mutex>
@@ -343,14 +346,14 @@ namespace dev::skins
         return changed;
     }
 
-    std::string Select(PPCContext& ctx, uint8_t* base, int skin, bool now)
+    std::string Select(PPCContext& ctx, uint8_t* base, int skin, bool now, bool frontend)
     {
         if (!Wearable(skin))
             return std::string("skin ") + std::to_string(skin) + " (" + Label(skin) + ") nao pode ser usada";
         Hashes(ctx, base);
         if (skin == HULK)
             HoldNormalCrash(ctx, base);
-        if (!g_inLevel)
+        if (!g_inLevel || frontend)
         {
             // Frontend: what the skin screen's "wear" does (Frontend:SelectSkin).
             uint32_t manager = FrontendManager(ctx, base);
@@ -389,10 +392,27 @@ PPC_FUNC(sub_82215730)
     __imp__sub_82215730(ctx, base);
 }
 
+// MULTIPLAYER's SKIN AND COLOR (mp_menu.h PickerOpen): the skin screen goes through every wearable skin
+// but Crash_Hulk, in the skin menu's order, unlocked or not.
+namespace
+{
+    const int PICKER_SKINS[] = { 21, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 23, 24 };
+
+    bool PickerSkin(int skin)
+    {
+        return std::find(std::begin(PICKER_SKINS), std::end(PICKER_SKINS), skin) != std::end(PICKER_SKINS);
+    }
+}
+
 // IsSkinUnlocked: Crash_Hulk with [dev] hulk_skin, without a slot of the game's list.
 PPC_FUNC(sub_82215900)
 {
     int32_t skin = ctx.r3.s32;
+    if (mp::menu::PickerOpen() && PickerSkin(skin == -1 ? int32_t(LoadBE32(0x82497508)) : skin))
+    {
+        ctx.r3.u64 = 1;
+        return;
+    }
     PPCContext saved = ctx;
     __imp__sub_82215900(ctx, base);
     if (ctx.r3.u32 == 0 && HulkUnlocked())
@@ -409,6 +429,14 @@ PPC_FUNC(sub_822159F8)
 {
     int32_t skin = ctx.r3.s32;
     bool previous = ctx.r4.s32 == 2;
+    if (mp::menu::PickerOpen())
+    {
+        constexpr int COUNT = int(std::size(PICKER_SKINS));
+        int at = int(std::find(std::begin(PICKER_SKINS), std::end(PICKER_SKINS), skin) - std::begin(PICKER_SKINS));
+        at = at >= COUNT ? 0 : (at + (previous ? COUNT - 1 : 1)) % COUNT;
+        ctx.r3.s64 = PICKER_SKINS[at];
+        return;
+    }
     if (!HulkUnlocked() || HulkInList())
     {
         __imp__sub_822159F8(ctx, base);

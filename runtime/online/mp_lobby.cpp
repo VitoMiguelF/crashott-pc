@@ -424,7 +424,8 @@ namespace mp::lobby
                 }
                 if (r.ok && skin != m.skin)
                 {
-                    m.skin = skin;  // the player wore another skin at its HUB
+                    m.skin = skin;  // the player wore another skin (its HUB, or SKIN AND COLOR)
+                    Log("[lobby] %s: skin %08X", m.name.c_str(), skin);
                     SendRoster(s);
                 }
             }

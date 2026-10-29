@@ -1576,3 +1576,32 @@ dev_invincible = true
 env = { CRASH_MP = "1", CRASH_MP_PLAYERS = "3" }
 input = [["@gameplay_ready"], [5, "P2_X"], [5.1, "SHOT"], [5.25, "SHOT"], [5.4, "SHOT"], [8, "P3_X"], [8.1, "SHOT"], [8.25, "SHOT"], [8.4, "SHOT"], [11, "P3_A"], [11.1, "SHOT"], [11.25, "SHOT"], [11.4, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['player 3.s input registered'] }
+
+[profiles.mp_skin_cor]
+description = "SKIN E COR do host: NOVO JOGO até o HUB, BACK abre o lobby, SKIN E COR abre a tela de skins do jogo (prévia 3D) com a caixa de cor; direita troca a skin, baixo troca a cor, A confirma e o lobby volta"
+test = false
+timeout = 75
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "HOST", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_MENU_AUTOPILOT = "96:A:2000,96:Y:1500,105:A+:1500,154:A+:1500,165:DOWN:1500,165:A:1000,320:A+:1000" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [7, "A"],
+    ["@hub"], [3, "BACK"], [4, "SHOT"], [4.5, "DOWN"], [5, "A"], [9, "SHOT"], [10, "RIGHT"], [12, "SHOT"], [13, "DOWN"], [14, "SHOT"], [15, "DOWN"], [16, "SHOT"], [17, "A"], [18.5, "SHOT"], [19, "LEFT"], [19.5, "A"], [23, "SHOT"], [24, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["hub"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SKIN AND COLOR: the skin screen', 'lobby opened again at the HUB'] }
+
+[profiles.mp_skin_cor_c]
+description = "SKIN E COR do cliente (com mp_lobby_host_new): entra pelo código, Y na espera abre a tela de skins do jogo, direita troca a skin, baixo a cor, SIM confirma e volta para a espera do lobby"
+test = false
+timeout = 80
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "CLIENTE", CRASH_MP_CODE = "3Z000-03EP2", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
+input = [
+    ["@main_menu"], [3, "DOWN"], [3.5, "DOWN"], [4.5, "A"], [6, "DOWN"], [6.5, "A"], [7.3, "DOWN"], [7.8, "A"], [11, "SHOT"], [12, "A"], [16, "SHOT"], [20, "Y"], [25, "SHOT"], [26, "RIGHT"], [28, "SHOT"], [29, "DOWN"], [30, "SHOT"], [31, "A"], [32.5, "LEFT"], [33, "A"], [38, "SHOT"], [42, "SHOT"],
+]
+expect = { exit = ["timeout"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SKIN AND COLOR: the skin screen', 'SKIN AND COLOR: back to the wait', 'menu opened at the lobby'] }

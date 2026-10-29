@@ -65,6 +65,7 @@ namespace dev
         bool UnlockHulk(bool on);
         // Wears `skin`: in the frontend at once (the game's SelectSkin), in a level at the next
         // level load (`now`: restarts the level). Returns the message for the console.
-        std::string Select(PPCContext& ctx, uint8_t* base, int skin, bool now);
+        // `frontend`: the frontend's way even if a level was loaded (the skin screen: the menus' scene loads as one).
+        std::string Select(PPCContext& ctx, uint8_t* base, int skin, bool now, bool frontend = false);
     }
 }

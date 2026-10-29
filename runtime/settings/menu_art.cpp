@@ -751,6 +751,38 @@ namespace settings::menu_art
         return std::round(height * float(g.x1 - g.x0) / float(g.y1 - g.y0));
     }
 
+    float DrawIconTurned(Canvas& canvas, char32_t icon, float x, float y, float height, bool clockwise)
+    {
+        const Font* f = LoadedFont(FontId::Large);
+        auto it = f ? f->glyphs.find(icon) : decltype(f->glyphs.end()){};
+        if (!f || it == f->glyphs.end() || it->second.empty)
+            return 0.0f;
+        const Glyph& g = it->second;
+        int h = int(std::lround(height)), w = int(IconWidth(icon, height));
+        if (w <= 0 || h <= 0)
+            return 0.0f;
+        const Image& image = Scaled(f->pages[g.page], g.x0, g.y0, g.x1 - g.x0, g.y1 - g.y0, w, h);
+        static std::mutex s_mutex;
+        static std::map<std::tuple<char32_t, int, int, bool>, Image> s_turned;
+        std::lock_guard lock(s_mutex);
+        auto [found, inserted] = s_turned.try_emplace({ icon, w, h, clockwise });
+        Image& turned = found->second;
+        if (inserted)
+        {
+            // w x h -> h x w: clockwise the new (x, y) is the old (y, h - 1 - x); the other way (w - 1 - y, x).
+            turned.w = h, turned.h = w;
+            turned.px.resize(size_t(w) * h);
+            for (int ty = 0; ty < w; ty++)
+                for (int tx = 0; tx < h; tx++)
+                {
+                    int sx = clockwise ? ty : w - 1 - ty, sy = clockwise ? h - 1 - tx : tx;
+                    turned.px[size_t(ty) * h + tx] = image.px[size_t(sy) * w + sx];
+                }
+        }
+        canvas.Blit(turned, int(std::lround(x)), int(std::lround(y)));
+        return float(turned.w);
+    }
+
     float DrawIcon(Canvas& canvas, char32_t icon, float x, float y, float height, float opacity, bool flipX)
     {
         const Font* f = LoadedFont(FontId::Large);

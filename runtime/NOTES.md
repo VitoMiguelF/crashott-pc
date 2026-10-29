@@ -2581,3 +2581,8 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   do controle do jogador pela tabela de 2 do `GetPlayersControllerNum`; o índice 2 lia além dela e pegava o
   dispositivo do P2, então as cópias do P3-P8 só andavam (o analógico é lido pelo binding), sem pular nem bater
   (nada de dano, plantas de mojo inteiras). O hook do `sub_821ED6C0` registra cada um no próprio dispositivo.
+- **SKIN E COR no lobby** (2026-10-29): linha do lobby do host e Y na espera do cliente abrem a tela de skins do
+  próprio jogo (nó 1058, prévia 3D) pela saída 67; todas as skins vestíveis menos a Crash_Hulk; cima/baixo
+  mudam a cor (no visual da tela: título COR, setas do jogo giradas, dica entre VOLTAR e VESTIR SKIN) e a
+  prévia já vem pintada; o host volta ao HUB com o lobby aberto, o cliente volta à espera (saída 91). A skin
+  vai aos outros pelo lobby.

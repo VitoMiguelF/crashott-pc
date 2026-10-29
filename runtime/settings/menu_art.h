@@ -106,6 +106,10 @@ namespace settings::menu_art
     // One icon `height` pixels high with its top-left at (x, y), optionally mirrored; returns its width.
     float DrawIcon(Canvas& canvas, char32_t icon, float x, float y, float height, float opacity = 1.0f, bool flipX = false);
     float IconWidth(char32_t icon, float height);
+    // An icon turned a quarter (clockwise, or the other way): ICON_LEFT clockwise points up, the other way down
+    // (the up / down arrows next to the left / right ones). `height` is the icon's own (its width once turned);
+    // returns the turned icon's width.
+    float DrawIconTurned(Canvas& canvas, char32_t icon, float x, float y, float height, bool clockwise);
     // Whether the font draws `c` (not empty).
     bool HasGlyph(FontId font, char32_t c);
     // `text` in at most `maxWidth`: the cell shrinks down to `minScale` x, then the end is cut with
