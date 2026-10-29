@@ -76,6 +76,8 @@ public class LauncherActivity extends SDLActivity {
     }
 
     private boolean bringGameToFront() {
+        if (!GameInstaller.installed(this))
+            return false;  // a game an older APK built: the launcher builds the new one
         ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
         for (ActivityManager.AppTask task : manager.getAppTasks()) {
             ActivityManager.RecentTaskInfo info = task.getTaskInfo();
