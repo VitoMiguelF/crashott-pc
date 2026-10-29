@@ -823,27 +823,28 @@ namespace mp
 
     // After a cutscene the game puts players 1 and 2 where the level goes on; players 3-8 stayed where
     // they were (the parking place, when they came up during the level's opening one: out of everybody's
-    // sight, and their room kept current). Every player in play goes next to the host's, 1.2 apart per
-    // slot behind its line, the same place on every machine.
+    // sight, and their room kept current). Every player in play goes to the host's place, 1.2 apart per
+    // slot behind its line, the same place on every machine. The host's place is where this machine's
+    // player 1 was put (the level's player 1 spot, the same everywhere): on a client the host is player 2,
+    // which the game puts at the player 2 spot (20 units off in L1_E1), and gathering there had everybody
+    // corrected back across the level (a player "born" far ahead).
     void Gather(PPCContext& ctx, uint8_t* base)
     {
         g_gatherAt = 0;
-        uint32_t host = MAX_PLAYERS;
-        for (uint32_t i = 0; i < MAX_PLAYERS; ++i)
-            if (PlayerCrash(i) && PlayerSlot(i) == 0)
-                host = i;
-        uint32_t hostCrash = host < MAX_PLAYERS ? PlayerCrash(host) : 0;
-        uint32_t physics = hostCrash ? LoadBE32(hostCrash + 0xDC) : 0, actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
+        uint32_t p1 = PlayerCrash(0);
+        uint32_t physics = p1 ? LoadBE32(p1 + 0xDC) : 0, actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
         uint32_t xform = GuestPointer(actor) ? LoadBE32(actor + 44) : 0;
-        if (!GuestPointer(xform))
+        if (!GuestPointer(xform) || !PlayerOnFoot(0))
             return;
+        float spot[3] = {LoadF(xform + 48), LoadF(xform + 52), LoadF(xform + 56)};
         for (uint32_t i = 0; i < MAX_PLAYERS; ++i)
         {
-            if (i == host || !PlayerOnFoot(i) || HitpointsHeld(i))
+            uint32_t slot = PlayerSlot(i);
+            if (!PlayerCrash(i) || !PlayerOnFoot(i) || HitpointsHeld(i) || (i == 0 && slot == 0))
                 continue;
-            float x = LoadF(xform + 48) + 1.2f * PlayerSlot(i), y = LoadF(xform + 52) + 0.5f, z = LoadF(xform + 56) - 1.5f;
+            float x = spot[0] + 1.2f * slot, y = spot[1] + 0.5f, z = spot[2] - (slot ? 1.5f : 0.0f);
             bool moved = TeleportCrash(ctx, base, PlayerCrash(i), x, y, z);
-            Log("[mp] after the cutscene: player %u (slot %u) next to the host's at (%.1f, %.1f, %.1f)%s", i + 1, PlayerSlot(i) + 1, x, y, z,
+            Log("[mp] after the cutscene: player %u (slot %u) at the host's place (%.1f, %.1f, %.1f)%s", i + 1, slot + 1, x, y, z,
                 moved ? "" : ", not moved");
         }
     }

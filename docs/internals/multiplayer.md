@@ -229,6 +229,11 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   with its own device (2 / 3, or ours for 5-8); the actor is the Crash - 0x40 (its +156 is set after vf06).
   `mp_p3_botoes` (local, 3 players): P3 attacks and jumps on its own buttons; `mp_p3_ataque`: P3 breaks the
   village's mojo plants (`CRASH_DEV_DAMAGE_DEBUG` names each damage's attacker).
+- **Breakables** (`mp_planta_host` + `mp_planta_c`): a mojo plant's hitpoints go 1 -> 0 -> 1 (broken, then its
+  stump) within a frame, so the host's 30 Hz records never carried the 0, and a client drops its own hits on what
+  the host mirrors: the plants a client hit broke on the host only. The host keeps a broken actor's record at 0
+  for 1.5 s (`brokenUntil`, set in the AdjustHitpoints hook when the hitpoints reach 0); a client applies that 0
+  once per break (`brokenAt`), so the stump is not broken again.
 - **No backpack**: online (or with `CRASH_MP_PLAYERS`) `SetPlayerEnteringBackpack` (`sub_82153348`) is skipped for a
   Crash on foot, `IsOkayToEnterBackpack` says no and `EnterOtherPlayersBackpack` fails the game's way.
 - **Network**: slots (host 0, clients `CRASH_MP_SLOT` 1-3, UDP port + slot). Each machine plays its own slot as
@@ -514,11 +519,19 @@ PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale f
 ## Leaving a level, the pause, players who leave
 
 - **Each machine owns its player's position** (`mp_net.cpp`, protocol version 4): the pad packet also carries
-  where the sender's player is and whether it is in play (48 bytes); every machine corrects its copies of the
-  other players to that (`CorrectRemotePlayers`, the rules the client's corrections from the host's records
-  had: past 1.0 moving, 2.0 in contact, 0.25 standing, 250 ms, 3 tries) and never its own player. Before, a
-  client's own Crash was corrected to the host's copy of it: a teleport every now and then while walking, with
-  the falling animation. The host's records still give the players' hitpoints.
+  where the sender's player is and whether it is in play (48 bytes); every machine brings its copies of the
+  other players there and never its own player. Before, a client's own Crash was corrected to the host's copy
+  of it: a teleport every now and then while walking, with the falling animation. The host's records still
+  give the players' hitpoints.
+- **Walked there, not teleported** (`Steer`, `RemotePad`): a teleport is a jump and the falling animation, which
+  the players kept seeing on the others. A copy 0.3 to 4 units off (on the ground) gets a stick toward its owner's
+  place on top of the mirrored pad (alone when that pad's stick is idle, half added when it moves; slower close
+  to it), turned onto this machine's camera. `CorrectRemotePlayers` teleports only past 4 units (or `snap`), or a
+  copy still more than 0.6 off after 1.5 s standing (a wall, another player in the way); 250 ms, 3 tries.
+- **Quiet in and after a cutscene**: while one plays (`cutscenes::CutscenePlaying`: a client never gets the skip
+  prompt, so `SkipPossible` was false there) and 1.5 s after it, nobody sends its player as in play nor corrects
+  or steers copies: the players stand at parking spots then, and the copies were pulled 160 units across the
+  level for a moment.
 - **Leash** (as the shared co-op camera kept the players together, each with its own camera;
   `CRASH_MP_LEASH`, default 15 units, 0 = off): past it from the middle of the other players in play, the part
   of player 1's stick that walks further away is taken out before the game and the other machines see the
@@ -565,10 +578,20 @@ PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale f
   doesn't see its skip buttons). The host's skip goes in the roster (a counter and the cutscene's frontend
   node, protocol version 3); a client skips that cutscene when it plays it (kept 20 s for a client still
   behind). When a cutscene ends (state 7 on a cutscene node; the scripted sequences inside the gameplay don't
-  count) every player in play goes next to the host's 500 ms later (`mp::CinematicDone`, 1.2 apart per slot):
+  count) every player in play goes to the host's place 500 ms later (`mp::CinematicDone`, 1.2 apart per slot):
   the game places players 1 and 2, and players 3-4, spawned during the level's opening cutscene, stayed at the
-  parking place (57.4 45.5 -52.1), out of everybody's sight: "the blue Crash was invisible". Profiles
-  `mp_cine_host` + `mp_cine_c1` + `mp_cine_c2` (not passing yet: the clients' scripts end before they join).
+  parking place (57.4 45.5 -52.1), out of everybody's sight: "the blue Crash was invisible". The host's place is
+  where each machine's player 1 was put (the level's player 1 spot, the same everywhere): on a client the host
+  is player 2, which the game puts at the player 2 spot (20 units ahead in L1_E1), and gathering there had the
+  players corrected back across the level ("P2 born far ahead").
+- **Cutscenes start together** (protocol version 8, `lobby::HoldAtCutscene`): the frontend's way into a
+  cutscene is held (`OverrideExit` returns -1) until every machine of the session is there: InGame (630) once
+  the level has loaded (a client only starts loading when the host's InGame shows: the phones came in seconds
+  late) and GameRunning's exits to the cutscenes (657-748, the conditions give 638 the exit to the cutscene
+  itself, e.g. "node 638 exit 657"; not the jacking one). A client says where it waits in its PING, the host
+  lets everybody go with the roster (`go`), at most 45 s at a level's start and 10 s in it; a member quiet for
+  3 s is not waited for. Seen (`mp_cine_host` + `mp_cine_c1` + `mp_cine_c2`): the host waits 1.8 s at 630 for
+  the two clients, then the three start NIS01 together and stand at the same places after the host's skip.
 - Test: `mp_quit_host` + `mp_quit_c` + `mp_quit_c2` (three windows, the code client quits by its menu, the host
   leaves, then closes the session); `mp_tres_sair` (local, 3 players, EXIT LEVEL to the HUB).
 

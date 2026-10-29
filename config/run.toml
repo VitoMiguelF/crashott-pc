@@ -1631,3 +1631,29 @@ skip_cinematics = true
 env = { CRASH_SETTINGS = "controls.player2=keyboard" }
 input = [["@gameplay_ready"], [1, "SHOT"], [3, "KEY_E"], [5, "SHOT"], [8, "KEY_ESCAPE"], [9.5, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['P2 = teclado'] }
+
+[profiles.mp_planta_host]
+description = "Host do L1_E1 parado; rode junto com mp_planta_c: o cliente anda para a direita até as plantas de mojo e bate (as plantas que o cliente quebrava só quebravam no host)"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_TRACE = "1", CRASH_DEV_DAMAGE_DEBUG = "1", CRASH_RESTART_WINDOW = "0,0,1920,1100" }
+input = [["@gameplay_ready"], [3, "SHOT"], [10, "SHOT"], [12, "SHOT"], [14, "SHOT"], [18, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_planta_c]
+description = "Cliente do mp_planta_host: anda para a direita até as plantas de mojo e bate (X); as plantas devem quebrar nas duas janelas"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_DEV_DAMAGE_DEBUG = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1100" }
+input = [["@gameplay_ready"], [3, "SHOT"], [4, "LS", 1, 0, 2.5], [6.6, "X"], [7.0, "X"], [7.4, "X"], [7.8, "X"], [8.2, "X"], [8.6, "SHOT"], [9.0, "X"], [9.4, "X"], [10, "SHOT"], [12, "SHOT"], [14, "SHOT"], [18, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }

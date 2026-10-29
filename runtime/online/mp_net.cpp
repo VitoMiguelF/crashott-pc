@@ -176,6 +176,10 @@ namespace
         // and the way away from the others when it is past the leash (0, 0 within it)
         float myPos[3]{}, awayX = 0, awayZ = 0;
         bool myInPlay = false;
+        // Game thread: until when the players are not where they play (a cutscene and the game's placing after it:
+        // CUTSCENE_QUIET_MS). Their places then are parking spots: sent as such they pulled the copies elsewhere
+        // 160 units away for a moment (a player "born" far ahead).
+        uint64_t quietUntil = 0;
         uint64_t remotePadAt[mp::MAX_PLAYERS]{}, padSequence[mp::MAX_PLAYERS]{}, padPackets = 0;
         XINPUT_GAMEPAD lastSentPad{};
         uint64_t lastPadSend = 0, sentPadSequence = 0;
@@ -193,6 +197,13 @@ namespace
         float lastSnapPos[mp::MAX_PLAYERS][3]{};  // client: the last correction's target, and how many went there in a row
         uint32_t snapRepeats[mp::MAX_PLAYERS]{};  // trace: the host's last hitpoints (fraction) for each player
         uint64_t hitpointsApplied = 0, damageDropped = 0;
+        // Host: actors whose hitpoints reached 0 (name -> until when): their records say 0 for BROKEN_HOLD_MS. A
+        // mojo plant's go 1 -> 0 -> 1 (broken, then the stump's) within a frame, so a snapshot never saw the 0
+        // and the plants a client hit broke on the host only.
+        std::unordered_map<uint64_t, uint64_t> brokenUntil;
+        // Client: when the host's 0 was applied to an actor (name): once per hold, the stump (hitpoints back at
+        // 1 at once) is not broken again.
+        std::unordered_map<uint64_t, uint64_t> brokenAt;
     };
 
     uint32_t Get32(const uint8_t* p);
@@ -453,6 +464,13 @@ namespace
         }
         if (local < 0 || std::abs(local - wanted) <= 0.01f)
             return;
+        if (!player && wanted <= 0)
+        {
+            uint64_t& at = n.brokenAt[name];
+            if (at && mp::NowMs() - at < 2500)
+                return;
+            at = mp::NowMs();
+        }
         PPCContext call = ctx;
         call.r3.u64 = damageable;
         call.r5.u64 = 0;
@@ -624,6 +642,8 @@ namespace
                 r.m[row * 3 + c] = LoadF(xform + row * 16 + c * 4);
         uint32_t damageable = Damageable(N(), actor);
         r.hitpoints = damageable ? LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)) : -1.0f;
+        if (auto broken = N().brokenUntil.find(r.name); broken != N().brokenUntil.end() && mp::NowMs() < broken->second)
+            r.hitpoints = 0.0f;
         r.flags = 0;
         for (uint32_t player : mp::PlayerActors())
             if (player == actor)
@@ -787,7 +807,10 @@ namespace
         n.lastSend = now;
         bool full = now - n.lastFull >= 1000;
         if (full)
+        {
             n.lastFull = now;
+            std::erase_if(n.brokenUntil, [&](const auto& b) { return now >= b.second + 1000; });
+        }
 
         std::vector<uint32_t> actors = Actors();
         n.lastActorCount = actors.size();
@@ -1043,6 +1066,8 @@ namespace mp
         return true;
     }
 
+    constexpr uint64_t BROKEN_HOLD_MS = 1500;
+
     double Hitpoints(uint32_t damageable, double delta)
     {
         if (!Enabled())
@@ -1057,6 +1082,12 @@ namespace mp
         if (Trace() && delta < 0)
             Log("[mp] %s: %08X takes %.1f (hitpoints %.1f)%s", n.role == Role::Host ? "host" : "client", uint32_t(NameOf(actor)),
                 -delta, LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)), n.applyingHitpoints ? " from the host" : "");
+        if (n.role == Role::Host && delta < 0)
+        {
+            float hitpoints = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS));
+            if (hitpoints > 0 && hitpoints + float(delta) <= 0)
+                n.brokenUntil[NameOf(actor)] = NowMs() + BROKEN_HOLD_MS;
+        }
         if (n.role != Role::Client || delta >= 0 || n.applyingHitpoints)
             return delta;
         // A player the host mirrors, or an actor, takes its hits from the host's records only (a knocked-out
@@ -1099,17 +1130,25 @@ namespace mp
         return true;
     }
 
+    // A remote player's copy here more than STEER_FROM off (on the ground) from where its machine has it walks
+    // there on its stick (Steer, RemotePad); past TELEPORT_PAST it is teleported (CorrectRemotePlayers).
+    constexpr float STEER_FROM = 0.3f, TELEPORT_PAST = 4.0f;
+    // After a cutscene: the game places players 1 and 2, then Gather (mp_players.cpp, +500 ms) the others.
+    constexpr uint64_t CUTSCENE_QUIET_MS = 1500;
+
     // Each machine moves its own player and is the one that knows where it is: every other machine's copy
-    // (played on the same pad, input mirroring) is corrected to the position the owner sends with its pad,
-    // never this machine's own player (a correction is a teleport: a jump and the falling animation).
-    // Moving, only past `snap` (1.0); pushing against another player (within 1.6; each machine sees the
-    // push a few frames apart) up to 2.0; standing (both still for 0.5 s), anything past 0.25, so no
-    // offset stays for good. At most every 250 ms per player; a correction that does not hold (the place
-    // is taken here, or the player slides off it) is tried 3 times, then left until the owner moves.
+    // (played on the same pad, input mirroring) follows the position the owner sends with its pad, never
+    // this machine's own player. Up to TELEPORT_PAST its stick walks it there (Steer): a teleport is a jump
+    // and the falling animation, which the players saw every few seconds on the others. Teleported past
+    // that (or `snap`, if larger), or standing still for 1.5 s still more than 0.6 off (a wall, another
+    // player in the way). At most every 250 ms per player; a correction that does not hold (the place is
+    // taken here, or the player slides off it) is tried 3 times, then left until the owner moves.
     // Not for a player knocked out or just back (it lies and comes back at the same place everywhere).
     void CorrectRemotePlayers(PPCContext& ctx, uint8_t* base, Net& n)
     {
         uint64_t now = mp::NowMs();
+        if (cutscenes::CutscenePlaying() || now < n.quietUntil)
+            return;
         for (uint32_t slot = 0; slot < n.players && slot < MAX_PLAYERS; ++slot)
         {
             uint32_t index = LocalIndex(n.slot, slot);
@@ -1138,16 +1177,8 @@ namespace mp
                 memcpy(mine, here, sizeof(here));
                 n.localMovedAt[index] = now;
             }
-            bool still = now - n.recordMovedAt[index] >= 500 && now - n.localMovedAt[index] >= 500;
-            bool contact = false;
-            for (uint32_t j = 0; j < n.players && j < MAX_PLAYERS && !contact; ++j)
-                if (uint32_t other = j != index ? PlayerActor(j) : 0; other && GuestPointer(LoadBE32(other + 44)))
-                {
-                    uint32_t ox = LoadBE32(other + 44);
-                    float cx = LoadF(ox + 48) - here[0], cz = LoadF(ox + 56) - here[2];
-                    contact = cx * cx + cz * cz < 1.6f * 1.6f;
-                }
-            float limit = still ? 0.25f : contact ? std::max(n.snap, 2.0f) : n.snap;
+            bool stuck = now - n.recordMovedAt[index] >= 1500 && now - n.localMovedAt[index] >= 1500;
+            float limit = stuck ? 0.6f : std::max(n.snap, TELEPORT_PAST);
             float dx = here[0] - want[0], dy = here[1] - want[1], dz = here[2] - want[2];
             float* prev = n.lastSnapPos[index];
             bool same = std::abs(prev[0] - want[0]) + std::abs(prev[1] - want[1]) + std::abs(prev[2] - want[2]) < 0.1f;
@@ -1175,7 +1206,10 @@ namespace mp
     {
         static uint64_t farSince;
         float leash = LeashUnits(), cx = 0, cz = 0, away[2] = {0, 0}, pos[3] = {};
-        uint32_t actor = mp::PlayerOnFoot(0) && !mp::HitpointsHeld(0) ? PlayerActor(0) : 0, xf = actor ? LoadBE32(actor + 44) : 0;
+        if (cutscenes::CutscenePlaying())
+            n.quietUntil = NowMs() + CUTSCENE_QUIET_MS;
+        bool quiet = NowMs() < n.quietUntil;
+        uint32_t actor = mp::PlayerOnFoot(0) && !mp::HitpointsHeld(0) && !quiet ? PlayerActor(0) : 0, xf = actor ? LoadBE32(actor + 44) : 0;
         bool inPlay = GuestPointer(xf);
         float distance = 0;
         if (inPlay)
@@ -1196,7 +1230,7 @@ namespace mp
             n.awayX = away[0], n.awayZ = away[1];
         }
         uint64_t now = NowMs();
-        if (!inPlay || distance <= 2 * leash || cutscenes::SkipPossible())
+        if (!inPlay || distance <= 2 * leash || cutscenes::CutscenePlaying())
         {
             farSince = 0;
             return;
@@ -1285,6 +1319,27 @@ namespace mp
         SendToPeers(n, packet.data(), packet.size());
     }
 
+    // A remote player's copy here more than STEER_FROM off (on the ground) from where its machine has it, and
+    // up to TELEPORT_PAST: a walk there, as a world stick (x, z; full = 32767), slower close to it. Its
+    // machine's position comes with its pad (n.remotePos); padMutex held.
+    bool Steer(Net& n, uint32_t slot, uint32_t index, float out[2])
+    {
+        uint64_t at = n.remotePosAt[slot];
+        if (!n.remoteInPlay[slot] || !at || NowMs() - at > 1000 || !mp::PlayerOnFoot(index) || mp::HitpointsHeld(index) ||
+            cutscenes::CutscenePlaying() || NowMs() < n.quietUntil)
+            return false;
+        uint32_t actor = PlayerActor(index), xf = actor ? LoadBE32(actor + 44) : 0;
+        if (!GuestPointer(xf))
+            return false;
+        float dx = n.remotePos[slot][0] - LoadF(xf + 48), dz = n.remotePos[slot][2] - LoadF(xf + 56);
+        float d = std::sqrt(dx * dx + dz * dz);
+        if (d <= STEER_FROM || d > TELEPORT_PAST)
+            return false;
+        float speed = std::clamp(d / 1.5f, 0.4f, 1.0f) * 32767.0f;
+        out[0] = dx / d * speed, out[1] = dz / d * speed;
+        return true;
+    }
+
     bool RemotePad(uint32_t user, void* pad)
     {
         if (!Enabled())
@@ -1302,11 +1357,27 @@ namespace mp
             if (n.remotePadAt[slot] && NowMs() - n.remotePadAt[slot] <= 2000)
                 memcpy(pad, &n.remotePad[slot], sizeof(XINPUT_GAMEPAD));
             // The left stick as the sender meant it in the world: from its camera's axes to this one's.
-            float fx = n.remoteForward[slot][0], fz = n.remoteForward[slot][1], gx, gz;
-            if ((fx || fz) && CameraForward(gx, gz) && (game.sThumbLX || game.sThumbLY))
+            float fx = n.remoteForward[slot][0], fz = n.remoteForward[slot][1], gx = 0, gz = 0;
+            bool camera = CameraForward(gx, gz);
+            float wx = 0, wz = 0;
+            if ((fx || fz) && camera && (game.sThumbLX || game.sThumbLY))
             {
                 float sx = game.sThumbLX, sy = game.sThumbLY;
-                float wx = sx * fz + sy * fx, wz = -sx * fx + sy * fz;  // stick.x * right + stick.y * forward
+                wx = sx * fz + sy * fx, wz = -sx * fx + sy * fz;  // stick.x * right + stick.y * forward
+            }
+            // Off from where its machine has it: the stick walks it there (Steer), no teleport (CorrectRemotePlayers).
+            float steer[2];
+            bool steering = camera && Steer(n, slot, user, steer);
+            if (steering)
+            {
+                bool idle = !wx && !wz;
+                wx = idle ? steer[0] : wx + steer[0] * 0.5f, wz = idle ? steer[1] : wz + steer[1] * 0.5f;
+                if (float length = std::sqrt(wx * wx + wz * wz); length > 32767.0f)
+                    wx *= 32767.0f / length, wz *= 32767.0f / length;
+            }
+            if (wx || wz)
+            {
+                float sx = game.sThumbLX, sy = game.sThumbLY;
                 float rx = wx * gz - wz * gx, ry = wx * gx + wz * gz;   // onto this camera's right / forward
                 game.sThumbLX = int16_t(std::clamp(rx, -32768.0f, 32767.0f));
                 game.sThumbLY = int16_t(std::clamp(ry, -32768.0f, 32767.0f));

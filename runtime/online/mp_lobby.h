@@ -100,6 +100,13 @@ namespace mp::lobby
     // the cutscene) goes to the clients in the roster, and each skips that cutscene when it plays it.
     void HostSkippedCutscene(uint32_t node);
     bool TakeCutsceneSkip(uint32_t node);  // client: the host skipped this one (once; kept 20 s)
+    // The players' cutscenes start together: a machine at a cutscene (`id`: the frontend exit into it; `load`: the
+    // level's start, after its load) is held there (true) until every machine of the session is at it too (the
+    // clients say so in their pings, the host's go in the roster), at most 45 s at a start (a phone loads
+    // slower) and 10 s in a level. False to go on (also outside a session). CutsceneHoldDone: the frontend went on
+    // past it (the next one may have the same id).
+    bool HoldAtCutscene(uint32_t id, bool load);
+    void CutsceneHoldDone();
     bool IsClient();                       // joined to a host
     uint32_t KnockOutSeconds();          // 0 = the game's own
 

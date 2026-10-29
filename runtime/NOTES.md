@@ -2598,3 +2598,12 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   que conta como conectado) e nenhum controle fica com ele: JOGADOR 2 = TECLADO deixa o controle 1 como jogador 1 e
   o teclado como jogador 2 (JOIN GAME com E, P2 PAUSED com Esc); JOGADOR 1 = TECLADO põe o controle 1 no jogador 2.
   `--pads-selftest` cobre os dois casos; perfil `coop_teclado_p2`.
+- **Online: touch, quebráveis, quedas e cenas juntas** (2026-10-29): o menu START do cliente e as telas do MULTIPLAYER
+  tomam o toque como mouse (`mp::menu::TakesTouch`; antes os controles na tela ficavam por baixo); na SKIN E COR as
+  setas do próprio jogo (trocar a skin) aceitam toque/clique (`Hit::GameLeft/Right` -> esquerda/direita para o jogo,
+  `menu_mouse::PageScale`). Plantas de mojo que o cliente quebrava só quebravam no host (a vida vai 1 -> 0 -> 1 num
+  quadro): o host segura 0 no registro por 1,5 s. Correções pequenas dos outros jogadores viraram o analógico
+  andando até o lugar (`Steer`), teleporte só acima de 4 unidades: acabou a animação de queda. Em cena e 1,5 s
+  depois ninguém corrige (os jogadores estão estacionados); depois da cena todos vão para o lugar do P1 de cada
+  máquina (antes o P2 do cliente era o host no ponto do P2, 20 unidades à frente). Cenas começam juntas: o
+  frontend segura a entrada (carregamento da fase e cada cena) até todos chegarem (lobby versão 8, 45 s / 10 s).

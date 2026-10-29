@@ -39,6 +39,8 @@ namespace cutscenes
     bool VideoPlaying();
     // A cutscene or a video that can be skipped is on (the prompt's, even while it is hidden).
     bool SkipPossible();
+    // A cutscene is playing, skippable here or not (a client of a MULTIPLAYER session never skips one).
+    bool CutscenePlaying();
 
     // Render thread, once per presented frame, over the back buffer (RENDER_TARGET state).
     void Draw(uint32_t width, uint32_t height);

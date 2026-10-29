@@ -32,11 +32,15 @@ namespace mp::lobby
 {
     namespace
     {
-        constexpr uint32_t VERSION = 7;  // 2: the password goes hashed (PasswordHash); 3: cutscene skips in the roster; 4: positions in the pads;
+        constexpr uint32_t VERSION = 8;  // 2: the password goes hashed (PasswordHash); 3: cutscene skips in the roster; 4: positions in the pads;
                                          // 5: up to 8 players; 6: the players' colours (HELLO / PING: asked for, ROSTER: given);
-                                         // 7: the players' skins (HELLO / PING / ROSTER)
+                                         // 7: the players' skins (HELLO / PING / ROSTER); 8: cutscenes start together (PING: where a
+                                         // client waits, ROSTER: the host's go)
         constexpr uint64_t RESEND_MS = 500, TIMEOUT_MS = 6000, DISCOVER_MS = 1000, SERVER_TTL_MS = 3500, JOIN_TIMEOUT_MS = 6000;
         constexpr uint64_t SKIP_KEEP_MS = 20000;  // a client still not at the cutscene the host skipped: forgotten after this
+        // Waiting for the others at a cutscene (HoldAtCutscene): at most this long, at a level's start (the loads) and
+        // in it; a member not heard for MEMBER_QUIET_MS is not waited for.
+        constexpr uint64_t LOAD_WAIT_MS = 45000, CUTSCENE_WAIT_MS = 10000, MEMBER_QUIET_MS = 3000;
 
         enum Type : uint8_t { DISCOVER = 1, ANNOUNCE, HELLO, WELCOME, DENY, ROSTER, PING, PONG, LEAVE };
 
@@ -51,6 +55,7 @@ namespace mp::lobby
             uint32_t pingMs = 0;
             uint8_t wanted = 0, colour = colors::NONE;  // the colour the player asked for, and the one it has
             uint32_t skin = 0;  // its Crash skin (mp_skins.cpp)
+            uint32_t waiting = 0;  // the cutscene it waits at (HoldAtCutscene), 0 = none
         };
 
         struct Session
@@ -66,6 +71,7 @@ namespace mp::lobby
             int32_t startLevel = -1;
             uint32_t startId = 0;
             uint32_t skipId = 0, skipNode = 0;  // the cutscenes the host skipped (a counter) and the last one's node
+            uint32_t go = 0;  // the last cutscene everybody was let into (HoldAtCutscene; host: given, client: the host's)
             uint64_t lastRoster = 0;
             // client
             uint32_t token = 0, hostIp = 0;
@@ -79,6 +85,9 @@ namespace mp::lobby
             int32_t pendingStart = -1;
             uint32_t seenSkipId = 0, pendingSkipNode = 0;  // a skip of the host's not done here yet
             uint64_t pendingSkipAt = 0;
+            // both: the cutscene this machine is held at (HoldAtCutscene), since when, and the one let go last
+            uint32_t waitId = 0, releasedId = 0;
+            uint64_t waitSince = 0;
             // searching
             struct Found
             {
@@ -278,6 +287,20 @@ namespace mp::lobby
             return changed;
         }
 
+        // Client: alive, its ping, colour, skin and the cutscene it waits at.
+        void SendPing(Session& s, uint64_t now)
+        {
+            s.lastPing = now;
+            Writer w(PING, s.sessionId);
+            w.Put32(s.token);
+            w.Put32(uint32_t(now));
+            w.Put32(s.pingMs);
+            w.Put8(colors::Mine());
+            w.Put32(mp::skins::Local());
+            w.Put32(s.waitId);
+            Send(s.hostIp, s.hostPort, w);
+        }
+
         void SendRoster(Session& s)
         {
             ResolveColours(s);
@@ -303,6 +326,7 @@ namespace mp::lobby
             }
             w.Put32(s.skipId);
             w.Put32(s.skipNode);
+            w.Put32(s.go);
             for (uint32_t slot = 1; slot < MAX_PLAYERS; ++slot)
                 if (s.members[slot].used)
                     Send(s.members[slot].ip, s.members[slot].port, w);
@@ -409,9 +433,14 @@ namespace mp::lobby
             {
                 uint32_t sent = r.Get32(), rtt = r.Get32();
                 uint8_t wanted = uint8_t(r.Get8());
-                uint32_t skin = r.Get32();
+                uint32_t skin = r.Get32(), waiting = r.Get32();
                 if (r.ok)
+                {
                     m.pingMs = rtt;
+                    if (waiting != m.waiting && waiting)
+                        Log("[lobby] %s waits at the cutscene %u", m.name.c_str(), waiting);
+                    m.waiting = waiting;
+                }
                 Writer w(PONG, s.sessionId);
                 w.Put32(token);
                 w.Put32(sent);
@@ -552,9 +581,10 @@ namespace mp::lobby
                         s.hostName = p.name;
                     roster.push_back(p);
                 }
-                uint32_t skipId = r.Get32(), skipNode = r.Get32();
+                uint32_t skipId = r.Get32(), skipNode = r.Get32(), go = r.Get32();
                 if (!r.ok)
                     return;
+                s.go = go;
                 s.roster = roster;
                 {
                     uint8_t colours[MAX_PLAYERS];
@@ -658,16 +688,7 @@ namespace mp::lobby
                     return;
                 }
                 if (now - s.lastPing >= RESEND_MS)
-                {
-                    s.lastPing = now;
-                    Writer w(PING, s.sessionId);
-                    w.Put32(s.token);
-                    w.Put32(uint32_t(now));
-                    w.Put32(s.pingMs);
-                    w.Put8(colors::Mine());
-                    w.Put32(mp::skins::Local());
-                    Send(s.hostIp, s.hostPort, w);
-                }
+                    SendPing(s, now);
             }
         }
     }
@@ -992,6 +1013,7 @@ namespace mp::lobby
         g_s.inGame = true;
         g_s.startLevel = levelIndex;
         g_s.startId++;
+        g_s.go = 0;
         Log("[lobby] level %d started with %u player(s)", levelIndex, Count(g_s));
         SendRoster(g_s);
     }
@@ -1035,6 +1057,56 @@ namespace mp::lobby
             return false;
         g_s.pendingSkipNode = 0;
         return true;
+    }
+
+    bool HoldAtCutscene(uint32_t id, bool load)
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        Session& s = g_s;
+        bool host = s.state == State::Hosting;
+        if ((!host && s.state != State::Joined) || (host && Count(s) < 2) || id == s.releasedId)
+            return false;
+        uint64_t now = NowMs();
+        if (id != s.waitId)
+        {
+            s.waitId = id, s.waitSince = now;
+            Log("[lobby] cutscene %u: waiting for the others", id);
+            if (!host)
+                SendPing(s, now);
+        }
+        bool ready = true;
+        if (host)
+        {
+            for (uint32_t slot = 1; slot < MAX_PLAYERS; ++slot)
+            {
+                const Member& m = s.members[slot];
+                if (m.used && now - m.seenAt < MEMBER_QUIET_MS && m.waiting != id)
+                    ready = false;
+            }
+        }
+        else
+            ready = s.go == id;
+        bool late = now - s.waitSince >= (load ? LOAD_WAIT_MS : CUTSCENE_WAIT_MS);
+        if (!ready && !late)
+            return true;
+        Log("[lobby] cutscene %u: %s after %.1f s", id, ready ? "everybody there" : "not everybody came, going on",
+            (now - s.waitSince) / 1000.0);
+        s.releasedId = id, s.waitId = 0;
+        if (host)
+        {
+            s.go = id;
+            SendRoster(s);
+        }
+        else
+            SendPing(s, now);
+        return false;
+    }
+
+    void CutsceneHoldDone()
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_s.releasedId = 0;
+        g_s.waitId = 0;
     }
 
     bool IsClient()

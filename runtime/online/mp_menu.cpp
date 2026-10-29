@@ -19,6 +19,7 @@
 #include "../platform/platform.h"
 #include "../settings/keyboard.h"
 #include "../settings/menu_art.h"
+#include "../settings/menu_mouse.h"
 #include "../settings/settings.h"
 #include "../settings/settings_menu.h"
 
@@ -64,6 +65,11 @@ namespace mp::menu
         constexpr int32_t EXIT_CONTINUE_NO_SAVE = 1116;
         constexpr int32_t EXIT_HUB_WITHOUT_SAVING = 1179, EXIT_HUB_TO_MAIN_MENU = 598, EXIT_SETTINGS = 91;
         constexpr int32_t EXIT_PAUSE = 651;  // GameRunning's START: PauseScreen (PauseGame(true))
+        // Cinematics (655, from GameRunning's TestForCinematic): its exits to each level's cutscenes (the NIS and the
+        // camera ones), not TestRatcicleJack (656) nor the jacking cinematic (749). The conditions give GameRunning
+        // the exit to the cutscene itself.
+        constexpr uint32_t NODE_CINEMATICS = 655;
+        constexpr int32_t FIRST_CUTSCENE_EXIT = 657, LAST_CUTSCENE_EXIT = 748;
         // The skin screen (SkinSelectionScreen) and its exits: the title screen's ExitSpecial goes there from
         // anywhere (the frontend takes an exit of any node), ExitConfirmed (SelectSkin) / ExitBack to the HUB.
         constexpr uint32_t NODE_SKINS = 1058;
@@ -133,6 +139,7 @@ namespace mp::menu
         // SKIN AND COLOR: asked (the next frontend condition takes the skin screen), showing (from the host's
         // HUB or a client's wait), its colour box drawn; the host's lobby again at the HUB after it.
         std::atomic<bool> g_pickerRequest{ false }, g_picker{ false }, g_pickerShown{ false }, g_reopenLobby{ false };
+        bool g_cutsceneHold = false;  // game thread: at a cutscene's start (lobby::HoldAtCutscene) since the last other node
         std::atomic<bool> g_pickerHost{ false };
         void OpenPicker(bool host);
         std::atomic<uint32_t> g_node{ UINT32_MAX };
@@ -160,7 +167,7 @@ namespace mp::menu
         const Palette* g_palette = &CLOTH;
 
         // The mouse / touch: what each part of the screen does, as last drawn (virtual units).
-        enum class Hit : uint8_t { Row, RowLeft, RowRight, Back, Accept, Key, Erase, Confirm, Panel, Anywhere, Look, Up, Down };
+        enum class Hit : uint8_t { Row, RowLeft, RowRight, Back, Accept, Key, Erase, Confirm, Panel, Anywhere, Look, Up, Down, GameLeft, GameRight };
         struct HitZone
         {
             float x0, y0, x1, y1;
@@ -844,6 +851,17 @@ namespace mp::menu
             return pressed;
         }
 
+        // A button pressed for the game for a moment (a tap on the skin screen's arrows: the game's own left / right).
+        std::atomic<uint16_t> g_gamePress{ 0 };
+        std::atomic<uint64_t> g_gamePressUntil{ 0 };
+        constexpr uint64_t GAME_PRESS_MS = 120;
+
+        void PressForGame(uint16_t button)
+        {
+            g_gamePress = button;
+            g_gamePressUntil = plat::TickCountMs() + GAME_PRESS_MS;
+        }
+
         // The mouse / touch since the last call as buttons (and letters in g_tapped). Hover selects a
         // row; a click is taken from the game's menus.
         uint16_t MouseButtons()
@@ -887,6 +905,8 @@ namespace mp::menu
             case Hit::Look: return XINPUT_GAMEPAD_Y;
             case Hit::Up: return XINPUT_GAMEPAD_DPAD_UP;
             case Hit::Down: return XINPUT_GAMEPAD_DPAD_DOWN;
+            case Hit::GameLeft: PressForGame(XINPUT_GAMEPAD_DPAD_LEFT); return 0;
+            case Hit::GameRight: PressForGame(XINPUT_GAMEPAD_DPAD_RIGHT); return 0;
             }
             return 0;
         }
@@ -1362,6 +1382,15 @@ namespace mp::menu
             art::DrawIconTurned(g_canvas, art::ICON_LEFT, v.X(hx), v.Y(top + hintArrowH + 2.0f), HINT_ARROW * v.s, false);
             Draw(v, FontId::Large, hint, hx + HINT_ARROW + 8.0f, HINT_Y, HINT_CELL, HINT);
             AddZone(hx - 10.0f, HINT_Y - 8.0f, hx + hintW + 10.0f, HINT_Y + HINT_CELL + 8.0f, Hit::Down);
+            // The game's own arrows around the preview (its left / right: the skin), for the mouse and the touch.
+            // On its page (640 x 480) at x 189 and 451, y 394 of the 1280 x 720 picture; the page is 2 picture
+            // units a page unit wide, 1.5 on a picture that is not 16:9 (settings/menu_mouse.h).
+            float page = input::menu_mouse::PageScale();
+            for (int side = 0; side < 2; side++)
+            {
+                float x = VIRTUAL_W * 0.5f + ((side ? 451.0f : 189.0f) - 320.0f) * page, half = 34.0f * page;
+                AddZone(x - half, 330.0f, x + half, 460.0f, side ? Hit::GameRight : Hit::GameLeft);
+            }
         }
 
         bool PanelWanted()
@@ -1535,9 +1564,15 @@ namespace mp::menu
         return g_open || g_releasing || g_requested;
     }
 
+    bool TakesTouch()
+    {
+        return g_open;
+    }
+
     uint16_t GameButtons()
     {
-        return plat::TickCountMs() < g_backUntil ? XINPUT_GAMEPAD_B : 0;
+        uint64_t now = plat::TickCountMs();
+        return (now < g_backUntil ? XINPUT_GAMEPAD_B : 0) | (now < g_gamePressUntil.load() ? g_gamePress.load() : 0);
     }
 
     uint16_t HiddenButtons()
@@ -1697,6 +1732,29 @@ namespace mp::menu
                 lobby::HostLevelStarted(int32_t(LoadBE32(MANAGERS + LEVEL_INDEX)));
             else if (node == NODE_HUB && lobby::HostInGame())
                 lobby::HostBackInMenus();
+        }
+        // The cutscenes start together (lobby::HoldAtCutscene): the level's start (InGame once loaded: its intro
+        // cutscene or the game) and a cutscene's way in (GameRunning's exit through Cinematics to it, the one the
+        // conditions give: "node 638 exit 657"; not the jacking one) wait there until every machine of the session
+        // is at the same place.
+        if (mp::Trace() && (node == NODE_IN_GAME || node == NODE_GAME_RUNNING) && exit >= 0)
+            Log("[mp] menu: node %u exit %d", node, exit);
+        if (state == lobby::State::Hosting || state == lobby::State::Joined)
+        {
+            bool load = node == NODE_IN_GAME && exit >= 0;
+            bool cutscene = (node == NODE_GAME_RUNNING || node == NODE_CINEMATICS) && exit >= FIRST_CUTSCENE_EXIT &&
+                            exit <= LAST_CUTSCENE_EXIT;
+            if (load || cutscene)
+            {
+                g_cutsceneHold = true;
+                if (lobby::HoldAtCutscene(load ? NODE_IN_GAME : uint32_t(exit), load))
+                    return -1;
+            }
+            else if (g_cutsceneHold && node != NODE_IN_GAME)
+            {
+                g_cutsceneHold = false;
+                lobby::CutsceneHoldDone();
+            }
         }
         // Client: the host started a level.
         if (state == lobby::State::Joined && exit < 0 && (node == NODE_OPTIONS || node == NODE_MAIN_MENU || node == NODE_HUB || node == NODE_SKINS))

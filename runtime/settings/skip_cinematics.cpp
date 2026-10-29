@@ -171,6 +171,11 @@ namespace cutscenes
         return g_kind.load(std::memory_order_relaxed) != int(Kind::None);
     }
 
+    bool CutscenePlaying()
+    {
+        return CurrentKind(plat::TickCountMs()) == Kind::Cutscene;
+    }
+
     void NoteMovie(int index)
     {
         g_movie = index;

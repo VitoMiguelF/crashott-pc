@@ -10,6 +10,7 @@
 #include "../diagnostics.h"
 #include "../gpu/overlay.h"
 #include "../kernel/pc_input.h"
+#include "../online/mp_menu.h"
 
 #include <algorithm>
 #include <atomic>
@@ -115,11 +116,11 @@ namespace
 
     Mode CurrentMode()
     {
-        if (!touch_controls::Enabled() || settings::menu::IsOpen() || dev::console::IsOpen())
+        if (!touch_controls::Enabled() || settings::menu::IsOpen() || dev::console::IsOpen() || mp::menu::TakesTouch())
             return Mode::Mouse;
         // The intro videos play before the frontend runs, and nothing is played in a cutscene: a
         // finger held anywhere skips them (skip_cinematics.cpp), no controls drawn.
-        return input::pc::InMenus() || cutscenes::VideoPlaying() || cutscenes::SkipPossible() ? Mode::Mouse : Mode::Game;
+        return input::pc::InMenus() || cutscenes::VideoPlaying() || cutscenes::SkipPossible() || cutscenes::CutscenePlaying() ? Mode::Mouse : Mode::Game;
     }
 
     // The button of `set` under (x, y), within 1.3 x its radius (the nearest one), or -1.

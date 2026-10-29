@@ -38,6 +38,9 @@ namespace mp::menu
 
     // The game must see a neutral controller (a screen open, or its buttons still held).
     bool BlocksGameInput();
+    // A screen of these is open (also over a level: a client's START menu): the touch is the mouse there,
+    // not the on-screen controls (settings/touch_controls.cpp).
+    bool TakesTouch();
     // Pressed for the game on top: B for a moment when the screens close back to the main menu.
     uint16_t GameButtons();
     // Hidden from the game: BACK while the HUB panel shows (it opens the lobby).

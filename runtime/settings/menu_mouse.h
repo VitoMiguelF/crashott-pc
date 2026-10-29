@@ -49,6 +49,9 @@ namespace input::menu_mouse
     // 21:9 picture, 1440 of a 2400x1080 phone, 864 of 1152x720 16:10. The pause keeps the page
     // stretched over the 16:9 area.
     void NoteFrontendPage();
+    // Picture units (of the 1280 x 720 16:9 area) a page unit is wide now: 2, or 1.5 on a frontend
+    // screen of a picture that is not 16:9.
+    float PageScale();
     // The item under page point (x, y) (y up), or -1.
     int HitTest(const Menu& menu, float x, float y);
 }

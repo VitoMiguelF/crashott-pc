@@ -121,6 +121,13 @@ namespace input::menu_mouse
         g_pageTime.store(plat::TickCountMs(), std::memory_order_relaxed);
     }
 
+    float PageScale()
+    {
+        uint64_t frontend = g_pageTime.load(std::memory_order_relaxed);
+        bool wide = fabsf(gpu::widescreen::Aspect() - gpu::widescreen::BASE_ASPECT) >= 0.001f;
+        return frontend && plat::TickCountMs() - frontend <= 250 && wide ? 1.5f : 2.0f;
+    }
+
     bool Live(Menu& menu)
     {
         std::lock_guard lock(g_mutex);
@@ -201,10 +208,7 @@ namespace
         float u, v;
         if (!input::pc::CursorOnImage(u, v))
             return false;
-        float page = 2.0f;  // image pixels per page unit across
-        uint64_t frontend = g_pageTime.load(std::memory_order_relaxed);
-        if (frontend && plat::TickCountMs() - frontend <= 250 && fabsf(gpu::widescreen::Aspect() - gpu::widescreen::BASE_ASPECT) >= 0.001f)
-            page = 1.5f;
+        float page = PageScale();  // image pixels per page unit across
         x = 320.0f + (u - 640.0f) / page, y = (720.0f - v) * (480.0f / 720.0f);
         return true;
     }
