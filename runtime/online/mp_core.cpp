@@ -88,7 +88,7 @@ namespace mp
 
     void SetSession(bool open, uint32_t players)
     {
-        g_sessionPlayers = std::clamp<uint32_t>(players, 1, 4);
+        g_sessionPlayers = std::clamp<uint32_t>(players, 1, MAX_PLAYERS);
         if (g_session.exchange(open) != open)
             Log("[mp] session %s", open ? "open: the prototype is on" : "closed");
     }
@@ -109,7 +109,7 @@ namespace mp
         static uint32_t players = [] {
             const char* text = getenv("CRASH_MP_PLAYERS");
             int n = text ? atoi(text) : 2;
-            return uint32_t(n < 2 ? 2 : n > 4 ? 4 : n);
+            return uint32_t(std::clamp<int>(n, 2, int(MAX_PLAYERS)));
         }();
         return players;
     }

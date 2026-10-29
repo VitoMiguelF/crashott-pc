@@ -14,8 +14,12 @@
 // Crash::vf20 saves it) and 0x8245FA98 is the player that joins into the backpack at the start (-1 =
 // nobody); both are set to "not joined, nobody", so player 2 is built hidden like players 3 and 4.
 // PlayersTick then shows each one next to player 1 with the game's own "leave the backpack" show
-// (sub_82154A58) and gives it its controller. The game's limit stays 4 players: 4 controllers (CInputManager
-// devices) and 4 AI targets (CAIManager); a 5th Crash is left hidden.
+// (sub_82154A58) and gives it its controller. The game's own limit is 4 players: 4 controllers (CInputManager
+// devices) and 4 AI targets (CAIManager). Players 5-8 (experimental) get controllers 4-7 of ours
+// (ExtraInput below) and take turns with the others as the AI's 4 targets (BalanceAiTargets); the game
+// sees them with player index 2 / 3 (players 3 / 4's), the only ones past its two-entry tables it
+// already handles: its per-player byte flags (CGameDatabase +32 + index) end at index 3, the next bytes
+// are an int of its.
 // Afterwards nobody is pulled into the backpack: co-op puts the player the shared camera leaves behind
 // into the other one's, but each machine has its own camera. The Crash's script asks
 // IsOkayToEnterBackpack (sub_82153400) first, then SetPlayerEnteringBackpack turns the Crash's collision
@@ -34,8 +38,10 @@
 #include "mp_lobby.h"
 #include "../diagnostics.h"
 #include "../dev/dev_tools.h"
+#include "../kernel/input.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
+#include "../kernel/xinput_types.h"
 
 #include <ppc_config.h>
 
@@ -54,6 +60,14 @@ extern "C" PPC_FUNC(__imp__sub_82153B08);  // Crash::~Crash
 extern "C" PPC_FUNC(__imp__sub_821551B0);  // should the player's fight tree go straight to the backpack
 extern "C" PPC_FUNC(__imp__sub_82098A38);  // CAIManager: adds an AI target (a player actor)
 extern "C" PPC_FUNC(__imp__sub_8220D830);  // CActionResetPlayer: a player's death (vf01's first run)
+extern "C" PPC_FUNC(__imp__sub_821ED5B0);  // CInputManager::vf10: updates its CInputDevices
+extern "C" PPC_FUNC(__imp__sub_821ED160);  // CInputDevice: update of the frame (f1 = seconds)
+PPC_EXTERN_FUNC(sub_821E9C78);             // CInputDevice: an input history entry's constructor (16 bytes)
+PPC_EXTERN_FUNC(sub_821EB3F0);             // CInputDevice: a stick detector's constructor (44 bytes)
+PPC_EXTERN_FUNC(sub_821ECDD0);             // CInputDevice::CInputDevice(this, gamepad, 40, controller number)
+PPC_EXTERN_FUNC(sub_821EC1C8);             // CInputDevice: attaches to a controller (its inputs call the device back)
+PPC_EXTERN_FUNC(sub_82289FF8);             // controller: a stick's dead zone (short* x, short* y, f1)
+PPC_EXTERN_FUNC(sub_8228A110);             // controller input: its value from the pad, the device's callback on a change
 PPC_EXTERN_FUNC(sub_82090370);             // CActor: reset (vtable +0x3c), what a respawn does
 PPC_EXTERN_FUNC(sub_82142608);             // CActor::GetBehaviour
 PPC_EXTERN_FUNC(sub_82143698);             // CPhysicsBehaviour: collision on / off
@@ -77,8 +91,9 @@ namespace
         return f;
     }
 
-    // Players 3-5: native Crashes with player index 2-4 (the game's tables have 2 entries; index 2 lands
-    // on the backpack pointer, which the constructor hook restores). Game thread only.
+    // Players 3-8: native Crashes with player index 2-7 (ours; the game's byte at Crash +292 says 2 or 3, see
+    // GameIndex) (the game's tables have 2 entries; index 2 lands on the backpack pointer, which the
+    // constructor hook restores). Game thread only.
     struct Extra
     {
         uint32_t crash = 0;
@@ -87,7 +102,7 @@ namespace
         uint64_t shownAt = 0;  // its transform is the new place a frame later: in play 300 ms after
         bool onFoot = false;
     };
-    std::vector<Extra> g_extras;  // players 2-4 (index 1-3) to be shown, in spawn order
+    std::vector<Extra> g_extras;  // players 2-8 (index 1-7) to be shown, in spawn order
 
     constexpr uint32_t KNOCKOUT_SECONDS = 0x82002328;  // float: the co-op knock-out time
     struct Knockout
@@ -98,7 +113,7 @@ namespace
     };
     std::vector<Knockout> g_knockouts;
     std::vector<uint32_t> g_departed;  // the Crashes of players who left the session (RemovePlayer)
-    uint64_t g_revivedAt[4] = {};
+    uint64_t g_revivedAt[mp::MAX_PLAYERS] = {};
     uint64_t g_gatherAt = 0;  // CinematicDone: when the players go next to the host's (0 = not due)
 
     // Player 1 sits at the parking place of the hidden Crashes for the first frames of a level, until the
@@ -108,7 +123,7 @@ namespace
 
     void KnockOut(uint32_t index, const char* why)
     {
-        uint32_t crash = index < 4 ? mp::PlayerCrash(index) : 0;
+        uint32_t crash = index < mp::MAX_PLAYERS ? mp::PlayerCrash(index) : 0;
         if (!crash || std::any_of(g_knockouts.begin(), g_knockouts.end(), [crash](const Knockout& k) { return k.crash == crash; }))
             return;
         float seconds = LoadF(KNOCKOUT_SECONDS);
@@ -146,6 +161,209 @@ namespace
                 return device;
         return 0;
     }
+
+    // The player index the game sees for a Crash past the second: players 3 and 4 have 2 and 3; players 5-8
+    // (experimental) share them (5 and 7 have 2, 6 and 8 have 3). The game's per-player byte flags
+    // (CGameDatabase +32 + index: set by Crash::vf06, cleared by SignalDead, read by vf15 and others) end at
+    // index 3; index 4-7 would write into the int after them. Its player-index compares only ask for 0, 1
+    // or 2, and its player -> controller table of 2 (sub_821D8C50) is already read past for 2 / 3.
+    uint8_t GameIndex(uint32_t index) { return uint8_t(index < 4 ? index : 2 + (index & 1)); }
+
+    // Controllers 4-7 for players 5-8. The game polls 4 XInput users (the controller system at 0x824B46DC:
+    // 4 controllers of 48 bytes from +24; +16 the user, +28 its inputs, 60 bytes each, +32 its outputs,
+    // 36 bytes each, +36 the type, +40 connected) and CInputManager (manager 7) has 4 CInputDevices; a
+    // controller's input (sub_8228A110, from the XINPUT_GAMEPAD the poll read) calls back the device
+    // attached to it (+52 the callback, +56 the device's input) on a change, and the manager's update
+    // (vf10) updates each device (sub_821ED160: the input maps of the Crash it drives).
+    // Here each extra controller is a copy of controller 0 (type, inputs, outputs) with its own inputs
+    // and a CInputDevice built the way CInputManager builds its own (524 bytes, constructor, vf0 = AddRef)
+    // and attached to it (sub_821EC1C8: the game's own attach). Neither is in the game's
+    // lists: after the manager's update, the pad of controller 4-7 (input::ReadExtraController) goes
+    // through the copied inputs, then the device is updated. The Crash's input binding (+176, its +0 the
+    // device) points to it, as players 3 / 4 get devices 2 / 3. Made once, kept for good (the device
+    // holds a reference of ours, so a Crash releasing its binding never deletes it).
+    // In a level the game's heaps are nearly full: operator new had room for one device, and the
+    // constructor's own allocations (each input's history, 4 + 16 x 40 bytes at +48 + 12 i: buffer, size,
+    // position; the stick detectors at +492..+504) mostly came back null. So the device is in the runtime's
+    // memory and what its constructor could not allocate is made here, the way it makes them (never freed,
+    // as the device never is).
+    constexpr uint32_t CONTROLLER_SYSTEM = 0x824B46DC;  // -> 4 controllers from +24, 48 bytes each
+    constexpr uint32_t CONTROLLER_TYPES = 0x824733B4;   // 28 bytes per type: +12 inputs, +20 outputs
+    constexpr uint32_t STICK_DEAD_ZONE = 0x8200DD94;    // float: what the poll passes to sub_82289FF8
+    constexpr uint32_t DEVICE_INPUTS = 18;
+    struct ExtraInput
+    {
+        uint32_t controller = 0;  // 48 bytes + the pad (12 bytes, big-endian) at +48
+        uint32_t device = 0;
+        uint32_t inputs = 0;
+        bool failed = false;
+    };
+    ExtraInput g_inputs[mp::MAX_PLAYERS - mp::GAME_PLAYERS];
+    double g_inputSeconds = 1.0 / 30;  // the last update's time step (CInputManager::vf10 passes it on)
+
+    uint32_t ZeroAlloc(uint32_t size)
+    {
+        uint32_t p = GuestAlloc(size);
+        memset(g_memory.Translate(p), 0, size);
+        return p;
+    }
+
+    // What the device's constructor could not allocate (see above); how many parts were made here.
+    uint32_t BackfillDevice(PPCContext& ctx, uint8_t* base, uint32_t device)
+    {
+        uint32_t made = 0;
+        for (uint32_t i = 0; i < DEVICE_INPUTS; ++i)
+        {
+            uint32_t history = device + 48 + i * 12, size = LoadBE32(history + 4);
+            if (LoadBE32(history) || !size || size > 1024)
+                continue;
+            uint32_t buffer = ZeroAlloc(4 + 16 * size);  // sub_821EA0E0: the count, then the entries
+            StoreBE32(buffer, size);
+            for (uint32_t e = 0; e < size; ++e)
+            {
+                PPCContext call = ctx;
+                call.r3.u64 = buffer + 4 + e * 16;
+                sub_821E9C78(call, base);
+            }
+            StoreBE32(history, buffer + 4);
+            ++made;
+        }
+        for (uint32_t at : {492u, 496u})  // sub_821EB660: two stick detectors
+            if (!LoadBE32(device + at))
+            {
+                uint32_t detector = ZeroAlloc(44);
+                PPCContext call = ctx;
+                call.r3.u64 = detector;
+                sub_821EB3F0(call, base);
+                StoreBE32(device + at, detector);
+                ++made;
+            }
+        for (uint32_t at : {500u, 504u})  // and two of {the float at 0x82000DC8, 3 bytes}
+            if (!LoadBE32(device + at))
+            {
+                uint32_t part = ZeroAlloc(8);
+                StoreBE32(part, LoadBE32(0x82000DC8));
+                StoreBE32(device + at, part);
+                ++made;
+            }
+        return made;
+    }
+
+    uint32_t ExtraDevice(PPCContext& ctx, uint8_t* base, uint32_t controllerNumber)
+    {
+        ExtraInput& in = g_inputs[controllerNumber - mp::GAME_PLAYERS];
+        if (in.device || in.failed)
+            return in.device;
+        uint32_t system = LoadBE32(CONTROLLER_SYSTEM), first = system ? system + 24 : 0;
+        if (!first || !*g_memory.Translate(first + 40))
+            return 0;  // controller 0 not up yet
+        uint32_t type = LoadBE32(first + 36);
+        uint32_t inputs = LoadBE32(CONTROLLER_TYPES + type * 28 + 12), outputs = LoadBE32(CONTROLLER_TYPES + type * 28 + 20);
+        uint32_t from = LoadBE32(first + 28), fromOutputs = LoadBE32(first + 32);
+        in.failed = true;  // one try
+        if (type > 16 || !inputs || inputs > 64 || outputs > 64 || !from || (outputs && !fromOutputs))
+        {
+            Log("[mp] controller %u (experimental): controller 0 not as expected (type %u, %u inputs), players 5-8 without it",
+                controllerNumber, type, inputs);
+            return 0;
+        }
+        uint32_t device = ZeroAlloc(524), controller = ZeroAlloc(48 + 16), copies = ZeroAlloc(inputs * 60), outputCopies = ZeroAlloc(std::max(outputs, 1u) * 36);
+        memcpy(g_memory.Translate(controller), g_memory.Translate(first), 48);
+        memcpy(g_memory.Translate(copies), g_memory.Translate(from), inputs * 60);
+        if (outputs)
+            memcpy(g_memory.Translate(outputCopies), g_memory.Translate(fromOutputs), outputs * 36);
+        for (uint32_t i = 0; i < inputs; ++i)
+        {
+            uint32_t input = copies + i * 60;
+            StoreBE32(input + 52, 0);  // no callback until the device attaches
+            StoreBE32(input + 56, 0);
+            float none = -1000.0f;  // so the first update reports every value to the device
+            uint32_t bits;
+            memcpy(&bits, &none, 4);
+            StoreBE32(input + 24, bits);
+        }
+        StoreBE32(controller + 16, controllerNumber);
+        StoreBE32(controller + 28, copies);
+        StoreBE32(controller + 32, outputCopies);
+        PPCContext call = ctx;
+        call.r3.u64 = device;
+        call.r4.u64 = 1;
+        call.r5.u64 = 40;
+        call.r6.u64 = controllerNumber;
+        sub_821ECDD0(call, base);
+        uint32_t made = BackfillDevice(ctx, base, device);
+        uint32_t addRef = LoadBE32(LoadBE32(device));
+        if (PPCFunc* f = addRef >= PPC_CODE_BASE && addRef < PPC_CODE_BASE + PPC_CODE_SIZE ? PPC_LOOKUP_FUNC(base, addRef) : nullptr)
+        {
+            call = ctx;
+            call.r3.u64 = device;
+            f(call, base);
+        }
+        call = ctx;
+        call.r3.u64 = device;
+        call.r4.u64 = controller;
+        sub_821EC1C8(call, base);
+        uint32_t attached = 0;
+        for (uint32_t i = 0; i < inputs; ++i)
+            attached += LoadBE32(copies + i * 60 + 52) != 0;
+        in = {controller, device, inputs, false};
+        Log("[mp] controller %u (experimental): device %08X on a copy of controller 0 (type %u, %u inputs, %u attached; %u parts "
+            "made outside the game's heaps)", controllerNumber, device, type, inputs, attached, made);
+        return device;
+    }
+
+    // After the game's devices: controllers 4-7 read their pads and update their devices.
+    void UpdateExtraInputs(PPCContext& ctx, uint8_t* base)
+    {
+        for (uint32_t k = 0; k < mp::MAX_PLAYERS - mp::GAME_PLAYERS; ++k)
+        {
+            const ExtraInput& in = g_inputs[k];
+            if (!in.device)
+                continue;
+            XINPUT_GAMEPAD pad{};
+            input::ReadExtraController(mp::GAME_PLAYERS + k, &pad);
+            uint32_t p = in.controller + 48;  // as the poll reads it: buttons, triggers, sticks
+            StoreBE16(p, pad.wButtons);
+            *g_memory.Translate(p + 2) = pad.bLeftTrigger;
+            *g_memory.Translate(p + 3) = pad.bRightTrigger;
+            StoreBE16(p + 4, uint16_t(pad.sThumbLX));
+            StoreBE16(p + 6, uint16_t(pad.sThumbLY));
+            StoreBE16(p + 8, uint16_t(pad.sThumbRX));
+            StoreBE16(p + 10, uint16_t(pad.sThumbRY));
+            for (uint32_t stick = 0; stick < 2; ++stick)
+            {
+                PPCContext call = ctx;
+                call.r3.u64 = p + 4 + stick * 4;
+                call.r4.u64 = p + 6 + stick * 4;
+                call.f1.f64 = LoadF(STICK_DEAD_ZONE);
+                sub_82289FF8(call, base);
+            }
+            for (uint32_t i = 0; i < in.inputs; ++i)
+            {
+                PPCContext call = ctx;
+                call.r3.u64 = LoadBE32(in.controller + 28) + i * 60;
+                call.r4.u64 = p;
+                sub_8228A110(call, base);
+            }
+            PPCContext call = ctx;
+            call.r3.u64 = in.device;
+            call.f1.f64 = g_inputSeconds;
+            __imp__sub_821ED160(call, base);
+        }
+    }
+}
+
+PPC_FUNC(sub_821ED160)
+{
+    g_inputSeconds = ctx.f1.f64;
+    __imp__sub_821ED160(ctx, base);
+}
+
+PPC_FUNC(sub_821ED5B0)
+{
+    __imp__sub_821ED5B0(ctx, base);
+    if (mp::Enabled())
+        UpdateExtraInputs(ctx, base);
 }
 
 PPC_FUNC(sub_82153860)
@@ -167,15 +385,16 @@ PPC_FUNC(sub_82153860)
     {
         for (uint32_t i = 0; i < 3; ++i)
             StoreBE32(BACKPACK_CRASH + i * 4, after[i]);
-        // The game gives every Crash past the second index 2: players 3, 4, 5 get 2, 3, 4.
+        // The game gives every Crash past the second index 2: players 3-8 get 2-7 here (GameIndex for the game).
         index = uint8_t(2 + ExtraCount());
-        *g_memory.Translate(bc + 292) = index;
+        *g_memory.Translate(bc + 292) = GameIndex(index);
         // Its co-op state came from 0x8245FA9C[index], past the 2-entry table: not joined.
         uint32_t state = LoadBE32(bc + 300);
         StoreBE32(bc + 300, 0);
         Log("[mp] extra Crash %08X: co-op state read past the table %08X, now 0", bc, state);
         g_extras.push_back({bc, index, mp::NowMs(), false});
-        Log("[mp] extra Crash %08X got player index %u (backpack pointer kept at %08X)", bc, index, backpack);
+        Log("[mp] extra Crash %08X got player index %u (game index %u; backpack pointer kept at %08X)", bc, index,
+            GameIndex(index), backpack);
     }
     else
     {
@@ -188,8 +407,8 @@ PPC_FUNC(sub_82153860)
 
 // CAIManager holds 4 AI targets (36-byte slots from +4, the count at +0x94, right after the 4th):
 // a 5th add writes over the count and the AI update (sub_820985E0) then runs over its stack arrays.
-// Each Crash spawned adds itself; with players 3-5 the 5th is refused (enemies don't chase player 5)
-// and an actor already there is not added twice.
+// Each Crash spawned adds itself; with more than 4 players the 5th is refused (BalanceAiTargets below
+// gives players 5-8 their turns) and an actor already there is not added twice.
 PPC_FUNC(sub_82098A38)
 {
     uint32_t ai = ctx.r3.u32, actor = ctx.r4.u32, count = LoadBE32(ai + 0x94);
@@ -245,6 +464,14 @@ PPC_FUNC(sub_8220D830)
         return;
     }
     uint32_t index = LoadBE32(ctx.r3.u32 + 4);
+    // Players 4-8 share the game's index 3 (and 3 / 5 / 7 its 2: GameIndex): the one of them out of hitpoints.
+    if (index >= 2 && index < 4)
+        for (uint32_t i = index; i < mp::MAX_PLAYERS; i += 2)
+            if (mp::PlayerCrash(i) && !mp::HitpointsHeld(i) && mp::PlayerHitpoints(i) > -0.5f && mp::PlayerHitpoints(i) <= 0.0f)
+            {
+                index = i;
+                break;
+            }
     KnockOut(index, "reset action");
     ctx.r3.u64 = 1;  // done, as the co-op path answers
 }
@@ -310,10 +537,10 @@ PPC_FUNC(sub_82154D10)
 
 namespace
 {
-    // Players 3 and 4 (CRASH_MP_PLAYERS > 2) are spawned the way the levels spawn players 1 and 2
+    // Players 3-8 (CRASH_MP_PLAYERS > 2) are spawned the way the levels spawn players 1 and 2
     // (objectives.lua: pObjective:DO_SpawnPlayer(n, name, locator)), by one objective of the game's own
     // system, once per level, when player 1 is on foot; every machine names them the same
-    // (ref_Crash_P3 / ref_Crash_P4: the network id).
+    // (ref_Crash_P3 .. ref_Crash_P8: the network id).
     void SpawnPlayers(PPCContext& ctx, uint8_t* base)
     {
         static uint32_t spawnedFor;  // player 1's Crash of the level they were spawned in
@@ -355,7 +582,7 @@ namespace mp
             return false;
         for (const Extra& e : g_extras)
             if (e.crash == crash)
-                return e.onFoot && e.index < 4 && NowMs() - e.shownAt >= 300;
+                return e.onFoot && e.index < MAX_PLAYERS && NowMs() - e.shownAt >= 300;
         return !Managed() || (crash == g_p1 && NowMs() - g_p1Since >= 500);
     }
 
@@ -381,7 +608,7 @@ namespace mp
         return out;
     }
 
-    // Players 2-4 are built like an unjoined player 2: hidden, parked, its behaviours off. Once player 1
+    // Players 2-8 are built like an unjoined player 2: hidden, parked, its behaviours off. Once player 1
     // is on foot each is shown the way leaving the backpack shows a player (sub_82154A58 detaches it from
     // the backpack Crash's attacher, so that pointer is player 1 for the call), set on foot (co-op
     // state 2) and put next to player 1.
@@ -390,7 +617,7 @@ namespace mp
         for (const Knockout& k : g_knockouts)
             if (k.index == index)
                 return true;
-        return index < 4 && g_revivedAt[index] && NowMs() - g_revivedAt[index] < 1500;
+        return index < MAX_PLAYERS && g_revivedAt[index] && NowMs() - g_revivedAt[index] < 1500;
     }
 
     // A knocked-out player whose time is up: reset (the respawn's reset keeps two of the actor's values,
@@ -402,7 +629,7 @@ namespace mp
         if (!GuestPointer(actor))
             return;
         uint32_t target = 0, targetSlot = ~0u;
-        for (uint32_t i = 0; i < 4; ++i)
+        for (uint32_t i = 0; i < MAX_PLAYERS; ++i)
         {
             uint32_t crash = PlayerCrash(i);
             if (!crash || crash == k.crash || !PlayerOnFoot(i) || HitpointsHeld(i))
@@ -489,29 +716,114 @@ namespace mp
         Log("[mp] player %u (Crash %08X) left the session: out of the level", index + 1, crash);
     }
 
+    // More than 4 players (experimental): the CAIManager holds 4 targets (36-byte slots from +4: +0 the
+    // actor, then two lists of the AI after it, +4..+8 and +20..+24; the count at +0x94) and its update
+    // (sub_820985E0) keeps stack arrays per slot, so it cannot grow. Every 0.5 s a target not in play
+    // (knocked out, gone) gives its place to a player waiting, a free place goes to the one waiting
+    // longest, and every 8 s the target nobody is after (both lists empty) that has been one longest makes
+    // room for the one waiting longest: enemies go after every player in turn, not only the first 4.
+    void BalanceAiTargets(PPCContext& ctx, uint8_t* base)
+    {
+        static uint64_t next, lastTurn;
+        static uint64_t since[MAX_PLAYERS];  // when the player became a target, or stopped being one
+        static bool wasTarget[MAX_PLAYERS];
+        uint64_t now = NowMs();
+        if (Players() <= GAME_PLAYERS || now < next)
+            return;
+        next = now + 500;
+        uint32_t ai = LoadBE32(MANAGERS_TABLE + (2 + 7) * 4);
+        if (!GuestPointer(ai))
+            return;
+        auto place = [&](uint32_t actor) {
+            uint32_t count = std::min<uint32_t>(LoadBE32(ai + 0x94), 4);
+            for (uint32_t i = 0; i < count; ++i)
+                if (LoadBE32(ai + 4 + i * 36) == actor)
+                    return int(i);
+            return -1;
+        };
+        auto change = [&](uint32_t actor, bool add) {
+            PPCContext call = ctx;
+            call.r3.u64 = ai;
+            call.r4.u64 = actor;
+            if (add)
+                sub_82098A38(call, base);
+            else
+                sub_82098E68(call, base);
+        };
+        uint32_t actors[MAX_PLAYERS] = {};
+        bool ready[MAX_PLAYERS] = {};
+        std::vector<uint32_t> waiting;
+        for (uint32_t i = 0; i < MAX_PLAYERS; ++i)
+        {
+            uint32_t crash = PlayerCrash(i);
+            actors[i] = crash ? LoadBE32(crash + 156) : 0;
+            ready[i] = GuestPointer(actors[i]) && PlayerOnFoot(i) && !HitpointsHeld(i);
+            bool target = actors[i] && place(actors[i]) >= 0;
+            if (target != wasTarget[i])
+                wasTarget[i] = target, since[i] = now;
+            if (ready[i] && !target)
+                waiting.push_back(i);
+        }
+        std::stable_sort(waiting.begin(), waiting.end(), [](uint32_t a, uint32_t b) { return since[a] < since[b]; });
+        size_t turn = 0;
+        auto give = [&](int out, const char* why) {
+            uint32_t in = waiting[turn++];
+            if (out >= 0)
+                change(actors[out], false);
+            change(actors[in], true);
+            if (place(actors[in]) < 0)
+                return;
+            if (out >= 0)
+                wasTarget[out] = false, since[out] = now;
+            wasTarget[in] = true, since[in] = now;
+            Log("[mp] AI target: player %u in%s%s (%s)", in + 1, out >= 0 ? ", player " : "", out >= 0 ? std::to_string(out + 1).c_str() : "", why);
+        };
+        for (uint32_t i = 0; i < MAX_PLAYERS && turn < waiting.size(); ++i)
+            if (wasTarget[i] && !ready[i] && actors[i])
+                give(int(i), "out of play");
+        while (turn < waiting.size() && LoadBE32(ai + 0x94) < 4)
+            give(-1, "a free place");
+        if (turn >= waiting.size() || now - lastTurn < 8000)
+            return;
+        int longest = -1;
+        for (uint32_t i = 0; i < MAX_PLAYERS; ++i)
+        {
+            int at = wasTarget[i] && ready[i] ? place(actors[i]) : -1;
+            uint32_t slot = ai + 4 + uint32_t(at) * 36;
+            if (at >= 0 && LoadBE32(slot + 4) == LoadBE32(slot + 8) && LoadBE32(slot + 20) == LoadBE32(slot + 24) &&
+                (longest < 0 || since[i] < since[longest]))
+                longest = int(i);
+        }
+        if (longest >= 0)
+        {
+            lastTurn = now;
+            give(longest, "its turn");
+        }
+    }
+
     void CinematicDone()
     {
         if (Managed())
             g_gatherAt = NowMs() + 500;  // after the game's own placing of players 1 and 2
     }
 
-    // After a cutscene the game puts players 1 and 2 where the level goes on; players 3 and 4 stayed where
+    // After a cutscene the game puts players 1 and 2 where the level goes on; players 3-8 stayed where
     // they were (the parking place, when they came up during the level's opening one: out of everybody's
     // sight, and their room kept current). Every player in play goes next to the host's, 1.2 apart per
     // slot behind its line, the same place on every machine.
     void Gather(PPCContext& ctx, uint8_t* base)
     {
         g_gatherAt = 0;
-        uint32_t host = 4;
-        for (uint32_t i = 0; i < 4; ++i)
+        uint32_t host = MAX_PLAYERS;
+        for (uint32_t i = 0; i < MAX_PLAYERS; ++i)
             if (PlayerCrash(i) && PlayerSlot(i) == 0)
                 host = i;
-        uint32_t hostCrash = host < 4 ? PlayerCrash(host) : 0;
+        uint32_t hostCrash = host < MAX_PLAYERS ? PlayerCrash(host) : 0;
         uint32_t physics = hostCrash ? LoadBE32(hostCrash + 0xDC) : 0, actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
         uint32_t xform = GuestPointer(actor) ? LoadBE32(actor + 44) : 0;
         if (!GuestPointer(xform))
             return;
-        for (uint32_t i = 0; i < 4; ++i)
+        for (uint32_t i = 0; i < MAX_PLAYERS; ++i)
         {
             if (i == host || !PlayerOnFoot(i) || HitpointsHeld(i))
                 continue;
@@ -529,16 +841,16 @@ namespace mp
         if (uint32_t p1 = PlayerCrash(0); p1 != g_p1)
             g_p1 = p1, g_p1Since = NowMs();
         SpawnPlayers(ctx, base);
-        // Players 3 and 4 come with the template's maximum (90), players 1 and 2 with the game's (30 at the
+        // Players 3-8 come with the template's maximum (90), players 1 and 2 with the game's (30 at the
         // start, more with the upgrades): they get player 1's.
         float p1Max = PlayerMaxHitpoints(0);
-        for (uint32_t i = 2; i < 4; ++i)
+        for (uint32_t i = 2; i < MAX_PLAYERS; ++i)
             if (p1Max > 0 && PlayerOnFoot(i) && PlayerMaxHitpoints(i) > 0 && PlayerMaxHitpoints(i) != p1Max)
             {
                 Log("[mp] player %u: maximum hitpoints %.0f -> %.0f (player 1's)", i + 1, PlayerMaxHitpoints(i), p1Max);
                 SetPlayerMaxHitpoints(i, p1Max);
             }
-        for (uint32_t i = 0; i < 4; ++i)
+        for (uint32_t i = 0; i < MAX_PLAYERS; ++i)
             if (PlayerOnFoot(i) && !HitpointsHeld(i) && PlayerHitpoints(i) > -0.5f && PlayerHitpoints(i) <= 0.0f)
                 KnockOut(i, "no hitpoints");
         for (size_t i = 0; i < g_knockouts.size();)
@@ -552,6 +864,7 @@ namespace mp
                 ++i;
         if (g_gatherAt && NowMs() >= g_gatherAt)
             Gather(ctx, base);
+        BalanceAiTargets(ctx, base);
         if (g_extras.empty())
             return;
         uint32_t p1 = LoadBE32(CRASH_TABLE);
@@ -564,12 +877,16 @@ namespace mp
         {
             if (e.onFoot || NowMs() - e.since < 1500 || !GuestPointer(LoadBE32(e.crash + 0xDC)))
                 continue;
-            if (e.index >= 4)
+            if (e.index >= MAX_PLAYERS)
             {
                 e.onFoot = true;  // never shown
-                Log("[mp] player %u (Crash %08X) left hidden: the game holds 4 players", e.index + 1, e.crash);
+                Log("[mp] player %u (Crash %08X) left hidden: at most %u players", e.index + 1, e.crash, MAX_PLAYERS);
                 continue;
             }
+            // Players 5-8: controllers 4-7 of ours (made once controller 0 is up).
+            uint32_t extraDevice = e.index >= GAME_PLAYERS ? ExtraDevice(ctx, base, e.index) : 0;
+            if (e.index >= GAME_PLAYERS && !extraDevice)
+                continue;
             uint32_t saved = LoadBE32(BACKPACK_CRASH);
             StoreBE32(BACKPACK_CRASH, p1);
             PPCContext call = ctx;
@@ -577,11 +894,20 @@ namespace mp
             sub_82154A58(call, base);
             StoreBE32(BACKPACK_CRASH, saved);
             StoreBE32(e.crash + 300, 2);
-            // Its controller: the Crash's input binding (+176 -> +0 the CInputDevice); players 3 and 4 start on
-            // player 2's.
-            uint32_t binding = LoadBE32(e.crash + 176), device = Device(e.index);
+            // Its controller: the Crash's input binding (+176 -> +0 the CInputDevice); players 3-8 start on
+            // player 2's. Players 5-8 take a reference to theirs (the Crash releases its binding when it goes).
+            uint32_t binding = LoadBE32(e.crash + 176), device = extraDevice ? extraDevice : Device(e.index);
             if (GuestPointer(binding) && LoadBE32(LoadBE32(binding)) == INPUT_DEVICE_VTABLE && device)
+            {
                 StoreBE32(binding, device);
+                uint32_t addRef = extraDevice ? LoadBE32(LoadBE32(device)) : 0;
+                if (PPCFunc* f = addRef >= PPC_CODE_BASE && addRef < PPC_CODE_BASE + PPC_CODE_SIZE ? PPC_LOOKUP_FUNC(base, addRef) : nullptr)
+                {
+                    PPCContext ref = ctx;
+                    ref.r3.u64 = device;
+                    f(ref, base);
+                }
+            }
             else
                 device = 0;
             float x = LoadF(p1Xform + 48) + 1.5f * e.index, y = LoadF(p1Xform + 52) + 0.5f, z = LoadF(p1Xform + 56);

@@ -13,8 +13,8 @@ opened from the main menu's MULTIPLAYER** ("Lobby" below); with it off no hook c
 | `CRASH_MP_TRACE=1\|<ms>` | rooms + players once a second, every player move > 10 units in one frame |
 | `CRASH_MP_ROLE=host\|client` | the M1 UDP mirror; `CRASH_MP_PEER` (127.0.0.1), `CRASH_MP_PORT` (47810; client = +1), `CRASH_MP_HZ` (30) |
 | `CRASH_MP_SUPPRESS=ai,objectives` | client: skip CAIManager / CObjectiveManager updates once its level is up |
-| `CRASH_MP_PLAYERS=<n>` | 2-4 players (the game's limit is 4); with more than 2, players 3 and 4 are spawned on every machine |
-| `CRASH_MP_SLOT=<n>` | client: its player, 1-3 (default 1; UDP port + slot); the host is 0 |
+| `CRASH_MP_PLAYERS=<n>` | 2-8 players (the game's own limit is 4, 5-8 are experimental: "8 players" below); with more than 2, players 3-8 are spawned on every machine |
+| `CRASH_MP_SLOT=<n>` | client: its player, 1-7 (default 1; UDP port + slot); the host is 0 |
 | `CRASH_MP_SNAP=<units>` | client: a player further than this from the host's record is put back through its physics (default 1.0) |
 | `CRASH_MP_NAME=<name>` | the player's name in the lobby when none was saved (`[multiplayer] name`, typed on the MULTIPLAYER screens; default: the OS user's, A-Z 0-9, 12 letters); it also skips the first-time name screen |
 | `CRASH_MP_PASSWORD` / `CRASH_MP_CODE` | tests: the host's password and what a client's password field starts with / what ENTER CODE starts with |
@@ -24,7 +24,7 @@ Profiles (`test = false`): `mp_stream_vanilla`, `mp_stream_union`, `mp_stream_al
 (run together; windows side by side through `CRASH_RESTART_WINDOW`), `mp_tres_crash`, `mp_m2_host` + `mp_m2_client`,
 `mp_m3_host` + `mp_m3_client` (both players in the first fight, client with its own AI and objectives),
 `mp4_host` + `mp4_c1` + `mp4_c2` + `mp4_c3` (4 machines, windows in the screen's quadrants), `mp_tres_crash` (4 players
-on one machine, controllers 0-3), `mp_marionete`, `mp_lobby_host` + `mp_lobby_c1` + `mp_lobby_c2` (the lobby through
+on one machine, controllers 0-3), `mp_oito_crash` (8 players on one machine, P5-P8 on our controllers 4-7), `mp_marionete`, `mp_lobby_host` + `mp_lobby_c1` + `mp_lobby_c2` (the lobby through
 the menus: host, a client from the LAN list, one by code), `mp_lobby_host_new` (the host's NEW GAME to the HUB).
 
 ## Level streaming (the user's must-have question)
@@ -273,6 +273,60 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   player 0.9 off the host's for good; now standing players match within 0-0.22. The first try showed a remote P2 in T-pose, stuttering: it
   ignored its controller (state 0 had freed its input map), so the snaps pulled it every 250 ms.
 
+## 8 players (experimental)
+
+Past the game's 4, up to 8 native Crashes (branch `mp-8players`, 2026-10-29). The lobby's MAX PLAYERS goes to 8
+(default 4); 5-8 show EXPERIMENTAL. `mp::MAX_PLAYERS = 8` / `GAME_PLAYERS = 4` (`mp.h`), `lobby::MAX_PLAYERS = 8` /
+`STABLE_PLAYERS = 4` (`mp_lobby.h`, protocol version 5); every per-player array of `mp_net.cpp` / `mp_players.cpp` is
+sized by them (pads, positions, snaps, hitpoints, camera interests, knock-outs), slots 0-7, UDP port + slot.
+
+- **Spawn**: `DO_SpawnPlayer(3..8, "ref_Crash_P3..P8", "PlayerSpawnPosition")`, the same objective as players 3-4.
+  Our index (the `Extra` list: `PlayerCrash`, knock-out, colours, corrections) is 2-7, but the byte the game
+  reads (Crash +292) is `GameIndex`: 2 or 3 (players 5 / 7 share player 3's, 6 / 8 player 4's). The game's
+  per-player byte flags (CGameDatabase +32 + index: set by `Crash::vf06` `sub_821648A0`, cleared by `SignalDead`
+  `sub_82153E70`, read by `Crash::vf15` and others) have room for index 0-3; index 4-7 would write into the int at
+  +36 after them. Its other uses of the index are guarded (`index > 1` checks, compares with 0 / 1 / 2) and
+  `sub_821D8C50` (player -> controller, a table of 2) is already read past for 2 / 3. A `CActionResetPlayer` of
+  index 2 / 3 goes to whichever of the sharers is out of hitpoints (else the game's 2 / 3).
+- **Controllers 4-7** (`ExtraDevice`, `UpdateExtraInputs`): the game polls 4 XInput users (controller system
+  `*0x824B46DC`: 4 controllers of 48 bytes from +24; +16 user, +28 inputs of 60 bytes, +32 outputs of 36, +36 type,
+  +40 connected; per type at 0x824733B4 + 28 n: +12 inputs, +20 outputs) and `CInputManager` builds 4
+  `CInputDevice`s (524 bytes, `sub_821ECDD0(this, 1, 40, n)`, vf0 = AddRef). A controller input
+  (`sub_8228A110(input, XINPUT_GAMEPAD*)`) calls back the device attached to it (+52 the callback = device +20,
+  +56 the device's input) when its value changes; the device (`sub_821ED228` -> `sub_821ECC78`) keeps a history
+  per input (+48 + 12 i: buffer, size 40, position) and its update (`sub_821ED160`, from `CInputManager::vf10`
+  `sub_821ED5B0`) runs the input maps of the Crash it drives. For players 5-8: a copy of controller 0 (its 20
+  inputs and outputs copied, callbacks cleared), a device built with the game's constructor and attached by the
+  game's own `sub_821EC1C8`, neither in the game's lists. After `CInputManager::vf10` each frame the pad of
+  controller 4-7 (`input::ReadExtraController`: `CRASH_INPUT_SCRIPT`'s `P5_..P8_` or `mp::RemotePad`) goes into the
+  copy (big-endian at +48, the poll's stick dead zone `sub_82289FF8` with the float at 0x8200DD94), through each
+  input, then the device is updated (time step of the game's last device update). The Crash's binding (+176 ->
+  +0) points to it, with a reference of ours (the Crash releases it when it goes; ours keeps it alive).
+  In a level the game's heaps are full: `operator new(524)` had room for one device and its constructor's
+  allocations (18 histories of 644 bytes, the stick detectors at +492..+504) came back null (a null history was
+  the first crash, `sub_821ECC78` reading 0x4). So the device is in the runtime's memory (`GuestAlloc`) and what
+  its constructor could not allocate is made there the way it does (`sub_821E9C78` per history entry,
+  `sub_821EB3F0` per detector). Made once per controller, kept for good.
+- **AI targets** (`BalanceAiTargets`, only with more than 4 players): `CAIManager` keeps 4 targets (36-byte slots
+  from +4: +0 actor, two lists of the AI after it at +4..+8 and +20..+24, count at +0x94) and its update
+  (`sub_820985E0`) works per slot with stack arrays: it cannot grow. Every 0.5 s a target not in play (knocked out,
+  gone) gives its place to a waiting player, a free place goes to whoever waited longest, and every 8 s the target
+  nobody is after (both lists empty) that has been one longest makes room for the longest waiting: enemies go after
+  every player in turn. Players' actor = Crash +156 (what the show adds, `RemoveTarget` takes). Each machine
+  decides on its own clock (the enemies' positions and hitpoints are the host's anyway).
+- Knock-out / revive, hitpoints (players 3-8 get player 1's maximum), leash, `CorrectRemotePlayers`, `Gather`
+  after a cutscene, `RemovePlayer` and the camera interests loop over the 8.
+- **Colours**: slots 5-8 come from `mp-colors` (its own branch); here they are orange like slot 1.
+- Seen: `mp_oito_crash` (one machine): the 8 Crashes on foot next to P1, P5-P8 each walking its own way on
+  controllers 4-7, no crash in 30 s, AI targets turning (player 5 in, then 6, 7...). Five machines (`mp4_host` +
+  `mp4_c1..c3` + a fourth client, `--set env={..., CRASH_MP_PLAYERS = "5", CRASH_MP_SLOT = "4" ...}`, windows 3 + 2):
+  every machine with the 5 Crashes, slot 5 walking on its machine and in the same place on the host and client 1
+  (-54.7, -2.5, 53.6 on all three), 16-21 snaps per machine in 40 s (as with 4).
+- **Not done / limits**: a CActionResetPlayer with no sharer out of hitpoints (a fall) knocks out the game's
+  player 3 / 4 instead of 5-8 (the leash brings a fallen player back); enemies chase at most 4 players at a time;
+  the lobby's player list with 8 names does not fit the 720 virtual height (`mp-menus` lays it out); never tried with 6-8
+  machines, on Android nor over the internet; each extra controller takes ~13 KB of the runtime's heap.
+
 ## Lobby (MULTIPLAYER on the main menu)
 
 - **The item**: a sixth main menu item, MULTIPLAYER, between LOAD GAME and CREDITS (`settings/pc_frontend.cpp`:
@@ -306,7 +360,7 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   got there too but stayed black (no fade in). A loaded game reaches the HUB by itself (308 -> 309 -> 575). A
   client waits in LOBBY (the host, the players, their ping); B leaves.
 - **At the HUB** (node 575) the host has a panel at the top right: players, the invite code; BACK (hidden from
-  the game) opens the lobby: A on a player kicks that player, PASSWORD (typed), MAX PLAYERS 2-4, KNOCK-OUT TIME 3 / 5 / 10 s
+  the game) opens the lobby: A on a player kicks that player, PASSWORD (typed), MAX PLAYERS 2-8 (5-8 marked EXPERIMENTAL), KNOCK-OUT TIME 3 / 5 / 10 s
   (the knock-out of "4 players", instead of the game's float), CLOSE SESSION. Y (CONTINUE STORY) or any level
   start of the HUB goes on as usual: when the host reaches InGame (node 630) its level index (managers +24) goes
   to the clients in the roster; each one, on its options screen / main menu / HUB, calls `Frontend:StartLevel`
@@ -425,7 +479,8 @@ arrays). So up to 4 players, all native Crashes, no puppets:
 
 ## Recommended architecture
 
-- **One real player per machine, the others native Crashes on its inputs** (up to 4, the game's limit):
+- **One real player per machine, the others native Crashes on its inputs** (up to 4, the game's limit; 8
+  experimental):
   each machine runs its own Crash as player 1 (input, physics, camera, HUD) and the remote players as
   players 2-4 on their owners' pads, so the game itself animates them, enemies target them and triggers see
   them; the host's records correct their positions. (The earlier plan, puppet actors driven by transform +
