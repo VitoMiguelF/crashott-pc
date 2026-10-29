@@ -6,6 +6,7 @@
 
 #include "mp_menu.h"
 #include "mp.h"
+#include "mp_colors.h"
 #include "mp_lobby.h"
 #include "../diagnostics.h"
 #include "../gpu/overlay.h"
@@ -283,8 +284,38 @@ namespace mp::menu
             return text;
         }
 
-        // MULTIPLAYER's rows: the player's name (A: the name screen), HOST GAME, FIND GAME.
-        enum RootRow { ROOT_NAME, ROOT_HOST, ROOT_FIND };
+        // MULTIPLAYER's rows: the player's name (A: the name screen), HOST GAME, FIND GAME, the colour.
+        enum RootRow { ROOT_NAME, ROOT_HOST, ROOT_FIND, ROOT_COLOUR };
+
+        // ---- the player's colour (mp_colors.h) ----------------------------------------------------
+
+        // The Root screen's last row: COLOR  < BLUE >, left / right (or A) change it.
+        constexpr int ROOT_COLOUR_ROW = ROOT_COLOUR;
+
+        std::string ColourRowText()
+        {
+            const colors::Colour& c = colors::Get(colors::Mine());
+            return std::string(T("COLOR", "COR")) + ":  \xC2\xBA " + T(c.en, c.pt) + " \xC2\xBB";
+        }
+
+        // A sample of the colour's fur: a square at (x, y) in virtual units, with a dark edge.
+        void DrawSwatch(const View& v, float x, float y, float size, uint32_t colour)
+        {
+            uint8_t rgb[3];
+            colors::Swatch(colour, rgb);
+            g_canvas.Fill(v.IX(x), v.IY(y), v.IX(x + size), v.IY(y + size), { 30, 14, 0, 255 });
+            g_canvas.Fill(v.IX(x + 2.0f), v.IY(y + 2.0f), v.IX(x + size - 2.0f), v.IY(y + size - 2.0f), { rgb[0], rgb[1], rgb[2], 255 });
+        }
+
+        // Left / right (A: right) on the player's colour; true if pressed.
+        bool StepColour(uint16_t pressed, bool acceptToo)
+        {
+            int change = (pressed & XINPUT_GAMEPAD_DPAD_LEFT) ? -1
+                         : (pressed & XINPUT_GAMEPAD_DPAD_RIGHT) || (acceptToo && (pressed & (XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_START))) ? 1 : 0;
+            if (change)
+                colors::Step(change);
+            return change != 0;
+        }
 
         std::vector<std::string> Rows()
         {
@@ -292,7 +323,7 @@ namespace mp::menu
             {
             case Screen::Root:
                 return { std::string(T("NAME", "NOME")) + ":  " + lobby::LocalName(), T("HOST GAME", "CRIAR PARTIDA"),
-                         T("FIND GAME", "ENCONTRAR PARTIDA") };
+                         T("FIND GAME", "ENCONTRAR PARTIDA"), ColourRowText() };
             case Screen::HostMode: return { T("NEW GAME", "NOVO JOGO"), T("LOAD GAME", "CARREGAR JOGO") };
             case Screen::FindMode: return { T("SERVER LIST", "LISTA DE PARTIDAS"), T("ENTER CODE", "DIGITAR CÓDIGO") };
             default: return {};
@@ -392,7 +423,7 @@ namespace mp::menu
         {
             float widest = 0.0f;
             for (const lobby::Player& p : players)
-                widest = std::max(widest, Width(FontId::Small, RosterName(p), cell) + ROSTER_GAP + Width(FontId::Small, RosterRight(p), cell));
+                widest = std::max(widest, cell + 4.0f + Width(FontId::Small, RosterName(p), cell) + ROSTER_GAP + Width(FontId::Small, RosterRight(p), cell));
             return widest;
         }
 
@@ -407,11 +438,20 @@ namespace mp::menu
                 const TextStyle& style = selected || (p.me && !host) ? pal.selected : pal.normal;
                 float left = box ? box->Left(y, cell) : 400.0f, right = box ? box->Right(y, cell) : 880.0f;
                 std::string side = RosterRight(p);
-                float sideW = std::min(Width(FontId::Small, side, cell), (right - left) * 0.5f);
-                Draw(v, FontId::Small, RosterName(p), left, y, cell, style, 0.0f, right - left - sideW - ROSTER_GAP);
+                float swatch = cell - 4.0f, nameX = left + swatch + 8.0f;
+                float sideW = std::min(Width(FontId::Small, side, cell), (right - nameX) * 0.5f);
+                if (p.colour < colors::Count())
+                    DrawSwatch(v, left, y + 2.0f, swatch, p.colour);
+                Draw(v, FontId::Small, RosterName(p), nameX, y, cell, style, 0.0f, right - nameX - sideW - ROSTER_GAP);
                 Draw(v, FontId::Small, side, right, y, cell, style, 1.0f, sideW);
                 if (host && p.slot != 0)
                     AddZone(left - 20.0f, y - 6.0f, right + 20.0f, y + cell + 6.0f, Hit::Row, int(i), true);
+                else if (p.me)  // the player's own row: left / right half change its colour
+                {
+                    float mid = (left + right) * 0.5f;
+                    AddZone(left - 20.0f, y - 6.0f, mid, y + cell + 6.0f, Hit::RowLeft, int(i));
+                    AddZone(mid, y - 6.0f, right + 20.0f, y + cell + 6.0f, Hit::RowRight, int(i));
+                }
                 y += pitch;
             }
         }
@@ -486,13 +526,22 @@ namespace mp::menu
                     float y = ROWS_Y + 40.0f + i * ROW_PITCH;
                     float right = Draw(v, FontId::Large, rows[i], VIRTUAL_W * 0.5f, y, ROW_CELL, int(i) == g_row ? pal.selected : pal.normal, 0.5f, 900.0f);
                     float left = VIRTUAL_W - right;
-                    AddZone(left - 20.0f, y - 6.0f, right + 20.0f, y + ROW_CELL + 6.0f, Hit::Row, int(i));
+                    if (g_screen == Screen::Root && int(i) == ROOT_COLOUR_ROW)
+                    {
+                        DrawSwatch(v, right + 16.0f, y + 2.0f, ROW_CELL - 4.0f, colors::Mine());
+                        AddZone(left - 20.0f, y - 6.0f, VIRTUAL_W * 0.5f, y + ROW_CELL + 6.0f, Hit::RowLeft, int(i));
+                        AddZone(VIRTUAL_W * 0.5f, y - 6.0f, right + 60.0f, y + ROW_CELL + 6.0f, Hit::RowRight, int(i));
+                    }
+                    else
+                        AddZone(left - 20.0f, y - 6.0f, right + 20.0f, y + ROW_CELL + 6.0f, Hit::Row, int(i));
                 }
                 std::string help = g_screen == Screen::Root
                                        ? g_row == ROOT_NAME ? T("Your name in the games online: A to change it.",
                                                                 "O seu nome nas partidas online: A para mudar.")
-                                                            : T("Up to 4 players: one hosts, the others find the game in the list (same network) or by its code.",
-                                                                "Até 4 jogadores: um cria a partida, os outros a encontram na lista (mesma rede) ou pelo código.")
+                                         : g_row == ROOT_COLOUR ? T("Your Crash's color: left / right to change it.",
+                                                                    "A cor do seu Crash: esquerda / direita para mudar.")
+                                                            : T("Up to 8 players (5-8 experimental): one hosts, the others find the game in the list (same network) or by its code.",
+                                                                "Até 8 jogadores (5-8 experimental): um cria a partida, os outros a encontram na lista (mesma rede) ou pelo código.")
                                    : g_screen == Screen::HostMode
                                        ? T("Start or load your game: the players wait for you at the HUB.",
                                            "Comece ou carregue o seu jogo: os jogadores esperam você no HUB.")
@@ -560,7 +609,8 @@ namespace mp::menu
                                                                "O host está numa fase: você entra na próxima que ele começar.")
                                                            : T("Waiting for the host to start a level...", "Esperando o host começar uma fase...") });
                 }
-                DrawHelp(v, pal, { T("B: leave", "B: sair") }, HELP_Y + 40.0f);
+                DrawHelp(v, pal, { lobby::GetState() == lobby::State::Joined ? T("Left / right: your color    B: leave", "Esquerda / direita: sua cor    B: sair")
+                                                                             : T("B: leave", "B: sair") }, HELP_Y + 40.0f);
                 break;
             }
             case Screen::Message:
@@ -610,7 +660,8 @@ namespace mp::menu
                                    (code != local ? std::string(T("   LAN ", "   rede local ")) + local : "   " + lobby::Address());
             std::string net = lobby::InternetText(g_portuguese);
             std::string back = std::string("\xC2\xB2 ") + T("BACK", "VOLTAR");
-            std::string help = g_row < players ? T("A: kick", "A: expulsar") : T("A / left / right: change", "A / esquerda / direita: mudar");
+            std::string help = g_row < players ? (list[size_t(g_row)].me ? T("Left / right: your color", "Esquerda / direita: sua cor") : T("A: kick", "A: expulsar"))
+                                               : T("A / left / right: change", "A / esquerda / direita: mudar");
             float fixed = TITLE + 12.0f + CODE + 6.0f + NET + 16.0f + 4.0f + HELP_CELL;
             float pitch = std::clamp((MAX_CONTENT_H - fixed) / rows, 30.0f, LIST_PITCH), cell = std::min(LIST_CELL, pitch - 8.0f);
             float contentW = std::max({ Width(FontId::Large, "MULTIPLAYER", TITLE), Width(FontId::Small, codeLine, CODE),
@@ -988,6 +1039,8 @@ namespace mp::menu
                     Close(true);
                 else if (accept && g_row == ROOT_NAME)
                     BeginField(Screen::Name, lobby::LocalName());
+                else if (g_row == ROOT_COLOUR_ROW)
+                    StepColour(pressed, true);
                 else if (accept)
                     Go(g_row == ROOT_HOST ? Screen::HostMode : Screen::FindMode);
                 break;
@@ -1095,6 +1148,8 @@ namespace mp::menu
                     lobby::Leave();
                     Go(Screen::Root, ROOT_FIND);
                 }
+                else if (state == lobby::State::Joined && StepColour(pressed, false))
+                    break;
                 else if (state == lobby::State::Failed)
                 {
                     lobby::Reason reason = lobby::LastReason();
@@ -1146,7 +1201,9 @@ namespace mp::menu
             if (g_row < players)
             {
                 std::vector<lobby::Player> list = lobby::Players();
-                if (accept && list[size_t(g_row)].slot != 0)
+                if (list[size_t(g_row)].me)
+                    StepColour(pressed, true);  // the host's own row: its colour
+                else if (accept)
                     lobby::Kick(list[size_t(g_row)].slot);
                 return;
             }

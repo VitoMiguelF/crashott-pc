@@ -170,6 +170,29 @@ if (ANDROID)
 else()
     add_executable(CrashRecomp ${CRASH_RUNTIME_SOURCES})
 endif()
+# The multiplayer colours on Crash's skins (runtime/online/mp_colors.cpp): a table made from the
+# user's extracted game data (private/assets, tools/mp_skin_colours.py) into the build folder, never
+# the repository. Without the data, Python or its modules (the GitHub builds) the table is empty
+# and the skins get the fur test only.
+set(CRASH_GENERATED_RUNTIME ${CMAKE_BINARY_DIR}/generated_runtime)
+set(CRASH_SKIN_TABLE ${CRASH_GENERATED_RUNTIME}/mp_skin_palettes.inc)
+find_package(Python3 COMPONENTS Interpreter)
+if (Python3_FOUND)
+    set(CRASH_SKIN_TABLE_DEPENDS ${CMAKE_SOURCE_DIR}/tools/mp_skin_colours.py ${CMAKE_SOURCE_DIR}/tools/p3d.py)
+    if (EXISTS ${CMAKE_SOURCE_DIR}/private/assets/index.csv)
+        list(APPEND CRASH_SKIN_TABLE_DEPENDS ${CMAKE_SOURCE_DIR}/private/assets/index.csv)
+    endif()
+    add_custom_command(OUTPUT ${CRASH_SKIN_TABLE}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/mp_skin_colours.py table ${CRASH_SKIN_TABLE}
+        DEPENDS ${CRASH_SKIN_TABLE_DEPENDS}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Multiplayer colours: skin table (tools/mp_skin_colours.py)")
+    set_source_files_properties(${CRASH_SKIN_TABLE} PROPERTIES HEADER_FILE_ONLY TRUE GENERATED TRUE)
+    target_sources(CrashRecomp PRIVATE ${CRASH_SKIN_TABLE})
+elseif (NOT EXISTS ${CRASH_SKIN_TABLE})
+    file(WRITE ${CRASH_SKIN_TABLE} "// empty: no Python at configure time (tools/mp_skin_colours.py)\n")
+endif()
+target_include_directories(CrashRecomp PRIVATE ${CRASH_GENERATED_RUNTIME})
 if (WIN32)
     enable_language(RC)  # launcher.rc: the icon (launcher/crashrecomp.png -> .ico, tools/make_icon.py)
     target_sources(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/launcher/launcher.rc)

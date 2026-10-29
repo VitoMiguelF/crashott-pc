@@ -408,6 +408,12 @@ namespace settings
                 if (ok)
                     values.cameraDistance = percent;
             }
+            else if (name == "multiplayer.color")
+            {
+                ok = !lower.empty() && lower.size() < 16 && std::all_of(lower.begin(), lower.end(), [](char c) { return c >= 'a' && c <= 'z'; });
+                if (ok)
+                    values.mpColour = lower;  // an unknown one is orange (online/mp_colors.cpp)
+            }
             else if (name == "dev.console")
                 ok = ParseBool(lower, values.devConsole);
             else if (name == "dev.hulk_skin")
@@ -497,6 +503,8 @@ namespace settings
                 << "gi_intensity = " << v.giIntensity << "   # 0-200 %, intensidade da luz indireta\n"
                 << "contact_shadows = " << (v.contactShadows ? "true" : "false") << "   # sombras de contato sob personagens, objetos e beiradas, vale na hora\n"
                 << "soft_shadows = " << (v.softShadows ? "true" : "false") << "   # sombras do jogo com filtro mais largo e suave (disco girado), vale na hora\n";
+            out << "\n[multiplayer]\n"
+                << "color = \"" << v.mpColour << "\"   # a cor do seu Crash no multijogador: orange | red | pink | purple | blue | cyan | green | yellow | brown | white | gray | black\n";
             out << "\n[dev]\n"
                 << "console = " << (v.devConsole ? "true" : "false") << "   # console de desenvolvedor (tecla antes do 1 ou F10; guia, \"Console de desenvolvedor\"), vale na hora\n"
                 << "hulk_skin = " << (v.hulkSkin ? "true" : "false") << "   # a skin Crash_Hulk (nao usada no jogo original) no menu de skins; o console liga com \"unlock skin hulk\"\n";
