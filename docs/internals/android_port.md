@@ -313,6 +313,31 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     Finding the draw: `CRASH_DUMP_SHADERS` on the phone, `CRASH_GPU_SKIP_PS` and
     `userdata/shaderoverride` tints (each PS's output mixed with a solid colour) on the PC and
     the phone, compared screen by screen.
+  - **S25 Ultra: two more driver bugs (2026-10-29), fixed.** Only on Qualcomm's own driver
+    (Adreno 830, 1.3.284); the PC, the S20 FE (Turnip) and the Tab S10 (Mali) were right.
+    - *L1_E1, the stones with mojo in the river looked as if they were behind the water.* They
+      were not drawn at all; what showed was their reflection in the water. `CRASH_GPU_SAFE=all`
+      brought them back and, one mode at a time, `instances` alone: the renderer records a draw
+      inside an open rendering instance that has more color attachments than the draw writes,
+      with a pipeline variant whose extra slots are masked (`PipelineInsideRendering`), and the
+      driver draws nothing of those. `CRASH_VULKAN_INSIDE` (bits: 1 fewer colors, 2 a null color,
+      4 no depth) showed it is only the fewer-colors case: on Qualcomm's driver such a draw now
+      begins its own instance (log `draws inside larger rendering instances: 0xFFFFFFFE`); the
+      depthless and null-slot variants stay.
+    - *The skin screen (and CRASH'S STATS, the same 3D Crash) in spikes across the screen.* The
+      frontend's Crash is one draw of 7488 indices (1995 vertices, skinned on the CPU) that the
+      wide-screen code sends through `HUD_GS` as 2D. Its vertex data is right as uploaded
+      (`CRASH_GPU_TRACE_DUMP`), and neither the index buffer (bound per draw, read by the vertex
+      shader instead, a smaller ring), the memory type of the ring, a `dsb sy` before submits,
+      a host-write barrier nor `CRASH_GPU_SAFE=all` changed it; `CRASH_HUD_NO_GS=1` did, frame
+      after frame. On Qualcomm's driver the renderer now uses no geometry shaders, as on Mali
+      (log `Qualcomm driver: geometry shaders not used`): rectangle lists expanded on the CPU,
+      the 2D folded into c4..c7 or placed per vertex.
+    - How it was found: `env.txt` with `CRASH_DEV_TELEPORT=-39.4, -2.34, -6.0` and
+      `CRASH_DEV_LUA_AT=gameplay_ready+1` (the stones, straight from `args.txt` `--boot level:L1_E1
+      --skip-cinematics`), and `--boot load:1:hub` with
+      `CRASH_INPUT_SCRIPT=hub+2000:DOWN,hub+3000:A` (CRASH'S STATS) for repeatable screenshots;
+      `userdata/shaderoverride` vertex shaders that moved suspect vertices to the screen centre.
   - **Tab S10 Ultra (Mali-G720 MC12, driver r44p1, Vulkan 1.3.247), same day: the game runs**, the
     opening cutscene at a steady 60 fps (16.67 ms per frame, the limit) at 1154x720 on its
     2960x1848 screen, with the dump pushed (3.0 GB over adb Wi-Fi in 66 s) and the S20 FE's SPIR-V
@@ -611,7 +636,7 @@ The renderer needs Vulkan 1.3 with dynamic rendering, synchronization2, timeline
 | Requirement | Adreno (Qualcomm, 6xx/7xx/8xx) | Mali (Arm, Valhall / 5th gen) | Plan |
 |---|---|---|---|
 | Vulkan 1.3 | yes on recent drivers (Android 13+) | yes on recent drivers | keep; log and refuse below |
-| `geometryShader` | yes | older Mali: **no**; Mali-G720 (Tab S10 Ultra): yes | GS-free path: rect lists (`RECT_LIST_GS`) expanded to two triangles in the vertex shader (vertex pulling from the storage ring, already used) or on the CPU; `HUD_GS` (Hor+ 2D): most draws now folded into c4..c7 on the CPU (`HudFoldDraw`, done 2026-10-26). Needed for older Mali |
+| `geometryShader` | yes, but **not used on Qualcomm's own driver** (`HUD_GS` gave a large draw wrong positions on the Adreno 830; Turnip uses them) | older Mali: **no**; Mali-G720 (Tab S10 Ultra): yes, but its compiler crashes on them (not used) | GS-free path: rect lists (`RECT_LIST_GS`) expanded to two triangles in the vertex shader (vertex pulling from the storage ring, already used) or on the CPU; `HUD_GS` (Hor+ 2D): most draws now folded into c4..c7 on the CPU (`HudFoldDraw`, done 2026-10-26). Needed for older Mali |
 | BC1–BC5 textures (`textureCompressionBC`) | mostly yes on 7xx; check per device | **no** (ASTC/ETC2 only) | when the format reports no `SAMPLED_IMAGE` support: decode to RGBA8 on upload (CPU `bcdec`, public domain, or a compute shader). That costs 4–8× the memory for those textures. Transcoding to ASTC is an option for later |
 | `VK_KHR_push_descriptor` | recent drivers, but **not used on Qualcomm's own driver** (wrong textures on the Adreno 830; Turnip is fine) | recent drivers | already only for draws (passes use regular sets): per-draw sets from a pool when missing or on Qualcomm's driver |
 | D24S8 sampled | yes | yes | the renderer already falls back to D32S8 |

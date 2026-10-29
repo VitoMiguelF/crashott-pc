@@ -514,6 +514,11 @@ namespace gpu::rhi
             // Implicit-LOD sampling: off on Mesa's Turnip (Adreno 650, Mesa 26.2.5), where the
             // translated shaders' SampleBias lost the device after 1-2 minutes of a level.
             bool m_implicitDerivatives = true;
+            // Which draws PipelineInsideRendering may record inside a larger rendering instance
+            // (INSIDE_* bits; CRASH_VULKAN_INSIDE overrides): not one with fewer color attachments
+            // than the instance on Qualcomm's driver, which drew nothing of them.
+            enum : uint32_t { INSIDE_FEWER_COLORS = 1, INSIDE_NULL_COLOR = 2, INSIDE_NO_DEPTH = 4 };
+            uint32_t m_insideRendering = ~0u;
             bool m_gplExtension = false;  // VK_EXT_graphics_pipeline_library + VK_KHR_pipeline_library listed
             std::vector<std::string> m_enabledDeviceExtensions;
             std::unordered_map<uint32_t, VkFormatFeatureFlags> m_formatFeatures;  // (format, usage) pairs checked by CreateTexture
@@ -995,6 +1000,24 @@ namespace gpu::rhi
                 m_pushDescriptors = false;
                 Log("[vulkan] Qualcomm driver: push descriptors not used");
             }
+            // Through a geometry shader the same driver gives part of a large draw wrong positions:
+            // the Crash of the stats and skin screens (frontend 2D, HUD_GS) came out in spikes across
+            // the screen. Without geometry shaders, as on Mali: rectangle lists and the wide-screen
+            // 2D placed on the CPU.
+            if (m_geometryShaders && driver.driverID == VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
+            {
+                m_geometryShaders = false;
+                Log("[vulkan] Qualcomm driver: geometry shaders not used, rectangle lists drawn as triangles");
+            }
+            // The same driver draws nothing of a draw recorded inside a rendering instance with more
+            // color attachments than it writes (a pipeline variant with the extra slots masked): the
+            // stones with mojo in the L1_E1 river were missing, their reflection in the water left.
+            if (driver.driverID == VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
+                m_insideRendering &= ~INSIDE_FEWER_COLORS;
+            if (const char* inside = getenv("CRASH_VULKAN_INSIDE"))
+                m_insideRendering = uint32_t(strtoul(inside, nullptr, 0));
+            if (m_insideRendering != ~0u)
+                Log("[vulkan] draws inside larger rendering instances: 0x%X (1 fewer colors, 2 a null color, 4 no depth)", m_insideRendering);
             VkPhysicalDeviceVulkan13Features features13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
             features13.dynamicRendering = VK_TRUE;
             features13.synchronization2 = VK_TRUE;
@@ -2202,6 +2225,12 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
             if (exact)
                 return nullptr;  // BeginRendering keeps the instance as it is
+            uint32_t kind = (colorCount < m_rendering.colorCount ? INSIDE_FEWER_COLORS : 0) | (!depth && m_rendering.depth ? INSIDE_NO_DEPTH : 0);
+            for (uint32_t i = 0; i < colorCount; i++)
+                if (!colors[i] && m_rendering.colors[i])
+                    kind |= INSIDE_NULL_COLOR;
+            if ((kind & m_insideRendering) != kind)
+                return nullptr;
             uint64_t signature = uint64_t(m_rendering.colorCount) | (uint64_t(depth != nullptr) << 3) | (uint64_t(m_rendering.depth != nullptr) << 4);
             for (uint32_t i = 0; i < m_rendering.colorCount; i++)
                 signature |= uint64_t(m_rendering.colors[i] ? uint32_t(m_rendering.colors[i]->desc.RenderFormat()) & 0xFF : 0) << (8 + 8 * i);
