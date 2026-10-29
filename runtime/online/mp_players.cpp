@@ -73,6 +73,7 @@ PPC_EXTERN_FUNC(sub_82142608);             // CActor::GetBehaviour
 PPC_EXTERN_FUNC(sub_82143698);             // CPhysicsBehaviour: collision on / off
 PPC_EXTERN_FUNC(sub_82098E68);             // CAIManager: removes an AI target (RemoveTarget)
 PPC_EXTERN_FUNC(sub_82154A58);             // Crash: shows a player (behaviours on, collision, AI target), as leaving the backpack does
+extern "C" PPC_FUNC(__imp__sub_821ED6C0);  // CInputManager: registers a player's input binding with its controller's device
 
 namespace
 {
@@ -150,6 +151,7 @@ namespace
     // CInputManager (manager 7: MANAGERS_TABLE + (7 + 7) * 4): its CInputDevices at +8..+12, one per
     // controller (device +0x10 = the controller number, 0-3).
     constexpr uint32_t INPUT_DEVICE_VTABLE = 0x8201DC54;
+    constexpr uint32_t DEVICE_ACTOR = 508;  // CInputDevice: the actor whose input maps its update runs
 
     uint32_t Device(uint32_t controller)
     {
@@ -160,6 +162,18 @@ namespace
             if (uint32_t device = LoadBE32(p); GuestPointer(device) && LoadBE32(device + 0x10) == controller)
                 return device;
         return 0;
+    }
+
+    // Every player's device (its binding's) drives that player's actor (DEVICE_ACTOR).
+    void OwnDevices()
+    {
+        for (uint32_t i = 0; i < mp::MAX_PLAYERS; ++i)
+        {
+            uint32_t crash = mp::PlayerCrash(i), binding = crash ? LoadBE32(crash + 176) : 0;
+            uint32_t device = GuestPointer(binding) ? LoadBE32(binding) : 0;
+            if (GuestPointer(device) && LoadBE32(device) == INPUT_DEVICE_VTABLE && GuestPointer(LoadBE32(crash + 156)))
+                StoreBE32(device + DEVICE_ACTOR, LoadBE32(crash + 156));
+        }
     }
 
     // The player index the game sees for a Crash past the second: players 3 and 4 have 2 and 3; players 5-8
@@ -896,11 +910,19 @@ namespace mp
             StoreBE32(e.crash + 300, 2);
             // Its controller: the Crash's input binding (+176 -> +0 the CInputDevice); players 3-8 start on
             // player 2's. Players 5-8 take a reference to theirs (the Crash releases its binding when it goes).
+            // The device also names the actor it drives (+508, what Crash::vf06's registration sub_821ED6C0
+            // writes): its update runs that actor's input maps, so with only the binding moved the stick
+            // (read through the binding) worked and no button did (no attack, no jump). Every player's device
+            // gets its own actor again (the registration with the wrong controller number wrote P3's into
+            // another player's device).
             uint32_t binding = LoadBE32(e.crash + 176), device = extraDevice ? extraDevice : Device(e.index);
             if (GuestPointer(binding) && LoadBE32(LoadBE32(binding)) == INPUT_DEVICE_VTABLE && device)
             {
+                bool registered = LoadBE32(binding) == device;  // by the sub_821ED6C0 hook below
                 StoreBE32(binding, device);
-                uint32_t addRef = extraDevice ? LoadBE32(LoadBE32(device)) : 0;
+                StoreBE32(device + DEVICE_ACTOR, LoadBE32(e.crash + 156));
+                OwnDevices();
+                uint32_t addRef = extraDevice && !registered ? LoadBE32(LoadBE32(device)) : 0;
                 if (PPCFunc* f = addRef >= PPC_CODE_BASE && addRef < PPC_CODE_BASE + PPC_CODE_SIZE ? PPC_LOOKUP_FUNC(base, addRef) : nullptr)
                 {
                     PPCContext ref = ctx;
@@ -920,4 +942,44 @@ namespace mp
 
         }
     }
+}
+
+// CInputManager: Crash::vf06 registers a player's input binding (r5, the Crash's +176) for its actor (r6) with
+// the device of the player's controller, asked of CFrontendManager::GetPlayersControllerNum (sub_821D8C50, a
+// table of 2) with the player index (r4): the device names the actor (+508), takes a reference and goes in
+// the binding. The input maps the Crash then makes go into that device's list (+412), which its update
+// (sub_821ED160) runs with its own buttons. For players 3-8 the index read past the table gave player 2's
+// device: they ran on player 2's buttons and, with the binding moved to their own device afterwards, only
+// the stick (read through the binding) was theirs (no jump, no attack on the other machines). Each of them
+// is registered with its own device here: 2 / 3 for players 3 / 4, ours (ExtraDevice) for players 5-8.
+PPC_FUNC(sub_821ED6C0)
+{
+    uint32_t binding = ctx.r5.u32, actor = ctx.r6.u32;
+    if (Managed() && GuestPointer(binding) && actor)
+        for (const Extra& e : g_extras)
+        {
+            // The Crash is its actor's part at +0x40 (its +156, the actor, is set after vf06)
+            if (e.index < 2 || e.index >= mp::MAX_PLAYERS || (e.crash - 0x40 != actor && LoadBE32(e.crash + 156) != actor))
+                continue;
+            uint32_t device = e.index < mp::GAME_PLAYERS ? Device(e.index) : ExtraDevice(ctx, base, e.index);
+            if (!GuestPointer(device))
+                break;
+            StoreBE32(device + DEVICE_ACTOR, actor);
+            auto call = [&](uint32_t object, uint32_t slot) {
+                uint32_t f = LoadBE32(LoadBE32(object) + slot * 4);
+                if (PPCFunc* fn = f >= PPC_CODE_BASE && f < PPC_CODE_BASE + PPC_CODE_SIZE ? PPC_LOOKUP_FUNC(base, f) : nullptr)
+                {
+                    PPCContext c = ctx;
+                    c.r3.u64 = object;
+                    fn(c, base);
+                }
+            };
+            call(device, 0);  // AddRef
+            if (uint32_t old = LoadBE32(binding); GuestPointer(old))
+                call(old, 1);  // Release
+            StoreBE32(binding, device);
+            Log("[mp] player %u's input registered with controller %u's device (not player 2's)", e.index + 1, e.index);
+            return;
+        }
+    __imp__sub_821ED6C0(ctx, base);
 }

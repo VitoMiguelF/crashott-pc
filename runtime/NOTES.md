@@ -2577,3 +2577,7 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   (liberados na saída), o `CActionSpawnPlayer` de cada jogador recebe a skin do slot dele (+8) e o
   `Crash:CheckSkinType` (arma da skin) compara com a skin com que aquele Crash nasceu. Junção das branches
   mp-menus, mp-8players e mp-colors em online-coop (2026-10-29). Ainda não visto no jogo.
+- **P3+ sem botões nas outras máquinas** (2026-10-29): o `Crash::vf06` registra a entrada do Crash no dispositivo
+  do controle do jogador pela tabela de 2 do `GetPlayersControllerNum`; o índice 2 lia além dela e pegava o
+  dispositivo do P2, então as cópias do P3-P8 só andavam (o analógico é lido pelo binding), sem pular nem bater
+  (nada de dano, plantas de mojo inteiras). O hook do `sub_821ED6C0` registra cada um no próprio dispositivo.

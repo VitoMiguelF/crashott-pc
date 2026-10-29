@@ -1550,3 +1550,29 @@ input = [
     ["@cinematic_done"], [2, "SHOT"], [3, "LS", 1, 0, 2.0], [6, "SHOT"], [12, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["cinematic", "cinematic_done"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['the host skipped the cutscene of node', 'after the cutscene: player'] }
+
+[profiles.mp_p3_ataque]
+description = "Multijogador local, 3 Crashes na vila: o P3 anda para a direita até as plantas de mojo batendo (P3_X), depois o P2 faz o mesmo; CRASH_DEV_DAMAGE_DEBUG mostra o dano em cada planta (o P3 não quebrava as plantas)"
+test = false
+timeout = 34
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_PLAYERS = "3", CRASH_MP_TRACE = "1", CRASH_DEV_DAMAGE_DEBUG = "1" }
+input = [["@gameplay_ready"], [3, "SHOT"], [4, "P3_LS", 1, 0, 2.5], [6.6, "P3_X"], [7.0, "P3_X"], [7.4, "P3_X"], [7.8, "P3_X"], [8.2, "P3_X"], [8.6, "SHOT"], [9.0, "P3_X"], [9.4, "P3_X"], [10, "SHOT"], [13, "P2_LS", 1, 0, 2.5], [15.6, "P2_X"], [16.0, "P2_X"], [16.4, "P2_X"], [16.8, "P2_X"], [17.2, "P2_X"], [17.6, "SHOT"], [18.0, "P2_X"], [18.4, "P2_X"], [19, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_p3_botoes]
+description = "Multijogador local, 3 Crashes na vila (câmera de todos): rajadas de capturas logo depois de X do P2, X do P3 e A do P3 (o P3 não pulava nem batia: entrada registrada no controle do P2)"
+test = false
+timeout = 24
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_PLAYERS = "3" }
+input = [["@gameplay_ready"], [5, "P2_X"], [5.1, "SHOT"], [5.25, "SHOT"], [5.4, "SHOT"], [8, "P3_X"], [8.1, "SHOT"], [8.25, "SHOT"], [8.4, "SHOT"], [11, "P3_A"], [11.1, "SHOT"], [11.25, "SHOT"], [11.4, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['player 3.s input registered'] }

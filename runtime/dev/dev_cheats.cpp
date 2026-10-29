@@ -157,7 +157,9 @@ PPC_FUNC(sub_82110448)
             snprintf(item, sizeof(item), " +%u=%08X(%08X)", o, w, vt);
             words += item;
         }
-        Log("[dev] damage %.2f to 0x%08X:%s", -ctx.f1.f64, d, words.c_str());
+        uint32_t by = ctx.r5.u32, byActor = PlausibleObject(by) ? LoadBE32(by + 28) : 0;
+        Log("[dev] damage %.2f to 0x%08X by 0x%08X (vtable %08X, actor %08X):%s", -ctx.f1.f64, d, by,
+            PlausibleObject(by) ? LoadBE32(by) : 0, byActor, words.c_str());
     }
     if (InvincibleFlag() && ctx.f1.f64 < 0.0 && IsPlayerDamageable(ctx.r3.u32))
     {

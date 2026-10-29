@@ -218,6 +218,17 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   attacher, so `0x8249D780` is P1 for the call), set to co-op state 2 and teleported next to P1.
 - **Controller**: `Crash+176` -> an input binding whose +0 is the `CInputDevice`; P3 and P4 start on P2's, so
   they get devices 2 and 3.
+- **Each player's own buttons** (`mp_players.cpp`, the `sub_821ED6C0` hook): `Crash::vf06` registers the Crash's input
+  binding (+176) with the device of the player's controller, asked of `GetPlayersControllerNum` (`sub_821D8C50`, a
+  table of 2) with the player index: the device names the actor it drives (+508), takes a reference and goes in
+  the binding, and the input maps the Crash makes then go into that device's list (+412), which its update
+  (`sub_821ED160`) runs with its own buttons. Index 2-3 read past the table and got player 2's device: players 3-8
+  ran on player 2's buttons, and with only the binding moved to their own device afterwards just the stick (read
+  through the binding) was theirs: on the other machines they walked but never jumped nor attacked (no hits, no
+  mojo plants broken), while their own machine (where they are player 1) showed it all. Now each is registered
+  with its own device (2 / 3, or ours for 5-8); the actor is the Crash - 0x40 (its +156 is set after vf06).
+  `mp_p3_botoes` (local, 3 players): P3 attacks and jumps on its own buttons; `mp_p3_ataque`: P3 breaks the
+  village's mojo plants (`CRASH_DEV_DAMAGE_DEBUG` names each damage's attacker).
 - **No backpack**: online (or with `CRASH_MP_PLAYERS`) `SetPlayerEnteringBackpack` (`sub_82153348`) is skipped for a
   Crash on foot, `IsOkayToEnterBackpack` says no and `EnterOtherPlayersBackpack` fails the game's way.
 - **Network**: slots (host 0, clients `CRASH_MP_SLOT` 1-3, UDP port + slot). Each machine plays its own slot as
