@@ -2555,7 +2555,7 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
 - **Cada máquina manda no próprio jogador + coleira** (protocolo 4): o pacote do pad leva a posição do jogador;
   cada máquina corrige só as cópias dos outros por ela (`CorrectRemotePlayers`), nunca o próprio jogador. Antes
   o cliente corrigia o próprio Crash pela cópia do host: teleportes pequenos andando, com a animação de queda.
-  Coleira (`CRASH_MP_LEASH`, 15 unidades, 0 desliga): passando do limite a partir do meio dos outros, o
+  Coleira (`CRASH_MP_LEASH`, em unidades; desligada por padrão desde 2026-10-29, não ficou boa; era 15): passando do limite a partir do meio dos outros, o
   analógico perde a parte que afasta (o pad enviado já vai assim); quem ficar a mais do dobro por 1,5 s volta
   ao lado do companheiro de menor slot, movido pela própria máquina. Câmera continua individual.
 - **8 jogadores (experimental, branch `mp-8players`, 2026-10-29)**: MÁXIMO DE JOGADORES vai até 8 no lobby

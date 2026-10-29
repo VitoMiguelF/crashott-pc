@@ -78,6 +78,7 @@ extern "C" PPC_FUNC(__imp__sub_821ED6C0);  // CInputManager: registers a player'
 namespace
 {
     constexpr uint32_t CRASH_TABLE = 0x8249D778;     // Crash* [2], by player index
+    constexpr uint32_t PLAYERS_SHARED = 0x8249D78C;  // the players' shared object (~Crash releases it with the last one)
     constexpr uint32_t BACKPACK_CRASH = 0x8249D780;  // right after it
     constexpr uint32_t MANAGERS_TABLE = 0x824A7A24;  // CUberManager: manager n at +(n + 7) * 4 (2 = AI, 7 = input)
     constexpr uint32_t COOP_STATE = 0x8245FA9C;      // int [2], per player index
@@ -448,26 +449,39 @@ PPC_FUNC(sub_82153B08)
                       g_knockouts.end());
     g_departed.erase(std::remove(g_departed.begin(), g_departed.end(), crash), g_departed.end());
     // When both entries of the table are empty the destructor releases the players' shared object
-    // (0x8249D78C, vf1). A level's unload destroyed players 1 and 2 before the third Crash, which then
-    // used it (a crash leaving any level with 3+ players): while an extra Crash is alive the other entry
-    // holds it, so the last Crash to go releases the object.
+    // (0x8249D78C: PrepareForDelete, vf1, then 0). A level's unload destroyed players 1 and 2 before the third
+    // Crash, which then used it (a crash leaving any level with 3+ players): while another extra Crash is alive
+    // an empty entry holds it, so the last Crash to go releases the object. With 4+ players the first extra
+    // to go after players 1 and 2 released it and the next one released it again (PrepareForDelete of null: the
+    // S20 FE closed when its session ended in a level with 4 players): once it is gone, an entry holds this
+    // Crash meanwhile, so nothing is released twice.
     uint32_t index = *g_memory.Translate(crash + 292);
-    uint32_t keep = 0;
-    if (index < 2 && LoadBE32(CRASH_TABLE + index * 4) == crash && !LoadBE32(CRASH_TABLE + (index ^ 1) * 4))
+    bool own = index < 2 && LoadBE32(CRASH_TABLE + index * 4) == crash;  // the destructor clears that entry
+    bool emptyAfter = true;
+    for (uint32_t i = 0; i < 2; ++i)
+        if (LoadBE32(CRASH_TABLE + i * 4) && !(own && i == index))
+            emptyAfter = false;
+    uint32_t keep = 0, entry = own ? index ^ 1 : 0;
+    if (emptyAfter)
+    {
         for (const Extra& e : g_extras)
             if (e.index >= 2 && GuestPointer(e.crash))
             {
                 keep = e.crash;
                 break;
             }
+        if (!keep && !LoadBE32(PLAYERS_SHARED))
+            keep = crash;  // already released
+    }
     if (keep)
     {
-        StoreBE32(CRASH_TABLE + (index ^ 1) * 4, keep);
-        Log("[mp] Crash %08X (player %u) goes before extra Crash %08X: the shared object stays", crash, index + 1, keep);
+        StoreBE32(CRASH_TABLE + entry * 4, keep);
+        Log("[mp] Crash %08X (player %u) goes before %s: the shared object %s", crash, index + 1,
+            keep == crash ? "nobody" : "an extra Crash", keep == crash ? "is not released again" : "stays");
     }
     __imp__sub_82153B08(ctx, base);
     if (keep)
-        StoreBE32(CRASH_TABLE + (index ^ 1) * 4, 0);
+        StoreBE32(CRASH_TABLE + entry * 4, 0);
 }
 
 PPC_FUNC(sub_8220D830)

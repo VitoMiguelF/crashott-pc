@@ -30,7 +30,7 @@
 // camera to this one's. A player's position is its own machine's: the other machines correct their
 // copy to the one sent with its pad, through its physics (TeleportPlayer), when it drifts more than
 // CRASH_MP_SNAP (default 1.0) away; nobody corrects its own player (CorrectRemotePlayers). The players
-// stay within CRASH_MP_LEASH of each other (Leash, UpdateLocalPlayer).
+// stay within CRASH_MP_LEASH of each other when it is set (off by default; Leash, UpdateLocalPlayer).
 
 #include "mp.h"
 #include "mp_colors.h"
@@ -1101,12 +1101,13 @@ namespace mp
         return 0.0;
     }
 
-    // How far the players may go apart (CRASH_MP_LEASH, units on the ground; 0 = no limit).
+    // How far the players may go apart (CRASH_MP_LEASH, units on the ground; 0 = no limit, the default: the
+    // leash did not play well, 2026-10-29).
     float LeashUnits()
     {
         static float units = [] {
             const char* text = getenv("CRASH_MP_LEASH");
-            return text && *text ? std::max(0.0f, float(atof(text))) : 15.0f;
+            return text && *text ? std::max(0.0f, float(atof(text))) : 0.0f;
         }();
         return units;
     }

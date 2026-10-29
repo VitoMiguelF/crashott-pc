@@ -533,7 +533,7 @@ PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale f
   or steers copies: the players stand at parking spots then, and the copies were pulled 160 units across the
   level for a moment.
 - **Leash** (as the shared co-op camera kept the players together, each with its own camera;
-  `CRASH_MP_LEASH`, default 15 units, 0 = off): past it from the middle of the other players in play, the part
+  `CRASH_MP_LEASH`, units; **off by default since 2026-10-29**: it did not play well, 15 was the old default): past it from the middle of the other players in play, the part
   of player 1's stick that walks further away is taken out before the game and the other machines see the
   pad (`Leash`; the game thread keeps the way away for the input reads, `UpdateLocalPlayer`). A player still
   further than twice that for 1.5 s (a fall, a hit) goes back next to the teammate with the lowest slot, moved
@@ -566,7 +566,9 @@ PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale f
   (`sub_822116C0` -> `CActionSpawnActor` `sub_822102B0`) ran again with the template's name already freed
   (`GenerateObject` gsub on nil, then a null call): now `NewObjective(name, "", true)` (not resettable);
   (2) players 1 and 2 going before an extra Crash released the players' shared object (0x8249D78C) the extra
-  then used (`CActor::PrepareForDelete`): the ~Crash hook keeps the extra in the other table entry meanwhile;
+  then used (`CActor::PrepareForDelete`): the ~Crash hook keeps the extra in the other table entry meanwhile
+  (with 4+ players the next extra then released it again, `PrepareForDelete(0)`: the S20 FE closed when its
+  session ended in a level with 4 players; once it is gone, an entry holds the Crash going meanwhile);
   (3) online, a replaced jacked palette pointer made the drawable release its normal palette twice
   (`_purecall` in `~CCharacterObject`, reached from `CActor::PrepareForDelete` before ~Crash): put back in a
   `~CCharacterObject` hook (`sub_822210E0`). KeBugCheck now logs the host backtrace (guest callers by name).
