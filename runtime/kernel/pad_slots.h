@@ -10,8 +10,9 @@
 // [controls] player1 / player2 choose ("auto" | "xbox1".."xbox4" | "playstation1".."playstation4",
 // settings/controls.h), and keep them until unplugged. Player 1 is on the game controller that
 // pressed START on the title screen (the game's own choice, 0 before that); with player1 = "auto"
-// the device that pressed it becomes player 1. The keyboard and the mouse always drive player 1,
-// and a single pad is player 1 with them.
+// the device that pressed it becomes player 1. The keyboard and the mouse drive player 1 with its pad
+// (a single pad is player 1 with them), unless a player's row says "keyboard": then they are that player's
+// alone and the pads go to the others (the keyboard on player 1 and controller 1 on player 2, say).
 
 #include "xinput_types.h"
 
@@ -30,6 +31,9 @@ namespace input::slots
     // The game controller of player 1 (the one the game took on the title screen), where the
     // keyboard and the mouse go.
     uint32_t PlayerOneUser();
+    // The game controller the keyboard and the mouse drive: player 1's, or that of the player whose row is
+    // "keyboard" ([controls] player1 / player2).
+    uint32_t KeyboardUser();
 
     // The devices connected now, for the settings screen: settings key ("xbox1", "playstation2"),
     // name ("Controle 1", "DualSense (USB)") and player (0 = player 1, -1 = none).

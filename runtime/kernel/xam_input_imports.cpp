@@ -400,9 +400,15 @@ namespace
         state = {};
         bool connected = input::slots::Read(user, state.Gamepad);
         RemapPad(state.Gamepad);
-        uint32_t playerOne = input::slots::PlayerOneUser();
+        uint32_t playerOne = input::slots::PlayerOneUser(), keyboard = input::slots::KeyboardUser();
         if (user != playerOne)
         {
+            // The keyboard and the mouse on this player's own ([controls] player2 = "keyboard").
+            if (user == keyboard)
+            {
+                input::pc::Apply(state, poll, ScriptedKeys(ClockNow()));
+                connected = true;
+            }
             // A virtual pad from CRASH_INPUT_SCRIPT (P2_ entries) on top.
             if (ScriptedPad(user))
             {
@@ -422,7 +428,8 @@ namespace
             uint64_t now = ClockNow();
             // The touch controls (Android) first: what the pad alone did hides them.
             touch_controls::Apply(state.Gamepad, poll);
-            input::pc::Apply(state, poll, ScriptedKeys(now));
+            if (keyboard == playerOne)
+                input::pc::Apply(state, poll, ScriptedKeys(now));
             static uint16_t s_lastPlayer, s_lastScript;
             NotePresses(state.Gamepad.wButtons, s_lastPlayer, false, now);
             XINPUT_STATE scripted{};

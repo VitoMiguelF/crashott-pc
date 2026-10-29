@@ -267,6 +267,8 @@ namespace settings::menu
         {
             if (key == "auto")
                 return T({ "AUTO", "AUTO" });
+            if (key == "keyboard")
+                return T({ "KEYBOARD", "TECLADO" });
             for (const input::slots::Device& device : input::slots::Devices())
             {
                 if (device.key != key)
@@ -682,9 +684,9 @@ namespace settings::menu
             Values before = g_values;
             if (item == Item::Player1 || item == Item::Player2)
             {
-                // AUTO, then the controllers connected now (and the saved one, if it is not).
+                // AUTO, the keyboard, then the controllers connected now (and the saved one, if it is not).
                 std::string& chosen = g_values.controls.players[item == Item::Player2];
-                std::vector<std::string> keys = { "auto" };
+                std::vector<std::string> keys = { "auto", "keyboard" };
                 for (const input::slots::Device& device : input::slots::Devices())
                     keys.push_back(device.key);
                 if (std::find(keys.begin(), keys.end(), chosen) == keys.end())

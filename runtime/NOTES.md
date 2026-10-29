@@ -2592,3 +2592,9 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   antes da página (o menu principal ainda saindo): agora espera a página aparecer (palavra +84 do objeto da
   página, +20 da ação, vira uma cor opaca; 2,5 s no máximo). O título ENTER YOUR NAME (frontend 0xE194) virou
   SAVE NAME em todos os idiomas do jogo (`pc_frontend.cpp` PC_TEXTS) e NOME DO JOGO SALVO em pt-br.
+- **Teclado separado no co-op local** (2026-10-29): `[controls] player1/player2` aceitam `keyboard` (TECLADO nas linhas
+  JOGADOR 1/2 do jogo e do launcher). Em AUTO nada muda (teclado + controle 1 = jogador 1). Com TECLADO num jogador
+  o teclado e o mouse são só dele (`input::slots::KeyboardUser`, `pc::Apply` no controle do jogo daquele jogador,
+  que conta como conectado) e nenhum controle fica com ele: JOGADOR 2 = TECLADO deixa o controle 1 como jogador 1 e
+  o teclado como jogador 2 (JOIN GAME com E, P2 PAUSED com Esc); JOGADOR 1 = TECLADO põe o controle 1 no jogador 2.
+  `--pads-selftest` cobre os dois casos; perfil `coop_teclado_p2`.

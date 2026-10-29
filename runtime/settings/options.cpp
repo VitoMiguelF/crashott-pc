@@ -349,6 +349,8 @@ namespace settings::options
             const std::string& key = values.controls.players[item == Item::Player2];
             if (key == "auto")
                 return "AUTO";
+            if (key == "keyboard")
+                return t({ "KEYBOARD", "TECLADO" });
             return key.compare(0, 4, "xbox") == 0 ? t({ "CONTROLLER ", "CONTROLE " }) + key.substr(4) + " (XINPUT)" : "PLAYSTATION " + key.substr(11);
         }
         case Item::MouseCamera: return OnOff(pt, values.controls.mouseCamera);
@@ -520,11 +522,11 @@ namespace settings::options
                          t({ "ADVANCED > DEFINITIVE EDITION.", "AVANÇADO > DEFINITIVE EDITION." }) };
             }
         case Item::Player1:
-            return { t({ "Controller of player 1 (with the keyboard and mouse).", "Controle do jogador 1 (junto com teclado e mouse)." }),
-                     t({ "AUTO: the one that pressed START on the title screen.", "AUTO: o que apertou START na tela título." }) };
+            return { t({ "Player 1: AUTO (the controller that pressed START, with", "Jogador 1: AUTO (o controle que apertou START, junto" }),
+                     t({ "the keyboard), KEYBOARD alone or one controller.", "com o teclado), só o TECLADO ou um controle." }) };
         case Item::Player2:
-            return { t({ "Controller of player 2: B joins the game, Y leaves", "Controle do jogador 2: B entra no jogo, Y desce" }),
-                     t({ "the backpack. A single controller is always player 1.", "da mochila. Com um controle só, ele é o jogador 1." }) };
+            return { t({ "Player 2 (B joins, Y leaves the backpack): KEYBOARD", "Jogador 2 (B entra, Y desce da mochila): TECLADO" }),
+                     t({ "takes it from player 1; with AUTO one pad = player 1.", "o tira do jogador 1; em AUTO um controle só é o 1." }) };
         case Item::Prompts:
             return { t({ "Icons in menus and hints: the last device used,", "Ícones nos menus e dicas: o último aparelho usado," }),
                      t({ "or always Xbox / PlayStation / keyboard.", "ou sempre Xbox / PlayStation / teclado." }) };
@@ -682,7 +684,7 @@ namespace settings::options
         case Item::Player1:
         case Item::Player2:
         {
-            static const char* const KEYS[] = { "auto", "xbox1", "xbox2", "xbox3", "xbox4", "playstation1", "playstation2", "playstation3", "playstation4" };
+            static const char* const KEYS[] = { "auto", "keyboard", "xbox1", "xbox2", "xbox3", "xbox4", "playstation1", "playstation2", "playstation3", "playstation4" };
             constexpr int COUNT = int(std::size(KEYS));
             std::string& key = values.controls.players[item == Item::Player2];
             int index = 0;

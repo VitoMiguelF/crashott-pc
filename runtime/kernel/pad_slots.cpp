@@ -291,8 +291,16 @@ namespace input::slots
                         text += line;
                     }
                 }
+                if (KeyboardOnly() >= 0)
+                    text += (text.empty() ? "" : ", ") + std::string("P") + std::to_string(KeyboardOnly() + 1) + " = teclado (controle " +
+                            std::to_string(UserOf(KeyboardOnly())) + " do jogo)";
                 return text.empty() ? "nenhum controle (só o teclado, no controle " + std::to_string(playerOne) + " do jogo)" : text;
             }
+
+            // The player the keyboard drives: the one whose row is "keyboard", else player 1 (with its pad).
+            int KeyboardPlayer() const { return choices_[1] == "keyboard" && choices_[0] != "keyboard" ? 1 : 0; }
+            // The player kept for the keyboard alone (no pad there), -1 when it rides with player 1's pad.
+            int KeyboardOnly() const { return choices_[0] == "keyboard" ? 0 : choices_[1] == "keyboard" ? 1 : -1; }
 
             int UserOf(int player) const
             {
@@ -425,13 +433,20 @@ namespace input::slots
 
             void Assign()
             {
+                // A player kept for the keyboard has no pad.
+                int keyboard = KeyboardOnly();
+                for (Dev& d : devs_)
+                {
+                    if (d.player >= 0 && d.player == keyboard)
+                        d.player = -1;
+                }
                 // The devices chosen in the settings, when there are two or more (a single pad is
-                // always player 1, with the keyboard).
-                if (devs_.size() >= 2)
+                // always player 1, with the keyboard), or one with the keyboard on its own player.
+                if (devs_.size() >= 2 || keyboard >= 0)
                 {
                     for (int p = 0; p < 2; p++)
                     {
-                        if (choices_[p] == "auto" || (p == 1 && choices_[1] == choices_[0]))
+                        if (choices_[p] == "auto" || choices_[p] == "keyboard" || (p == 1 && choices_[1] == choices_[0]))
                             continue;
                         Dev* chosen = ByKey(choices_[p]);
                         if (!chosen || chosen->player == p)
@@ -451,7 +466,7 @@ namespace input::slots
                         continue;
                     for (int p = 0; p < USERS; p++)
                     {
-                        if (std::none_of(devs_.begin(), devs_.end(), [&](const Dev& o) { return o.player == p; }))
+                        if (p != keyboard && std::none_of(devs_.begin(), devs_.end(), [&](const Dev& o) { return o.player == p; }))
                         {
                             d.player = p;
                             break;
@@ -576,6 +591,12 @@ namespace input::slots
     uint32_t PlayerOneUser()
     {
         return g_playerOne.load();
+    }
+
+    uint32_t KeyboardUser()
+    {
+        std::lock_guard lock(g_mutex);
+        return uint32_t(g_table.UserOf(g_table.KeyboardPlayer()));
     }
 
     std::vector<Device> Devices()
@@ -707,6 +728,25 @@ namespace input::slots
             step(a, now, &idle, nullptr, autoChoices, &idle);
             a.SetPlayerOne(1);
             check("START no titulo pelo controle 1 do jogo, auto: ele vira o P1 sem trocar", player(a, "xbox2") == 0 && a.DeviceOn(1)->slot == 1 && a.DeviceOn(0)->slot == 0);
+        }
+        {
+            // The keyboard on a player of its own: the pads go to the others.
+            Table t;
+            uint64_t now = 0;
+            const Choices keyboardP1{ "keyboard", "auto" }, keyboardP2{ "auto", "keyboard" };
+            step(t, now, &idle, nullptr, autoChoices);
+            check("auto: Controle 1 = P1 e o teclado junto", player(t, "xbox1") == 0 && t.KeyboardPlayer() == 0 && t.KeyboardOnly() < 0);
+            step(t, now, &idle, nullptr, keyboardP1);
+            check("player1 = keyboard: o Controle 1 sozinho vira o P2", player(t, "xbox1") == 1 && t.KeyboardPlayer() == 0 && !t.DeviceOn(t.UserOf(0)));
+            step(t, now, &idle, nullptr, keyboardP1, &idle);
+            check("player1 = keyboard: o Controle 2 fica com o P3", player(t, "xbox1") == 1 && player(t, "xbox2") == 2);
+            Table b;
+            now = 0;
+            step(b, now, &idle, nullptr, keyboardP2, &idle);
+            check("player2 = keyboard: Controle 1 = P1, Controle 2 = P3, teclado = P2",
+                  player(b, "xbox1") == 0 && player(b, "xbox2") == 2 && b.KeyboardPlayer() == 1 && b.UserOf(1) == 1);
+            step(b, now, &idle, nullptr, autoChoices, &idle);
+            check("de volta a auto: o teclado volta para o P1", b.KeyboardPlayer() == 0 && b.KeyboardOnly() < 0);
         }
         printf("%s\n", failures ? "FALHOU" : "tudo ok");
         return failures != 0;

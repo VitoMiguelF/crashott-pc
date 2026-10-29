@@ -1619,3 +1619,15 @@ input = [
     ["@name_entry"], [3, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["name_entry"] }
+
+[profiles.coop_teclado_p2]
+description = "Co-op local com o teclado só do jogador 2 ([controls] player2 = keyboard): na vila L1_E1, o teclado entra com E (B, JOIN GAME), e pausa com Esc (START): P2 PAUSED; o jogador 1 (sem controle aqui) fica parado"
+test = true
+timeout = 34
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+env = { CRASH_SETTINGS = "controls.player2=keyboard" }
+input = [["@gameplay_ready"], [1, "SHOT"], [3, "KEY_E"], [5, "SHOT"], [8, "KEY_ESCAPE"], [9.5, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['P2 = teclado'] }

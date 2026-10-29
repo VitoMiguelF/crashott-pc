@@ -527,8 +527,10 @@ hd_textures = false` no `settings.toml` os desliga).
 
 **Dois jogadores**: ligue dois controles (Xbox ou DualSense, em qualquer combinação). Na fase, aperte **B**
 no segundo controle quando aparecer JOIN GAME: o jogador 2 entra na mochila do Crash, e **Y** o faz descer.
-O teclado e o mouse ficam sempre com o jogador 1; com um controle só, ele é o jogador 1. Para trocar quem é
-quem, use **SETTINGS > CONTROLES > JOGADOR 1 / JOGADOR 2**.
+Em AUTO o teclado e o mouse ficam com o jogador 1, junto com o controle dele (com um controle só, ele é o jogador
+1). Para trocar quem é quem, use **SETTINGS > CONTROLES > JOGADOR 1 / JOGADOR 2**: escolher **TECLADO** num deles
+separa o teclado do controle (por exemplo JOGADOR 2 = TECLADO: o controle 1 joga como jogador 1 e o teclado como
+jogador 2; JOGADOR 1 = TECLADO: o teclado é o jogador 1 e o controle 1 vira o jogador 2).
 
 ## Mods e exportação dos assets do jogo
 

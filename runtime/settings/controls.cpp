@@ -310,7 +310,7 @@ namespace settings
 
     bool ValidPlayerDevice(const std::string& key)
     {
-        if (key == "auto")
+        if (key == "auto" || key == "keyboard")
             return true;
         for (std::string prefix : { "xbox", "playstation" })
         {
@@ -344,8 +344,8 @@ namespace settings
             << "walk_speed = " << c.walkSpeed << "   # 10-90 %, analogico enquanto 'walk' esta apertado (andar em vez de correr)\n"
             << "mouse_menus = " << (c.mouseMenus ? "true" : "false") << "   # menus do jogo pelo mouse (passar por cima seleciona, clique confirma, botao direito volta)\n"
             << "prompts = \"" << PromptStyleName(c.prompts) << "\"   # icones dos botoes: auto (o ultimo usado) | xbox | playstation | keyboard\n"
-            << "player1 = \"" << c.players[0] << "\"   # co-op local, controle do jogador 1: auto | xbox1..xbox4 (XInput) | playstation1..playstation4\n"
-            << "player2 = \"" << c.players[1] << "\"   # controle do jogador 2 (com um controle so, ele e o jogador 1, junto com o teclado)\n"
+            << "player1 = \"" << c.players[0] << "\"   # co-op local, controle do jogador 1: auto | keyboard | xbox1..xbox4 (XInput) | playstation1..playstation4\n"
+            << "player2 = \"" << c.players[1] << "\"   # controle do jogador 2 (com um controle so, ele e o jogador 1, junto com o teclado; keyboard: o teclado e so dele)\n"
             << "pad_layout = \"" << PadLayoutName(c.padLayout) << "\"   # mapeamento do controle na gameplay: xbox360 (o do jogo) | ps2 (o da versao de PS2)\n";
         return out.str();
     }
