@@ -378,7 +378,9 @@ sized by them (pads, positions, snaps, hitpoints, camera interests, knock-outs),
   launcher's background; B does nothing, there is no way back to the HUB's grid): the code, the players (A on a
   player kicks that player), CONTINUE STORY (the HUB's own exit 604, `StartNextLevel`), LEVEL < n > (the save's
   unlocked story levels, the list of 20 level indices at 0x824A8070 the HUB's `Level_Timeline` reads, -1 = free;
-  A plays it: `Frontend:StartLevel` + SkipToLevel 51, as a client follows), SKIN AND COLOR, PASSWORD (typed),
+  shown as "EP1 - A NEW HOP", the episode's title from the frontend bible key `Episode_<level>_Name` in the game's
+  language, a pack's included: `settings::CaptureFrontendTexts` / `FrontendText`, a read-only entry rewrite
+  registered after the language pack's; A plays it: `Frontend:StartLevel` + SkipToLevel 51, as a client follows), SKIN AND COLOR, PASSWORD (typed),
   MAX PLAYERS 2-8 (5-8 marked EXPERIMENTAL), KNOCK-OUT TIME 3 / 5 / 10 s (the knock-out of "4 players", instead
   of the game's float), CLOSE SESSION (the HUB then goes on alone). The choice is made on the render thread and
   taken by the game thread at the HUB's next condition (`g_hostGo`). When the host reaches InGame (node 630) its level index (managers +24) goes

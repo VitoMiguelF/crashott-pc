@@ -22,6 +22,7 @@
 #include "../settings/menu_mouse.h"
 #include "../settings/settings.h"
 #include "../settings/settings_menu.h"
+#include "../settings/title_logo.h"
 
 #include <algorithm>
 #include <atomic>
@@ -516,12 +517,28 @@ namespace mp::menu
             return levels;
         }
 
+        // The story's levels in the game's order (index 0-19; settings/direct_boot.cpp lists them from the game): their
+        // HUB titles are the frontend keys Episode_<level>_Name ("A NEW HOP", "UMA NOVA PULÂNCIA").
+        constexpr const char* STORY_LEVEL_NAMES[STORY_LEVELS] = { "L1_E1", "L1_E2", "L1_E3", "L1_E4", "L2_E1", "L2_E2", "L2_E4",
+                                                                  "L3_E1", "L3_E1A", "L3_E1B", "L3_E2", "L3_E3", "L3_E4", "L4_E1",
+                                                                  "L4_E2", "L4_E3", "L4_E4", "L5_E1", "L5_E2", "L5_E3" };
+
         std::string LevelName(int index)
         {
             uint32_t count = LoadBE32(MANAGERS + LEVEL_COUNT);
             uint32_t level = index >= 0 && uint32_t(index) < count && count <= 64 ? LoadBE32(MANAGERS + LEVELS + 4 * uint32_t(index)) : 0;
             uint32_t name = level >= 0x40000000 ? LoadBE32(level + LEVEL_NAME) : 0;
             return name >= 0x40000000 ? std::string(reinterpret_cast<const char*>(g_memory.Translate(name))) : std::string();
+        }
+
+        // "EP1 - A NEW HOP": the episode's number and its title as the HUB shows it (the level's name without one).
+        std::string EpisodeName(int index)
+        {
+            std::string title = index >= 0 && index < int(STORY_LEVELS)
+                                    ? settings::FrontendText(std::string("Episode_") + STORY_LEVEL_NAMES[index] + "_Name") : std::string();
+            if (title.empty())
+                title = LevelName(index);
+            return "EP" + std::to_string(index + 1) + (title.empty() ? "" : " - " + title);
         }
 
         // The LEVEL row's level: the one picked if still unlocked, else the last unlocked (-1: none yet).
@@ -546,8 +563,7 @@ namespace mp::menu
                 int level = PickedLevel();
                 if (level < 0)
                     return T("LEVEL:  NONE DONE YET", "FASE:  NENHUMA FEITA AINDA");
-                std::string name = LevelName(level);
-                return std::string(T("LEVEL", "FASE")) + ":  \xC2\xBA " + std::to_string(level + 1) + (name.empty() ? "" : "  " + name) + " \xC2\xBB";
+                return std::string(T("LEVEL", "FASE")) + ":  \xC2\xBA " + EpisodeName(level) + " \xC2\xBB";
             }
             case ROW_LOOK: return T("SKIN AND COLOR", "SKIN E COR");
             case ROW_PASSWORD:
@@ -1290,7 +1306,7 @@ namespace mp::menu
         {
             g_hostGoAt = plat::TickCountMs();
             g_hostGo = go;
-            Log("[mp] menu: the host starts %s", go == GO_STORY ? "the story" : ("level " + std::to_string(go + 1) + " " + LevelName(go)).c_str());
+            Log("[mp] menu: the host starts %s", go == GO_STORY ? "the story" : (LevelName(go) + " (" + EpisodeName(go) + ")").c_str());
             Close(false);
         }
 
@@ -1626,6 +1642,14 @@ namespace mp::menu
             g_dirty = false;
             g_lastDraw = plat::TickCountMs();
         }
+    }
+
+    void Init()
+    {
+        std::vector<std::string> keys;
+        for (const char* level : STORY_LEVEL_NAMES)
+            keys.push_back(std::string("Episode_") + level + "_Name");
+        settings::CaptureFrontendTexts(keys);
     }
 
     void RequestOpen()

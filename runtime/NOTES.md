@@ -2609,5 +2609,6 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   frontend segura a entrada (carregamento da fase e cada cena) até todos chegarem (lobby versão 8, 45 s / 10 s).
 - **Menu próprio do host no HUB** (2026-10-29): no HUB o host não vê mais o menu do jogo: o lobby abre sozinho em tela
   cheia sobre o pano do menu principal (`menu_art::ComposeBackdrop`, o mesmo fundo do launcher) com CONTINUAR HISTÓRIA
-  (saída 604 do HUB), FASE < n > (as fases liberadas do save, lista de 20 índices em 0x824A8070; StartLevel + saída 51),
+  (saída 604 do HUB), FASE < EP1 - UMA NOVA PULÂNCIA > (as fases liberadas do save, lista de 20 índices em 0x824A8070;
+  o título vem da chave `Episode_<fase>_Name` do bible frontend no idioma do jogo; StartLevel + saída 51),
   SKIN E COR e as opções da sessão. B não faz nada; ENCERRAR SESSÃO deixa o HUB sozinho. Perfis de host confirmam com A.

@@ -20,6 +20,7 @@
 // below for tuning (keys: see g_layout).
 
 #include "title_logo.h"
+#include "settings.h"
 #include "../diagnostics.h"
 #include "../fs/rcf_overlay.h"
 
@@ -27,6 +28,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -385,6 +388,86 @@ namespace settings
         Log("[pc] frontend: %s / %s (0x%X) added to %zu language(s): %s", BIBLE_NAME, key, KeyHash(key, 0x1003F), letters.size(),
             letters.c_str());
         return true;
+    }
+
+    namespace
+    {
+        std::mutex g_textsMutex;
+        std::vector<std::string> g_wantedTexts;
+        std::map<std::string, std::string> g_frontendTexts;  // key name -> UTF-8
+
+        // A read-only pass over a frontend package: the wanted keys' texts of the startup language's letter.
+        bool ReadFrontendTexts(std::vector<uint8_t>& data)
+        {
+            if (data.size() < 12)
+                return false;
+            std::vector<LanguageChunk> languages;
+            std::vector<size_t> path = { 0 };
+            FindLanguages(data, LoadLE32(&data[4]), std::min<size_t>(data.size(), LoadLE32(&data[8])), false, path, languages);
+            char wanted = StartupLanguage().letter;
+            std::lock_guard lock(g_textsMutex);
+            size_t found = 0;
+            for (const LanguageChunk& language : languages)
+            {
+                size_t offset = language.offset, end = offset + LoadLE32(&data[offset + 8]);
+                size_t fields = offset + 13 + data[offset + 12];
+                if (fields + 13 > end || char(data[fields]) != wanted)
+                    continue;
+                uint32_t count = LoadLE32(&data[fields + 1]), modulo = LoadLE32(&data[fields + 5]), bufferSize = LoadLE32(&data[fields + 9]);
+                size_t hashes = fields + 13, offsets = hashes + size_t(count) * 4, buffer = offsets + size_t(count) * 4;
+                if (modulo == 0 || buffer + bufferSize > end)
+                    continue;
+                for (const std::string& key : g_wantedTexts)
+                {
+                    uint32_t hash = KeyHash(key.c_str(), modulo);
+                    for (uint32_t i = 0; i < count; i++)
+                    {
+                        if (LoadLE32(&data[hashes + i * 4]) != hash)
+                            continue;
+                        std::string text;
+                        for (size_t at = buffer + LoadLE32(&data[offsets + i * 4]); at + 1 < buffer + bufferSize; at += 2)
+                        {
+                            uint32_t ch = data[at] | (uint32_t(data[at + 1]) << 8);
+                            if (!ch)
+                                break;
+                            if (ch < 0x80)
+                                text += char(ch);
+                            else if (ch < 0x800)
+                                text += char(0xC0 | (ch >> 6)), text += char(0x80 | (ch & 0x3F));
+                            else
+                                text += char(0xE0 | (ch >> 12)), text += char(0x80 | ((ch >> 6) & 0x3F)), text += char(0x80 | (ch & 0x3F));
+                        }
+                        g_frontendTexts[key] = text;
+                        found++;
+                        break;
+                    }
+                }
+            }
+            if (found)
+                Log("[pc] frontend texts: %zu of %zu key(s) read (letter %c)", found, g_wantedTexts.size(), wanted);
+            return false;
+        }
+    }
+
+    void CaptureFrontendTexts(const std::vector<std::string>& keys)
+    {
+        {
+            std::lock_guard lock(g_textsMutex);
+            g_wantedTexts.insert(g_wantedTexts.end(), keys.begin(), keys.end());
+        }
+        static bool registered = false;
+        if (registered)
+            return;
+        registered = true;
+        for (const char* package : BIBLE_PACKAGES)
+            rcf_overlay::RegisterEntryRewrite("default", package, "textos do frontend (so leitura)", ReadFrontendTexts);
+    }
+
+    std::string FrontendText(const std::string& key)
+    {
+        std::lock_guard lock(g_textsMutex);
+        auto it = g_frontendTexts.find(key);
+        return it == g_frontendTexts.end() ? std::string() : it->second;
     }
 
     const char* const* FrontendBiblePackages(size_t& count)

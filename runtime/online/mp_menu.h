@@ -32,6 +32,9 @@ struct PPCContext;
 
 namespace mp::menu
 {
+    // Startup, after the language pack: the episode titles the host's LEVEL row shows (title_logo.h FrontendText).
+    void Init();
+
     // Game thread (the marker hook, frontend_hooks.cpp): MULTIPLAYER chosen on the main menu.
     void RequestOpen();
     // The SETTINGS marker opens these screens (at the lobby): a client back from the host's level.

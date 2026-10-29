@@ -43,6 +43,7 @@
 #include "settings/prompt_icons.h"
 #include "settings/language_pack.h"
 #include "settings/settings.h"
+#include "online/mp_menu.h"
 #include "settings/settings_menu.h"
 #include "subtitles/subtitles.h"
 
@@ -132,6 +133,7 @@ int main(int argc, char** argv)
     settings::RegisterMojoPatches();
     settings::RegisterSnipePatches();
     settings::RegisterLanguagePack();
+    mp::menu::Init();  // after the language pack: the episode titles as the game shows them
     // Subtitles of that language (<data>/subtitles, languages\<id>\subtitles.txt), if any.
     subtitles::Init();
     // The game's fonts and frames for the settings screen, read from default.rcf on a thread.

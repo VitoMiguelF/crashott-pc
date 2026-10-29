@@ -8,6 +8,7 @@
 //   which has no logo, is left as it was.
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace settings
@@ -21,4 +22,11 @@ namespace settings
     // FrontendBiblePackages lists.
     bool AddFrontendTextKey(std::vector<uint8_t>& data, const char* key, const char16_t* (*textOf)(char letter));
     const char* const* FrontendBiblePackages(size_t& count);
+
+    // Reading texts of the "frontend" bible by their key names (e.g. Episode_L1_E1_Name, the HUB's episode
+    // titles) in the startup language's letter, as the game shows them (after a language pack's rewrite: call
+    // after RegisterLanguagePack). FrontendText: UTF-8, empty until the game has read the bible (the frontend
+    // loads it at startup) or for a key it lacks. Any thread.
+    void CaptureFrontendTexts(const std::vector<std::string>& keys);
+    std::string FrontendText(const std::string& key);
 }
