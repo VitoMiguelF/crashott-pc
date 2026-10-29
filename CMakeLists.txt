@@ -99,17 +99,28 @@ endif()
 
 # Recompiled game code. Built as a static library so it compiles without the
 # kernel/XAM import implementations, which the runtime will provide later.
-add_library(CrashPPC STATIC ${CRASH_PPC_SOURCES})
-target_include_directories(CrashPPC PUBLIC
-    ${CRASH_PPC_DIR}
-    ${XENON_RECOMP_DIR}/thirdparty/simde)
+# CRASH_PPC_PREBUILT=<libCrashPPC.a>: another build's library of the same generated/ppc (same toolchain),
+# linked instead of compiling the game code again (a second git worktree's build).
+set(CRASH_PPC_PREBUILT "" CACHE FILEPATH "Prebuilt CrashPPC library to link instead of building it")
 set(CRASH_COMPILE_OPTIONS
     ${CRASH_ARCH_FLAGS}
     -fno-strict-aliasing
     -Wno-unused-label
     -Wno-unused-variable
     -Wno-unused-but-set-variable)
-target_compile_options(CrashPPC PRIVATE ${CRASH_COMPILE_OPTIONS})
+if (CRASH_PPC_PREBUILT)
+    add_library(CrashPPC STATIC IMPORTED)
+    set_target_properties(CrashPPC PROPERTIES IMPORTED_LOCATION ${CRASH_PPC_PREBUILT})
+    target_include_directories(CrashPPC INTERFACE
+        ${CRASH_PPC_DIR}
+        ${XENON_RECOMP_DIR}/thirdparty/simde)
+else()
+    add_library(CrashPPC STATIC ${CRASH_PPC_SOURCES})
+    target_include_directories(CrashPPC PUBLIC
+        ${CRASH_PPC_DIR}
+        ${XENON_RECOMP_DIR}/thirdparty/simde)
+    target_compile_options(CrashPPC PRIVATE ${CRASH_COMPILE_OPTIONS})
+endif()
 
 # XEX decryption at startup (runtime/xex_image/): XenonRecomp's XenonUtils (AES, basic and LZX
 # compression) turns <game>\default.xex into the image the recompiled code expects, so no
