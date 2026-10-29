@@ -19,7 +19,8 @@
 // works where a code does. The host's code is its public address once its router forwards the port
 // (UPnP) or STUN found one (mp_nat.h), its LAN address otherwise; there is no relay server.
 //
-//   CRASH_MP_NAME=<name>      the player's name (default: the OS user's, on Android the device's model;
+//   CRASH_MP_NAME=<name>      the player's name when none was saved ([multiplayer] name, typed on the
+//                             MULTIPLAYER screens; default: the OS user's, on Android the device's model;
 //                             A-Z 0-9, 12 letters)
 //   CRASH_MP_PASSWORD=<text>  tests: the host's password, and what a client's password field starts with
 //   CRASH_MP_CODE=<code>      tests: what ENTER CODE starts with (mp_menu.cpp)
@@ -76,7 +77,8 @@ namespace mp::lobby
     std::string LocalCode();   // host: the code of its LAN address
     const char* InternetText(bool portuguese);  // host: whether the internet can reach it (mp_nat.h)
     std::string Address();     // "192.168.0.10:47810"
-    std::string LocalName();
+    std::string LocalName();  // SetLocalName's, else CRASH_MP_NAME, else the OS user's / device's model
+    void SetLocalName(const std::string& name);  // the MULTIPLAYER screens (the saved name); empty = the default
     void Kick(uint32_t slot);
     void SetPassword(const std::string& password);
     std::string Password();

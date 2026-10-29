@@ -108,6 +108,23 @@ namespace settings::menu_art
     float IconWidth(char32_t icon, float height);
     // Whether the font draws `c` (not empty).
     bool HasGlyph(FontId font, char32_t c);
+    // `text` in at most `maxWidth`: the cell shrinks down to `minScale` x, then the end is cut with
+    // "...". Returns what to draw; `cell` becomes the size to draw it at.
+    std::u32string FitText(FontId font, const std::u32string& text, float& cell, float maxWidth, float minScale = 0.8f);
+
+    // The game's message box (the settings' dialogs, the save screens' question, the MULTIPLAYER
+    // screens): MSG_Background, its top-left corner (curl, border and black inside), mirrored into the
+    // four corners of (left, top)-(right, bottom) in canvas pixels. The curl keeps its aspect, so it
+    // grows with the box's height; the straight part is stretched. `fallback` fills the box without the art.
+    void DrawMessageFrame(Canvas& canvas, int left, int top, int right, int bottom, Color tint, Color fallback);
+    // Where text goes in a message box (x0, y0)-(x1, y1), in any unit, measured on MSG_Background (a
+    // mod's frame is followed too): the border's depth at the top (and the bottom); how far from the
+    // left (and the right) side a line spanning lineTop-lineBottom must start to clear the border and
+    // the curls at those heights (the curls reach far in, over most of the height); the outer size of
+    // the box that holds contentW x contentH clear of both, `gap` more on every side.
+    float FrameTopInset(float y0, float y1);
+    float FrameSideInset(float x0, float y0, float x1, float y1, float lineTop, float lineBottom);
+    void FrameOuterSize(float contentW, float contentH, float gap, float& outerW, float& outerH);
 
     std::u32string Utf32(const std::string& utf8);
 }

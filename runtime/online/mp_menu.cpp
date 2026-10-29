@@ -94,7 +94,7 @@ namespace mp::menu
         constexpr Color FRAME{ 236, 222, 190, 200 };
         constexpr Color DIM_TOP{ 14, 8, 0, 200 }, DIM_BOTTOM{ 8, 4, 0, 220 };
 
-        enum class Screen { Root, HostMode, FindMode, Servers, Code, Password, Waiting, Message, Lobby, HostPassword, LevelMenu };
+        enum class Screen { Root, HostMode, FindMode, Servers, Code, Password, Waiting, Message, Lobby, HostPassword, LevelMenu, Name };
         enum LevelMenuRow { ROW_RESUME, ROW_SETTINGS, ROW_QUIT, LEVEL_MENU_ROWS };  // a client's menu in a level
 
         // Between the threads.
@@ -125,7 +125,7 @@ namespace mp::menu
         Screen g_screen = Screen::Root;
         int g_row = 0;
         bool g_portuguese = false;
-        std::string g_field;      // the code or password being typed
+        std::string g_field;      // the code, password or name being typed
         size_t g_cursor = 0;
         std::string g_joinTarget;  // what the password is for (a code or an address)
         std::string g_message;
@@ -156,7 +156,7 @@ namespace mp::menu
 
         constexpr const char* CODE_LETTERS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
         constexpr const char* PASSWORD_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        constexpr size_t SHORT_CODE_LENGTH = 7, CODE_LENGTH = 10, PASSWORD_LENGTH = 12;  // codes: mp_lobby.h
+        constexpr size_t SHORT_CODE_LENGTH = 7, CODE_LENGTH = 10, PASSWORD_LENGTH = 12, NAME_LENGTH = 12;  // codes, names: mp_lobby.h
 
         const char* T(const char* en, const char* pt) { return g_portuguese ? pt : en; }
 
@@ -186,45 +186,94 @@ namespace mp::menu
             AddZone(g_portuguese ? 778.0f : 864.0f, 610.0f, 1048.0f, 676.0f, Hit::Accept);
         }
 
+        // Text at most `maxWidth` wide: a little smaller, then cut with "..." (art::FitText).
         float Draw(const View& v, FontId font, const std::string& text, float x, float y, float cell, const TextStyle& style,
                    float align = 0.0f, float maxWidth = 1e9f)
         {
-            std::u32string u = art::Utf32(text);
-            float width = art::TextWidth(font, u, cell);
-            if (width > maxWidth && width > 0.0f)
-            {
-                float fitted = cell * maxWidth / width;
-                y += (cell - fitted) * 0.5f;
-                cell = fitted, width = maxWidth;
-            }
+            float fitted = cell;
+            std::u32string u = art::FitText(font, art::Utf32(text), fitted, std::max(maxWidth, 1.0f));
+            y += (cell - fitted) * 0.5f;
+            float width = art::TextWidth(font, u, fitted);
             float left = x - width * align;
-            art::DrawGameText(g_canvas, font, u, v.X(left), v.Y(y), cell * v.s, style);
+            art::DrawGameText(g_canvas, font, u, v.X(left), v.Y(y), fitted * v.s, style);
             return left + width;
+        }
+
+        // Words of `text` in lines no wider than `width`.
+        std::vector<std::string> Wrap(const std::string& text, FontId font, float cell, float width)
+        {
+            std::vector<std::string> lines;
+            std::string line;
+            size_t at = 0;
+            while (at < text.size())
+            {
+                size_t end = text.find(' ', at);
+                std::string word = text.substr(at, end == std::string::npos ? std::string::npos : end - at);
+                at = end == std::string::npos ? text.size() : end + 1;
+                std::string tried = line.empty() ? word : line + " " + word;
+                if (!line.empty() && Width(font, tried, cell) > width)
+                {
+                    lines.push_back(line);
+                    line = word;
+                }
+                else
+                    line = tried;
+            }
+            if (!line.empty())
+                lines.push_back(line);
+            return lines;
         }
 
         // MSG_Background mirrored into the four corners (as the settings' dialogs).
         void DrawFrame(const View& v, float x0, float y0, float x1, float y1)
         {
-            const art::Image* corner = art::GetArt(art::Art::MessageFrame);
-            int left = v.IX(x0), top = v.IY(y0), right = v.IX(x1), bottom = v.IY(y1);
-            if (!corner)
-            {
-                g_canvas.Fill(left, top, right, bottom, { 0, 0, 0, 170 });
-                return;
-            }
-            int halfW = (right - left) / 2, halfH = (bottom - top) / 2;
-            float k = float(halfH) / float(corner->h);
-            int curl = corner->w / 3;
-            int curlW = std::min(int(std::lround(curl * k)), halfW);
-            for (int q = 0; q < 4; q++)
-            {
-                bool flipX = q & 1, flipY = q & 2;
-                int qx = flipX ? right - halfW : left, qy = flipY ? bottom - halfH : top;
-                const art::Image& c = art::Scaled(*corner, 0, 0, curl, corner->h, curlW, halfH, flipX, flipY);
-                const art::Image& edge = art::Scaled(*corner, curl, 0, corner->w - curl, corner->h, halfW - curlW, halfH, flipX, flipY);
-                g_canvas.Blit(c, flipX ? qx + halfW - curlW : qx, qy, FRAME);
-                g_canvas.Blit(edge, flipX ? qx : qx + curlW, qy, FRAME);
-            }
+            art::DrawMessageFrame(g_canvas, v.IX(x0), v.IY(y0), v.IX(x1), v.IY(y1), FRAME, { 0, 0, 0, 170 });
+        }
+
+        // A message frame sized by what it holds, and the room for a line in it: clear of the border
+        // and of its curls, which grow with the frame's height and reach far in over most of it
+        // (art::FrameSideInset). Every framed screen lays its lines out with Top / Left / Right.
+        constexpr float BOX_GAP = 10.0f;
+        struct Box
+        {
+            float x0, y0, x1, y1;
+            float Top() const { return y0 + art::FrameTopInset(y0, y1) + BOX_GAP; }
+            float Inset(float y, float h) const { return art::FrameSideInset(x0, y0, x1, y1, y, y + h) + BOX_GAP; }
+            float Left(float y, float h) const { return x0 + Inset(y, h); }
+            float Right(float y, float h) const { return x1 - Inset(y, h); }
+            float Room(float y, float h) const { return Right(y, h) - Left(y, h); }
+        };
+
+        // The box for contentW x contentH: `align` 0.5 centres it on x, 1 puts its right side there;
+        // its top at `top`, or centred on the screen when top < 0.
+        Box FitBox(float contentW, float contentH, float x, float align, float top)
+        {
+            float w, h;
+            art::FrameOuterSize(contentW, contentH, BOX_GAP, w, h);
+            w = std::min(w, VIRTUAL_W - 16.0f), h = std::min(h, VIRTUAL_H - 8.0f);
+            Box box;
+            box.x0 = std::round(std::clamp(x - w * align, 8.0f, VIRTUAL_W - 8.0f - w)), box.x1 = box.x0 + w;
+            box.y0 = std::round(top >= 0.0f ? top : std::max(4.0f, (VIRTUAL_H - h) * 0.5f)), box.y1 = box.y0 + h;
+            return box;
+        }
+
+        void DrawBox(const View& v, const Box& box) { DrawFrame(v, box.x0, box.y0, box.x1, box.y1); }
+
+        // The last line of a box: B BACK at the left (a zone for the mouse), `right` at the right.
+        void DrawBoxFooter(const View& v, const Box& box, float y, const std::string& back, const std::string& right, const TextStyle& backStyle,
+                           const TextStyle& rightStyle)
+        {
+            float left = box.Left(y, HELP_CELL), end = box.Right(y, HELP_CELL);
+            float backEnd = Draw(v, FontId::Small, back, left, y, HELP_CELL, backStyle, 0.0f, end - left);
+            AddZone(left - 10.0f, y - 8.0f, backEnd + 10.0f, y + HELP_CELL + 8.0f, Hit::Back);
+            if (!right.empty())
+                Draw(v, FontId::Small, right, end, y, HELP_CELL, rightStyle, 1.0f, end - backEnd - 30.0f);
+        }
+
+        // The width of a box's last line (DrawBoxFooter).
+        float FooterWidth(const std::string& back, const std::string& right)
+        {
+            return Width(FontId::Small, back, HELP_CELL) + (right.empty() ? 0.0f : 30.0f + Width(FontId::Small, right, HELP_CELL));
         }
 
         std::string Upper(std::string text)
@@ -234,11 +283,16 @@ namespace mp::menu
             return text;
         }
 
+        // MULTIPLAYER's rows: the player's name (A: the name screen), HOST GAME, FIND GAME.
+        enum RootRow { ROOT_NAME, ROOT_HOST, ROOT_FIND };
+
         std::vector<std::string> Rows()
         {
             switch (g_screen)
             {
-            case Screen::Root: return { T("HOST GAME", "CRIAR PARTIDA"), T("FIND GAME", "ENCONTRAR PARTIDA") };
+            case Screen::Root:
+                return { std::string(T("NAME", "NOME")) + ":  " + lobby::LocalName(), T("HOST GAME", "CRIAR PARTIDA"),
+                         T("FIND GAME", "ENCONTRAR PARTIDA") };
             case Screen::HostMode: return { T("NEW GAME", "NOVO JOGO"), T("LOAD GAME", "CARREGAR JOGO") };
             case Screen::FindMode: return { T("SERVER LIST", "LISTA DE PARTIDAS"), T("ENTER CODE", "DIGITAR CÓDIGO") };
             default: return {};
@@ -255,6 +309,7 @@ namespace mp::menu
             case Screen::Code: return T("ENTER CODE", "DIGITAR CÓDIGO");
             case Screen::Password:
             case Screen::HostPassword: return T("PASSWORD", "SENHA");
+            case Screen::Name: return T("YOUR NAME", "SEU NOME");
             case Screen::Waiting:
             case Screen::Lobby: return "LOBBY";
             default: return "MULTIPLAYER";
@@ -262,7 +317,7 @@ namespace mp::menu
         }
 
         // The field being typed: the code as XXXX-XXX (XXXXX-XXXXX once it has more than 7 letters), the
-        // password as is; '_' where letters are missing, the one under the cursor in the selected colour.
+        // password or the name as is; '_' where letters are missing, the one under the cursor in the selected colour.
         void DrawField(const View& v, const Palette& pal, float y, bool code)
         {
             size_t length = code ? (g_field.size() > SHORT_CODE_LENGTH ? CODE_LENGTH : SHORT_CODE_LENGTH) : std::max(g_field.size() + 1, size_t(6));
@@ -281,15 +336,23 @@ namespace mp::menu
                 x += pitch;
             }
         }
+        constexpr float FIELD_CELL = 46.0f;
 
         // Keys for the mouse / touch: the field's letters, ERASE and OK, 10 a row from `top`.
         constexpr float KEY_W = 64.0f, KEY_H = 46.0f, KEY_PITCH_X = 70.0f, KEY_PITCH_Y = 52.0f;
+
+        float KeysWidth() { return 10 * KEY_PITCH_X - (KEY_PITCH_X - KEY_W); }
+        float KeysHeight(bool code)
+        {
+            int count = int(strlen(code ? CODE_LETTERS : PASSWORD_LETTERS)) + 2;
+            return ((count + 9) / 10) * KEY_PITCH_Y - (KEY_PITCH_Y - KEY_H);
+        }
 
         void DrawKeys(const View& v, const Palette& pal, float top, bool code)
         {
             std::string letters = code ? CODE_LETTERS : PASSWORD_LETTERS;
             int count = int(letters.size()) + 2;
-            float left = VIRTUAL_W * 0.5f - (10 * KEY_PITCH_X - (KEY_PITCH_X - KEY_W)) * 0.5f;
+            float left = VIRTUAL_W * 0.5f - KeysWidth() * 0.5f;
             for (int i = 0; i < count; i++)
             {
                 float x = left + (i % 10) * KEY_PITCH_X, y = top + (i / 10) * KEY_PITCH_Y;
@@ -311,24 +374,45 @@ namespace mp::menu
             }
         }
 
-        void DrawRoster(const View& v, const Palette& pal, float y, bool host)
+        // The players: "N  name" at the left, HOST or (YOU) the ping at the right. In a box (the host's
+        // lobby) each line keeps inside it; on the cloth (a client's wait) between x 400 and 880.
+        std::string RosterName(const lobby::Player& p) { return std::to_string(p.slot + 1) + "  " + p.name; }
+
+        std::string RosterRight(const lobby::Player& p)
+        {
+            std::string right = p.slot == 0 ? std::string("HOST") : std::to_string(p.pingMs) + " ms";
+            if (p.me && p.slot != 0)
+                right = std::string(T("YOU", "VOCÊ")) + "  " + right;
+            return right;
+        }
+
+        constexpr float ROSTER_GAP = 24.0f;
+
+        float RosterWidth(const std::vector<lobby::Player>& players, float cell)
+        {
+            float widest = 0.0f;
+            for (const lobby::Player& p : players)
+                widest = std::max(widest, Width(FontId::Small, RosterName(p), cell) + ROSTER_GAP + Width(FontId::Small, RosterRight(p), cell));
+            return widest;
+        }
+
+        void DrawRoster(const View& v, const Palette& pal, float y, bool host, const Box* box = nullptr, float cell = LIST_CELL,
+                        float pitch = LIST_PITCH)
         {
             std::vector<lobby::Player> players = lobby::Players();
             for (size_t i = 0; i < players.size(); i++)
             {
                 const lobby::Player& p = players[i];
-                char line[96];
-                snprintf(line, sizeof(line), "%u  %s", p.slot + 1, p.name.c_str());
                 bool selected = host && g_lobbyModal && g_row == int(i) && p.slot != 0;
                 const TextStyle& style = selected || (p.me && !host) ? pal.selected : pal.normal;
-                Draw(v, FontId::Small, line, 400.0f, y, LIST_CELL, style, 0.0f, 420.0f);
-                std::string right = p.slot == 0 ? std::string("HOST") : std::to_string(p.pingMs) + " ms";
-                if (p.me && p.slot != 0)
-                    right = std::string(T("YOU", "VOCÊ")) + "  " + right;
-                Draw(v, FontId::Small, right, 880.0f, y, LIST_CELL, style, 1.0f);
+                float left = box ? box->Left(y, cell) : 400.0f, right = box ? box->Right(y, cell) : 880.0f;
+                std::string side = RosterRight(p);
+                float sideW = std::min(Width(FontId::Small, side, cell), (right - left) * 0.5f);
+                Draw(v, FontId::Small, RosterName(p), left, y, cell, style, 0.0f, right - left - sideW - ROSTER_GAP);
+                Draw(v, FontId::Small, side, right, y, cell, style, 1.0f, sideW);
                 if (host && p.slot != 0)
-                    AddZone(380.0f, y - 6.0f, 900.0f, y + LIST_CELL + 6.0f, Hit::Row, int(i), true);
-                y += LIST_PITCH;
+                    AddZone(left - 20.0f, y - 6.0f, right + 20.0f, y + cell + 6.0f, Hit::Row, int(i), true);
+                y += pitch;
             }
         }
 
@@ -353,12 +437,43 @@ namespace mp::menu
             }
         }
 
+        // A message (an error) in a box; A or a click anywhere goes on.
+        void DrawMessage(const View& v)
+        {
+            constexpr float LINE = SUB_CELL + 8.0f;
+            std::vector<std::string> lines = Wrap(g_message, FontId::Small, SUB_CELL, 680.0f);
+            std::string ok = "\xC2\xB1 OK";
+            float contentW = Width(FontId::Small, ok, SUB_CELL);
+            for (const std::string& line : lines)
+                contentW = std::max(contentW, Width(FontId::Small, line, SUB_CELL));
+            Box box = FitBox(contentW, lines.size() * LINE + 14.0f + SUB_CELL, VIRTUAL_W * 0.5f, 0.5f, -1.0f);
+            DrawBox(v, box);
+            float y = box.Top();
+            for (const std::string& line : lines)
+            {
+                Draw(v, FontId::Small, line, VIRTUAL_W * 0.5f, y, SUB_CELL, DIMMED.warning, 0.5f, box.Room(y, SUB_CELL));
+                y += LINE;
+            }
+            Draw(v, FontId::Small, ok, VIRTUAL_W * 0.5f, y + 14.0f, SUB_CELL, DIMMED.selected, 0.5f);
+        }
+
+        // A field typed on the cloth (the code, a password, the name): what it is, the field, the keys, the help.
+        void DrawTyping(const View& v, const Palette& pal, const std::string& about, bool code, const std::string& confirm)
+        {
+            Draw(v, FontId::Small, about, VIRTUAL_W * 0.5f, SUB_Y + 4.0f, SUB_CELL, pal.help, 0.5f, 980.0f);
+            DrawField(v, pal, ROWS_Y - 40.0f, code);
+            DrawKeys(v, pal, ROWS_Y + 30.0f, code);
+            DrawHelp(v, pal, { T("Type it, touch the keys, or D-pad up / down: letter, left / right: move, X: erase",
+                                 "Digite, toque nas teclas, ou direcional cima / baixo: letra, esquerda / direita: mover, X: apagar"),
+                               confirm }, HELP_Y + 4.0f);
+        }
+
         void RasterizeFull(const View& v, int width, int height)
         {
             const Palette& pal = *g_palette;
             if (g_palette == &DIMMED)
                 g_canvas.FillGradient(0, 0, width, height, DIM_TOP, DIM_BOTTOM);
-            Draw(v, FontId::Large, Title(), VIRTUAL_W * 0.5f, TITLE_Y, TITLE_CELL, pal.title, 0.5f);
+            Draw(v, FontId::Large, Title(), VIRTUAL_W * 0.5f, TITLE_Y, TITLE_CELL, pal.title, 0.5f, 980.0f);
             if (g_screen != Screen::Message)
                 AddFooterZones();
             std::vector<std::string> rows = Rows();
@@ -367,20 +482,22 @@ namespace mp::menu
                 for (size_t i = 0; i < rows.size(); i++)
                 {
                     float y = ROWS_Y + 40.0f + i * ROW_PITCH;
-                    float right = Draw(v, FontId::Large, rows[i], VIRTUAL_W * 0.5f, y, ROW_CELL, int(i) == g_row ? pal.selected : pal.normal, 0.5f);
+                    float right = Draw(v, FontId::Large, rows[i], VIRTUAL_W * 0.5f, y, ROW_CELL, int(i) == g_row ? pal.selected : pal.normal, 0.5f, 900.0f);
                     float left = VIRTUAL_W - right;
                     AddZone(left - 20.0f, y - 6.0f, right + 20.0f, y + ROW_CELL + 6.0f, Hit::Row, int(i));
                 }
                 std::string help = g_screen == Screen::Root
-                                       ? T("Up to 4 players: one hosts, the others find the game in the list (same network) or by its code.",
-                                           "Até 4 jogadores: um cria a partida, os outros a encontram na lista (mesma rede) ou pelo código.")
+                                       ? g_row == ROOT_NAME ? T("Your name in the games online: A to change it.",
+                                                                "O seu nome nas partidas online: A para mudar.")
+                                                            : T("Up to 4 players: one hosts, the others find the game in the list (same network) or by its code.",
+                                                                "Até 4 jogadores: um cria a partida, os outros a encontram na lista (mesma rede) ou pelo código.")
                                    : g_screen == Screen::HostMode
                                        ? T("Start or load your game: the players wait for you at the HUB.",
                                            "Comece ou carregue o seu jogo: os jogadores esperam você no HUB.")
                                        : T("The list shows the games on this network; a code also works over the internet.",
                                            "A lista mostra as partidas desta rede; o código serve também pela internet.");
                 DrawHelp(v, pal, { help });
-                if (g_screen == Screen::HostMode || g_screen == Screen::Root)
+                if (g_screen == Screen::HostMode)
                     DrawHelp(v, pal, { std::string(T("Name: ", "Nome: ")) + lobby::LocalName() }, HELP_Y + 40.0f);
                 return;
             }
@@ -391,20 +508,21 @@ namespace mp::menu
                 std::vector<lobby::Server> servers = lobby::Servers();
                 if (servers.empty())
                     Draw(v, FontId::Small, T("Looking for games on this network...", "Procurando partidas nesta rede..."), VIRTUAL_W * 0.5f,
-                         ROWS_Y + 40.0f, LIST_CELL, pal.info, 0.5f);
+                         ROWS_Y + 40.0f, LIST_CELL, pal.info, 0.5f, 980.0f);
                 g_row = std::min(g_row, std::max(0, int(servers.size()) - 1));
                 float y = ROWS_Y;
                 for (size_t i = 0; i < servers.size() && i < 7; i++)
                 {
                     const lobby::Server& s = servers[i];
                     const TextStyle& style = int(i) == g_row ? pal.selected : pal.normal;
-                    Draw(v, FontId::Small, s.name, 300.0f, y, LIST_CELL, style, 0.0f, 360.0f);
                     std::string state = std::to_string(s.players) + "/" + std::to_string(s.maxPlayers);
                     if (s.locked)
                         state += std::string("  ") + T("PASSWORD", "SENHA");
                     if (s.inGame)
                         state += std::string("  ") + T("IN A LEVEL", "EM FASE");
-                    Draw(v, FontId::Small, state, 980.0f, y, LIST_CELL, style, 1.0f);
+                    float stateW = Width(FontId::Small, state, LIST_CELL);
+                    Draw(v, FontId::Small, s.name, 300.0f, y, LIST_CELL, style, 0.0f, std::min(360.0f, 980.0f - stateW - 30.0f - 300.0f));
+                    Draw(v, FontId::Small, state, 980.0f, y, LIST_CELL, style, 1.0f, 400.0f);
                     AddZone(280.0f, y - 6.0f, 1000.0f, y + LIST_CELL + 6.0f, Hit::Row, int(i));
                     y += LIST_PITCH;
                 }
@@ -412,30 +530,29 @@ namespace mp::menu
                 break;
             }
             case Screen::Code:
-            case Screen::Password:
-            {
-                bool code = g_screen == Screen::Code;
-                Draw(v, FontId::Small, code ? T("The host's code (in its HUB panel)", "O código do host (no painel do HUB dele)")
-                                            : T("This game has a password", "Esta partida tem senha"),
-                     VIRTUAL_W * 0.5f, SUB_Y + 4.0f, SUB_CELL, pal.help, 0.5f);
-                DrawField(v, pal, ROWS_Y - 40.0f, code);
-                DrawKeys(v, pal, ROWS_Y + 30.0f, code);
-                DrawHelp(v, pal, { T("Type it, touch the keys, or D-pad up / down: letter, left / right: move, X: erase",
-                                     "Digite, toque nas teclas, ou direcional cima / baixo: letra, esquerda / direita: mover, X: apagar"),
-                                   T("A / Enter / OK: join    B: back", "A / Enter / OK: entrar    B: voltar") }, HELP_Y + 4.0f);
+                DrawTyping(v, pal, T("The host's code (in its HUB panel)", "O código do host (no painel do HUB dele)"), true,
+                           T("A / Enter / OK: join    B: back", "A / Enter / OK: entrar    B: voltar"));
                 break;
-            }
+            case Screen::Password:
+                DrawTyping(v, pal, T("This game has a password", "Esta partida tem senha"), false,
+                           T("A / Enter / OK: join    B: back", "A / Enter / OK: entrar    B: voltar"));
+                break;
+            case Screen::Name:
+                DrawTyping(v, pal, T("Your name in the games online (A-Z, 0-9, up to 12)", "O seu nome nas partidas online (A-Z, 0-9, até 12)"), false,
+                           T("A / Enter / OK: save    B: back", "A / Enter / OK: salvar    B: voltar"));
+                break;
             case Screen::Waiting:
             {
                 lobby::State state = lobby::GetState();
                 if (state == lobby::State::Joining)
                 {
                     Draw(v, FontId::Small, std::string(T("Connecting to ", "Conectando a ")) + lobby::Address() + "...", VIRTUAL_W * 0.5f, ROWS_Y,
-                         SUB_CELL, pal.help, 0.5f);
+                         SUB_CELL, pal.help, 0.5f, 980.0f);
                 }
                 else
                 {
-                    Draw(v, FontId::Small, std::string(T("Code ", "Código ")) + lobby::InviteCode(), VIRTUAL_W * 0.5f, SUB_Y, SUB_CELL, pal.help, 0.5f);
+                    Draw(v, FontId::Small, std::string(T("Code ", "Código ")) + lobby::InviteCode(), VIRTUAL_W * 0.5f, SUB_Y, SUB_CELL, pal.help, 0.5f,
+                         980.0f);
                     DrawRoster(v, pal, ROWS_Y, false);
                     DrawHelp(v, pal, { lobby::HostInGame() ? T("The host is in a level: you join the next one it starts.",
                                                                "O host está numa fase: você entra na próxima que ele começar.")
@@ -446,105 +563,160 @@ namespace mp::menu
             }
             case Screen::Message:
                 AddZone(0.0f, 0.0f, VIRTUAL_W, VIRTUAL_H, Hit::Anywhere);
-                DrawFrame(v, 260.0f, 220.0f, 1020.0f, 420.0f);
-                Draw(v, FontId::Small, g_message, VIRTUAL_W * 0.5f, 270.0f, SUB_CELL, DIMMED.warning, 0.5f, 680.0f);
-                Draw(v, FontId::Small, std::string("\xC2\xB1 OK"), VIRTUAL_W * 0.5f, 340.0f, SUB_CELL, DIMMED.selected, 0.5f);
+                DrawMessage(v);
                 break;
             default: break;
             }
         }
 
-        // Host, at the HUB: the lobby (modal) or the panel.
+        // Host, at the HUB: the lobby's password, typed in a box.
+        void RasterizeHostPassword(const View& v, const Palette& pal)
+        {
+            constexpr float TITLE = 38.0f;
+            std::string title = T("PASSWORD", "SENHA");
+            std::string back = std::string("\xC2\xB2 ") + T("BACK", "VOLTAR"), note = T("Empty = no password", "Vazia = sem senha");
+            float keysH = KeysHeight(false);
+            float contentW = std::max({ KeysWidth(), Width(FontId::Large, title, TITLE), FooterWidth(back, note) });
+            Box box = FitBox(contentW, TITLE + 16.0f + FIELD_CELL + 20.0f + keysH + 16.0f + HELP_CELL, VIRTUAL_W * 0.5f, 0.5f, -1.0f);
+            DrawBox(v, box);
+            float y = box.Top();
+            Draw(v, FontId::Large, title, VIRTUAL_W * 0.5f, y, TITLE, pal.title, 0.5f, box.Room(y, TITLE));
+            y += TITLE + 16.0f;
+            DrawField(v, pal, y, false);
+            y += FIELD_CELL + 20.0f;
+            DrawKeys(v, pal, y, false);
+            y += keysH + 16.0f;
+            DrawBoxFooter(v, box, y, back, note, pal.help, pal.info);
+        }
+
+        // Host, at the HUB: the lobby (modal) over the dimmed HUB. With many players the rows get closer
+        // so the box (whose frame takes a quarter of its height) stays on the screen.
         void RasterizeLobby(const View& v, int width, int height)
         {
             const Palette& pal = DIMMED;
-            int players = LobbyPlayerRows();
             g_canvas.FillGradient(0, 0, width, height, DIM_TOP, DIM_BOTTOM);  // the HUB's own texts behind
             if (g_screen == Screen::HostPassword)
             {
-                DrawFrame(v, 240.0f, 90.0f, 1040.0f, 560.0f);
-                Draw(v, FontId::Large, T("PASSWORD", "SENHA"), VIRTUAL_W * 0.5f, 116.0f, 38.0f, pal.title, 0.5f);
-                DrawField(v, pal, 170.0f, false);
-                DrawKeys(v, pal, 236.0f, false);
-                std::string back = std::string("\xC2\xB2 ") + T("BACK", "VOLTAR");
-                float end = Draw(v, FontId::Small, back, 330.0f, 466.0f, HELP_CELL, pal.help);
-                AddZone(320.0f, 458.0f, end + 10.0f, 466.0f + HELP_CELL + 8.0f, Hit::Back);
-                Draw(v, FontId::Small, T("Empty = no password", "Vazia = sem senha"), 950.0f, 466.0f, HELP_CELL, pal.info, 1.0f);
+                RasterizeHostPassword(v, pal);
                 return;
             }
-            float top = 80.0f, bottom = top + 230.0f + (players + int(LOBBY_ROWS)) * LIST_PITCH;
-            DrawFrame(v, 300.0f, top, 980.0f, bottom);
-            Draw(v, FontId::Large, "MULTIPLAYER", VIRTUAL_W * 0.5f, top + 26.0f, 38.0f, pal.title, 0.5f);
+            constexpr float TITLE = 38.0f, CODE = 26.0f, NET = 22.0f, MAX_CONTENT_H = 450.0f;
+            std::vector<lobby::Player> list = lobby::Players();
+            int players = int(list.size()), rows = players + LOBBY_ROWS;
             std::string code = lobby::InviteCode(), local = lobby::LocalCode();
-            Draw(v, FontId::Small, std::string(T("Code ", "Código ")) + code + (code != local ? std::string(T("   LAN ", "   rede local ")) + local : "   " + lobby::Address()),
-                 VIRTUAL_W * 0.5f, top + 74.0f, 26.0f, pal.info, 0.5f, 620.0f);
-            Draw(v, FontId::Small, lobby::InternetText(g_portuguese), VIRTUAL_W * 0.5f, top + 104.0f, 22.0f, pal.help, 0.5f, 620.0f);
-            float y = top + 146.0f;
-            DrawRoster(v, pal, y, true);
-            y += players * LIST_PITCH;
+            std::string codeLine = std::string(T("Code ", "Código ")) + code +
+                                   (code != local ? std::string(T("   LAN ", "   rede local ")) + local : "   " + lobby::Address());
+            std::string net = lobby::InternetText(g_portuguese);
+            std::string back = std::string("\xC2\xB2 ") + T("BACK", "VOLTAR");
+            std::string help = g_row < players ? T("A: kick", "A: expulsar") : T("A / left / right: change", "A / esquerda / direita: mudar");
+            float fixed = TITLE + 12.0f + CODE + 6.0f + NET + 16.0f + 4.0f + HELP_CELL;
+            float pitch = std::clamp((MAX_CONTENT_H - fixed) / rows, 30.0f, LIST_PITCH), cell = std::min(LIST_CELL, pitch - 8.0f);
+            float contentW = std::max({ Width(FontId::Large, "MULTIPLAYER", TITLE), Width(FontId::Small, codeLine, CODE),
+                                        Width(FontId::Small, net, NET), RosterWidth(list, cell),
+                                        FooterWidth(back, T("A / left / right: change", "A / esquerda / direita: mudar")) });
+            for (int row = 0; row < LOBBY_ROWS; row++)
+                contentW = std::max(contentW, Width(FontId::Small, LobbyRowText(row), cell));
+            contentW = std::clamp(contentW, 480.0f, 760.0f);
+            Box box = FitBox(contentW, fixed + rows * pitch, VIRTUAL_W * 0.5f, 0.5f, -1.0f);
+            DrawBox(v, box);
+            float cx = VIRTUAL_W * 0.5f, y = box.Top();
+            Draw(v, FontId::Large, "MULTIPLAYER", cx, y, TITLE, pal.title, 0.5f, box.Room(y, TITLE));
+            y += TITLE + 12.0f;
+            Draw(v, FontId::Small, codeLine, cx, y, CODE, pal.info, 0.5f, box.Room(y, CODE));
+            y += CODE + 6.0f;
+            Draw(v, FontId::Small, net, cx, y, NET, pal.help, 0.5f, box.Room(y, NET));
+            y += NET + 16.0f;
+            DrawRoster(v, pal, y, true, &box, cell, pitch);
+            y += players * pitch;
             for (int row = 0; row < LOBBY_ROWS; row++)
             {
-                Draw(v, FontId::Small, LobbyRowText(row), VIRTUAL_W * 0.5f, y, LIST_CELL, g_row == players + row ? pal.selected : pal.normal, 0.5f, 600.0f);
+                float left = box.Left(y, cell), right = box.Right(y, cell);
+                Draw(v, FontId::Small, LobbyRowText(row), cx, y, cell, g_row == players + row ? pal.selected : pal.normal, 0.5f, right - left);
                 if (row == ROW_MAX_PLAYERS || row == ROW_KNOCK_OUT)
                 {
-                    AddZone(380.0f, y - 6.0f, VIRTUAL_W * 0.5f, y + LIST_CELL + 6.0f, Hit::RowLeft, players + row);
-                    AddZone(VIRTUAL_W * 0.5f, y - 6.0f, 900.0f, y + LIST_CELL + 6.0f, Hit::RowRight, players + row);
+                    AddZone(left - 20.0f, y - 6.0f, cx, y + cell + 6.0f, Hit::RowLeft, players + row);
+                    AddZone(cx, y - 6.0f, right + 20.0f, y + cell + 6.0f, Hit::RowRight, players + row);
                 }
                 else
-                    AddZone(380.0f, y - 6.0f, 900.0f, y + LIST_CELL + 6.0f, Hit::Row, players + row, row == ROW_CLOSE);
-                y += LIST_PITCH;
+                    AddZone(left - 20.0f, y - 6.0f, right + 20.0f, y + cell + 6.0f, Hit::Row, players + row, row == ROW_CLOSE);
+                y += pitch;
             }
-            std::string help = g_row < players ? T("A: kick", "A: expulsar") : T("A / left / right: change", "A / esquerda / direita: mudar");
-            std::string back = std::string("\xC2\xB2 ") + T("BACK", "VOLTAR");
-            float end = Draw(v, FontId::Small, back, 390.0f, bottom - 62.0f, HELP_CELL, pal.help);
-            AddZone(380.0f, bottom - 70.0f, end + 10.0f, bottom - 62.0f + HELP_CELL + 8.0f, Hit::Back);
-            Draw(v, FontId::Small, help, 890.0f, bottom - 62.0f, HELP_CELL, pal.info, 1.0f);
+            DrawBoxFooter(v, box, y + 4.0f, back, help, pal.help, pal.info);
         }
 
         // A client's menu in a level, over the game (which goes on).
         void RasterizeLevelMenu(const View& v)
         {
             const Palette& pal = DIMMED;
-            DrawFrame(v, 340.0f, 180.0f, 940.0f, 540.0f);
-            Draw(v, FontId::Large, "MULTIPLAYER", VIRTUAL_W * 0.5f, 206.0f, 38.0f, pal.title, 0.5f);
+            constexpr float TITLE = 38.0f;
             const char* rows[LEVEL_MENU_ROWS] = { T("RESUME", "CONTINUAR"), T("SETTINGS", "CONFIGURAÇÕES"), T("QUIT TO THE MAIN MENU", "SAIR PARA O MENU PRINCIPAL") };
+            std::string back = std::string("\xC2\xB2 ") + T("BACK TO THE GAME", "VOLTAR AO JOGO");
+            float contentW = std::max(Width(FontId::Large, "MULTIPLAYER", TITLE), FooterWidth(back, ""));
+            for (const char* row : rows)
+                contentW = std::max(contentW, Width(FontId::Large, row, ROW_CELL));
+            contentW = std::min(contentW, 640.0f);
+            Box box = FitBox(contentW, TITLE + 20.0f + int(LEVEL_MENU_ROWS) * ROW_PITCH + 8.0f + HELP_CELL, VIRTUAL_W * 0.5f, 0.5f, -1.0f);
+            DrawBox(v, box);
+            float y = box.Top();
+            Draw(v, FontId::Large, "MULTIPLAYER", VIRTUAL_W * 0.5f, y, TITLE, pal.title, 0.5f, box.Room(y, TITLE));
+            y += TITLE + 20.0f;
             for (int row = 0; row < LEVEL_MENU_ROWS; row++)
             {
-                float y = 270.0f + row * ROW_PITCH;
-                float right = Draw(v, FontId::Large, rows[row], VIRTUAL_W * 0.5f, y, ROW_CELL, row == g_row ? pal.selected : pal.normal, 0.5f, 540.0f);
+                float right = Draw(v, FontId::Large, rows[row], VIRTUAL_W * 0.5f, y, ROW_CELL, row == g_row ? pal.selected : pal.normal, 0.5f,
+                                   box.Room(y, ROW_CELL));
                 AddZone(VIRTUAL_W - right - 20.0f, y - 6.0f, right + 20.0f, y + ROW_CELL + 6.0f, Hit::Row, row);
+                y += ROW_PITCH;
             }
-            std::string back = std::string("\xC2\xB2 ") + T("BACK TO THE GAME", "VOLTAR AO JOGO");
-            float end = Draw(v, FontId::Small, back, 400.0f, 470.0f, HELP_CELL, pal.help);
-            AddZone(390.0f, 462.0f, end + 10.0f, 470.0f + HELP_CELL + 8.0f, Hit::Back);
+            DrawBoxFooter(v, box, y + 8.0f, back, "", pal.help, pal.info);
         }
 
-        // The HUB panel's size in virtual units.
-        constexpr float PANEL_L = 900.0f, PANEL_T = 14.0f, PANEL_R = 1268.0f, PANEL_PAD = 50.0f;
-        float PanelBottom(size_t players) { return PANEL_T + 126.0f + players * 30.0f + 64.0f; }
+        // The HUB panel, at the top right: as wide and as high as its lines (the code, the internet's
+        // state, the players and their ping), kept inside its frame.
+        constexpr float PANEL_R = 1268.0f, PANEL_T = 8.0f;
+        constexpr float PANEL_TITLE = 24.0f, PANEL_CODE = 26.0f, PANEL_NET = 18.0f, PANEL_NAME = 22.0f, PANEL_PING = 20.0f, PANEL_PITCH = 26.0f;
 
         void RasterizePanel(const View& v)
         {
             const Palette& pal = DIMMED;
             std::vector<lobby::Player> players = lobby::Players();
-            DrawFrame(v, PANEL_L, PANEL_T, PANEL_R, PanelBottom(players.size()));
-            AddZone(PANEL_L, PANEL_T, PANEL_R, PanelBottom(players.size()), Hit::Panel);
-            float x = PANEL_L + PANEL_PAD, y = PANEL_T + 24.0f;
-            Draw(v, FontId::Small, "MULTIPLAYER " + std::to_string(players.size()) + "/" + std::to_string(lobby::GetOptions().maxPlayers), x, y, 26.0f,
-                 pal.title, 0.0f, 280.0f);
-            y += 34.0f;
-            Draw(v, FontId::Small, lobby::InviteCode(), x, y, 28.0f, pal.selected);
-            y += 34.0f;
-            Draw(v, FontId::Small, lobby::InternetText(g_portuguese), x, y, 20.0f, pal.help, 0.0f, PANEL_R - PANEL_PAD - x);
-            y += 32.0f;
+            std::string title = "MULTIPLAYER " + std::to_string(players.size()) + "/" + std::to_string(lobby::GetOptions().maxPlayers);
+            std::string code = lobby::InviteCode(), hint = "\xC2\xB5 LOBBY";
+            std::vector<std::string> net = Wrap(lobby::InternetText(g_portuguese), FontId::Small, PANEL_NET, 300.0f);
+            auto name = [](const lobby::Player& p) { return std::to_string(p.slot + 1) + " " + p.name; };
+            auto ping = [](const lobby::Player& p) { return p.slot ? std::to_string(p.pingMs) + " ms" : std::string(); };
+            float contentW = std::max({ Width(FontId::Small, title, PANEL_TITLE), Width(FontId::Small, code, PANEL_CODE), Width(FontId::Small, hint, PANEL_NAME) });
+            for (const std::string& line : net)
+                contentW = std::max(contentW, Width(FontId::Small, line, PANEL_NET));
+            for (const lobby::Player& p : players)
+                contentW = std::max(contentW, Width(FontId::Small, name(p), PANEL_NAME) + 16.0f + Width(FontId::Small, ping(p), PANEL_PING));
+            contentW = std::clamp(contentW, 220.0f, 340.0f);
+            float contentH = PANEL_TITLE + 8.0f + PANEL_CODE + 6.0f + net.size() * (PANEL_NET + 4.0f) + 8.0f + players.size() * PANEL_PITCH + 6.0f + PANEL_NAME;
+            Box box = FitBox(contentW, contentH, PANEL_R, 1.0f, PANEL_T);
+            DrawBox(v, box);
+            AddZone(box.x0, box.y0, box.x1, box.y1, Hit::Panel);
+            float y = box.Top();
+            Draw(v, FontId::Small, title, box.Left(y, PANEL_TITLE), y, PANEL_TITLE, pal.title, 0.0f, box.Room(y, PANEL_TITLE));
+            y += PANEL_TITLE + 8.0f;
+            Draw(v, FontId::Small, code, box.Left(y, PANEL_CODE), y, PANEL_CODE, pal.selected, 0.0f, box.Room(y, PANEL_CODE));
+            y += PANEL_CODE + 6.0f;
+            for (const std::string& line : net)
+            {
+                Draw(v, FontId::Small, line, box.Left(y, PANEL_NET), y, PANEL_NET, pal.help, 0.0f, box.Room(y, PANEL_NET));
+                y += PANEL_NET + 4.0f;
+            }
+            y += 8.0f;
             for (const lobby::Player& p : players)
             {
-                Draw(v, FontId::Small, std::to_string(p.slot + 1) + " " + p.name, x, y, 24.0f, pal.normal, 0.0f, 200.0f);
-                if (p.slot)
-                    Draw(v, FontId::Small, std::to_string(p.pingMs) + " ms", PANEL_R - PANEL_PAD, y, 22.0f, pal.info, 1.0f);
-                y += 30.0f;
+                float left = box.Left(y, PANEL_NAME), right = box.Right(y, PANEL_NAME);
+                std::string ms = ping(p);
+                float msW = ms.empty() ? 0.0f : std::min(Width(FontId::Small, ms, PANEL_PING), (right - left) * 0.4f);
+                Draw(v, FontId::Small, name(p), left, y, PANEL_NAME, pal.normal, 0.0f, right - left - (ms.empty() ? 0.0f : msW + 16.0f));
+                if (!ms.empty())
+                    Draw(v, FontId::Small, ms, right, y + (PANEL_NAME - PANEL_PING) * 0.5f, PANEL_PING, pal.info, 1.0f, msW);
+                y += PANEL_PITCH;
             }
-            Draw(v, FontId::Small, std::string("\xC2\xB5 LOBBY"), x, y + 2.0f, 24.0f, pal.help);
+            y += 6.0f;
+            Draw(v, FontId::Small, hint, box.Left(y, PANEL_NAME), y, PANEL_NAME, pal.help, 0.0f, box.Room(y, PANEL_NAME));
         }
 
         View MakeView(int width, int height)
@@ -625,24 +797,25 @@ namespace mp::menu
             return 0;
         }
 
-        bool Typing() { return g_screen == Screen::Code || g_screen == Screen::Password || g_screen == Screen::HostPassword; }
+        bool Typing()
+        {
+            return g_screen == Screen::Code || g_screen == Screen::Password || g_screen == Screen::HostPassword || g_screen == Screen::Name;
+        }
+
+        bool g_textEntry = false;  // the keyboard types text (a field's screen)
 
         void Go(Screen screen, int row = 0)
         {
-            bool typing = Typing();
             g_screen = screen;
             g_row = row;
             g_dirty = true;
-            if (Typing())
+            if (Typing() != g_textEntry)
             {
-                if (!typing)
-                {
-                    input::pc::SetTextEntry(true);
+                g_textEntry = Typing();
+                input::pc::SetTextEntry(g_textEntry);
+                if (g_textEntry)
                     input::pc::TakeTypedText();
-                }
             }
-            else if (typing)
-                input::pc::SetTextEntry(false);
         }
 
         void ShowMessage(const std::string& text, Screen after)
@@ -669,8 +842,9 @@ namespace mp::menu
         // `back`: B for the game, which leaves the options screen to the main menu.
         void Close(bool back)
         {
-            if (Typing())
+            if (g_textEntry)
                 input::pc::SetTextEntry(false);
+            g_textEntry = false;
             g_closing = !g_lobbyModal && !g_levelModal;  // the lobby at the HUB just goes (the panel is back)
             g_open = false;
             g_lobbyModal = false;
@@ -772,10 +946,24 @@ namespace mp::menu
         {
             g_field.clear();
             for (char c : text)
-                if (c != '-')
+                if (c != '-' && (screen != Screen::Name || isalnum(uint8_t(c))))
                     g_field += c;
-            g_cursor = text.size();
+            g_cursor = g_field.size();
             Go(screen);
+        }
+
+        // The player's name online ([multiplayer] name in settings.toml, lobby::SetLocalName): asked
+        // the first time MULTIPLAYER opens, unless CRASH_MP_NAME gives one (tests).
+        bool NameAsked() { return !settings::Get().mpName.empty() || getenv("CRASH_MP_NAME"); }
+
+        void SaveName(const std::string& name)
+        {
+            settings::Values values = settings::Get();
+            values.mpName = name;
+            settings::Set(values);
+            settings::Save();
+            lobby::SetLocalName(name);
+            Log("[mp] menu: player name %s (saved)", name.c_str());
         }
 
         // A screen opened from the main menu.
@@ -796,12 +984,31 @@ namespace mp::menu
             case Screen::Root:
                 if (back)
                     Close(true);
+                else if (accept && g_row == ROOT_NAME)
+                    BeginField(Screen::Name, lobby::LocalName());
                 else if (accept)
-                    Go(g_row == 0 ? Screen::HostMode : Screen::FindMode);
+                    Go(g_row == ROOT_HOST ? Screen::HostMode : Screen::FindMode);
+                break;
+            case Screen::Name:
+                if (back)
+                {
+                    Go(Screen::Root, ROOT_NAME);
+                    break;
+                }
+                if (EditField(pressed, PASSWORD_LETTERS, NAME_LENGTH))
+                {
+                    if (g_field.empty())
+                        ShowMessage(T("TYPE YOUR NAME", "DIGITE O SEU NOME"), Screen::Name);
+                    else
+                    {
+                        SaveName(g_field);
+                        Go(Screen::Root, ROOT_HOST);
+                    }
+                }
                 break;
             case Screen::HostMode:
                 if (back)
-                    Go(Screen::Root, 0);
+                    Go(Screen::Root, ROOT_HOST);
                 else if (accept)
                 {
                     if (!lobby::Host())
@@ -818,7 +1025,7 @@ namespace mp::menu
                 break;
             case Screen::FindMode:
                 if (back)
-                    Go(Screen::Root, 1);
+                    Go(Screen::Root, ROOT_FIND);
                 else if (accept && g_row == 0)
                 {
                     lobby::Search();
@@ -884,7 +1091,7 @@ namespace mp::menu
                 if (back)
                 {
                     lobby::Leave();
-                    Go(Screen::Root, 1);
+                    Go(Screen::Root, ROOT_FIND);
                 }
                 else if (state == lobby::State::Failed)
                 {
@@ -1004,7 +1211,15 @@ namespace mp::menu
                     lobby::Leave();  // a session left behind (the host went back to the main menu)
                 g_palette = &CLOTH;
                 g_lobbyModal = false;
-                Go(resume ? Screen::Waiting : Screen::Root);
+                // The saved name, for the session; the first time (none saved, no CRASH_MP_NAME) the
+                // name screen comes first.
+                lobby::SetLocalName(settings::Get().mpName);
+                if (resume)
+                    Go(Screen::Waiting);
+                else if (NameAsked())
+                    Go(Screen::Root, ROOT_HOST);
+                else
+                    BeginField(Screen::Name, lobby::LocalName());
                 Open();
                 Log("[mp] menu opened%s", resume ? " at the lobby (back from the host's level)" : "");
             }

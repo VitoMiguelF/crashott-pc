@@ -4,7 +4,9 @@
 // It goes the SETTINGS way (frontend_hooks.cpp): the game plays its transition to the emptied PS2
 // options screen and these screens are drawn over its cloth, like the settings (settings_menu.h):
 //
-//   MULTIPLAYER   HOST GAME / FIND GAME
+//   MULTIPLAYER   NAME / HOST GAME / FIND GAME
+//   YOUR NAME     the player's name online, saved in settings.toml ([multiplayer] name); shown first the
+//                 first time (no saved name, no CRASH_MP_NAME)
 //   HOST GAME     NEW GAME / LOAD GAME: opens the session (mp_lobby.h) and leaves through the main
 //                 menu's own exit (88 / 89); a new game goes from its last screen to the HUB (exit 309, the
 //                 loaded game's ExitToHUB: EndAccess + FadeIn) instead of the first level, a loaded one

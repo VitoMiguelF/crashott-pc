@@ -865,6 +865,145 @@ namespace settings::menu_art
         return Layout(&canvas, font, text, x, y, cell, &style, iconScale);
     }
 
+    std::u32string FitText(FontId font, const std::u32string& text, float& cell, float maxWidth, float minScale)
+    {
+        float width = TextWidth(font, text, cell);
+        if (width <= maxWidth || width <= 0.0f)
+            return text;
+        float scale = std::max(minScale, maxWidth / width);
+        cell *= scale;
+        if (width * scale <= maxWidth + 0.01f)
+            return text;
+        std::u32string cut = text;
+        while (!cut.empty() && TextWidth(font, cut + U"...", cell) > maxWidth)
+            cut.pop_back();
+        while (!cut.empty() && cut.back() == U' ')
+            cut.pop_back();
+        return cut + U"...";
+    }
+
+    // Message frames ----------------------------------------------------------------------------
+
+    namespace
+    {
+        // MSG_Background's shape: per row of the corner image, where the border stops in its curl
+        // third (a fraction of that third's width); the top border's depth (a fraction of the height);
+        // the curl third's width over the height. Before the art is there (or without it): the
+        // original's, measured the same way.
+        struct FrameShape
+        {
+            std::vector<float> side;
+            float top = 0.25f, curlAspect = 85.0f / 128.0f, sideMax = 0.9f;
+        };
+
+        FrameShape MeasureFrame(const Image& corner)
+        {
+            FrameShape shape;
+            int curl = std::max(1, corner.w / 3);
+            // The border is light (the box tints it), the inside black: opaque and bright.
+            auto border = [&](int x, int y) {
+                uint32_t p = corner.px[size_t(y) * corner.w + x], a = p >> 24;
+                return a >= 48 && (p & 0xFF) + ((p >> 8) & 0xFF) + ((p >> 16) & 0xFF) >= a * 3 / 2;
+            };
+            int topRows = 0;
+            for (int x = curl; x < corner.w; x++)
+                for (int y = corner.h - 1; y >= 0; y--)
+                    if (border(x, y))
+                    {
+                        topRows = std::max(topRows, y + 1);
+                        break;
+                    }
+            shape.top = float(topRows) / corner.h;
+            shape.side.assign(size_t(corner.h), 0.0f);
+            shape.sideMax = 0.0f;
+            for (int y = 0; y < corner.h; y++)
+            {
+                for (int x = curl - 1; x >= 0; x--)
+                    if (border(x, y))
+                    {
+                        shape.side[size_t(y)] = float(x + 1) / curl;
+                        break;
+                    }
+                if (y >= topRows)
+                    shape.sideMax = std::max(shape.sideMax, shape.side[size_t(y)]);
+            }
+            shape.curlAspect = float(curl) / corner.h;
+            return shape;
+        }
+
+        const FrameShape& Shape()
+        {
+            static const FrameShape original;
+            static FrameShape measured;
+            static std::once_flag once;
+            const Image* corner = GetArt(Art::MessageFrame);
+            if (!corner)
+                return original;
+            std::call_once(once, [&] { measured = MeasureFrame(*corner); });
+            return measured;
+        }
+    }
+
+    void DrawMessageFrame(Canvas& canvas, int left, int top, int right, int bottom, Color tint, Color fallback)
+    {
+        const Image* corner = GetArt(Art::MessageFrame);
+        if (!corner)
+        {
+            canvas.Fill(left, top, right, bottom, fallback);
+            return;
+        }
+        // The right / bottom quadrants take the odd pixel (no seam in the middle).
+        int halfW = (right - left) / 2, halfH = (bottom - top) / 2;
+        float k = float(halfH) / float(corner->h);
+        int curl = corner->w / 3;  // the curl is in the left third
+        int curlW = std::min(int(std::lround(curl * k)), halfW);
+        for (int q = 0; q < 4; q++)
+        {
+            bool flipX = q & 1, flipY = q & 2;
+            int qw = flipX ? right - left - halfW : halfW, qh = flipY ? bottom - top - halfH : halfH;
+            int qx = flipX ? left + halfW : left, qy = flipY ? top + halfH : top;
+            const Image& c = Scaled(*corner, 0, 0, curl, corner->h, curlW, qh, flipX, flipY);
+            const Image& edge = Scaled(*corner, curl, 0, corner->w - curl, corner->h, qw - curlW, qh, flipX, flipY);
+            canvas.Blit(c, flipX ? qx + qw - curlW : qx, qy, tint);
+            canvas.Blit(edge, flipX ? qx : qx + curlW, qy, tint);
+        }
+    }
+
+    float FrameTopInset(float y0, float y1)
+    {
+        return Shape().top * (y1 - y0) * 0.5f;
+    }
+
+    float FrameSideInset(float x0, float y0, float x1, float y1, float lineTop, float lineBottom)
+    {
+        const FrameShape& shape = Shape();
+        float halfW = (x1 - x0) * 0.5f, halfH = (y1 - y0) * 0.5f;
+        if (halfH <= 0.0f || halfW <= 0.0f)
+            return 0.0f;
+        float curlW = std::min(halfH * shape.curlAspect, halfW);
+        if (shape.side.empty())
+            return shape.sideMax * curlW;
+        // The rows of the corner the line covers (the bottom half is the top one mirrored).
+        float mid = (y0 + y1) * 0.5f;
+        auto depth = [&](float y) { return std::clamp((y < mid ? y - y0 : y1 - y) / halfH, 0.0f, 1.0f); };
+        float a = depth(lineTop), b = depth(lineBottom);
+        float from = std::min(a, b), to = lineTop < mid && lineBottom > mid ? 1.0f : std::max(a, b);
+        int n = int(shape.side.size());
+        int r0 = std::clamp(int(from * n), 0, n - 1), r1 = std::clamp(int(std::ceil(to * n)), r0 + 1, n);
+        float side = 0.0f;
+        for (int r = r0; r < r1; r++)
+            side = std::max(side, shape.side[size_t(r)]);
+        return side * curlW;
+    }
+
+    void FrameOuterSize(float contentW, float contentH, float gap, float& outerW, float& outerH)
+    {
+        const FrameShape& shape = Shape();
+        outerH = (contentH + 2.0f * gap) / std::max(0.2f, 1.0f - shape.top);
+        float curlW = outerH * 0.5f * shape.curlAspect;
+        outerW = contentW + 2.0f * (shape.sideMax * curlW + gap);
+    }
+
     std::u32string Utf32(const std::string& utf8)
     {
         std::u32string out;

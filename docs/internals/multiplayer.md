@@ -16,7 +16,7 @@ opened from the main menu's MULTIPLAYER** ("Lobby" below); with it off no hook c
 | `CRASH_MP_PLAYERS=<n>` | 2-4 players (the game's limit is 4); with more than 2, players 3 and 4 are spawned on every machine |
 | `CRASH_MP_SLOT=<n>` | client: its player, 1-3 (default 1; UDP port + slot); the host is 0 |
 | `CRASH_MP_SNAP=<units>` | client: a player further than this from the host's record is put back through its physics (default 1.0) |
-| `CRASH_MP_NAME=<name>` | the player's name in the lobby (default: the OS user's, A-Z 0-9, 12 letters) |
+| `CRASH_MP_NAME=<name>` | the player's name in the lobby when none was saved (`[multiplayer] name`, typed on the MULTIPLAYER screens; default: the OS user's, A-Z 0-9, 12 letters); it also skips the first-time name screen |
 | `CRASH_MP_PASSWORD` / `CRASH_MP_CODE` | tests: the host's password and what a client's password field starts with / what ENTER CODE starts with |
 | `CRASH_MP_TELEPORT=x,y,z` | host, tests: once both players are on foot, put P1 there and P2 2 units further along x (`mp_m3_host`: the first fight of L1_E1) |
 
@@ -284,8 +284,22 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   emptied PS2 options screen (node 99) and its marker (`PlaySoundSelect(4242)`) opens the MULTIPLAYER screens
   (`online/mp_menu.cpp`) instead of the settings, drawn the same way (game fonts and frames, overlay channel
   `BITMAP_MULTIPLAYER`, the game's input neutral while open).
-- **Screens**: HOST GAME (NEW GAME / LOAD GAME) and FIND GAME (SERVER LIST / ENTER CODE, then a password if the
-  host has one). The host's choice opens the session and closes the screen without B: the next condition of
+- **Screens**: NAME, HOST GAME (NEW GAME / LOAD GAME) and FIND GAME (SERVER LIST / ENTER CODE, then a password if
+  the host has one). The opened screen starts on HOST GAME (the tests' A / DOWN A still host / find).
+- **The player's name**: the first row, `NAME: <name>`; A opens YOUR NAME (the field and the keys, as the
+  password: A-Z 0-9, 12 letters), whose A / Enter / OK saves it in `settings.toml` (`[multiplayer] name`,
+  `settings::Values::mpName`) and hands it to the lobby (`lobby::SetLocalName`, used in HELLO and the host's
+  roster). The first time MULTIPLAYER opens (no saved name and no `CRASH_MP_NAME`) YOUR NAME comes first,
+  filled with the default (`CRASH_MP_NAME`, else the OS user's / the device's model); B goes on to the menu with it.
+  Precedence: the saved name, else `CRASH_MP_NAME`, else the OS user's.
+- **Frames**: every screen in one of the game's message boxes (the HUB panel, the lobby, its password, the
+  messages, a client's menu in a level; also the settings' restart question and the save screens' delete
+  question) is sized by its lines, and each line keeps clear of the frame. MSG_Background's curl keeps its
+  aspect, so it grows with the box's height and reaches ~88% of its third in, over most of the height: the
+  room on a line comes from the frame itself (`menu_art::FrameTopInset` / `FrameSideInset` / `FrameOuterSize`,
+  measured on the image's border pixels, so a mod's frame is followed; `mp_menu.cpp` `Box` / `FitBox`). A text
+  wider than its room shrinks to 80% and is then cut with "..." (`menu_art::FitText`); the panel wraps the
+  internet's state, the lobby's rows get closer with many players so the box stays on the screen. The host's choice opens the session and closes the screen without B: the next condition of
   node 99 returns the main menu's own exit, 88 (NEW GAME -> name entry) or 89 (LOAD GAME -> the slot screen); a
   new game's last screen (node 322, `FadeOut`) takes exit 309, the loaded game's `ExitToHUB` (`EndAccess` +
   `FadeIn` -> 575, the HUB), instead of 323 (`StartLevelByName(L1_E1)`); exit 380 (`GotoGameState(LEVEL_SELECT)`)

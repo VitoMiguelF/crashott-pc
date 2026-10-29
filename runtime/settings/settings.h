@@ -180,6 +180,9 @@ namespace settings
         // [dev]: developer tools (dev/dev_console.h), live
         bool devConsole = false;  // console: the developer console (the key left of 1, or F10)
         bool hulkSkin = false;    // hulk_skin: the unused Crash_Hulk skin is in the skin menu (console "unlock skin hulk")
+        // [multiplayer] name: the player's name online (A-Z 0-9, 12 letters), typed on the MULTIPLAYER
+        // screens (online/mp_menu.cpp); empty = CRASH_MP_NAME or the OS user's (mp_lobby.h LocalName).
+        std::string mpName;
         // [paths] game: the game folder (UTF-8), when it is not next to the exe (paths.h); set by the
         // folder picker on the first run.
         std::string gamePath;

@@ -942,9 +942,12 @@ namespace settings::save_screens
             return menu_art::TextWidth(font, menu_art::Utf32(text), cell);
         }
 
-        float Text(const View& v, FontId font, const std::string& text, float x, float y, float cell, const TextStyle& style, float align = 0.0f)
+        float Text(const View& v, FontId font, const std::string& text, float x, float y, float cell, const TextStyle& style, float align = 0.0f,
+                   float maxWidth = 1e9f)
         {
-            std::u32string u = menu_art::Utf32(text);
+            float fitted = cell;
+            std::u32string u = menu_art::FitText(font, menu_art::Utf32(text), fitted, maxWidth);
+            y += (cell - fitted) * 0.5f, cell = fitted;
             float width = menu_art::TextWidth(font, u, cell);
             float left = x - width * align;
             menu_art::DrawGameText(g_canvas, font, u, v.X(left), v.Y(y), cell * v.s, style);
@@ -1036,26 +1039,7 @@ namespace settings::save_screens
         // MSG_Background (the top-left corner of the game's message boxes) in the four corners.
         void DrawFrame(const View& v, float x0, float y0, float x1, float y1)
         {
-            const menu_art::Image* corner = menu_art::GetArt(menu_art::Art::MessageFrame);
-            int left = v.IX(x0), top = v.IY(y0), right = v.IX(x1), bottom = v.IY(y1);
-            if (!corner)
-            {
-                g_canvas.Fill(left, top, right, bottom, { 0, 0, 0, 190 });
-                return;
-            }
-            int halfW = (right - left) / 2, halfH = (bottom - top) / 2;
-            float k = float(halfH) / float(corner->h);
-            int curl = corner->w / 3;
-            int curlW = std::min(int(std::lround(curl * k)), halfW);
-            for (int q = 0; q < 4; q++)
-            {
-                bool flipX = q & 1, flipY = q & 2;
-                int qx = flipX ? right - halfW : left, qy = flipY ? bottom - halfH : top;
-                const menu_art::Image& c = menu_art::Scaled(*corner, 0, 0, curl, corner->h, curlW, halfH, flipX, flipY);
-                const menu_art::Image& edge = menu_art::Scaled(*corner, curl, 0, corner->w - curl, corner->h, halfW - curlW, halfH, flipX, flipY);
-                g_canvas.Blit(c, flipX ? qx + halfW - curlW : qx, qy, FRAME);
-                g_canvas.Blit(edge, flipX ? qx : qx + curlW, qy, FRAME);
-            }
+            menu_art::DrawMessageFrame(g_canvas, v.IX(x0), v.IY(y0), v.IX(x1), v.IY(y1), FRAME, { 0, 0, 0, 190 });
         }
 
         // Words of `text` in lines no wider than `width`.
@@ -1087,22 +1071,11 @@ namespace settings::save_screens
         void DrawConfirm(const View& v, const Visual& vis, int width, int height)
         {
             g_canvas.Fill(0, 0, width, height, DIM);
-            constexpr float X0 = 260.0f, X1 = 1020.0f, CELL = 30.0f, LINE = 36.0f;
+            constexpr float CELL = 30.0f, LINE = 36.0f, SAVE_CELL = 34.0f, WARNING_CELL = 26.0f, GAP = 10.0f;
+            constexpr float QUESTION_W = 640.0f, MAX_W = 1180.0f;
             std::vector<std::string> question = Wrap(T(vis.portuguese, "Are you sure you want to delete this saved game?",
                                                        "Tem certeza de que deseja apagar este jogo salvo?"),
-                                                     FontId::Small, CELL, X1 - X0 - 100.0f);
-            // The frame fits the lines: question, the save, the warning, NO / YES and the hints,
-            // centred a little above the middle of the screen (over the slots' pictures).
-            const float contentH = 40.0f + LINE * question.size() + 4.0f + 44.0f + 40.0f + 2 * 44.0f + 16.0f + 28.0f + 52.0f;
-            const float Y0 = std::round(350.0f - contentH * 0.5f), Y1 = Y0 + contentH;
-            DrawFrame(v, X0, Y0, X1, Y1);
-            const float cx = VIRTUAL_W * 0.5f;
-            float y = Y0 + 40.0f;
-            for (const std::string& line : question)
-            {
-                Text(v, FontId::Small, line, cx, y, CELL, MSG_TEXT, 0.5f);
-                y += LINE;
-            }
+                                                     FontId::Small, CELL, QUESTION_W);
             // The save: slot, name, date and play time, as the slot screen shows them.
             std::string save = std::string(T(vis.portuguese, "SLOT ", "ESPAÇO ")) + std::to_string(vis.slot);
             for (const std::string* part : { &vis.saveName, &vis.saveDate, &vis.saveTime })
@@ -1110,10 +1083,39 @@ namespace settings::save_screens
                 if (!part->empty())
                     save += "   " + *part;
             }
+            std::string warning = T(vis.portuguese, "It cannot be recovered.", "Não será possível recuperá-lo.");
+            // (B) BACK ... SELECT (A), as the game's hints (with the device's icons).
+            const float hintCell = 28.0f;
+            std::string back = std::string("\xC2\xB2 ") + T(vis.portuguese, "BACK", "VOLTAR");
+            std::string select = std::string(T(vis.portuguese, "SELECT", "SELECIONAR")) + " \xC2\xB1";
+            float backW = Width(FontId::Large, back, hintCell), selectW = Width(FontId::Large, select, hintCell);
+
+            // The frame fits the lines (question, the save, the warning, NO / YES and the hints) clear
+            // of its border and curls (menu_art::FrameSideInset), centred a little above the middle of
+            // the screen (over the slots' pictures).
+            float contentW = std::max({ Width(FontId::Large, save, SAVE_CELL), Width(FontId::Small, warning, WARNING_CELL), backW + 60.0f + selectW });
+            for (const std::string& line : question)
+                contentW = std::max(contentW, Width(FontId::Small, line, CELL));
+            const float contentH = LINE * question.size() + 4.0f + 44.0f + 40.0f + 2 * 44.0f + 16.0f + hintCell;
+            float frameW, frameH;
+            menu_art::FrameOuterSize(contentW, contentH, GAP, frameW, frameH);
+            frameW = std::min(frameW, MAX_W);
+            const float Y0 = std::round(350.0f - frameH * 0.5f), Y1 = Y0 + frameH;
+            const float X0 = std::round((VIRTUAL_W - frameW) * 0.5f), X1 = VIRTUAL_W - X0;
+            DrawFrame(v, X0, Y0, X1, Y1);
+            // The room on a line from y to y + cell.
+            auto room = [&](float y, float cell) { return X1 - X0 - 2.0f * (menu_art::FrameSideInset(X0, Y0, X1, Y1, y, y + cell) + GAP); };
+            const float cx = VIRTUAL_W * 0.5f;
+            float y = Y0 + menu_art::FrameTopInset(Y0, Y1) + GAP;
+            for (const std::string& line : question)
+            {
+                Text(v, FontId::Small, line, cx, y, CELL, MSG_TEXT, 0.5f, room(y, CELL));
+                y += LINE;
+            }
             y += 4.0f;
-            Text(v, FontId::Large, save, cx, y, 34.0f, MSG_SELECTED, 0.5f);
+            Text(v, FontId::Large, save, cx, y, SAVE_CELL, MSG_SELECTED, 0.5f, room(y, SAVE_CELL));
             y += 44.0f;
-            Text(v, FontId::Small, T(vis.portuguese, "It cannot be recovered.", "Não será possível recuperá-lo."), cx, y, 26.0f, MSG_WARNING, 0.5f);
+            Text(v, FontId::Small, warning, cx, y, WARNING_CELL, MSG_WARNING, 0.5f, room(y, WARNING_CELL));
 
             // NO / YES (NÃO / SIM), the highlighted one in the selected colours.
             const float itemsY = y + 40.0f, itemCell = 40.0f, itemPitch = 44.0f;
@@ -1129,16 +1131,13 @@ namespace settings::save_screens
                       itemsY + i * itemPitch + itemPitch - 4.0f, i ? Zone::Yes : Zone::No);
             }
 
-            // (B) BACK ... SELECT (A), as the game's hints (with the device's icons).
-            const float hintY = itemsY + 2 * itemPitch + 16.0f, hintCell = 28.0f;
-            std::string back = std::string("\xC2\xB2 ") + T(vis.portuguese, "BACK", "VOLTAR");
-            std::string select = std::string(T(vis.portuguese, "SELECT", "SELECIONAR")) + " \xC2\xB1";
-            // Inside the frame's bottom curls.
-            float backEnd = Text(v, FontId::Large, back, X0 + 96.0f, hintY, hintCell, KEY_NORMAL);
-            float selectW = Width(FontId::Large, select, hintCell);
-            Text(v, FontId::Large, select, X1 - 96.0f, hintY, hintCell, KEY_NORMAL, 1.0f);
-            AddZone(X0 + 86.0f, hintY - 6.0f, backEnd + 10.0f, hintY + hintCell + 6.0f, Zone::Back);
-            AddZone(X1 - 106.0f - selectW, hintY - 6.0f, X1 - 86.0f, hintY + hintCell + 6.0f, Zone::Accept);
+            // The hints at the sides, inside the frame's bottom curls.
+            const float hintY = itemsY + 2 * itemPitch + 16.0f;
+            float inset = (X1 - X0 - room(hintY, hintCell)) * 0.5f;
+            float backEnd = Text(v, FontId::Large, back, X0 + inset, hintY, hintCell, KEY_NORMAL);
+            Text(v, FontId::Large, select, X1 - inset, hintY, hintCell, KEY_NORMAL, 1.0f);
+            AddZone(X0 + inset - 10.0f, hintY - 6.0f, backEnd + 10.0f, hintY + hintCell + 6.0f, Zone::Back);
+            AddZone(X1 - inset - 10.0f - selectW, hintY - 6.0f, X1 - inset + 10.0f, hintY + hintCell + 6.0f, Zone::Accept);
         }
 
         void Rasterize(const Visual& vis, int width, int height)
