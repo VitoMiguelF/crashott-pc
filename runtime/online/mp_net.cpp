@@ -22,13 +22,15 @@
 // slot). Every machine plays its own slot as player 1 (camera, HUD, controller 0) and the other slots
 // on players 2-4 in slot order, all native Crashes on foot from the start (mp_players.cpp). Each
 // machine sends player 1's pad (the state the game read, "CMI2" packets: slot, sequence, the 12-byte
-// XINPUT_GAMEPAD and its camera's forward, on change and at least every 50 ms); the host passes the
+// XINPUT_GAMEPAD, its camera's forward and where its player is, on change and at least every 50 ms); the host passes the
 // clients' on to the other clients, and each machine gives every remote slot's pad to the controller
 // of the player that slot is there. So every machine runs every Crash on the same inputs and the game
 // plays the same moves (input mirroring); the local Crash answers at once (local prediction). The
 // game walks a player relative to the camera, so a remote left stick is turned from the sender's
-// camera to this one's. The host's records only correct the players' positions, through their
-// physics (TeleportPlayer), when they drift more than CRASH_MP_SNAP (default 1.0) away.
+// camera to this one's. A player's position is its own machine's: the other machines correct their
+// copy to the one sent with its pad, through its physics (TeleportPlayer), when it drifts more than
+// CRASH_MP_SNAP (default 1.0) away; nobody corrects its own player (CorrectRemotePlayers). The players
+// stay within CRASH_MP_LEASH of each other (Leash, UpdateLocalPlayer).
 
 #include "mp.h"
 #include "mp_lobby.h"
@@ -37,6 +39,7 @@
 #include "../kernel/xinput_types.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
+#include "../settings/skip_cinematics.h"
 
 #include <algorithm>
 #include <atomic>
@@ -86,6 +89,8 @@ namespace
 {
     constexpr uint32_t MAGIC = 0x434D5031;  // "CMP1"
     constexpr uint32_t INPUT_MAGIC = 0x434D4932;  // "CMI2"
+    // magic, slot, sequence, the pad, camera forward (x, z), the player's position (x, y, z), in play
+    constexpr size_t PAD_PACKET = 12 + 12 + 8 + 12 + 4;
     constexpr uint32_t GAME_DATABASE = 0x824A76A4;  // CGameDatabase: players at +16 / +20
     constexpr uint32_t CRASH_TABLE = 0x8249D778;    // Crash* [2], by player index
     constexpr size_t RECORD = 64;
@@ -162,10 +167,19 @@ namespace
         std::mutex padMutex;  // the pads and the clients' addresses (the input thread reads them)
         XINPUT_GAMEPAD remotePad[4]{};  // by slot
         float remoteForward[4][2]{};    // by slot: the sender's camera forward (x, z) its stick was read with
+        // by slot: where the sender's player was when it sent its pad (its machine moves it: the others
+        // correct their copy to it, CorrectRemotePlayers), and whether it was in play
+        float remotePos[4][3]{};
+        bool remoteInPlay[4]{};
+        uint64_t remotePosAt[4]{};
+        // the game thread's view of player 1 for the input reads (LocalPad, Leash): where it is, in play,
+        // and the way away from the others when it is past the leash (0, 0 within it)
+        float myPos[3]{}, awayX = 0, awayZ = 0;
+        bool myInPlay = false;
         uint64_t remotePadAt[4]{}, padSequence[4]{}, padPackets = 0;
         XINPUT_GAMEPAD lastSentPad{};
         uint64_t lastPadSend = 0, sentPadSequence = 0;
-        float snap = 1.0f;  // client: player position error corrected through the physics
+        float snap = 1.0f;  // a remote player's position error corrected through the physics
         uint32_t lookDone[4] = {};  // the players' drawables whose colour was set (by local index)
         uint64_t lastSnap[4] = {};  // client: last correction of each player (by local index)
         float lastRecordPos[4][3] = {}, lastLocalPos[4][3] = {};  // client: to tell a standing player
@@ -746,6 +760,16 @@ namespace
                 uint32_t bits = Get32(buffer + 12 + sizeof(XINPUT_GAMEPAD) + i * 4);
                 memcpy(&n.remoteForward[slot][i], &bits, 4);
             }
+            if (got >= int(PAD_PACKET))
+            {
+                for (int i = 0; i < 3; ++i)
+                {
+                    uint32_t bits = Get32(buffer + 20 + sizeof(XINPUT_GAMEPAD) + i * 4);
+                    memcpy(&n.remotePos[slot][i], &bits, 4);
+                }
+                n.remoteInPlay[slot] = Get32(buffer + 32 + sizeof(XINPUT_GAMEPAD)) & 1;
+                n.remotePosAt[slot] = mp::NowMs();
+            }
             if (mp::Trace() && n.remotePad[slot].wButtons != before)
                 Log("[mp] pad in t=%llu slot %u buttons %04X", (unsigned long long)mp::NowMs(), slot + 1,
                     n.remotePad[slot].wButtons);
@@ -936,13 +960,8 @@ namespace
         n.local.clear();
         for (uint32_t actor : Actors())
             n.local[NameOf(actor)] = actor;
-        // Players run on their own inputs here (input mirroring); a record only corrects a player that
-        // drifted more than `snap` away, through its physics, after the loop.
-        struct Target
-        {
-            uint32_t actor = 0;
-            float pos[3]{};
-        } targets[4];
+        // Players run on their own inputs here (input mirroring) and their positions come from their own
+        // machines (CorrectRemotePlayers): the host's records give them only their hitpoints.
         for (auto& [recordName, r] : n.latest)
         {
             uint64_t name = recordName;
@@ -970,53 +989,7 @@ namespace
                 // A player not on foot (not shown yet) is the game's to move.
                 if (!mp::PlayerOnFoot(uint32_t(player)))
                     continue;
-                float dx = LoadF(xform + 48) - r.m[9], dy = LoadF(xform + 52) - r.m[10], dz = LoadF(xform + 56) - r.m[11];
                 uint32_t index = uint32_t(player);
-                // At most every 250 ms: a player that cannot get there (pushed, hit) is not teleported every frame.
-                // Moving, only past `snap` (a correction shows as a jump); standing (the host's record still for
-                // 0.5 s, the player here still too), anything past 0.25, so no offset stays for good.
-                uint64_t now = mp::NowMs();
-                float* last = n.lastRecordPos[index];
-                if (std::abs(last[0] - r.m[9]) + std::abs(last[1] - r.m[10]) + std::abs(last[2] - r.m[11]) > 0.05f)
-                {
-                    last[0] = r.m[9], last[1] = r.m[10], last[2] = r.m[11];
-                    n.recordMovedAt[index] = now;
-                }
-                float* mine = n.lastLocalPos[index];
-                float here[3] = {LoadF(xform + 48), LoadF(xform + 52), LoadF(xform + 56)};
-                if (std::abs(mine[0] - here[0]) + std::abs(mine[1] - here[1]) + std::abs(mine[2] - here[2]) > 0.05f)
-                {
-                    memcpy(mine, here, sizeof(here));
-                    n.localMovedAt[index] = now;
-                }
-                bool still = now - n.recordMovedAt[index] >= 500 && now - n.localMovedAt[index] >= 500;
-                // Pushing against another player (within 1.6), each machine sees the push a few frames
-                // apart: up to 2.0 is let go while moving (the correction standing still evens it out).
-                bool contact = false;
-                for (uint32_t j = 0; j < n.players && !contact; ++j)
-                    if (uint32_t other = j != index ? PlayerActor(j) : 0; other && GuestPointer(LoadBE32(other + 44)))
-                    {
-                        uint32_t ox = LoadBE32(other + 44);
-                        float cx = LoadF(ox + 48) - here[0], cz = LoadF(ox + 56) - here[2];
-                        contact = cx * cx + cz * cz < 1.6f * 1.6f;
-                    }
-                float limit = still ? 0.25f : contact ? std::max(n.snap, 2.0f) : n.snap;
-                // A knocked-out player lies where it fell and comes back at the same place on every machine.
-                // A correction that does not hold (the place is taken here, or the player slides off it) is tried
-                // 3 times, then left until the host's record moves.
-                float* prev = n.lastSnapPos[index];
-                bool same = std::abs(prev[0] - r.m[9]) + std::abs(prev[1] - r.m[10]) + std::abs(prev[2] - r.m[11]) < 0.1f;
-                if (!(r.flags & 2) && !mp::HitpointsHeld(index) && dx * dx + dy * dy + dz * dz > limit * limit &&
-                    now - n.lastSnap[index] >= 250 && !(same && n.snapRepeats[index] >= 3))
-                {
-                    targets[index] = {it->second, {r.m[9], r.m[10], r.m[11]}};
-                    n.lastSnap[index] = mp::NowMs();
-                    n.snapRepeats[index] = same ? n.snapRepeats[index] + 1 : 1;
-                    prev[0] = r.m[9], prev[1] = r.m[10], prev[2] = r.m[11];
-                    if (mp::Trace())
-                        Log("[mp] P%u off by %.2f (%.1f, %.1f, %.1f here)", index + 1, std::sqrt(dx * dx + dy * dy + dz * dz),
-                            here[0], here[1], here[2]);
-                }
                 // The players' hitpoints are the host's too (so a knock-out comes on every machine), except
                 // while one is knocked out here or just back (the host's record may still say 0).
                 n.recordHitpoints[index] = r.hitpoints;
@@ -1030,13 +1003,6 @@ namespace
             n.applied++;
             ApplyHitpoints(ctx, base, n, it->second, r, name);
         }
-        for (const Target& t : targets)
-            if (t.actor && TeleportPlayer(ctx, base, t.actor, t.pos[0], t.pos[1], t.pos[2]))
-            {
-                n.teleports++;
-                if (mp::Trace())
-                    Log("[mp] snap P%u to (%.1f, %.1f, %.1f)", uint32_t(&t - targets) + 1, t.pos[0], t.pos[1], t.pos[2]);
-            }
         if (mp::Trace() && mp::NowMs() - n.lastSyncTrace >= 250)
         {
             n.lastSyncTrace = mp::NowMs();
@@ -1150,7 +1116,178 @@ namespace mp
         return 0.0;
     }
 
-    void LocalPad(const void* padBytes, bool poll)
+    // How far the players may go apart (CRASH_MP_LEASH, units on the ground; 0 = no limit).
+    float LeashUnits()
+    {
+        static float units = [] {
+            const char* text = getenv("CRASH_MP_LEASH");
+            return text && *text ? std::max(0.0f, float(atof(text))) : 15.0f;
+        }();
+        return units;
+    }
+
+    // The middle (x, z) of the players in play other than `index` (none knocked out).
+    bool OthersCentre(const Net& n, uint32_t index, float& x, float& z)
+    {
+        x = z = 0;
+        int count = 0;
+        for (uint32_t i = 0; i < n.players && i < 4; ++i)
+        {
+            uint32_t actor = i == index || !mp::PlayerOnFoot(i) || mp::HitpointsHeld(i) ? 0 : PlayerActor(i);
+            uint32_t xf = actor ? LoadBE32(actor + 44) : 0;
+            if (!GuestPointer(xf))
+                continue;
+            x += LoadF(xf + 48), z += LoadF(xf + 56), ++count;
+        }
+        if (!count)
+            return false;
+        x /= count, z /= count;
+        return true;
+    }
+
+    // Each machine moves its own player and is the one that knows where it is: every other machine's copy
+    // (played on the same pad, input mirroring) is corrected to the position the owner sends with its pad,
+    // never this machine's own player (a correction is a teleport: a jump and the falling animation).
+    // Moving, only past `snap` (1.0); pushing against another player (within 1.6; each machine sees the
+    // push a few frames apart) up to 2.0; standing (both still for 0.5 s), anything past 0.25, so no
+    // offset stays for good. At most every 250 ms per player; a correction that does not hold (the place
+    // is taken here, or the player slides off it) is tried 3 times, then left until the owner moves.
+    // Not for a player knocked out or just back (it lies and comes back at the same place everywhere).
+    void CorrectRemotePlayers(PPCContext& ctx, uint8_t* base, Net& n)
+    {
+        uint64_t now = mp::NowMs();
+        for (uint32_t slot = 0; slot < n.players && slot < 4; ++slot)
+        {
+            uint32_t index = LocalIndex(n.slot, slot);
+            float want[3];
+            bool inPlay;
+            uint64_t at;
+            {
+                std::lock_guard<std::mutex> lock(n.padMutex);
+                memcpy(want, n.remotePos[slot], sizeof(want));
+                inPlay = n.remoteInPlay[slot];
+                at = n.remotePosAt[slot];
+            }
+            uint32_t actor = index ? PlayerActor(index) : 0, xform = actor ? LoadBE32(actor + 44) : 0;
+            if (!GuestPointer(xform) || !inPlay || !at || now - at > 1000 || !mp::PlayerOnFoot(index) || mp::HitpointsHeld(index))
+                continue;
+            float* last = n.lastRecordPos[index];
+            if (std::abs(last[0] - want[0]) + std::abs(last[1] - want[1]) + std::abs(last[2] - want[2]) > 0.05f)
+            {
+                memcpy(last, want, sizeof(want));
+                n.recordMovedAt[index] = now;
+            }
+            float here[3] = {LoadF(xform + 48), LoadF(xform + 52), LoadF(xform + 56)};
+            float* mine = n.lastLocalPos[index];
+            if (std::abs(mine[0] - here[0]) + std::abs(mine[1] - here[1]) + std::abs(mine[2] - here[2]) > 0.05f)
+            {
+                memcpy(mine, here, sizeof(here));
+                n.localMovedAt[index] = now;
+            }
+            bool still = now - n.recordMovedAt[index] >= 500 && now - n.localMovedAt[index] >= 500;
+            bool contact = false;
+            for (uint32_t j = 0; j < n.players && j < 4 && !contact; ++j)
+                if (uint32_t other = j != index ? PlayerActor(j) : 0; other && GuestPointer(LoadBE32(other + 44)))
+                {
+                    uint32_t ox = LoadBE32(other + 44);
+                    float cx = LoadF(ox + 48) - here[0], cz = LoadF(ox + 56) - here[2];
+                    contact = cx * cx + cz * cz < 1.6f * 1.6f;
+                }
+            float limit = still ? 0.25f : contact ? std::max(n.snap, 2.0f) : n.snap;
+            float dx = here[0] - want[0], dy = here[1] - want[1], dz = here[2] - want[2];
+            float* prev = n.lastSnapPos[index];
+            bool same = std::abs(prev[0] - want[0]) + std::abs(prev[1] - want[1]) + std::abs(prev[2] - want[2]) < 0.1f;
+            if (dx * dx + dy * dy + dz * dz <= limit * limit || now - n.lastSnap[index] < 250 || (same && n.snapRepeats[index] >= 3))
+                continue;
+            n.lastSnap[index] = now;
+            n.snapRepeats[index] = same ? n.snapRepeats[index] + 1 : 1;
+            memcpy(prev, want, sizeof(want));
+            if (TeleportPlayer(ctx, base, actor, want[0], want[1], want[2]))
+            {
+                n.teleports++;
+                if (mp::Trace())
+                    Log("[mp] P%u (slot %u) off by %.2f: to its machine's (%.1f, %.1f, %.1f)", index + 1, slot + 1,
+                        std::sqrt(dx * dx + dy * dy + dz * dz), want[0], want[1], want[2]);
+            }
+        }
+    }
+
+    // The players stay together, as the shared co-op camera kept them, each with its own camera. Game
+    // thread: where player 1 is and, past LeashUnits() from the middle of the others, the way away from
+    // them (for Leash on the input reads); and its own player further than twice that for 1.5 s (a fall,
+    // a hit, a jump) goes back next to the teammate in play with the lowest slot (1.2 apart per slot): its
+    // machine moves it, the others follow its position. Not while a cutscene or a video plays.
+    void UpdateLocalPlayer(PPCContext& ctx, uint8_t* base, Net& n)
+    {
+        static uint64_t farSince;
+        float leash = LeashUnits(), cx = 0, cz = 0, away[2] = {0, 0}, pos[3] = {};
+        uint32_t actor = mp::PlayerOnFoot(0) && !mp::HitpointsHeld(0) ? PlayerActor(0) : 0, xf = actor ? LoadBE32(actor + 44) : 0;
+        bool inPlay = GuestPointer(xf);
+        float distance = 0;
+        if (inPlay)
+        {
+            pos[0] = LoadF(xf + 48), pos[1] = LoadF(xf + 52), pos[2] = LoadF(xf + 56);
+            if (leash > 0 && OthersCentre(n, 0, cx, cz))
+            {
+                float dx = pos[0] - cx, dz = pos[2] - cz;
+                distance = std::sqrt(dx * dx + dz * dz);
+                if (distance > leash)
+                    away[0] = dx / distance, away[1] = dz / distance;
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(n.padMutex);
+            memcpy(n.myPos, pos, sizeof(pos));
+            n.myInPlay = inPlay;
+            n.awayX = away[0], n.awayZ = away[1];
+        }
+        uint64_t now = NowMs();
+        if (!inPlay || distance <= 2 * leash || cutscenes::SkipPossible())
+        {
+            farSince = 0;
+            return;
+        }
+        if (!farSince)
+            farSince = now;
+        if (now - farSince < 1500)
+            return;
+        farSince = 0;
+        uint32_t target = 4;
+        for (uint32_t j = 1; j < n.players && j < 4; ++j)
+            if (mp::PlayerOnFoot(j) && !mp::HitpointsHeld(j) && (target == 4 || SlotOf(n.slot, j) < SlotOf(n.slot, target)))
+                target = j;
+        uint32_t targetActor = target < 4 ? PlayerActor(target) : 0, txf = targetActor ? LoadBE32(targetActor + 44) : 0;
+        if (!GuestPointer(txf))
+            return;
+        float x = LoadF(txf + 48) + 1.2f * (n.slot + 1), y = LoadF(txf + 52) + 0.5f, z = LoadF(txf + 56) - 1.5f;
+        bool moved = mp::TeleportCrash(ctx, base, mp::PlayerCrash(0), x, y, z);
+        Log("[mp] too far from the others (%.1f): back next to slot %u at (%.1f, %.1f, %.1f)%s", distance, SlotOf(n.slot, target) + 1,
+            x, y, z, moved ? "" : ", not moved");
+    }
+
+    // The input reads: past the leash, the part of player 1's stick that walks further away from the others
+    // is taken out (walking back or along stays). The other machines get the pad as it is here, so they
+    // see the same moves.
+    void Leash(Net& n, XINPUT_GAMEPAD& pad)
+    {
+        float ax, az, fx, fz;
+        {
+            std::lock_guard<std::mutex> lock(n.padMutex);
+            ax = n.awayX, az = n.awayZ;
+        }
+        if ((!ax && !az) || !(pad.sThumbLX || pad.sThumbLY) || !CameraForward(fx, fz))
+            return;
+        float sx = pad.sThumbLX, sy = pad.sThumbLY;
+        float wx = sx * fz + sy * fx, wz = -sx * fx + sy * fz;  // stick.x * right + stick.y * forward
+        float out = wx * ax + wz * az;
+        if (out <= 0)
+            return;
+        wx -= out * ax, wz -= out * az;
+        pad.sThumbLX = int16_t(std::clamp(wx * fz - wz * fx, -32768.0f, 32767.0f));  // back onto the camera's axes
+        pad.sThumbLY = int16_t(std::clamp(wx * fx + wz * fz, -32768.0f, 32767.0f));
+    }
+
+    void LocalPad(void* padBytes, bool poll)
     {
         if (!Enabled())
             return;
@@ -1158,6 +1295,7 @@ namespace mp
         // Only in a level: in the menus the host's title screen would take it as player 1.
         if (n.role == Role::None || !InLevel())
             return;
+        Leash(n, *static_cast<XINPUT_GAMEPAD*>(padBytes));
         // The peer runs this player on the same pad; pause stays local (no START / BACK).
         XINPUT_GAMEPAD pad = *static_cast<const XINPUT_GAMEPAD*>(padBytes);
         pad.wButtons &= ~(0x0010 | 0x0020);
@@ -1176,12 +1314,20 @@ namespace mp
         packet.insert(packet.end(), raw, raw + sizeof(pad));
         float forward[2] = {0, 0};
         CameraForward(forward[0], forward[1]);
-        for (float f : forward)
+        float where[3];
+        bool inPlay;
+        {
+            std::lock_guard<std::mutex> lock(n.padMutex);
+            memcpy(where, n.myPos, sizeof(where));
+            inPlay = n.myInPlay;
+        }
+        for (float f : {forward[0], forward[1], where[0], where[1], where[2]})
         {
             uint32_t bits;
             memcpy(&bits, &f, 4);
             Put32(packet, bits);
         }
+        Put32(packet, inPlay ? 1 : 0);
         SendToPeers(n, packet.data(), packet.size());
     }
 
@@ -1294,6 +1440,8 @@ namespace mp
             FixLooks(ctx, base, n);
             LocalCamera(ctx, base, n);
             DepartedPlayers(ctx, base, n);
+            UpdateLocalPlayer(ctx, base, n);
+            CorrectRemotePlayers(ctx, base, n);
         }
         if (n.role == Role::Host)
             HostTick(ctx, base, n);

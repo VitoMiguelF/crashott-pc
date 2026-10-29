@@ -2552,3 +2552,9 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   os clientes, que não podem pular. O ouvinte do som fica entre a câmera e o objeto que ela segue
   (`GameListenerSettings.targetFollowWeight`): o som errado com os jogadores longe deve ser o das rooms não
   carregadas. Perfis `mp_cine_*` ainda não passam (o roteiro dos clientes acaba antes de entrarem).
+- **Cada máquina manda no próprio jogador + coleira** (protocolo 4): o pacote do pad leva a posição do jogador;
+  cada máquina corrige só as cópias dos outros por ela (`CorrectRemotePlayers`), nunca o próprio jogador. Antes
+  o cliente corrigia o próprio Crash pela cópia do host: teleportes pequenos andando, com a animação de queda.
+  Coleira (`CRASH_MP_LEASH`, 15 unidades, 0 desliga): passando do limite a partir do meio dos outros, o
+  analógico perde a parte que afasta (o pad enviado já vai assim); quem ficar a mais do dobro por 1,5 s volta
+  ao lado do companheiro de menor slot, movido pela própria máquina. Câmera continua individual.

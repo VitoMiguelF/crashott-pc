@@ -15,8 +15,9 @@
 //   CRASH_MP_PLAYERS=<n>       2-4 players (the game's limit is 4: controllers, AI targets); with more
 //                              than 2, players 3 and 4 are spawned on every machine (mp_players.cpp)
 //   CRASH_MP_SLOT=<n>          client: its player, 1-3 (default 1); the host is 0
-//   CRASH_MP_SNAP=<units>      client: a player further than this from its record is put back (1.0)
+//   CRASH_MP_SNAP=<units>      a remote player further than this from where its machine says is put back (1.0)
 //   CRASH_MP_TELEPORT=x,y,z    host, tests: both players put there once they are on foot
+//   CRASH_MP_LEASH=<units>     how far apart the players may go (default 15; 0 = no limit; mp_net.cpp)
 
 #include <cstdint>
 #include <string>
@@ -101,10 +102,11 @@ namespace mp
     // Moves a Crash through its physics only (its partner stays where it is).
     bool TeleportCrash(PPCContext& ctx, uint8_t* base, uint32_t crash, float x, float y, float z);
     // M2 (kernel/xam_input_imports.cpp): LocalPad gets player 1's pad each game read (sent to the other
-    // machines); RemotePad gives controller `user` the pad of the remote player it plays (true if one
-    // is connected: it replaces whatever is there).
+    // machines; its stick no longer walks away from the others past CRASH_MP_LEASH, default 15 units);
+    // RemotePad gives controller `user` the pad of the remote player it plays (true if one is connected:
+    // it replaces whatever is there).
     // `pad` is a 12-byte XINPUT_GAMEPAD (kernel/xinput_types.h; the name clashes with <xinput.h>).
-    void LocalPad(const void* pad, bool poll);
+    void LocalPad(void* pad, bool poll);
     bool RemotePad(uint32_t user, void* pad);
     // CDamageableBehaviour::AdjustHitpoints (dev/dev_cheats.cpp's hook): learns each actor's
     // damageable behaviour (the records carry its hitpoints) and returns the delta to apply: on a

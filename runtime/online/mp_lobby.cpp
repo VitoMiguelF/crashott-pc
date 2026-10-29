@@ -31,7 +31,7 @@ namespace mp::lobby
 {
     namespace
     {
-        constexpr uint32_t VERSION = 3;  // 2: the password goes hashed (PasswordHash); 3: cutscene skips in the roster
+        constexpr uint32_t VERSION = 4;  // 2: the password goes hashed (PasswordHash); 3: cutscene skips in the roster; 4: positions in the pads
         constexpr uint64_t RESEND_MS = 500, TIMEOUT_MS = 6000, DISCOVER_MS = 1000, SERVER_TTL_MS = 3500, JOIN_TIMEOUT_MS = 6000;
         constexpr uint64_t SKIP_KEEP_MS = 20000;  // a client still not at the cutscene the host skipped: forgotten after this
 

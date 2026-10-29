@@ -350,6 +350,18 @@ arrays). So up to 4 players, all native Crashes, no puppets:
 
 ## Leaving a level, the pause, players who leave
 
+- **Each machine owns its player's position** (`mp_net.cpp`, protocol version 4): the pad packet also carries
+  where the sender's player is and whether it is in play (48 bytes); every machine corrects its copies of the
+  other players to that (`CorrectRemotePlayers`, the rules the client's corrections from the host's records
+  had: past 1.0 moving, 2.0 in contact, 0.25 standing, 250 ms, 3 tries) and never its own player. Before, a
+  client's own Crash was corrected to the host's copy of it: a teleport every now and then while walking, with
+  the falling animation. The host's records still give the players' hitpoints.
+- **Leash** (as the shared co-op camera kept the players together, each with its own camera;
+  `CRASH_MP_LEASH`, default 15 units, 0 = off): past it from the middle of the other players in play, the part
+  of player 1's stick that walks further away is taken out before the game and the other machines see the
+  pad (`Leash`; the game thread keeps the way away for the input reads, `UpdateLocalPlayer`). A player still
+  further than twice that for 1.5 s (a fall, a hit) goes back next to the teammate with the lowest slot, moved
+  by its own machine (not during a cutscene or a video).
 - **No pause in a session** (`mp_menu.cpp`): `Frontend:PauseGame(true)` (`sub_820F8918`, CUberManager vf13) is
   skipped while the frontend is on GameRunning (node 638): the host's pause screen, the tutorials and the other
   screens it opens show over the running level, and the other machines go on with it. The host gets the
