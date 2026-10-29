@@ -114,17 +114,75 @@ namespace
         return true;
     }
 
-    // Skins (dev_skins.cpp) have palettes of their own (each package's crash_normal / Crash_Player2).
-    // Crash's has 132 fur entries of 256; the skins whose costume is mostly orange / brown 89-160
-    // (Battler, Bratgirl, Chiratta, Parafox, Roller, Shellephant, Spike: the whole costume takes the
-    // colour), the others 61 or less, where only specks or patches would change (Grizzly, Shurtle,
-    // Koala, Rabbit, Valentine, Stinky) or nothing. Below this a palette keeps its own look.
+    // Skins (dev_skins.cpp) have palettes of their own (each package's crash_normal / Crash_Player2)
+    // and a costume over Crash. tools/mp_skin_colours.py makes the table from the user's extracted game
+    // data, at build time into the build folder (game data, never in the repository; without the data
+    // it is empty and every palette gets the fur test below): per skin the palette entries
+    // of the costume's main colour (the jeans left out), its hue, mean saturation and bright value,
+    // and 16 sample entries by which a drawable's palette is recognised. Those entries take the
+    // colour like the fur (hue around the costume's own, saturation and value normalised to the
+    // fur's), so the whole costume changes, as the skin's own P2 palette (WHITE) changes it; a costume
+    // without a colour (Skeleton) gets its light entries coloured.
+    struct SkinPalette
+    {
+        const char* name;
+        uint8_t samples[16][3];  // entries 0, 16, ..., 240
+        uint8_t mask[32];        // a bit per entry: the costume's colour
+        float centre, sMean, v95;
+        bool colourize;
+    };
+    const SkinPalette SKINS[] = {
+#include "mp_skin_palettes.inc"
+        { nullptr },
+    };
+    constexpr float FUR_SAT = 0.8f;  // the normal Crash's fur, its mean saturation
+
+    // The skin a drawable's palette (big-endian ARGB words) is, -1 if none (the normal Crash).
+    int FindSkin(const uint8_t* words)
+    {
+        for (int i = 0; SKINS[i].name; ++i)
+        {
+            bool same = true;
+            for (int k = 0; k < 16 && same; ++k)
+                for (int ch = 0; ch < 3; ++ch)
+                    same = same && std::abs(int(words[k * 64 + 1 + ch]) - int(SKINS[i].samples[k][ch])) <= 4;
+            if (same)
+                return i;
+        }
+        return -1;
+    }
+
+    void RecolourSkin(const Recipe& recipe, const SkinPalette& skin, uint8_t c[3])
+    {
+        float h, s, v;
+        ToHsv(c[0] / 255.0f, c[1] / 255.0f, c[2] / 255.0f, h, s, v);
+        float nh = recipe.hue, ns = std::clamp(0.55f * recipe.sat, 0.0f, 1.0f);
+        if (!skin.colourize)
+        {
+            nh = recipe.hue + (std::fmod(h - skin.centre + 540.0f, 360.0f) - 180.0f) * recipe.spread;
+            ns = std::clamp(s / skin.sMean * FUR_SAT * recipe.sat, 0.0f, 1.0f);
+        }
+        float rgb[3];
+        ToRgb(nh, ns, recipe.vMin + (recipe.vMax - recipe.vMin) * std::pow(std::min(v / skin.v95, 1.0f), recipe.gamma), rgb);
+        for (int k = 0; k < 3; ++k)
+            c[k] = uint8_t(std::clamp(rgb[k] * 255.0f + 0.5f, 0.0f, 255.0f));
+    }
+
+    // A palette that is neither Crash's nor a known skin's: its fur only when at least this many of
+    // its 256 entries are (Crash's has 132), else it keeps its look (specks or patches otherwise).
     constexpr int MIN_FUR_ENTRIES = 64;
 
-    // The final palette of a drawable (256 big-endian ARGB words).
-    void TintPalette(uint32_t palette, const Recipe& recipe)
+    // The final palette of a drawable (256 big-endian ARGB words); skin: FindSkin's.
+    void TintPalette(uint32_t palette, const Recipe& recipe, int skin)
     {
         uint8_t* words = g_memory.Translate(palette);
+        if (skin >= 0)
+        {
+            for (int e = 0; e < 256; ++e)
+                if (SKINS[skin].mask[e >> 3] & (1 << (e & 7)))
+                    RecolourSkin(recipe, SKINS[skin], words + e * 4 + 1);
+            return;
+        }
         int fur = 0;
         for (int e = 0; e < 256; ++e)
         {
@@ -144,8 +202,13 @@ namespace
     std::atomic<bool> g_session{ false };
     std::atomic<uint8_t> g_slots[mp::colors::MAX_SLOTS];
 
+    struct Painted
+    {
+        uint32_t colour;
+        int skin = -2;  // FindSkin's, -2 not looked yet
+    };
     std::mutex g_paintMutex;
-    std::unordered_map<uint32_t, uint32_t> g_painted;  // drawable -> colour
+    std::unordered_map<uint32_t, Painted> g_painted;  // by drawable
 
     // CRASH_MP_COLORS (tests).
     struct TestList
@@ -284,14 +347,14 @@ namespace mp::colors
     void Paint(uint32_t drawable, uint32_t colour)
     {
         std::lock_guard<std::mutex> lock(g_paintMutex);
-        g_painted[drawable] = std::min(colour, COUNT - 1);
+        g_painted[drawable] = { std::min(colour, COUNT - 1) };
     }
 
     int PaintedWith(uint32_t drawable)
     {
         std::lock_guard<std::mutex> lock(g_paintMutex);
         auto it = g_painted.find(drawable);
-        return it == g_painted.end() ? -1 : int(it->second);
+        return it == g_painted.end() ? -1 : int(it->second.colour);
     }
 
     void Forget(uint32_t drawable)
@@ -301,22 +364,39 @@ namespace mp::colors
     }
 }
 
-// After the game blends a character's palette for the frame: a player's fur gets its colour.
+// After the game blends a character's palette for the frame: a player's fur (or skin's costume) gets
+// its colour.
 PPC_FUNC(sub_822212C0)
 {
     uint32_t drawable = ctx.r3.u32;
     __imp__sub_822212C0(ctx, base);
     if (!mp::Enabled())
         return;
-    int colour = mp::colors::PaintedWith(drawable);
-    if (colour < 0 || RECIPES[colour].kind != Kind::Tint)
+    Painted painted{ 0, -2 };
+    {
+        std::lock_guard<std::mutex> lock(g_paintMutex);
+        auto it = g_painted.find(drawable);
+        if (it == g_painted.end())
+            return;
+        painted = it->second;
+    }
+    if (RECIPES[painted.colour].kind != Kind::Tint)
         return;
     // Still a player's (an old level's drawable may have been freed and its memory reused).
     for (uint32_t i = 0; i < mp::colors::MAX_SLOTS; ++i)
         if (uint32_t crash = mp::PlayerCrash(i))
             if (uint32_t render = LoadBE32(crash + 0xE0); GuestPointer(render) && LoadBE32(render + 92) == drawable)
             {
-                TintPalette(drawable + 0x11C8, RECIPES[colour]);
+                if (painted.skin == -2)
+                {
+                    // Before this frame's recolour: the palette as the game blended it (base = target).
+                    painted.skin = FindSkin(g_memory.Translate(drawable + 0x11C8));
+                    Log("[mp] drawable %08X: %s palette", drawable, painted.skin >= 0 ? SKINS[painted.skin].name : "Crash's (or unknown)");
+                    std::lock_guard<std::mutex> lock(g_paintMutex);
+                    if (auto it = g_painted.find(drawable); it != g_painted.end())
+                        it->second.skin = painted.skin;
+                }
+                TintPalette(drawable + 0x11C8, RECIPES[painted.colour], painted.skin);
                 return;
             }
 }

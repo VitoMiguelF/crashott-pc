@@ -345,16 +345,27 @@ PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale f
   top of the head stay dark brown (outside the hue / saturation test). `FixLooks` (`mp_net.cpp`) paints once per
   drawable and again when its slot's colour changes; the original jacked pointer goes back before the
   drawable is deleted (`~CCharacterObject` hook), also after a repaint.
-- **Skins** (`dev/dev_skins.cpp`): each skin package has palettes of its own (`crash_normal.bmp` /
-  `Crash_Player2.bmp`, chunks 0x19006: 256 BGRA entries). The fur test is applied to whatever palette the
-  drawable has, so a palette is recoloured only when at least 64 of its 256 entries are fur (`MIN_FUR_ENTRIES`).
-  Counted offline on the packages: Crash 132; Battler, Bratgirl, Chiratta, Parafox, Roller, Shellephant, Spike
-  89-160 (their whole costume takes the colour, it looks right); Grizzly 61, Koala 55, Rabbit 49, Valentine 48,
-  Shurtle 47 and Monkey, Stinky, Ratcicle, Scorporilla, Eelectric, Sludge, Skeleton (0-23) keep their look
-  (recoloured they only got specks or patches). WHITE is always the jacked palette, i.e. the skin's own P2
-  version. Crash_Hulk has no palettes and is not painted. Checked with an offline preview (each skin's
-  costume texture through the 12 recipes, the same code in Python), not in the game. Skins are per machine
-  (not sent in the lobby), so another machine shows its own skin choice, not this player's.
+- **Skins** (`dev/dev_skins.cpp`): each skin package (`package\Characters_Crash_<skin>.p3d`) has palettes of
+  its own (`crash_normal.bmp` / `Crash_Player2.bmp`, chunks 0x19006: 256 BGRA entries) and a 512x512 costume
+  texture with Crash's shorts at the bottom right, at the same place in every skin. The fur test alone left most
+  skins as they were (their costume is not orange) or gave them specks, so every skin's whole costume is
+  recoloured, as its own P2 palette (WHITE) does. The build runs `tools/mp_skin_colours.py table`, which reads
+  the user's extracted game data (`private/assets`) and writes `<build>/generated_runtime/mp_skin_palettes.inc`
+  (game data: never in the repository; without the data, Python, Pillow or NumPy, as on the GitHub builds, the
+  table is empty and the skins only get the fur test below): per skin the entries of the costume's main colour (the hue covering
+  most of its pixels outside the shorts; the entries within 40 degrees of it that the costume uses at least
+  twice as much as the shorts, so the jeans stay blue even on Ratcicle / Scorporilla / Koala / Rabbit), that
+  hue, the costume's mean saturation and bright value (95th percentile), and 16 sample entries (0, 16 ... 240).
+  In the game the palette hook recognises the skin once per drawable by the samples (within 4 per channel,
+  on the blended palette before its recolour) and recolours those entries: hue = the colour's + the offset
+  from the costume's hue times its spread, saturation normalised to the fur's (0.8) times the colour's,
+  value / bright value through the colour's curve. Skeleton (no coloured costume) gets its light entries
+  coloured (the bones). 19 skins (Crash_Hulk has no palettes: not painted). A palette that is neither
+  Crash's nor a known skin's gets the fur test only if 64+ of its entries are fur. ORANGE keeps the skin's
+  own look, WHITE is its P2 version. `tools/mp_skin_colours.py preview out.png` draws every costume through
+  the 12 colours (the same arithmetic): every costume takes the colour, the shorts stay blue. Checked only
+  that way, not in the game. Skins are per machine (not sent in the lobby): another machine shows its own
+  skin choice, not this player's.
 - **Choosing**: MULTIPLAYER's first screen has a third row, COLOR / COR `< BLUE >` with a sample of the fur
   (left / right / A, or a click on its halves); in the lobby the player's own row changes it with left / right
   (the host's lobby at the HUB: its row; a client waiting in LOBBY: left / right anywhere). The roster shows
