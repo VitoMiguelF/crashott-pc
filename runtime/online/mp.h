@@ -128,8 +128,10 @@ namespace mp
     // `pad` is a 12-byte XINPUT_GAMEPAD (kernel/xinput_types.h; the name clashes with <xinput.h>).
     void LocalPad(void* pad, bool poll);
     bool RemotePad(uint32_t user, void* pad);
-    // CDamageableBehaviour::AdjustHitpoints (dev/dev_cheats.cpp's hook): learns each actor's
-    // damageable behaviour (the records carry its hitpoints) and returns the delta to apply: on a
-    // client, 0 for the local damage to an actor the host mirrors (the host's hitpoints come instead).
-    double Hitpoints(uint32_t damageable, double delta);
+    // CDamageableBehaviour::AdjustHitpoints (dev/dev_cheats.cpp's hook; `damager` = r5, the attacking
+    // actor or 0): learns each actor's damageable behaviour (the records carry its hitpoints) and returns
+    // the delta to apply. A hit counts where the attacker plays: a client's own player's hits on an actor
+    // the host mirrors land here at once and go to the host (HIT packets); its other damage to them is 0
+    // (the host's hitpoints come instead); on the host a remote player's copy deals none.
+    double Hitpoints(uint32_t damageable, double delta, uint32_t damager);
 }

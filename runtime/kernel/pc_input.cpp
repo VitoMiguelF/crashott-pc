@@ -12,6 +12,7 @@
 #include "../settings/touch_controls.h"
 #include "../dev/dev_console.h"
 #include "../dev/dev_tools.h"
+#include "../online/mp_menu.h"
 #include "../gpu/widescreen.h"
 #include "../gpu/window.h"
 #include "../platform/platform.h"
@@ -672,8 +673,9 @@ namespace input::pc
                 return 0;
             }
             menu_mouse::Menu menu;
-            // (Not on the name entry's keyboard, which takes its clicks itself: save_screens.cpp.)
-            if (!g_textEntry && !menu_mouse::Live(menu) && TakeMenuClick())
+            // (Not on the name entry's keyboard, which takes its clicks itself: save_screens.cpp, nor on the
+            // online SKIN AND COLOR, whose arrows take theirs: a tap anywhere else wore the skin, mp_menu.cpp.)
+            if (!g_textEntry && !menu_mouse::Live(menu) && TakeMenuClick() && !mp::menu::PickerOpen())
             {
                 s_holdA = 2;
                 NoteDevice(Device::Keyboard);

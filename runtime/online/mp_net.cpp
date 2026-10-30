@@ -40,6 +40,7 @@
 #include "../kernel/xinput_types.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
+#include "../kernel/pc_input.h"
 #include "../settings/skip_cinematics.h"
 
 #include <algorithm>
@@ -89,6 +90,10 @@ namespace
 {
     constexpr uint32_t MAGIC = 0x434D5031;  // "CMP1"
     constexpr uint32_t INPUT_MAGIC = 0x434D4932;  // "CMI2"
+    // A client player's hit on an actor the host mirrors: magic, slot, sequence, the actor's name (2 words), the
+    // delta (float). Sent twice (UDP); the host keeps the sequences it applied.
+    constexpr uint32_t HIT_MAGIC = 0x434D4831;  // "CMH1"
+    constexpr size_t HIT_PACKET = 24;
     // magic, slot, sequence, the pad, camera forward (x, z), the player's position (x, y, z), in play
     constexpr size_t PAD_PACKET = 12 + 12 + 8 + 12 + 4;
     constexpr uint32_t GAME_DATABASE = 0x824A76A4;  // CGameDatabase: players at +16 / +20
@@ -204,6 +209,22 @@ namespace
         // Client: when the host's 0 was applied to an actor (name): once per hold, the stump (hitpoints back at
         // 1 at once) is not broken again.
         std::unordered_map<uint64_t, uint64_t> brokenAt;
+        // Client: its own player's hits (Hitpoints): the actor's hitpoints are this machine's until then (the
+        // host's records are a round trip behind), and the HIT packets' sequence.
+        std::unordered_map<uint64_t, uint64_t> predictedUntil;
+        uint32_t hitSequence = 0;
+        // Host: the clients' hits to apply (game thread), the sequences applied per slot, and the one being
+        // applied (its damage counts although a remote player's copy deals it).
+        struct Hit
+        {
+            uint32_t slot = 0;
+            uint64_t name = 0;
+            float delta = 0;
+        };
+        std::vector<Hit> hits;
+        std::deque<uint32_t> hitsDone[mp::MAX_PLAYERS];
+        bool applyingHit = false;
+        uint64_t hitsApplied = 0, copyHitsDropped = 0;
     };
 
     uint32_t Get32(const uint8_t* p);
@@ -427,10 +448,10 @@ namespace
         return d;
     }
 
-    // A player's damageable before it has taken a hit: one of the pointers of the actor's behaviour controller
-    // (actor +0x1C, what Lua calls m_BehaviourController.m_DamageableBehaviour), known by its vtable and
-    // its actor (+28).
-    uint32_t PlayerDamageable(Net& n, uint32_t actor)
+    // An actor's damageable before it has taken a hit here (a player's, or a plant only the host's hits broke):
+    // one of the pointers of the actor's behaviour controller (actor +0x1C, what Lua calls
+    // m_BehaviourController.m_DamageableBehaviour), known by its vtable and its actor (+28).
+    uint32_t FindDamageable(Net& n, uint32_t actor)
     {
         if (uint32_t d = Damageable(n, actor))
             return d;
@@ -451,7 +472,10 @@ namespace
     // The host's hitpoints for an actor it mirrors: its hits (and the deaths they bring) land here too.
     void ApplyHitpoints(PPCContext& ctx, uint8_t* base, Net& n, uint32_t actor, const Record& r, uint64_t name, bool player = false)
     {
-        uint32_t damageable = r.hitpoints < 0 ? 0 : player ? PlayerDamageable(n, actor) : Damageable(n, actor);
+        if (!player)
+            if (auto it = n.predictedUntil.find(name); it != n.predictedUntil.end() && mp::NowMs() < it->second)
+                return;  // this player's own hit: the host's record of it is on its way
+        uint32_t damageable = r.hitpoints < 0 ? 0 : FindDamageable(n, actor);
         if (!damageable)
             return;
         float local = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)), wanted = r.hitpoints;
@@ -756,6 +780,32 @@ namespace
             SendToPeers(n, buffer, size_t(got), slot);
     }
 
+    // A client's HIT packet: queued for ApplyHits (once per sequence).
+    void ReceiveHit(Net& n, const uint8_t* buffer, int got, const sockaddr_in& from)
+    {
+        uint32_t slot = Get32(buffer + 4), sequence = Get32(buffer + 8);
+        if (got < int(HIT_PACKET) || slot == 0 || slot >= n.players || slot >= mp::MAX_PLAYERS)
+            return;
+        {
+            std::lock_guard<std::mutex> lock(n.padMutex);
+            if (n.lobbyClient[slot] && !SameAddress(from, n.clients[slot]))
+                return;  // not that player's machine
+        }
+        std::deque<uint32_t>& done = n.hitsDone[slot];
+        if (std::find(done.begin(), done.end(), sequence) != done.end())
+            return;
+        done.push_back(sequence);
+        if (done.size() > 64)
+            done.pop_front();
+        Net::Hit hit;
+        hit.slot = slot;
+        hit.name = (uint64_t(Get32(buffer + 12)) << 32) | Get32(buffer + 16);
+        uint32_t bits = Get32(buffer + 20);
+        memcpy(&hit.delta, &bits, 4);
+        if (hit.delta < 0 && hit.delta > -1000.0f)
+            n.hits.push_back(hit);
+    }
+
     void HostReceive(Net& n)
     {
         uint8_t buffer[256];
@@ -765,8 +815,46 @@ namespace
             int got = 0;
             if (!PopPacket(n, buffer, sizeof(buffer), got, from))
                 break;
-            ReceivePad(n, buffer, got, from);
+            if (got >= 4 && Get32(buffer) == HIT_MAGIC)
+                ReceiveHit(n, buffer, got, from);
+            else
+                ReceivePad(n, buffer, got, from);
         }
+    }
+
+    // The clients' hits, on the host's actors of those names, dealt by those players' copies here.
+    void ApplyHits(PPCContext& ctx, uint8_t* base, Net& n)
+    {
+        if (n.hits.empty())
+            return;
+        std::unordered_map<uint64_t, uint32_t> byName;
+        for (uint32_t actor : Actors())
+            byName[NameOf(actor)] = actor;
+        for (const Net::Hit& hit : n.hits)
+        {
+            auto it = byName.find(hit.name);
+            uint32_t damageable = it == byName.end() ? 0 : FindDamageable(n, it->second);
+            if (!damageable)
+            {
+                if (mp::Trace())
+                    Log("[mp] host: hit from slot %u on %08X: no such actor here", hit.slot + 1, uint32_t(hit.name));
+                continue;
+            }
+            float hitpoints = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS));
+            if (hitpoints <= 0)
+                continue;  // already down (another player's hit)
+            PPCContext call = ctx;
+            call.r3.u64 = damageable;
+            call.r5.u64 = PlayerActor(LocalIndex(n.slot, hit.slot));
+            call.f1.f64 = double(hit.delta);
+            n.applyingHit = true;
+            sub_82110448(call, base);
+            n.applyingHit = false;
+            n.hitsApplied++;
+            if (mp::Trace())
+                Log("[mp] host: hit from slot %u on %08X for %.1f (hitpoints %.1f)", hit.slot + 1, uint32_t(hit.name), -hit.delta, hitpoints);
+        }
+        n.hits.clear();
     }
 
     // Tests: CRASH_MP_TELEPORT=x,y,z puts both of the host's players there (P2 2 units along x), once,
@@ -799,6 +887,7 @@ namespace
     void HostTick(PPCContext& ctx, uint8_t* base, Net& n)
     {
         HostReceive(n);
+        ApplyHits(ctx, base, n);
         HostTestTeleport(ctx, base);
         uint64_t now = mp::NowMs();
         n.frames++;
@@ -1015,13 +1104,13 @@ namespace mp
 
     float PlayerHitpoints(uint32_t index)
     {
-        uint32_t damageable = PlayerDamageable(N(), PlayerActor(index));
+        uint32_t damageable = FindDamageable(N(), PlayerActor(index));
         return damageable ? LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)) : -1.0f;
     }
 
     void SetPlayerMaxHitpoints(uint32_t index, float value)
     {
-        uint32_t damageable = PlayerDamageable(N(), PlayerActor(index));
+        uint32_t damageable = FindDamageable(N(), PlayerActor(index));
         uint32_t max = damageable ? LoadBE32(damageable + 68) : 0, hp = damageable ? LoadBE32(damageable + DAMAGEABLE_HITPOINTS) : 0;
         if (!GuestPointer(max) || !GuestPointer(hp) || value <= 0)
             return;
@@ -1032,7 +1121,7 @@ namespace mp
 
     float PlayerMaxHitpoints(uint32_t index)
     {
-        uint32_t damageable = PlayerDamageable(N(), PlayerActor(index));
+        uint32_t damageable = FindDamageable(N(), PlayerActor(index));
         uint32_t max = damageable ? LoadBE32(damageable + 68) : 0;
         return GuestPointer(max) ? LoadF(max) : -1.0f;
     }
@@ -1068,7 +1157,32 @@ namespace mp
 
     constexpr uint64_t BROKEN_HOLD_MS = 1500;
 
-    double Hitpoints(uint32_t damageable, double delta)
+    constexpr uint64_t PREDICTED_MS = 700;  // a client's own hit: its hitpoints win over the host's records this long
+
+    void SendHit(Net& n, uint64_t name, float delta)
+    {
+        std::vector<uint8_t> packet;
+        Put32(packet, HIT_MAGIC);
+        Put32(packet, n.slot);
+        Put32(packet, ++n.hitSequence);
+        Put32(packet, uint32_t(name >> 32));
+        Put32(packet, uint32_t(name));
+        uint32_t bits;
+        memcpy(&bits, &delta, 4);
+        Put32(packet, bits);
+        for (int copy = 0; copy < 2; ++copy)
+            SendToPeers(n, packet.data(), packet.size());
+    }
+
+    bool IsPlayerActor(uint32_t actor)
+    {
+        for (uint32_t player : mp::PlayerActors())
+            if (player == actor)
+                return true;
+        return false;
+    }
+
+    double Hitpoints(uint32_t damageable, double delta, uint32_t damager)
     {
         if (!Enabled())
             return delta;
@@ -1082,6 +1196,16 @@ namespace mp
         if (Trace() && delta < 0)
             Log("[mp] %s: %08X takes %.1f (hitpoints %.1f)%s", n.role == Role::Host ? "host" : "client", uint32_t(NameOf(actor)),
                 -delta, LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)), n.applyingHitpoints ? " from the host" : "");
+        // On the host a remote player's copy (where its pad and steering put it, a little off its machine's
+        // place) hits nothing: its machine sends the hits its player made (HIT packets, ApplyHits). The copy
+        // hit what the player missed there, or missed what it hit (the big mojo plant by the ice).
+        if (n.role == Role::Host && delta < 0 && !n.applyingHit && damager && !IsPlayerActor(actor))
+            for (uint32_t i = 1; i < n.players && i < MAX_PLAYERS; ++i)
+                if (PlayerActor(i) == damager)
+                {
+                    n.copyHitsDropped++;
+                    return 0.0;
+                }
         if (n.role == Role::Host && delta < 0)
         {
             float hitpoints = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS));
@@ -1097,6 +1221,19 @@ namespace mp
                 return delta;
         if (!n.latest.count(NameOf(actor)))
             return delta;
+        // This machine's player's own hit: it lands here now (the break, the mojo) and goes to the host.
+        if (damager && damager == PlayerActor(0) && !IsPlayerActor(actor))
+        {
+            uint64_t name = NameOf(actor), now = NowMs();
+            n.predictedUntil[name] = now + PREDICTED_MS;
+            float hitpoints = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS));
+            if (hitpoints > 0 && hitpoints + float(delta) <= 0)
+                n.brokenAt[name] = now;  // the host's 0 for it then is this break
+            SendHit(n, name, float(delta));
+            if (Trace())
+                Log("[mp] client: hit %08X for %.1f sent to the host", uint32_t(name), -delta);
+            return delta;
+        }
         n.damageDropped++;
         return 0.0;
     }
@@ -1353,6 +1490,10 @@ namespace mp
         uint32_t slot = SlotOf(n.slot, user);
         XINPUT_GAMEPAD& game = *static_cast<XINPUT_GAMEPAD*>(pad);
         game = {};
+        // A menu over the level here (this machine's pause, a tutorial): the frontend takes any controller's
+        // buttons, so the remote players' stay off it (their Crashes stand until it closes).
+        if (input::pc::InMenus())
+            return true;
         {
             std::lock_guard<std::mutex> lock(n.padMutex);
             if (n.remotePadAt[slot] && NowMs() - n.remotePadAt[slot] <= 2000)

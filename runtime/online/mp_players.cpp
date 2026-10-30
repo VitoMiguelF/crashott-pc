@@ -74,6 +74,8 @@ PPC_EXTERN_FUNC(sub_82143698);             // CPhysicsBehaviour: collision on / 
 PPC_EXTERN_FUNC(sub_82098E68);             // CAIManager: removes an AI target (RemoveTarget)
 PPC_EXTERN_FUNC(sub_82154A58);             // Crash: shows a player (behaviours on, collision, AI target), as leaving the backpack does
 extern "C" PPC_FUNC(__imp__sub_821ED6C0);  // CInputManager: registers a player's input binding with its controller's device
+extern "C" PPC_FUNC(__imp__sub_82219908);  // trigger-volume condition (WAIT_TriggerVolume): true when it is met
+PPC_EXTERN_FUNC(sub_8213B280);             // CIntersectionBehaviour-ish: is the actor r4 inside the volume r3
 
 namespace
 {
@@ -997,4 +999,39 @@ PPC_FUNC(sub_821ED6C0)
             return;
         }
     __imp__sub_821ED6C0(ctx, base);
+}
+
+// The objectives' trigger volumes (pObjective:WAIT_TriggerVolume(name, by)): the condition (+8 its volume, +20 by)
+// with by = -1 (ETriggeredBy_MID_POINT_OF_ALL_ACTIVE_PLAYERS, most of them: the combat volumes that spawn the
+// enemies, the reset points) tests the point between the players, -2 (EITHER_PLAYER) players 1 and 2 only. Online,
+// where every player has a screen and goes anywhere, the enemies came only once every Crash stood near
+// their volume: there both are met by any player in play (1-8) inside it. -3 (BOTH_PLAYERS) and 1 / 2 stay the game's.
+PPC_FUNC(sub_82219908)
+{
+    uint32_t condition = ctx.r3.u32, volume = GuestPointer(condition) ? LoadBE32(condition + 8) : 0;
+    int32_t by = volume ? int32_t(LoadBE32(condition + 20)) : 0;
+    if (mp::Online() && (by == -1 || by == -2))
+    {
+        for (uint32_t i = 0; i < mp::MAX_PLAYERS; ++i)
+        {
+            uint32_t crash = mp::PlayerOnFoot(i) ? mp::PlayerCrash(i) : 0;
+            uint32_t physics = crash ? LoadBE32(crash + 0xDC) : 0, actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
+            if (!GuestPointer(actor))
+                continue;
+            PPCContext call = ctx;
+            call.r3.u64 = volume;
+            call.r4.u64 = actor;
+            sub_8213B280(call, base);
+            if (call.r3.u8)
+            {
+                if (mp::Trace())
+                    Log("[mp] trigger volume %08X met by player %u (by %d)", volume, i + 1, by);
+                ctx.r3.u64 = 1;
+                return;
+            }
+        }
+        ctx.r3.u64 = 0;
+        return;
+    }
+    __imp__sub_82219908(ctx, base);
 }

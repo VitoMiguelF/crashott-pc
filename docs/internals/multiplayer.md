@@ -234,6 +234,22 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   the host mirrors: the plants a client hit broke on the host only. The host keeps a broken actor's record at 0
   for 1.5 s (`brokenUntil`, set in the AdjustHitpoints hook when the hitpoints reach 0); a client applies that 0
   once per break (`brokenAt`), so the stump is not broken again.
+- **Hits count where the attacker plays** (lobby version 9, `mp_planta3_host` + `mp_planta3_c`): a client's hits used
+  to be made again by its copy on the host, where its pad and steering put it, a little off: the copy hit what the
+  player missed there or missed what it hit (the host saw a plant break and the client neither the break nor the
+  mojo; players 3+ never broke the big mojo plant by the ice). Now a client's own player's damage to an actor the
+  host mirrors (the damager, r5 of AdjustHitpoints, is that player's actor) lands at once and goes to the host as a
+  HIT packet ("CMH1": slot, sequence, the actor's name, the delta; sent twice, applied once per sequence by
+  `ApplyHits`, dealt by that player's copy); on the host a remote player's copy deals no damage to non-players. The
+  client keeps the hitpoints it took for 0.7 s (`predictedUntil`) and a break it made is its `brokenAt`; the host's
+  0 finds an actor's damageable through its behaviour controller (`FindDamageable`), not only one the client hit.
+- **Menus over the level**: a remote player's pad reads empty while this machine's frontend shows a menu over the
+  level (`input::pc::InMenus`: the pause, a tutorial): the frontend takes any controller's buttons, so player 2
+  moved player 1's pause.
+- **Trigger volumes**: `WAIT_TriggerVolume` conditions (`sub_82219908`: +8 the volume, +20 by) with by = -1
+  (`ETriggeredBy_MID_POINT_OF_ALL_ACTIVE_PLAYERS`, the point between the players, `sub_82152810`) or -2
+  (`EITHER_PLAYER`, players 1 and 2) are met online by any player in play inside the volume (`sub_8213B280`): the
+  combat volumes spawned their enemies only once every Crash stood near.
 - **No backpack**: online (or with `CRASH_MP_PLAYERS`) `SetPlayerEnteringBackpack` (`sub_82153348`) is skipped for a
   Crash on foot, `IsOkayToEnterBackpack` says no and `EnterOtherPlayersBackpack` fails the game's way.
 - **Network**: slots (host 0, clients `CRASH_MP_SLOT` 1-3, UDP port + slot). Each machine plays its own slot as

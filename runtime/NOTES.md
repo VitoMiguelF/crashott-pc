@@ -2612,3 +2612,16 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   (saída 604 do HUB), FASE < EP1 - UMA NOVA PULÂNCIA > (as fases liberadas do save, lista de 20 índices em 0x824A8070;
   o título vem da chave `Episode_<fase>_Name` do bible frontend no idioma do jogo; StartLevel + saída 51),
   SKIN E COR e as opções da sessão. B não faz nada; ENCERRAR SESSÃO deixa o HUB sozinho. Perfis de host confirmam com A.
+- **Online: golpes de quem bate, pause, SKIN E COR, gatilhos** (2026-10-30, lobby versão 9): o golpe de um cliente
+  era refeito pela cópia dele no host (onde o controle e o `Steer` a põem, um pouco fora do lugar): às vezes o host
+  via a planta quebrar e o cliente não (sem animação nem mojo), e o P3+ não quebrava a planta grande perto do gelo.
+  Agora o golpe vale onde o jogador joga: o dano do próprio jogador do cliente num ator espelhado entra na hora e vai
+  para o host (pacote "CMH1", mandado 2x, `ApplyHits`); no host a cópia de um jogador remoto não tira vida de quem não
+  é jogador. O cliente segura a vida que ele mesmo tirou por 0,7 s (`predictedUntil`), e o 0 do host acha o
+  damageable pelo controller do ator (`FindDamageable`; antes só o de quem o cliente já tinha acertado). O controle
+  de quem joga em outra máquina chega vazio enquanto o frontend mostra um menu sobre a fase (`input::pc::InMenus`):
+  o P2 mexia no pause do P1. Na SKIN E COR um toque fora das setas não é mais A (vestia a skin). Os gatilhos
+  `WAIT_TriggerVolume` com `ETriggeredBy_MID_POINT_OF_ALL_ACTIVE_PLAYERS` (-1) ou `EITHER_PLAYER` (-2) (condição
+  `sub_82219908`: +8 o volume, +20 o modo; ponto médio = `sub_82152810`, dentro = `sub_8213B280`) valem online com
+  qualquer jogador em jogo dentro: os inimigos só nasciam com todos os Crashes perto. Perfis `mp_planta3_host` +
+  `mp_planta3_c` (o P3 bate na planta: "hit from slot 3" no host).
