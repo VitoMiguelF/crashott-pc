@@ -330,6 +330,17 @@ env = { CRASH_SETTINGS = "controls.prompts=xbox" }
 input = [["@skip_prompt#1"], [1, "SHOT"], [1.5, "B", 1.2], ["@skip_prompt#2"], [1, "SHOT"], [1.5, "B", 1.2], ["@skip_prompt#3"], [1, "SHOT"], [1.5, "B", 1.2], ["@title"], [1, "SHOT"]]
 expect = { exit = ["timeout"], events = ["skip_prompt", "video_skipped", "title"], log_absent = ['\[fatal\]', '\[crash\]'] }
 
+[profiles.video_demo_clique]
+description = "O vídeo de demonstração (o título parado ~45 s) termina com um clique ou um toque (o celular não tem botão): os logos pulados segurando B, o título parado até o vídeo 4, um clique"
+fps_limit = 60
+test = true
+timeout = 90
+audio = false
+userdata_mode = "copy"
+input = [["@skip_prompt#1"], [1.5, "B", 1.2], ["@skip_prompt#2"], [1.5, "B", 1.2], ["@skip_prompt#3"], [1.5, "B", 1.2],
+         ["@title"], [50, "SHOT"], [52, "CLICK", 640, 360], [56, "SHOT"]]
+expect = { exit = ["timeout"], events = ["title", "video_skipped"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['video 4 starts', 'attract video, click or tap', 'the frontend moved on|video 4 ends'] }
+
 [profiles.configuracoes]
 description = "SETTINGS (antigo CALIBRATION) no menu: muda volume e anti-aliasing, passa por todas as abas (LB/RB), fecha e faz LOAD GAME"
 fps_limit = 60

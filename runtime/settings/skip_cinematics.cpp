@@ -126,7 +126,7 @@ namespace
         if (g_action.load() && now - g_actionSeen.load() < PLAYING_GRACE_MS)
             return Kind::Cutscene;
         // (the attract video, shown when the title screen is left alone, keeps the game's own
-        // any-button exit)
+        // any-button exit; a click or a tap presses START for it, FilterGameInput)
         int movie = g_movie.load();
         if (movie >= 0 && movie != MOVIE_SIERRA && movie != MOVIE_ATTRACT)
             return Kind::Video;
@@ -296,6 +296,16 @@ namespace cutscenes
             if (!(raw & heldMask) && !KeyboardOrMouseHeld())
                 heldMask = 0;
             pad.wButtons &= ~heldMask;
+        }
+        // The attract video (the title screen left alone) ends at any button of the game's own; a
+        // click or a tap (a phone has no button) presses START for it.
+        static uint32_t leftClicks = 0;
+        bool clicked = input::pc::LeftClicks() != leftClicks;  // also a tap shorter than a frame
+        leftClicks = input::pc::LeftClicks();
+        if (g_movie.load() == MOVIE_ATTRACT && clicked && !videoStartReads)
+        {
+            videoStartReads = VIDEO_SKIP_READS;
+            boot::Event("video_skipped", "attract video, click or tap");
         }
         if (videoStartReads > 0)
         {
