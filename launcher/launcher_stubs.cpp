@@ -95,6 +95,7 @@ namespace settings::prompts
 {
     uint32_t Style() { return 0; }
     bool Draw(char32_t, uint32_t, int, int, const uint32_t*, std::vector<uint32_t>&) { return false; }
+    void WidenIconsInPackage(std::vector<uint8_t>&) {}  // the launcher draws no button icons
 }
 
 namespace rcf_overlay
