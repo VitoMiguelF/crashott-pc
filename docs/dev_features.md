@@ -128,6 +128,14 @@ O verificador de cheats (`sub_821DB680`) roda no update do `CFrontendManager` co
 LEFT → Shadow, ACCEPT + RIGHT → Big Head. Nenhum outro evento é lido; `GOD_MODE` (42) e `RESURRECT` (32) estão
 no enum sem código.
 
+### Mojo sem o limite de 100 000 (issue #13)
+
+`mojo <n>` do console soma pelo nativo, `CStatsManager::IncrementValueInt` (`sub_82248F88`, stat 21 =
+`EStatInt_MojoCount`), sem passar o número pelo Lua (os números do Lua do jogo são `float`: inteiros só são exatos
+até 2^24). O mojo é um `unsigned int` somado sem checagem nas classes 0 e 1 (`GetValueInt(classe, stat)` =
+`*(this + 4 * (93 * classe + stat + 114))`); o comando mantém o total entre 0 e 2^31 - 1 (2 147 483 647), para
+nenhum código que o leia com sinal vê-lo negativo.
+
 ## 5. Skins
 
 O enum `ESkin` tem 25 valores. O jogo desbloqueia 20 (lista em `0x824A8218`, exatamente 20 posições): o Crash

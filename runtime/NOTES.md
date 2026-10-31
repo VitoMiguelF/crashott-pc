@@ -2662,3 +2662,7 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   chama "modelo_x_y_z_mpN" (lugar arredondado + contagem na fase; `CRASH_MP_SPAWN_NAMES=0` desliga). O id dos
   inimigos dos `DO_SpawnEnemy` (actor +8) não vem desse nome (igual com nomes trocados: o jogo os pré-cria,
   `DO_PreSpawnActor`, e dá o id por conta própria); os acessórios, mojos, vidas e drops sim.
+
+## Mojo sem o limite de 100 000 (issue #13, 2026-10-31, branch `mojo-no-limit`) (`dev/dev_cheats.cpp`, `dev/dev_console.cpp`)
+
+O limite de ±100 000 do `mojo <n>` caiu. O mojo é o stat 21 (`EStatInt_MojoCount`, número achado no registro do enum: `li r4,21` antes da string em `0x82026C64`), um `unsigned int` que `CStatsManager::IncrementValueInt` (`sub_82248F88`) soma sem checagem nas classes 0 e 1. O comando agora chama essa função direto (gerente 16 do `sub_821FB4F0`/`sub_821FA440`), sem passar pelo Lua (o `lua_Number` do jogo é `float`: acima de 2^24 o valor chegaria arredondado), e prende o total em 0..2^31 - 1 para nada que o leia com sinal vê-lo negativo. Verificado sem abrir o jogo: build do PC e do Android. Falta no jogo: `mojo 2000000000` (o HUD com 10 dígitos; o objetivo `IncrementPlayerLife`, uma vida a cada 25 000) e `mojo -999999999999` (zera).

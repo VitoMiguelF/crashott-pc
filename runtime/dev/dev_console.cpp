@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -203,7 +204,7 @@ namespace dev::console
         const Command COMMANDS[] = {
             { "help", "help [comando]", "lista os comandos, ou explica um" },
             { "unlock", "unlock all | unlock levels | unlock skin <nome>", "desbloqueia tudo (20 skins + Crash_Hulk, fases, golpes), so as fases (as skins ficam trancadas) ou uma skin" },
-            { "mojo", "mojo <n>", "da n de mojo (o HUD acompanha)" },
+            { "mojo", "mojo <n>", "da n de mojo (negativo tira; total de 0 a 2147483647; o HUD acompanha)" },
             { "god", "god [on|off]", "invencibilidade (o HP nao desce; poços ainda matam)" },
             { "tp", "tp <x> <y> <z>", "teleporta o jogador 1 (y = altura; veja pos)" },
             { "pos", "pos", "mostra a posicao do jogador 1" },
@@ -522,10 +523,14 @@ namespace dev::console
             else if (command == "mojo")
             {
                 double amount;
-                if (words.size() < 2 || !ParseNumber(words[1], amount) || amount != double(int64_t(amount)) || amount < -100000 || amount > 100000)
+                if (words.size() < 2 || !ParseNumber(words[1], amount) || !(std::fabs(amount) < 1e15) || amount != double(int64_t(amount)))
                     usage("mojo");
+                else if (MojoResult mojo = GiveMojo(ctx, base, int64_t(amount)); !mojo.ok)
+                    Reply("erro: nenhum jogo carregado", Tone::Error);
                 else
-                    ConsoleLua(ctx, base, "dev.give_mojo(" + std::to_string(int64_t(amount)) + ")");
+                    Reply("mojo " + std::string(mojo.added < 0 ? "" : "+") + std::to_string(mojo.added) + " -> " + std::to_string(mojo.total) +
+                              (mojo.clamped ? " (limite: 0 a " + std::to_string(MOJO_MAX) + ")" : ""),
+                          Tone::Ok);
             }
             else if (command == "god")
             {

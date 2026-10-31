@@ -31,6 +31,11 @@ desenvolvedor". Code: `runtime/dev/`. Profiles `dev_*`, `console_*`.
 - The original X360 cheats work: pause, hold RT, X X Y A = Big Head, Y X Y A = Shadow (checker sub_821DB680,
   settings 0x824A8B80 +93 / +94).
 - Unlocked-skins list 0x824A8218 holds 20; Crash_Hulk = ESkin 22 (`dev.unlock_skin`).
+- CStatsManager = managers subsystem 16 (sub_821FB4F0 + sub_821FA440). GetValueInt(class, stat) =
+  `*(this + 4*(93*class + stat + 114))`; IncrementValueInt sub_82248F88 adds an unsigned 32-bit amount to classes 0
+  and 1 unchecked; SetValueInt sub_82247FB8. Stat 21 = MojoCount (enum registration: `li r4,21` before the name
+  string at 0x82026C64). Lua numbers are float: pass big values natively. Console `mojo` keeps the total in
+  0..2^31-1.
 
 ## Developer console
 

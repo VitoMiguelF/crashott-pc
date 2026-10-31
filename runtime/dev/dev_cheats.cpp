@@ -16,6 +16,7 @@
 #include "../kernel/memory.h"
 #include "../online/mp.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -27,6 +28,9 @@ PPC_EXTERN_FUNC(sub_82234188);             // CSettingsDatabase: the cheat flags
 PPC_EXTERN_FUNC(sub_82142608);             // actor: behaviour by index (38 = the render behaviour)
 PPC_EXTERN_FUNC(sub_822845A0);             // joint name hash
 PPC_EXTERN_FUNC(sub_822EE2B0);             // drawable: joint index by hash
+PPC_EXTERN_FUNC(sub_821FB4F0);             // the managers object
+PPC_EXTERN_FUNC(sub_821FA440);             // managers: subsystem n (16 = CStatsManager)
+PPC_EXTERN_FUNC(sub_82248F88);             // CStatsManager::IncrementValueInt(stat, unsigned amount)
 
 namespace
 {
@@ -139,6 +143,56 @@ namespace dev
         }
         Log("[dev] big head %s (%d players)", on ? "on" : "off", players);
         return players;
+    }
+
+    // CStatsManager (managers subsystem 16): GetValueInt(class, stat) = *(this + 4 * (93 * class + stat + 114)),
+    // IncrementValueInt adds a plain 32-bit amount to class 0 and class 1 (no check: it wraps).
+    namespace
+    {
+        constexpr uint32_t STATS_MANAGER = 16;
+        constexpr uint32_t STAT_MOJO = 21;  // EStatInt_MojoCount
+
+        uint32_t StatsManager(PPCContext& ctx, uint8_t* base)
+        {
+            PPCContext call = ctx;
+            sub_821FB4F0(call, base);
+            call.r4.u64 = STATS_MANAGER;
+            sub_821FA440(call, base);
+            return PlausibleObject(call.r3.u32) ? call.r3.u32 : 0;
+        }
+
+        uint32_t StatAddress(uint32_t stats, uint32_t statClass, uint32_t stat)
+        {
+            return stats + 4 * (93 * statClass + stat + 114);
+        }
+    }
+
+    MojoResult GiveMojo(PPCContext& ctx, uint8_t* base, int64_t amount)
+    {
+        MojoResult result;
+        uint32_t stats = StatsManager(ctx, base);
+        if (!stats)
+            return result;
+        // Both classes stay in 0..MOJO_MAX: the game keeps mojo in an unsigned 32-bit int, compares it
+        // in signed and unsigned code and hands it to Lua as a float; past 2^31 - 1 some of that would
+        // read it as negative.
+        int64_t current[2] = { LoadBE32(StatAddress(stats, 0, STAT_MOJO)), LoadBE32(StatAddress(stats, 1, STAT_MOJO)) };
+        int64_t highest = std::max(current[0], current[1]), lowest = std::min(current[0], current[1]);
+        int64_t delta = std::clamp<int64_t>(amount, -lowest, std::max<int64_t>(0, MOJO_MAX - highest));
+        result.clamped = delta != amount;
+        if (delta)
+        {
+            PPCContext call = ctx;
+            call.r3.u64 = stats;
+            call.r4.u64 = STAT_MOJO;
+            call.r5.u64 = uint32_t(uint64_t(delta));  // modulo 2^32: the game's add takes it away
+            sub_82248F88(call, base);
+        }
+        result.ok = true;
+        result.added = delta;
+        result.total = LoadBE32(StatAddress(stats, 0, STAT_MOJO));
+        Log("[dev] mojo %+lld (asked %+lld) -> %u", (long long)delta, (long long)amount, result.total);
+        return result;
     }
 }
 
