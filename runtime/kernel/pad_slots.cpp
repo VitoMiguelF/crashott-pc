@@ -592,6 +592,25 @@ namespace input::slots
             hid::SetPadVibration(id, left, right);
     }
 
+    void SetLight(uint32_t user, uint32_t rgb, uint8_t player)
+    {
+        uint32_t id = 0;
+        {
+            std::lock_guard lock(g_mutex);
+            // A PlayStation pad on its own only: one that is also an XInput pad is DS4Windows/DSX's.
+            if (const Dev* d = g_table.DeviceOn(user); d && d->slot < 0)
+                id = d->hid;
+        }
+        if (id)
+            hid::SetPadLight(id, rgb, player);
+    }
+
+    uint32_t UserOfPlayer(int player)
+    {
+        std::lock_guard lock(g_mutex);
+        return uint32_t(g_table.UserOf(std::clamp(player, 0, USERS - 1)));
+    }
+
     uint32_t PlayerOneUser()
     {
         return g_playerOne.load();

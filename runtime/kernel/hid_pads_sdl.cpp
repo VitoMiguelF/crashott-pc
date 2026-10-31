@@ -22,6 +22,7 @@ namespace input::hid
             SDL_Gamepad* gamepad;
             std::string name;
             XINPUT_GAMEPAD state{};
+            uint32_t light = 0;  // 0x80000000 | player << 24 | 0xRRGGBB last set (0 = never)
         };
 
         std::mutex g_mutex;
@@ -134,6 +135,21 @@ namespace input::hid
         std::lock_guard lock(g_mutex);
         if (Pad* pad = Find(id))
             SDL_RumbleGamepad(pad->gamepad, left, right, 0);  // 0 ms: until the next call, like XInput
+    }
+
+    // SDL's HIDAPI drivers write the light bar (DualSense, DualShock 4) and, from the player index,
+    // the DualSense's player LEDs; a pad SDL reads another way (no HIDAPI) just returns false.
+    void SetPadLight(uint32_t id, uint32_t rgb, uint8_t player)
+    {
+        std::lock_guard lock(g_mutex);
+        Pad* pad = Find(id);
+        uint32_t light = 0x80000000u | uint32_t(player) << 24 | (rgb & 0xFFFFFF);
+        if (!pad || pad->light == light)
+            return;
+        if ((pad->light >> 24 & 0x7F) != player || !pad->light)
+            SDL_SetGamepadPlayerIndex(pad->gamepad, player ? int(player) - 1 : -1);
+        SDL_SetGamepadLED(pad->gamepad, uint8_t(rgb >> 16), uint8_t(rgb >> 8), uint8_t(rgb));
+        pad->light = light;
     }
 
     bool RecentlyActive()

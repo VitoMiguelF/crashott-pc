@@ -282,6 +282,21 @@ namespace mp::colors
             Recolour(recipe, rgb);
     }
 
+    bool SkinSwatch(uint32_t drawable, uint8_t rgb[3])
+    {
+        if (!GuestPointer(drawable))
+            return false;
+        int skin = FindSkin(g_memory.Translate(drawable + 0x11C8));
+        if (skin < 0)
+            return false;
+        const SkinPalette& s = SKINS[skin];
+        float out[3];
+        ToRgb(s.centre, s.colourize ? 0.0f : std::clamp(s.sMean * 1.3f, 0.5f, 1.0f), 1.0f, out);
+        for (int k = 0; k < 3; ++k)
+            rgb[k] = uint8_t(std::clamp(out[k] * 255.0f + 0.5f, 0.0f, 255.0f));
+        return true;
+    }
+
     uint32_t Mine()
     {
         int mine = g_mine.load();

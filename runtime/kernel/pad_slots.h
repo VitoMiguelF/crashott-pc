@@ -27,6 +27,12 @@ namespace input::slots
     bool Read(uint32_t user, XINPUT_GAMEPAD& pad);
     // XamInputSetState's motors (0..65535) for the device on `user`; 0 with [controls] vibration off.
     void SetVibration(uint32_t user, uint16_t left, uint16_t right);
+    // The light bar (0xRRGGBB) and DualSense player LEDs (1-8, 0 = off) of the PlayStation pad on
+    // `user` (pad_lights.h). Nothing for an Xbox pad, nor for a PlayStation pad that DS4Windows/DSX
+    // present as a virtual Xbox pad (the lights are theirs).
+    void SetLight(uint32_t user, uint32_t rgb, uint8_t player);
+    // The game controller of pad player `player` (0-3; player 1 = PlayerOneUser()).
+    uint32_t UserOfPlayer(int player);
 
     // The game controller of player 1 (the one the game took on the title screen), where the
     // keyboard and the mouse go.

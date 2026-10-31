@@ -18,6 +18,7 @@
 
 #include <hidsdi.h>
 #include <setupapi.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <atomic>
@@ -66,6 +67,10 @@ namespace input::hid
             ULONGLONG lastActive = 0;
             std::atomic<uint32_t> motors{ 0 };  // left << 16 | right, wanted
             uint32_t sentMotors = 0;
+            std::atomic<uint32_t> light{ 0 };  // LIGHT_SET | player << 24 | 0xRRGGBB, wanted (0 = never set)
+            uint32_t sentLight = 0;
+            ULONGLONG lightSentAt = 0;
+            bool lightSetup = false;  // DualSense: the boot light faded out (LIGHTBAR_SETUP_LIGHT_OUT)
             uint8_t outputSequence = 0;
             std::thread reader;
         };
@@ -162,31 +167,67 @@ namespace input::hid
                    moved(a.sThumbLY, b.sThumbLY) || moved(a.sThumbRX, b.sThumbRX) || moved(a.sThumbRY, b.sThumbRY);
         }
 
-        void SendMotors(Pad& pad, uint32_t motors, OVERLAPPED& overlapped)
+        // Pad::light: set at all, the player number, the colour.
+        constexpr uint32_t LIGHT_SET = 0x80000000u;
+        constexpr ULONGLONG LIGHT_EVERY_MS = 30;  // light changes (the pause's breathing) at most this often
+
+        // The DualSense's five player LEDs for player 1-5, as the PS5 lights them (Linux's
+        // hid-playstation too); 6-8 light all five.
+        uint8_t PlayerLeds(uint32_t player)
+        {
+            static constexpr uint8_t LEDS[] = { 0x00, 0x04, 0x0A, 0x15, 0x1B, 0x1F };
+            return LEDS[std::min<uint32_t>(player, 5)];
+        }
+
+        // One output report: the motors always (they are what the pad has now), the light bar and
+        // the player LEDs once a light was set, or only the DualSense's light bar setup (`setup`:
+        // fade out its boot light, which otherwise holds the bar; Linux sends it once too).
+        // Layouts (Linux's hid-playstation): the DualSense's common part starts at byte 1 over USB
+        // (report 0x02) and at byte 3 over Bluetooth (0x31, sequence, tag 0x10): valid flags 0 / 1
+        // (+0, +1), motors right / left (+2, +3), valid flag 2 (+38), light bar setup (+41), player
+        // LEDs (+43), light bar R G B (+44..+46). The DualShock 4's at byte 1 over USB (report 0x05)
+        // and at byte 3 over Bluetooth (0x11, 0xC0 = HID + CRC): valid flags (+0), motors right /
+        // left (+3, +4), light bar R G B (+5..+7). Bluetooth reports end with the CRC-32.
+        void SendOutput(Pad& pad, uint32_t motors, uint32_t light, bool setup, OVERLAPPED& overlapped)
         {
             uint8_t left = uint8_t(motors >> 24), right = uint8_t(motors >> 8);
-            std::vector<uint8_t> report(std::max<USHORT>(pad.outputLength, 32), 0);
-            if (pad.kind == Kind::DualSense && !pad.bluetooth)
-            {
-                report[0] = 0x02, report[1] = 0x03, report[3] = right, report[4] = left;
-            }
-            else if (pad.kind == Kind::DualSense)
-            {
+            uint8_t red = uint8_t(light >> 16), green = uint8_t(light >> 8), blue = uint8_t(light);
+            std::vector<uint8_t> report(std::max<USHORT>(pad.outputLength, pad.kind == Kind::DualSense ? 48 : 32), 0);
+            if (pad.bluetooth)
                 report.assign(78, 0);
-                report[0] = 0x31, report[1] = uint8_t(pad.outputSequence++ << 4), report[2] = 0x10;
-                report[3] = 0x03, report[5] = right, report[6] = left;
-                SealBluetooth(report);
-            }
-            else if (!pad.bluetooth)
+            size_t c = pad.bluetooth ? 3 : 1;
+            if (pad.kind == Kind::DualSense)
             {
-                report[0] = 0x05, report[1] = 0x01, report[4] = right, report[5] = left;
+                report[0] = pad.bluetooth ? 0x31 : 0x02;
+                if (pad.bluetooth)
+                    report[1] = uint8_t(pad.outputSequence++ << 4), report[2] = 0x10;
+                if (setup)
+                    report[c + 38] = 0x02, report[c + 41] = 0x02;  // LIGHTBAR_SETUP_CONTROL_ENABLE, LIGHT_OUT
+                else
+                {
+                    report[c] = 0x03, report[c + 2] = right, report[c + 3] = left;
+                    if (light & LIGHT_SET)
+                    {
+                        report[c + 1] = 0x04 | 0x10;  // LIGHTBAR_CONTROL_ENABLE, PLAYER_INDICATOR_CONTROL_ENABLE
+                        report[c + 43] = PlayerLeds((light >> 24) & 0x0F);
+                        report[c + 44] = red, report[c + 45] = green, report[c + 46] = blue;
+                    }
+                }
             }
             else
             {
-                report.assign(78, 0);
-                report[0] = 0x11, report[1] = 0xC0, report[3] = 0x01, report[6] = right, report[7] = left;
-                SealBluetooth(report);
+                report[0] = pad.bluetooth ? 0x11 : 0x05;
+                if (pad.bluetooth)
+                    report[1] = 0xC0;
+                report[c] = 0x01, report[c + 3] = right, report[c + 4] = left;
+                if (light & LIGHT_SET)
+                {
+                    report[c] |= 0x02;
+                    report[c + 5] = red, report[c + 6] = green, report[c + 7] = blue;
+                }
             }
+            if (pad.bluetooth)
+                SealBluetooth(report);
             if (pad.outputLength && report.size() > pad.outputLength && !pad.bluetooth)
                 report.resize(pad.outputLength);
             DWORD written = 0;
@@ -262,17 +303,26 @@ namespace input::hid
                         pad->state = state;
                     }
                 }
-                uint32_t motors = pad->motors.load();
-                if (motors != pad->sentMotors)
+                uint32_t motors = pad->motors.load(), light = pad->light.load();
+                ULONGLONG now = plat::TickCountMs();
+                bool newLight = light != pad->sentLight && now - pad->lightSentAt >= LIGHT_EVERY_MS;
+                if (newLight && pad->kind == Kind::DualSense && !pad->lightSetup)
+                {
+                    pad->lightSetup = true;
+                    SendOutput(*pad, motors, 0, true, write);
+                }
+                if (motors != pad->sentMotors || newLight)
                 {
                     pad->sentMotors = motors;
-                    SendMotors(*pad, motors, write);
+                    if (newLight)
+                        pad->sentLight = light, pad->lightSentAt = now;
+                    SendOutput(*pad, motors, pad->sentLight, false, write);
                 }
             }
             if (pending)
                 CancelIo(pad->handle);
             if (pad->sentMotors)
-                SendMotors(*pad, 0, write);
+                SendOutput(*pad, 0, pad->sentLight, false, write);
             CloseHandle(read.hEvent);
             CloseHandle(write.hEvent);
             pad->alive = false;
@@ -409,6 +459,36 @@ namespace input::hid
             SetupDiDestroyDeviceInfoList(devices);
         }
 
+        // DSX (DualSenseX) or DS4Windows running: they set the light bar themselves (the user's
+        // colours, their battery and mic indications), even of a pad we can open. The scan thread
+        // looks at the processes every 6 s (CheckLightTool).
+        std::atomic<bool> g_lightTool{ false };
+
+        void CheckLightTool()
+        {
+            static ULONGLONG checkedAt = 0;
+            ULONGLONG now = plat::TickCountMs();
+            if (checkedAt && now - checkedAt < 6000)
+                return;
+            checkedAt = now;
+            bool found = false;
+            HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snapshot != INVALID_HANDLE_VALUE)
+            {
+                PROCESSENTRY32W entry{ sizeof(entry) };
+                for (BOOL more = Process32FirstW(snapshot, &entry); more && !found; more = Process32NextW(snapshot, &entry))
+                {
+                    std::wstring name = entry.szExeFile;
+                    for (wchar_t& ch : name)
+                        ch = wchar_t(towlower(ch));
+                    found = name == L"dsx.exe" || name == L"dualsensex.exe" || name == L"ds4windows.exe";
+                }
+                CloseHandle(snapshot);
+            }
+            if (found != g_lightTool.exchange(found))
+                Log("[input] %s", found ? "DSX / DS4Windows running: the light bars are theirs" : "DSX / DS4Windows closed: the light bars are ours again");
+        }
+
         std::shared_ptr<Pad> PadById(uint32_t id)
         {
             std::lock_guard lock(g_padsMutex);
@@ -433,6 +513,7 @@ namespace input::hid
             for (;;)
             {
                 Scan();
+                CheckLightTool();
                 WaitForSingleObject(g_rescanEvent, 2000);
             }
         }).detach();
@@ -472,6 +553,13 @@ namespace input::hid
         std::shared_ptr<Pad> ps = PadById(id);
         if (ps && ps->outputLength)
             ps->motors = uint32_t(left) << 16 | right;
+    }
+
+    void SetPadLight(uint32_t id, uint32_t rgb, uint8_t player)
+    {
+        std::shared_ptr<Pad> ps = PadById(id);
+        if (ps && ps->outputLength && !g_lightTool)
+            ps->light = LIGHT_SET | uint32_t(std::min<uint8_t>(player, 15)) << 24 | (rgb & 0xFFFFFF);
     }
 
     bool RecentlyActive()
@@ -565,6 +653,8 @@ namespace input::hid
                     continue;
                 // Cross held: both motors at half (rumble check).
                 SetPadVibration(info.id, (pad.wButtons & XINPUT_GAMEPAD_A) ? 0x8000 : 0, (pad.wButtons & XINPUT_GAMEPAD_A) ? 0x8000 : 0);
+                // Circle held: the light bar red (else Crash's orange), player LEDs 2 (else 1).
+                SetPadLight(info.id, (pad.wButtons & XINPUT_GAMEPAD_B) ? 0xFF0000 : 0xFF4800, (pad.wButtons & XINPUT_GAMEPAD_B) ? 2 : 1);
                 auto it = std::find_if(last.begin(), last.end(), [&](const auto& entry) { return entry.first == info.id; });
                 if (it == last.end())
                     it = last.insert(last.end(), { info.id, XINPUT_GAMEPAD{} });

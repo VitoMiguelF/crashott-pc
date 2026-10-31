@@ -6,6 +6,7 @@
 
 #include "kernel.h"
 #include "input.h"
+#include "pad_lights.h"
 #include "pad_slots.h"
 #include "pc_input.h"
 #include "input_record.h"
@@ -445,6 +446,7 @@ namespace
                 MemDiffTick();             // CRASH_MEMDIFF_TIMES (debugging)
                 audio::volumes::Tick();    // the game's volume categories, once they exist
                 settings::GameOptionsTick();  // co-op mode, invert axis, autosave
+                input::lights::Tick();        // PlayStation light bars (pad_lights.h)
             }
             if (poll)
                 input::record::Poll(state);

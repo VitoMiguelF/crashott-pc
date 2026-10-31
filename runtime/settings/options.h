@@ -27,7 +27,7 @@ namespace settings::options
         FreeCamera, CameraSensitivity, CameraInvertY,
         LightSsao, LightGi, LightGiIntensity, LightContactShadows, LightSoftShadows,
         Lighting,  // every [lighting] option at once (LightingPreset): the launcher's simple view
-        Prompts, ControllerLayout, Vibration, MouseCamera, MouseSensitivity, MouseInvertY,
+        Prompts, ControllerLayout, Vibration, Lightbar, MouseCamera, MouseSensitivity, MouseInvertY,
         Player1, Player2,
         DevConsole,
         GameFolder, ModsFolder, SavesFolder, ExtraData,  // the launcher's SETUP tab (launcher.cpp)

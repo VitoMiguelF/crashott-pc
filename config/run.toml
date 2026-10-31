@@ -629,7 +629,7 @@ timeout = 55
 audio = false
 userdata_mode = "copy"
 skip_intros = true
-# Menu: seta para baixo x3 + Enter = SETTINGS; E x4 = aba CONTROLES (RB); seta para baixo x13 =
+# Menu: seta para baixo x3 + Enter = SETTINGS; E x4 = aba CONTROLES (RB); seta para baixo x14 =
 # PULAR; Enter = escolher a tecla; K = a nova tecla; Esc fecha (salva). Depois LOAD GAME como em
 # teclado e, na fase, K pula (o salto aparece na última captura).
 input = [
@@ -637,7 +637,7 @@ input = [
     [6.5, "KEY_E"], [6.9, "KEY_E"], [7.3, "KEY_E"], [7.7, "KEY_E"], [8.8, "SHOT"],
     [9.1, "KEY_DOWN"], [9.4, "KEY_DOWN"], [9.7, "KEY_DOWN"], [10, "KEY_DOWN"], [10.3, "KEY_DOWN"], [10.6, "KEY_DOWN"],
     [10.9, "KEY_DOWN"], [11.2, "KEY_DOWN"], [11.5, "KEY_DOWN"], [11.8, "KEY_DOWN"], [12.1, "KEY_DOWN"],
-    [12.4, "KEY_DOWN"], [12.7, "KEY_DOWN"], [13.5, "KEY_ENTER"], [13.9, "SHOT"], [14.5, "KEY_K"], [15.5, "SHOT"], [16.5, "KEY_ESC"], [17.5, "SHOT"],
+    [12.4, "KEY_DOWN"], [12.7, "KEY_DOWN"], [13.0, "KEY_DOWN"], [13.5, "KEY_ENTER"], [13.9, "SHOT"], [14.5, "KEY_K"], [15.5, "SHOT"], [16.5, "KEY_ESC"], [17.5, "SHOT"],
     [19.5, "KEY_DOWN"], [20.5, "KEY_ENTER"],
     ["@save_slots"], [1.5, "KEY_ENTER"],
     ["@load_complete"], [1, "KEY_ENTER"],
@@ -668,6 +668,19 @@ input = [
     ["@gameplay_ready"], [2.5, "SHOT"], [3, "X"], [3.35, "SHOT"], [5, "A"], [5.25, "SHOT"],
 ]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['tab -> controls', 'controls.pad_layout -> PS2', '\[settings\] saved', 'controller mapping: ps2'] }
+
+[profiles.barra_de_luz]
+description = "Barra de luz dos controles PlayStation (kernel/pad_lights.cpp): no L1_E1 o Crash leva nocaute (vermelho piscando) e volta, um Espeto nasce na frente dele (tools/dev_lua/lightbar_jack.lua), X o atordoa (titã em 1 golpe), B o monta (cor do Espeto), START pausa (respira); o log diz o estado de cada controle. Um DualSense/DualShock 4 conectado mostra as cores"
+test = true
+timeout = 50
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_lua_file = "tools/dev_lua/lightbar_jack.lua"
+env = { CRASH_DEV_ONE_HIT_TITANS = "1", CRASH_DEV_NO_AI = "1", CRASH_LIGHTBAR_TRACE = "1" }
+input = [["@gameplay_ready"], [2, "SHOT"], [2.6, "SHOT"], [14.5, "SHOT"], [15, "X"], [15.5, "X"], [16, "X"], [16.6, "SHOT"], [17, "B"], [17.4, "B"], [18, "B"], [19, "B"], [21, "SHOT"], [23, "START"], [24, "SHOT"], [25.5, "START"], [27, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lightbar\] controller 0 \(player 1\): on foot', '\[lightbar\] controller 0 \(player 1\): knocked out', '\[lightbar\] controller 0 \(player 1\): titan Spike'] }
 
 [profiles.mouse_menus]
 description = "Menus pelo mouse como num jogo de PC: passar em SETTINGS vindo de NEW GAME seleciona direto (uma troca só), roda, teclado e D-pad continuam, clique abre SETTINGS; lá: clique nas abas, passar nas linhas, clique e arrasto nas estrelas, clique na linha e nas setas, roda, RB, VOLTAR; depois LOAD GAME, save e CONTINUE pelo clique, menu do episódio; na fase, pausa, passar em OPTIONS e clique em RESUME GAME"
