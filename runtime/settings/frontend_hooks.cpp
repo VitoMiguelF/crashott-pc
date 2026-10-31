@@ -14,6 +14,7 @@
 #include "save_screens.h"
 #include "settings_menu.h"
 #include "../dev/dev_console.h"
+#include "../discord/discord_presence.h"
 #include "../online/mp_menu.h"
 #include "../kernel/kernel.h"
 #include "../kernel/pc_input.h"
@@ -101,6 +102,7 @@ PPC_FUNC(sub_820F9BA8)
         settings::MenuAutopilotNode(node);       // CRASH_MENU_AUTOPILOT
         boot::NoteFrontendNode(node);            // test events (direct_boot.h)
         settings::save_screens::NoteFrontendNode(node);  // name keyboard, delete on the slot screen
+        discord::NoteFrontendNode(node);                 // Discord Rich Presence: main menu / HUB
     }
     if (t_conditionDepth++ == 0)
         t_quitItemChosen = t_multiplayerItemChosen = false;

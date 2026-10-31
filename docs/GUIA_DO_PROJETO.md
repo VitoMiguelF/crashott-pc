@@ -485,6 +485,7 @@ Capturas da organização atual das abas em `docs\capturas\settings_abas\`: cada
 | Cooperativo | pula-sela (padrão do jogo: os dois se revezam pulando pelos desafios) / cavalinho (um jogador fica na mochila do outro). A opção do menu de opções original | na hora |
 | Inverter eixo | desligado (padrão) / ligado: inverte o eixo da câmera, como a opção original (a câmera lê a opção a cada quadro) | na hora |
 | Salvamento automático | ligado (padrão) / desligado: o jogo não salva sozinho (o menu de pausa passa a mostrar SAIR DA FASE, como fazia a opção original). Ligado, só salva quando há um slot de save escolhido (NEW GAME ou LOAD GAME); continuar sem salvar continua sem salvar | na hora |
+| Status no Discord | ligado (padrão) / desligado: o Discord Rich Presence (veja "Discord"). Não aparece no Android | na hora |
 | Armazenamento | Hard Drive (informativo) | — |
 | **Áudio** | | |
 | Volume geral | 0–100% (padrão 50%) | na hora (mixagem final do runtime) |
@@ -647,6 +648,7 @@ coop_mode = "leapfrog"   # leapfrog (pula-sela) | piggyback (cavalinho)
 invert_axis = false      # inverter eixo da câmera (a opção do jogo)
 autosave = true          # salvamento automático no slot escolhido; false = o jogo não salva sozinho
 skip_cutscenes = true    # segurar B / Esc pula cenas e vídeos, com um aviso no canto (veja "Pular cenas e vídeos")
+discord = true           # Discord Rich Presence: o jogo, onde você está e o tempo de jogo no perfil (veja "Discord")
 [camera]
 free_camera = false      # camera livre em terceira pessoa (experimental; veja "Camera livre")
 sensitivity = 100        # 25-300 %
@@ -718,6 +720,15 @@ O jogo original não deixa pular as cenas (nenhum botão faz nada durante elas).
 - **Desligar**: **SETTINGS > JOGO > PULAR CENAS** (`skip_cutscenes = true` em `[game]`, ligado por padrão; vale na hora). Desligado, não há aviso e os botões passam para o jogo como no original. O vídeo "attract" (o que passa sozinho quando o título fica parado) continua saindo com qualquer botão, como no original.
 
 Testes: `pular_cena` (Xbox, inglês, L1_E1: aviso, aviso apagado, B segurado, vila e pausa), `pular_cena_teclado` (Esc em PT-BR), `pular_cena_ps` (○, L1_E3), `pular_cena_chefe` (L4_E4), `pular_cena_fim` (L5_E1) e `pular_videos` (os vídeos de abertura até o título). Eventos: `skip_prompt`, `cinematic_skipped` (`held, cutscene frame N`), `video_skipped`, `cinematic_done`. `CRASH_SKIP_TRACE=1` registra cada leitura do controle enquanto o aviso está na tela. Capturas em `build\pular_cena\`. Detalhes em `runtime/NOTES.md`, "Pular as cenas".
+
+### Discord
+
+Com o Discord aberto no mesmo PC, o perfil do jogador mostra que ele está jogando (o nome do jogo é o do aplicativo no Discord, com o ícone do título do Xbox 360 como imagem), **onde ele está** e o **tempo de jogo** desde que o jogo abriu: "Iniciando", **Menu principal**, **HUB**, ou o episódio pelo nome que o HUB mostra ("Episódio 1: UMA NOVA PULÂNCIA", no idioma do jogo); numa sessão de **MULTIPLAYER** online, "Multijogador online" com o número de jogadores ("3 de 4").
+
+- **Como fala com o Discord**: sem SDK nem DLL, pelo IPC local do aplicativo do Discord (`runtime/discord/`): o pipe `\\.\pipe\discord-ipc-0` a `-9` no Windows, o socket `discord-ipc-N` em `$XDG_RUNTIME_DIR` (ou `TMPDIR`, `/tmp`, e as pastas do Flatpak e do Snap) no Linux. Um handshake com o Application ID e um `SET_ACTIVITY` em JSON quando o texto muda (no máximo um a cada 5 s, o limite do Discord). Sem Discord aberto não acontece nada: o jogo procura de novo a cada 15 s, sem erro nem aviso.
+- **Desligar**: **SETTINGS > JOGO > STATUS NO DISCORD** (`discord = true` em `[game]`, ligado por padrão; vale na hora: desligado, a presença some do perfil). **Android**: sem presença (o app do Discord no celular não tem IPC) e sem a opção.
+- **Application ID**: o Discord exige um aplicativo criado em <https://discord.com/developers/applications> (o nome dele é o nome do jogo no perfil: use "Crash of the Titans"). O ID vai em `APPLICATION_ID`, em `runtime/discord/discord_presence.cpp`; vazio, não há presença (o log diz `[discord] no Discord application id`). Em **Rich Presence > Art Assets** do aplicativo, suba o ícone com o nome **`crash_icon`** (`LARGE_IMAGE` no mesmo arquivo). O ícone é o do título no `default.xex` (o recurso XDBF `565507E4`, imagem `0x8000`, 64x64), derivado do jogo: fica só em `private\discord\` (`crash_icon_512.png`, ampliado para 512x512), fora do git.
+- Testes: `CRASH_DISCORD_APP_ID=<id>` e `CRASH_DISCORD_ASSET=<nome>` trocam o ID e a imagem sem recompilar. O log registra `[discord] connected to the Discord client`, cada `[discord] presence: {...}` enviada e as recusas do Discord (ID desconhecido: tenta de novo a cada 2 min).
 
 ## Desempenho
 

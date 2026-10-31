@@ -57,7 +57,7 @@ namespace settings::options
     const Tab* Tabs()
     {
         static Tab tabs[TAB_COUNT] = {
-            { "game", { "GAME", "JOGO" }, { Item::Language, Item::CoopMode, Item::InvertAxis, Item::Autosave, Item::SkipCutscenes, Item::Storage } },
+            { "game", { "GAME", "JOGO" }, { Item::Language, Item::CoopMode, Item::InvertAxis, Item::Autosave, Item::SkipCutscenes, Item::Discord, Item::Storage } },
             { "audio", { "AUDIO", "ÁUDIO" },
               { Item::Master, Item::Music, Item::Effects, Item::Voice, Item::HeaderSubtitles, Item::Subtitles, Item::SubtitleSize,
                 Item::SubtitleBackground } },
@@ -73,12 +73,13 @@ namespace settings::options
                 Item::CameraInvertY, Item::HeaderDev, Item::DevConsole } },
         };
 #if defined(__ANDROID__)
-        // Android has no HD AI Remaster (by design), no DLSS / FSR and no window mode: those rows go.
+        // Android has no HD AI Remaster (by design), no DLSS / FSR, no window mode and no Discord Rich Presence
+        // (the Discord app has no IPC): those rows go.
         static const bool trimmed = [] {
             for (Tab& tab : tabs)
                 std::erase_if(tab.items, [](Item item) {
                     return item == Item::HdRemaster || item == Item::Upscaler || item == Item::UpscalerQuality || item == Item::Sharpness ||
-                           item == Item::Window;
+                           item == Item::Window || item == Item::Discord;
                 });
             return true;
         }();
@@ -131,6 +132,7 @@ namespace settings::options
         case Item::InvertAxis: return "game.invert_axis";
         case Item::Autosave: return "game.autosave";
         case Item::SkipCutscenes: return "game.skip_cutscenes";
+        case Item::Discord: return "game.discord";
         case Item::Storage: return "game.storage";
         case Item::Subtitles: return "game.subtitles";
         case Item::SubtitleSize: return "game.subtitle_size";
@@ -193,6 +195,7 @@ namespace settings::options
         case Item::InvertAxis: return t({ "INVERT AXIS", "INVERTER EIXO" });
         case Item::Autosave: return t({ "AUTOSAVE", "SALVAMENTO AUTOMÁTICO" });
         case Item::SkipCutscenes: return t({ "SKIP CUTSCENES", "PULAR CENAS" });
+        case Item::Discord: return t({ "DISCORD STATUS", "STATUS NO DISCORD" });
         case Item::Storage: return t({ "STORAGE", "ARMAZENAMENTO" });
         case Item::Subtitles: return t({ "SUBTITLES", "LEGENDAS" });
         case Item::SubtitleSize: return t({ "SUBTITLE SIZE", "TAMANHO DA LEGENDA" });
@@ -308,6 +311,7 @@ namespace settings::options
         case Item::InvertAxis: return OnOff(pt, values.invertAxis);
         case Item::Autosave: return OnOff(pt, values.autosave);
         case Item::SkipCutscenes: return OnOff(pt, values.skipCutscenes);
+        case Item::Discord: return OnOff(pt, values.discord);
         case Item::Storage: return "HARD DRIVE";
         case Item::Subtitles:
             return values.subtitles && !context.haveSubtitles ? t({ "ON (NO TEXT)", "LIGADO (SEM TEXTO)" }) : OnOff(pt, values.subtitles);
@@ -469,6 +473,9 @@ namespace settings::options
         case Item::SkipCutscenes:
             return { t({ "Hold B (ESC, SPACE, ENTER) during a cutscene or video", "Segure B (ESC, ESPAÇO, ENTER) numa cena ou vídeo" }),
                      t({ "to skip it; a prompt shows in the corner.", "para pulá-la; um aviso aparece no canto." }) };
+        case Item::Discord:
+            return { t({ "Shows the game, the episode and the time played", "Mostra o jogo, o episódio e o tempo de jogo" }),
+                     t({ "on your Discord profile (Discord open on the PC).", "no seu perfil do Discord (Discord aberto no PC)." }) };
         case Item::Storage:
             return { t({ "Saves are kept on the PC, in the userdata folder.", "Os saves ficam no PC, na pasta userdata." }),
                      t({ "The Y button of the main menu picks it.", "O botão Y do menu principal o escolhe." }) };
@@ -648,6 +655,7 @@ namespace settings::options
         case Item::InvertAxis: values.invertAxis = !values.invertAxis; break;
         case Item::Autosave: values.autosave = !values.autosave; break;
         case Item::SkipCutscenes: values.skipCutscenes = !values.skipCutscenes; break;
+        case Item::Discord: values.discord = !values.discord; break;
         case Item::HdRemaster:
             if (HdRemasterAvailable())  // shown as unavailable: the saved value is kept for when the data is back
                 values.hdRemaster = !values.hdRemaster;
