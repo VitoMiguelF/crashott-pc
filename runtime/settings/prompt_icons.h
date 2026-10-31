@@ -49,6 +49,13 @@ namespace settings::prompts
     // in the middle). 0 for none. Any thread.
     uint16_t ButtonAt(float x, float y, float aspect);
 
+    // RT / LT are tall and narrow in the game's large font (64x128 textures), too narrow for L2 /
+    // R2 or a key cap: the font package's rewrite (registered here; menu_art does the same to its
+    // own copy) widens them to 1.25 x their height (language_font::WidenIcons), the game's picture
+    // centred, and IconOfTexture knows the new textures. Call before the game reads its files.
+    void RegisterIconPatches();
+    void WidenIconsInPackage(std::vector<uint8_t>& package);
+
     // --prompt-preview <dir>: a sheet of the game's icons and ours (PlayStation, keyboard in
     // gameplay and in menus) at a few sizes, as PNG, without starting the game. Returns the exit code.
     int Preview(const std::filesystem::path& directory);

@@ -425,6 +425,7 @@ namespace settings::menu_art
             bool fonts = false;
             if (open && ReadEntry(rcf, "package\\b4c85fe7.p3d", persistent, sources[0]))
             {
+                prompts::WidenIconsInPackage(persistent);  // as the game sees it (RT / LT widened)
                 fonts = LoadFont(persistent, "Titans_Small", g_fonts[int(FontId::Small)], log) &&
                         LoadFont(persistent, "Titans_Large", g_fonts[int(FontId::Large)], log);
                 FindImage(persistent, "MSG_Background.tga", g_art[size_t(Art::MessageFrame)]);

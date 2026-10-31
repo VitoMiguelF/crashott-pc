@@ -2,6 +2,7 @@
 
 #include "prompt_icons.h"
 #include "controls.h"
+#include "language_font.h"
 #include "menu_art.h"
 #include "settings.h"
 #include "settings_menu.h"
@@ -12,6 +13,8 @@
 #include "../platform/text_canvas.h"
 #include "../diagnostics.h"
 #include "../gpu/png_writer.h"
+#include "../gpu/hd_textures.h"
+#include "../fs/rcf_overlay.h"
 
 
 #include <algorithm>
@@ -525,9 +528,78 @@ namespace settings::prompts
         return best;
     }
 
+    namespace
+    {
+        constexpr const char* FONT_PACKAGE = "package\\b4c85fe7.p3d";  // Titans_Small / Titans_Large
+        constexpr float WIDE_ICON_ASPECT = 1.25f;                       // L2 / R2 (~1.12) with room
+
+        std::mutex g_widenedMutex;
+        std::vector<IconTexture> g_widened;  // the textures WidenIcons made, as ICON_TEXTURES
+    }
+
+    void WidenIconsInPackage(std::vector<uint8_t>& package)
+    {
+        constexpr uint32_t FONT = 0x22000;
+        if (package.size() < 12)
+            return;
+        std::vector<uint8_t> out(package.begin(), package.begin() + 12);
+        std::vector<language_font::WidenedIcon> widened;
+        std::string log;
+        size_t offset = 12;
+        while (offset + 12 <= package.size())
+        {
+            uint32_t id, size;
+            memcpy(&id, &package[offset], 4), memcpy(&size, &package[offset + 8], 4);
+            if (size < 12 || offset + size > package.size())
+                break;
+            if (id == FONT)
+                language_font::WidenIcons(&package[offset], size, { 0xB7, 0xBD }, WIDE_ICON_ASPECT, out, widened, log);
+            else
+                out.insert(out.end(), package.begin() + offset, package.begin() + offset + size);
+            offset += size;
+        }
+        out.insert(out.end(), package.begin() + offset, package.end());
+        if (widened.empty())
+            return;
+        uint32_t total = uint32_t(out.size());
+        memcpy(&out[8], &total, 4);
+        package = std::move(out);
+        std::lock_guard lock(g_widenedMutex);
+        for (const language_font::WidenedIcon& icon : widened)
+        {
+            // The renderer's key: the indices as R8, bottom row first (the game's k_8 texture).
+            std::vector<uint8_t> rows(icon.indices.size());
+            for (int y = 0; y < icon.h; y++)
+                memcpy(&rows[size_t(icon.h - 1 - y) * icon.w], &icon.indices[size_t(y) * icon.w], size_t(icon.w));
+            uint64_t key = gpu::hd::Key(rows.data(), uint32_t(icon.w), uint32_t(icon.w), uint32_t(icon.h), DXGI_FORMAT_R8_UNORM, uint32_t(icon.w), uint32_t(icon.h));
+            if (std::none_of(g_widened.begin(), g_widened.end(), [&](const IconTexture& t) { return t.key == key; }))
+                g_widened.push_back({ key, icon.icon, { 2, 2, icon.w - 2, icon.h - 2 } });
+        }
+        Log("[prompts] %s", log.c_str());
+    }
+
+    void RegisterIconPatches()
+    {
+        rcf_overlay::RegisterEntryRewrite("default", FONT_PACKAGE, "icones RT/LT mais largos", [](std::vector<uint8_t>& data) {
+            size_t before = data.size();
+            WidenIconsInPackage(data);
+            return data.size() != before;
+        });
+    }
+
     char32_t IconOfTexture(uint64_t key, int box[4])
     {
         for (const IconTexture& t : ICON_TEXTURES)
+        {
+            if (t.key == key)
+            {
+                if (box)
+                    std::copy(t.box, t.box + 4, box);
+                return t.icon;
+            }
+        }
+        std::lock_guard lock(g_widenedMutex);
+        for (const IconTexture& t : g_widened)
         {
             if (t.key == key)
             {
@@ -660,6 +732,8 @@ namespace settings::prompts
             x0 = float(box[0]), y0 = float(box[1]), x1 = float(box[2]), y1 = float(box[3]);
         else
             OpaqueBox(original, w, h, x0, y0, x1, y1);
+        if ((icon == 0xB7 || icon == 0xBD) && w > h)  // RT / LT widened (WidenIcons): ours take all of it
+            x0 = std::min(x0, 2.0f), x1 = std::max(x1, w - 2.0f), y0 = std::min(y0, 2.0f), y1 = std::max(y1, h - 2.0f);
         float bw = x1 - x0, bh = y1 - y0, cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
         Canvas shapes(w, h);
         std::string text;

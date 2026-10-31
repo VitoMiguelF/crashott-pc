@@ -132,7 +132,8 @@ namespace settings::language_font
 
         // A PNG with stored (uncompressed) deflate blocks: indexed with `plte`/`trns` when `plte`
         // is not empty (each pixel takes the nearest palette entry), RGBA otherwise.
-        std::vector<uint8_t> EncodePng(const Image& image, const std::vector<uint8_t>& plte, const std::vector<uint8_t>& trns)
+        std::vector<uint8_t> EncodePng(const Image& image, const std::vector<uint8_t>& plte, const std::vector<uint8_t>& trns,
+                                       std::vector<uint8_t>* indices = nullptr)
         {
             bool indexed = !plte.empty();
             std::vector<uint8_t> raw;  // filter byte + scanline per row
@@ -169,6 +170,8 @@ namespace settings::language_font
                         it = nearest.emplace(key, uint8_t(best)).first;
                     }
                     raw.push_back(it->second);
+                    if (indices)
+                        indices->push_back(it->second);
                 }
             }
             std::vector<uint8_t> zlib = { 0x78, 0x01 };
@@ -479,6 +482,103 @@ namespace settings::language_font
             }
             return false;
         }
+    }
+
+    int WidenIcons(const uint8_t* data, size_t size, const std::vector<char32_t>& codes, float aspect, std::vector<uint8_t>& out,
+                   std::vector<WidenedIcon>& widened, std::string& log)
+    {
+        auto copy = [&] {
+            out.insert(out.end(), data, data + size);
+            return 0;
+        };
+        uint32_t header = LoadLE32(data + 4);
+        if (size < 12 || header < 16 || header > size)
+            return copy();
+        std::string fontName(reinterpret_cast<const char*>(data + 17), strnlen(reinterpret_cast<const char*>(data + 17), std::min<size_t>(data[16], header - 17)));
+        std::vector<Chunk> children = Children(data, header, size);
+        std::vector<Chunk> textures;
+        const Chunk* glyphChunk = nullptr;
+        for (const Chunk& child : children)
+        {
+            if (child.id == TEXTURE)
+                textures.push_back(child);
+            else if (child.id == GLYPHS)
+                glyphChunk = &child;
+        }
+        if (!glyphChunk || glyphChunk->header < 16)
+            return copy();
+        uint32_t count = LoadLE32(data + glyphChunk->offset + 12);
+        if (16 + size_t(count) * 40 > glyphChunk->size)
+            return copy();
+        std::vector<Glyph> glyphs(count);
+        memcpy(glyphs.data(), data + glyphChunk->offset + 16, size_t(count) * 40);
+        // Icon glyphs name their texture with the top bit set; 0xB1 (square) gives the unit.
+        auto iconTexture = [&](const Glyph& g) { return (g.texture & 0x80000000u) && (g.texture & 0x7FFFFFFFu) < textures.size(); };
+        auto square = std::find_if(glyphs.begin(), glyphs.end(), [](const Glyph& g) { return g.code == 0xB1; });
+        if (square == glyphs.end() || !iconTexture(*square) || !(square->width > 0))
+            return copy();
+
+        std::map<uint32_t, std::vector<uint8_t>> replaced;  // texture -> new texture chunk
+        std::string names;
+        for (Glyph& g : glyphs)
+        {
+            if (std::find(codes.begin(), codes.end(), char32_t(g.code)) == codes.end() || !iconTexture(g))
+                continue;
+            uint32_t index = g.texture & 0x7FFFFFFFu;
+            const uint8_t* png;
+            size_t pngSize;
+            Image old;
+            if (replaced.count(index) || !TexturePng(data, textures[index], png, pngSize) || !DecodePng(png, pngSize, old) || old.w >= old.h)
+                continue;
+            Image wide;
+            wide.w = (int(std::lround(old.h * aspect)) + 31) / 32 * 32, wide.h = old.h;
+            wide.rgba.assign(size_t(wide.w) * wide.h * 4, 0);
+            int ox = (wide.w - old.w) / 2;
+            for (int y = 0; y < old.h; y++)
+                memcpy(wide.At(ox, y), old.At(0, y), size_t(old.w) * 4);
+            WidenedIcon icon{ char32_t(g.code), wide.w, wide.h, {} };
+            std::vector<uint8_t> newPng = EncodePng(wide, PngChunk(png, pngSize, "PLTE"), PngChunk(png, pngSize, "tRNS"), &icon.indices);
+            std::vector<uint8_t> texture = CloneTexture(data, textures[index], newPng, 0);
+            // Texture and image headers: name (length byte + characters), version, width, height.
+            auto resize = [&](size_t chunk) {
+                size_t at = chunk + 13 + texture[chunk + 12] + 4;
+                StoreLE32(&texture[at], uint32_t(wide.w)), StoreLE32(&texture[at + 4], uint32_t(wide.h));
+            };
+            resize(0);
+            for (const Chunk& child : Children(texture.data(), LoadLE32(&texture[4]), texture.size()))
+                if (child.id == IMAGE)
+                    resize(child.offset);
+            replaced[index] = std::move(texture);
+            g.width = g.advance = square->width * float(wide.w) / float(wide.h);
+            g.u0 = 0, g.u1 = 1;
+            widened.push_back(std::move(icon));
+            char name[24];
+            snprintf(name, sizeof(name), "%s%02X %dx%d", names.empty() ? "" : ", ", unsigned(g.code), wide.w, wide.h);
+            names += name;
+        }
+        if (replaced.empty())
+            return copy();
+
+        size_t start = out.size();
+        out.insert(out.end(), data, data + header);
+        for (const Chunk& child : children)
+        {
+            auto index = std::find_if(textures.begin(), textures.end(), [&](const Chunk& t) { return t.offset == child.offset; });
+            auto it = index == textures.end() ? replaced.end() : replaced.find(uint32_t(index - textures.begin()));
+            if (it != replaced.end())
+                out.insert(out.end(), it->second.begin(), it->second.end());
+            else if (&child == glyphChunk)
+            {
+                size_t at = out.size() + 16;
+                out.insert(out.end(), data + child.offset, data + child.offset + child.size);
+                memcpy(&out[at], glyphs.data(), size_t(count) * 40);
+            }
+            else
+                out.insert(out.end(), data + child.offset, data + child.offset + child.size);
+        }
+        StoreLE32(&out[start + 8], uint32_t(out.size() - start));
+        log += fontName + ": icons " + names + " widened; ";
+        return int(replaced.size());
     }
 
     bool DecodePng(const uint8_t* data, size_t size, int& width, int& height, std::vector<uint8_t>& rgba)

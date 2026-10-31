@@ -30,6 +30,7 @@
 //    (audio/game_volumes.cpp).
 
 #include "pc_frontend.h"
+#include "prompt_icons.h"
 #include "settings.h"
 #include "title_logo.h"
 #include "../diagnostics.h"
@@ -351,5 +352,6 @@ namespace settings
         rcf_overlay::RegisterBuiltinPatch("default", "package\\cdd70a8c.p3d", "tela de opcoes do PS2 vazia", PatchOptionsScreen);
         RegisterPcFrontendPatches();  // EXIT GAME, no storage device button, PC texts
         RegisterTitleLogoPatches();   // the logo with "Definitive Edition" on the title and main menu
+        prompts::RegisterIconPatches();  // RT / LT wide enough for L2 / R2 and key caps
     }
 }

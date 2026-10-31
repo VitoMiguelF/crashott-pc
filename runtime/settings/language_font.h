@@ -38,6 +38,22 @@ namespace settings::language_font
     int ComposeFont(const uint8_t* data, size_t size, const std::vector<Recipe>& recipes, std::vector<uint8_t>& out,
                     std::string& log);
 
+    // A button icon WidenIcons made wider: its new texture's palette indices (w x h, top row first).
+    struct WidenedIcon
+    {
+        char32_t icon;
+        int w, h;
+        std::vector<uint8_t> indices;
+    };
+
+    // The icons `codes` of font chunk [data, data + size) whose texture is taller than wide (RT /
+    // LT in Titans_Large: 64x128) get a texture `aspect` times as wide as high, the old one centred
+    // in it, and a glyph that wide (in the units of the square icon 0xB1), so the PlayStation and
+    // keyboard icons drawn in their place have room (prompt_icons.cpp); the game's own icon looks
+    // the same, with space around it. Appends the font to `out`; returns the icons widened.
+    int WidenIcons(const uint8_t* data, size_t size, const std::vector<char32_t>& codes, float aspect, std::vector<uint8_t>& out,
+                   std::vector<WidenedIcon>& widened, std::string& log);
+
     // Decodes a PNG to straight-alpha RGBA8 (plat::DecodePng); false on failure.
     bool DecodePng(const uint8_t* data, size_t size, int& width, int& height, std::vector<uint8_t>& rgba);
 }
