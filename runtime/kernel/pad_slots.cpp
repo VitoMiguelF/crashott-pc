@@ -574,6 +574,10 @@ namespace input::slots
 
     void SetVibration(uint32_t user, uint16_t left, uint16_t right)
     {
+        // [controls] vibration off: the motors stay still, for every kind of pad (XInput, the
+        // PlayStation pads read directly, SDL's on Linux / Android).
+        if (!settings::Get().controls.vibration)
+            left = right = 0;
         int slot = -1;
         uint32_t id = 0;
         {

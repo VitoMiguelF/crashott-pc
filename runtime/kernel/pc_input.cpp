@@ -275,7 +275,7 @@ namespace input::pc
             g_leftClicks++;
             float u, v, aspect;
             uint16_t prompt = 0;
-            if (InMenus() && !settings::menu::IsOpen() && !dev::console::IsOpen() && Controls().mouseMenus && CursorOnPicture(u, v, aspect))
+            if (InMenus() && !settings::menu::IsOpen() && !dev::console::IsOpen() && CursorOnPicture(u, v, aspect))
                 prompt = settings::prompts::ButtonAt(u, v, aspect);
             if (prompt)
             {
@@ -667,11 +667,6 @@ namespace input::pc
             uint32_t right = g_rightClicks.load();
             bool backed = right != s_right;
             s_right = right;
-            if (!settings::Get().controls.mouseMenus)
-            {
-                g_pressAccept = 0;
-                return 0;
-            }
             menu_mouse::Menu menu;
             // (Not on the name entry's keyboard, which takes its clicks itself: save_screens.cpp, nor on the
             // online SKIN AND COLOR, whose arrows take theirs: a tap anywhere else wore the skin, mp_menu.cpp.)
@@ -782,13 +777,13 @@ namespace input::pc
             if (length > 0.0f)
             {
                 bool walk = action(Action::Walk);
-                float scale = (walk ? controls.walkSpeed / 100.0f : 1.0f) / length;
+                float scale = (walk ? settings::WALK_SPEED / 100.0f : 1.0f) / length;
                 x *= scale, y *= scale;
                 static bool s_walking = false;
                 if (walk != s_walking && poll)
                 {
                     s_walking = walk;
-                    Log("[input] keyboard: %s (left stick at %d%%)", walk ? "walking" : "running", walk ? controls.walkSpeed : 100);
+                    Log("[input] keyboard: %s (left stick at %d%%)", walk ? "walking" : "running", walk ? settings::WALK_SPEED : 100);
                 }
             }
 

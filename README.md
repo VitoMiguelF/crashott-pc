@@ -35,8 +35,8 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 >   install, offline; it asks where to install, makes the shortcuts and installs DLSS only on a GPU that
 >   runs it.
 > - **Ultrawide (21:9, 32:9) and 16:10 with Hor+**: the same vertical view, more of the world on both
->   sides, nothing stretched or cropped. The HUD and menus stay at 16:9 in the middle (or the HUD
->   corners at the screen's edges), menu backgrounds fill the screen, and videos play at 16:9 between
+>   sides, nothing stretched or cropped. The HUD and menus stay at 16:9 in the middle, menu
+>   backgrounds fill the screen, and videos play at 16:9 between
 >   black bars. SETTINGS > VIDEO > ASPECT RATIO (AUTO follows the monitor).
 > - **Shaders compiled in the background**: the first time an effect appeared, the game used to stop to
 >   build it (~34 ms each, up to 1.6 s in one frame in the village, and all of it again after every
@@ -65,8 +65,8 @@ replaces the Xbox 360 (graphics, audio, input, files, saves) and a set of PC imp
 - **Native PC game**: story, menus and saves run natively, at the original 30 fps or unlocked
   (60 / 120 / unlimited), in a window, borderless or fullscreen, at internal resolutions up to 4K.
 - **Ultrawide and 16:10**: 21:9 (2560x1080, 3440x1440...), 32:9 (5120x1440...) and 16:10 (1280x800, Steam
-  Deck) with a wider view (Hor+), the HUD and menus kept at 16:9 in the middle (or the HUD corners at the
-  screen's edges), menu backgrounds filling the screen and the videos at 16:9 between black bars.
+  Deck) with a wider view (Hor+), the HUD and menus kept at 16:9 in the middle, menu
+  backgrounds filling the screen and the videos at 16:9 between black bars.
   SETTINGS > VIDEO > ASPECT RATIO (AUTO follows the monitor).
 - **DLSS / DLAA** (NVIDIA RTX) and **FSR 3.1** (any GPU) upscaling, FXAA / SMAA, anisotropic filtering,
   adjustable motion blur, depth of field and shadow softness.
@@ -326,8 +326,8 @@ de PC.
 > - **Um `.exe` só**: baixe apenas o `CrashSetup-<versão>.exe` e abra. Sem zip para descompactar, nada mais para
 >   instalar, offline; ele pergunta onde instalar, cria os atalhos e só instala o DLSS numa placa que o roda.
 > - **Ultrawide (21:9, 32:9) e 16:10 com Hor+**: a mesma visão na vertical e mais do mundo dos dois
->   lados, sem esticar nem cortar. O HUD e os menus ficam em 16:9 no meio (ou os cantos do HUD nas bordas
->   da tela), os fundos dos menus preenchem a tela e os vídeos passam em 16:9 entre faixas pretas.
+>   lados, sem esticar nem cortar. O HUD e os menus ficam em 16:9 no meio, os fundos
+>   dos menus preenchem a tela e os vídeos passam em 16:9 entre faixas pretas.
 >   SETTINGS > VÍDEO > PROPORÇÃO (AUTO segue o monitor).
 > - **Shaders compilados em segundo plano**: na primeira vez que um efeito aparecia, o jogo parava para
 >   montá-lo (~34 ms cada, até 1,6 s num quadro só na vila, e tudo de novo a cada atualização do driver).
@@ -354,8 +354,8 @@ de PC.
 - **Jogo nativo de PC**: história, menus e saves rodam nativamente, a 30 fps como o original ou
   sem limite (60 / 120 / livre), em janela, sem bordas ou tela cheia, com resolução interna até 4K.
 - **Ultrawide e 16:10**: 21:9 (2560x1080, 3440x1440...), 32:9 (5120x1440...) e 16:10 (1280x800, Steam
-  Deck) com visão mais larga (Hor+), o HUD e os menus em 16:9 no meio (ou os cantos do HUD nas bordas da
-  tela), os fundos dos menus preenchendo a tela e os vídeos em 16:9 entre faixas pretas.
+  Deck) com visão mais larga (Hor+), o HUD e os menus em 16:9 no meio, os fundos dos menus
+  preenchendo a tela e os vídeos em 16:9 entre faixas pretas.
   SETTINGS > VÍDEO > PROPORÇÃO (AUTO segue o monitor).
 - **DLSS / DLAA** (NVIDIA RTX) e **FSR 3.1** (qualquer placa), FXAA / SMAA, filtro anisotrópico, motion
   blur, profundidade de campo e suavidade das sombras ajustáveis.

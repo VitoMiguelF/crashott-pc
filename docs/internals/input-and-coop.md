@@ -80,4 +80,8 @@ Full write-ups: `runtime/NOTES.md` "Controles de PC" (with "Co-op local" and "Mo
   (`skip_cinematics.cpp`) shows START instead of B with PS2, the logo videos included; the buttons don't
   swap there (nodes < 59 and the cutscenes), so B still skips too.
 - The new row moved the key bindings down one: `controles_tela` now presses DOWN x14 to reach JUMP.
+- 2026-10-31: WALK SPEED and MOUSE IN MENUS left the tab (always 40% / always on; old `walk_speed` /
+  `mouse_menus` keys are ignored silently) and VIBRATION came in after CONTROLLER MAPPING: JUMP is DOWN x13.
+  `[controls] vibration = false` zeroes the motors in `input::slots::SetVibration`, the one path from
+  `XamInputSetState` to every pad backend (XInput, HID DualSense/DS4, SDL).
 - Profile `mapeamento_controle` (only checks the row and the log; the PS2 buttons were tested by hand).

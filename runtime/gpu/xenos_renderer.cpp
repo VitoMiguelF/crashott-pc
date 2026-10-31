@@ -818,6 +818,7 @@ float4 main(XeVertexOutput input) : SV_Target0
 )";
         constexpr uint64_t DEPTH_ALIAS_PS_KEY = 0xDEA7A11A5C1EA700ull;
 
+        constexpr size_t PRESENT_CONSTANTS = 12;  // PRESENT_PS's cbuffer, in floats (with its padding)
         const char* PRESENT_PS = R"(
 Texture2D<float4> source : register(t0);
 SamplerState linearClamp : register(s0);
@@ -828,6 +829,8 @@ cbuffer constants : register(b0)
     uint flags;      // 1: swap red/blue, 2: no source (show a pattern), 4/8: raw debug views
     uint swizzle;    // front buffer fetch constant swizzle (3 bits per component)
     float2 origin;   // top-left of the image in the target (black bars before it keep the aspect ratio)
+    float gamma;     // [video] gamma / 100: above 1 brighter (1 = unchanged)
+    float saturation;  // [video] saturation / 100 (1 = unchanged)
 };
 float select(float4 v, uint s)
 {
@@ -852,6 +855,10 @@ float4 main(float4 position : SV_Position) : SV_Target
     }
     float3 v = float3(select(t, swizzle & 7u), select(t, (swizzle >> 3) & 7u), select(t, (swizzle >> 6) & 7u));
     if (flags & 1u) v = v.bgr;
+    if (saturation != 1.0)
+        v = saturate(lerp(dot(v, float3(0.299, 0.587, 0.114)).xxx, v, saturation));
+    if (gamma != 1.0)
+        v = pow(saturate(v), 1.0 / gamma);
     return float4(v, 1.0);
 }
 )";
@@ -1574,14 +1581,14 @@ float4 main(float4 position : SV_Position) : SV_Target
         }
 
         // Resolve and present passes: one texture, 8 dwords of constants, a linear clamp sampler.
-        rhi::Pipeline* CreateBlitPipeline(const char* name, const char* ps, DXGI_FORMAT target, uint32_t textures = 1)
+        rhi::Pipeline* CreateBlitPipeline(const char* name, const char* ps, DXGI_FORMAT target, uint32_t textures = 1, uint32_t constantBytes = 32)
         {
             rhi::PassPipelineDesc desc;
             desc.name = name;
             desc.ps = ps;
             desc.targets[0] = target;
             desc.textureCount = textures;
-            desc.constantBytes = 32;
+            desc.constantBytes = constantBytes;
             desc.samplers[0] = LinearClamp();
             desc.samplerCount = 1;
             rhi::Pipeline* pipeline = g_rhi->CreatePassPipeline(desc);
@@ -1616,7 +1623,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             auto it = g_presentPipelines.find(uint32_t(format));
             if (it != g_presentPipelines.end())
                 return it->second;
-            rhi::Pipeline* pipeline = CreateBlitPipeline("present", PRESENT_PS, format);
+            rhi::Pipeline* pipeline = CreateBlitPipeline("present", PRESENT_PS, format, 1, PRESENT_CONSTANTS * 4);
             g_presentPipelines[uint32_t(format)] = pipeline;
             return pipeline;
         }
@@ -1659,8 +1666,6 @@ float4 main(float4 position : SV_Position) : SV_Target
         // scaled, between black bars.
         constexpr uint32_t HUD_WIDTH = 1280, HUD_HEIGHT = 720;
         constexpr uint64_t BINK_PS = 0xbd65c6f2d6f2d6d4ull;  // shaders\binkdecompress
-        constexpr uint32_t NODE_GAME_RUNNING = 638;           // Frontend.bfig (docs/internals/frontend-and-boot.md)
-        bool g_hudCentered = true;  // settings video.hud_16_9 (Swap)
 
         struct HudDraw
         {
@@ -1683,16 +1688,9 @@ float4 main(float4 position : SV_Position) : SV_Target
             if (hud.video)
                 hud.mode = 4;
             else
-            {
                 hud.mode = readsResolve ? 1u : 3u;
-                // HUD corners at the edges: in gameplay only (node 638 GameRunning; not the pause
-                // or the menus, whose pieces must stay together).
-                if (!g_hudCentered && g_stretch > 1.0f && settings::menu::FrontendNode() == NODE_GAME_RUNNING)
-                {
-                    hud.mode |= 8u;
-                    hud.shift = float(HUD_WIDTH) * 0.5f * (1.0f - hud.scaleX);
-                }
-            }
+            // Mode bit 8 (the HUD corners at the screen's edges, the old video.hud_16_9 = false) is
+            // no longer set: the HUD always stays in the 16:9 area.
             return g_drawHud = hud;
         }
 
@@ -1724,35 +1722,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             return c[3] == 0.0f && c[7] == 0.0f && c[11] == 0.0f && c[15] == 1.0f;
         }
 
-        // Anchored HUD: -1 if every vertex of the draw is in the left 40% of the screen, 1 in the
-        // right 40%, 0 otherwise (or when it can't tell).
-        int HudDrawSide(const float* data, uint32_t startDwords, uint32_t dwords, uint32_t stride, uint32_t minIndex, uint32_t maxIndex,
-                        const SystemConstants& system, float targetWidth)
-        {
-            if (!data || maxIndex < minIndex || maxIndex - minIndex > 4096)
-                return 0;
-            float c[16];
-            LoadHudMatrix(c);
-            float lo = 1e30f, hi = -1e30f;
-            for (uint32_t v = minIndex; v <= maxIndex; v++)
-            {
-                int64_t at = int64_t(v) * stride - int64_t(startDwords);
-                if (at < 0 || at + 3 > int64_t(dwords))
-                    return 0;
-                float x = data[at], y = data[at + 1], z = data[at + 2];
-                float clipX = x * c[0] + y * c[4] + z * c[8] + c[12];
-                float clipW = x * c[3] + y * c[7] + z * c[11] + c[15];
-                if (!(fabsf(clipW) > 1e-6f))
-                    return 0;
-                float ndc = clipX / clipW * system.ndcScale[0] + system.ndcOffset[0];
-                float px = (ndc + 1.0f) * 0.5f * targetWidth;
-                lo = std::min(lo, px), hi = std::max(hi, px);
-            }
-            float side = float(HUD_WIDTH) * 0.4f;
-            return hi < side ? -1 : lo > float(HUD_WIDTH) - side ? 1 : 0;
-        }
-
-        // Where the draw of a button icon lands (through the game's 2D vertex shader, as HudDrawSide):
+        // Where the draw of a button icon lands (through the game's 2D vertex shader, c4..c7):
         // its box, 0..1 of the picture, for the clickable prompts (prompt_icons.h IconSpots).
         void NoteIconSpot(const float* data, uint32_t startDwords, uint32_t dwords, uint32_t stride, uint32_t minIndex, uint32_t maxIndex,
                           const SystemConstants& system, float targetWidth, float targetHeight, const HudDraw& hud)
@@ -3571,27 +3541,6 @@ float4 main(float4 position : SV_Position) : SV_Target
             // cover. Squeezed, they left the HUB's depth uncleared in strips (titan dolls cut).
             if (rectList)
                 hud = HudDraw{};
-            if (hud.mode & 8u)
-            {
-                // Anchored HUD: the side of the whole draw (its vertices through the game's 2D
-                // vertex shader), so an element moves in one piece and centred text stays whole.
-                int side = 0;
-                for (uint32_t r = 0; r < rangeCount && vs->info.hash == HUD_VS; r++)
-                {
-                    const VertexFetchBinding* position = nullptr;
-                    for (const VertexFetchBinding& binding : vs->info.vertexFetches)
-                        if (binding.fetchConstant == ranges[r].fetchConstant && !position)
-                            position = &binding;
-                    if (position && position->minOffsetDwords == 0 && position->strideDwords >= 3)
-                        side = HudDrawSide(reinterpret_cast<const float*>(ranges[r].uploaded), ranges[r].startDwords, ranges[r].dwords,
-                                           position->strideDwords, indexData.minIndex, indexData.maxIndex, system, float(targetWidth));
-                    break;
-                }
-                if (side)
-                    hud.shift *= float(side);
-                else
-                    hud.mode &= ~8u;
-            }
             if (hud.video && colorTargets[0])
                 ClearVideoBars(*colorTargets[0]);
             // The frontend's page through its camera: a frontend screen, for the menus' mouse.
@@ -4360,7 +4309,6 @@ float4 main(float4 position : SV_Position) : SV_Target
         g_effects.motionBlur = float(options.motionBlur) / 100.0f;
         g_effects.depthOfField = float(options.depthOfField) / 100.0f;
         g_effects.shadowSoftness = float(options.shadowSoftness) / 100.0f;
-        g_hudCentered = options.hud16x9;
         // [graphics] shader_compilation applies at once; while the pipelines of earlier runs take
         // long to compile again at start (a new driver), a notice says so.
         {
@@ -4444,7 +4392,9 @@ float4 main(float4 position : SV_Position) : SV_Target
             imageY = std::floor((float(g_backBufferHeight) - imageHeight) * 0.5f);
         }
         bool bars = imageWidth < float(g_backBufferWidth) || imageHeight < float(g_backBufferHeight);
-        float constants[8] = { 1.0f, 1.0f, imageWidth, imageHeight, 0.0f, 0.0f, imageX, imageY };
+        // [video] gamma / saturation (live): only the present that draws into the back buffer.
+        float gamma = float(options.gamma) / 100.0f, saturation = float(options.saturation) / 100.0f;
+        float constants[PRESENT_CONSTANTS] = { 1.0f, 1.0f, imageWidth, imageHeight, 0.0f, 0.0f, imageX, imageY, gamma, saturation, 0.0f, 0.0f };
         uint32_t flags = g_swapRedBlue ? 1u : 0u;
         // The front buffer is read like a texture, through the swizzle of the fetch constant
         // VdSwap was given (as Xenia's RequestSwapTexture does). D3D resolves the frame with
@@ -4512,11 +4462,11 @@ float4 main(float4 position : SV_Position) : SV_Target
         }
         present.viewport = { imageX, imageY, imageWidth, imageHeight };
         present.scissor = { int32_t(imageX), int32_t(imageY), int32_t(imageX + imageWidth), int32_t(imageY + imageHeight) };
-        float presentConstants[8];
+        float presentConstants[PRESENT_CONSTANTS];
         if (antiAliasing)
         {
             // 1:1 copy with the swizzle, then FXAA / SMAA, then the scaled present below.
-            float copyConstants[8] = { constants[0], constants[1], float(g_aaWidth), float(g_aaHeight), constants[4], constants[5], 0.0f, 0.0f };
+            float copyConstants[PRESENT_CONSTANTS] = { constants[0], constants[1], float(g_aaWidth), float(g_aaHeight), constants[4], constants[5], 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f };
             rhi::PassDraw copy = present;
             copy.pipeline = GetPresentPipeline(DXGI_FORMAT_R8G8B8A8_UNORM);
             copy.targets[0] = g_aaInput;
@@ -4538,7 +4488,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
             // The scaled present of the result: no swizzle, no red/blue swap.
             present.textures[0] = { g_aaOutput };
-            float scaled[8] = { 1.0f, 1.0f, imageWidth, imageHeight, 0.0f, 0.0f, imageX, imageY };
+            float scaled[PRESENT_CONSTANTS] = { 1.0f, 1.0f, imageWidth, imageHeight, 0.0f, 0.0f, imageX, imageY, gamma, saturation, 0.0f, 0.0f };
             uint32_t identity = 0x688, noFlags = 0;
             memcpy(&scaled[4], &noFlags, 4);
             memcpy(&scaled[5], &identity, 4);

@@ -482,12 +482,13 @@ Capturas da organização atual das abas em `docs\capturas\settings_abas\`: cada
 | Tamanho da legenda | 50–200% (padrão 100%) | na hora |
 | Fundo da legenda | 0–100%: opacidade da caixa atrás do texto (padrão 50%; 0% = só o contorno) | na hora |
 | **Vídeo** | | |
-| Modo de tela | janela, sem bordas (janela do tamanho do monitor), tela cheia (exclusiva; com Alt+Tab volta a sem bordas e retoma quando a janela volta ao foco) | na hora |
+| Modo de tela | janela, sem bordas (padrão: janela do tamanho do monitor), tela cheia (exclusiva; com Alt+Tab volta a sem bordas e retoma quando a janela volta ao foco) | na hora |
 | Resolução | 1280x720 (original), 1600x900, 1920x1080, 2560x1440, 3840x2160: o tamanho em que o jogo é desenhado por dentro, depois ajustado à janela (`docs\capturas\antigas\resolucao_720_vs_1440.jpg`). A lista segue a **Proporção**: 21:9 1720x720, 2560x1080, 3440x1440, 3840x1600, 5120x2160; 32:9 2560x720, 3840x1080, 5120x1440, 7680x2160; 16:10 1280x800, 1440x900, 1680x1050, 1920x1200, 2560x1600, 3840x2400; AUTO acrescenta a resolução do monitor | ao sair da tela, sem reiniciar (`docs\capturas\settings_aplicar\ao_vivo_*.jpg`) |
 | Limite de FPS | 30 (original), 60, 120, sem limite | na hora |
 | V-Sync | ligado / desligado (padrão: desligado); com ele ligado o FPS também fica limitado à taxa do monitor | na hora |
 | Proporção | AUTO (padrão: a do monitor principal), 16:9 (original), 16:10, 21:9, 32:9. Mais larga que 16:9: vê mais dos lados (Hor+, o FOV vertical do 16:9); 16:10: vê mais em cima e embaixo. O HUD e os menus ficam na área 16:9 do meio, os fundos dos menus preenchem a tela, os vídeos ficam em 16:9 com faixas pretas (veja "Ultrawide") | ao sair da tela, sem reiniciar |
-| HUD em 16:9 | ligado (padrão): HUD e menus na área 16:9 do meio; desligado: no jogo, os cantos do HUD (vida, mojo, P2) vão para as bordas da tela | na hora |
+| Gamma | 50–150% (padrão 100% = a imagem do jogo): acima de 100% a imagem fica mais clara, abaixo mais escura. Aplicado no último passe (o que desenha a imagem na janela), no PC e no Android; não mexe nos menus do port nem no overlay | na hora |
+| Saturação | 0–200% (padrão 100% = original): a saturação das cores da imagem final; acima de 100% as cores ficam mais fortes, mais perto do PS2 (issue #22) | na hora |
 | Anti-aliasing | desligado / FXAA / SMAA: pós-processamento da imagem final, na resolução interna (o FXAA amolece também o HUD; o SMAA quase não) | na hora (`docs\capturas\antigas\graficos\aa_sem_fxaa_smaa.jpg`) |
 | Overlay | desligado, só FPS, FPS + frame time, completo (o mesmo do F1; veja "Overlay de desempenho") | na hora |
 | **Gráficos** | | |
@@ -498,7 +499,7 @@ Capturas da organização atual das abas em `docs\capturas\settings_abas\`: cada
 | Profundidade de campo | 0–100%: o desfoque de distância das cenas; 0% desliga | na hora (`docs\capturas\antigas\graficos\profundidade_de_campo_100_vs_0.jpg`) |
 | Filtro anisotrópico | desligado, 2x, 4x, 8x, 16x (o jogo já pede 16x na maioria das texturas da fase; a opção vale como mínimo) | na hora (`docs\capturas\antigas\graficos\mipmaps_antes_depois.jpg`) |
 | Suavidade das sombras | 0–200%: raio do filtro da borda das sombras (0% = borda dura). Não há resolução de sombra para ajustar (veja abaixo) | na hora (`docs\capturas\antigas\graficos\sombra_suavidade_100_vs_0.jpg`) |
-| **Controles** | ícones dos botões, câmera e sensibilidade do mouse, andar devagar, mouse nos menus e as teclas de cada ação (veja "Controles de PC") | na hora |
+| **Controles** | jogadores, ícones dos botões, mapeamento do controle, vibração (ligada por padrão; vale para Xbox/XInput, DualSense/DualShock e os controles do SDL no Linux/Android), câmera e sensibilidade do mouse e as teclas de cada ação (veja "Controles de PC") | na hora |
 | **Definitive Edition** | os extras deste port | |
 | Cores do mojo `*` | PS2 (padrão: mojo grande azul bem claro e mais brilhante, extra grande roxo lilás) / Xbox 360 (todos azuis, como no original) (veja "Cores do mojo") | reinicia o jogo (`docs\capturas\antigas\mojo\`) |
 | HD AI Remaster `*` | desligado (padrão) / ligado: texturas e modelos remasterizados por IA do jogo todo (`data\remaster_full`), ou só da fase 1 (`data\remaster_l1`) se o completo não existir (veja "HD AI Remaster"). Sem esses arquivos no PC aparece **INDISPONÍVEL** e não muda | reinicia o jogo (`docs\capturas\hd_remaster\`) |
@@ -586,7 +587,7 @@ A tela segue o estilo do frontend do jogo, com a arte lida na abertura do `defau
 
 **Serrilhado das texturas**: as texturas agora têm mipmaps e são filtradas com trilinear + anisotrópico, como no console (antes o runtime só usava o nível base, o que deixava o chão e a folhagem distantes "chiando").
 
-**Ultrawide** (SETTINGS > VÍDEO > PROPORÇÃO e HUD EM 16:9; `[video] aspect`, `hud_16_9`): o jogo continua desenhando para 16:9 em 1280x720, e o runtime alarga o resto. Os render targets ficam mais largos (3440x1440 = 2,0x na altura e 2,69x na largura), a projeção da câmera ganha FOV horizontal com o mesmo vertical do 16:9 (Hor+: 80° → 96,9° na vila em 21:9, 118° em 32:9) e o culling usa o ângulo largo, então nada some nas laterais. O 2D do jogo volta para a área 16:9 do meio, triângulo por triângulo: o que cobre a largura toda (escurecimentos, faixas de cinema, a passada final da cena) continua indo de borda a borda, e os fundos dos menus dão zoom para preencher a tela. Com HUD EM 16:9 desligado, no jogo, os elementos de canto do HUD (vida, mojo, P2) vão para as bordas; textos e a pausa ficam no meio. Os vídeos Bink ficam em 16:9 com faixas pretas. As cenas do motor também são Hor+. DLSS/FSR, iluminação remaster, motion blur e profundidade de campo funcionam igual (trabalham em coordenadas normalizadas). Em 16:10 (Steam Deck, 1280x800) é o contrário: mesma largura de visão do 16:9 e um pouco mais em cima e embaixo. Capturas em `build\ultrawide\` (local) e detalhes em `runtime/NOTES.md`, "Ultrawide".
+**Ultrawide** (SETTINGS > VÍDEO > PROPORÇÃO; `[video] aspect`): o jogo continua desenhando para 16:9 em 1280x720, e o runtime alarga o resto. Os render targets ficam mais largos (3440x1440 = 2,0x na altura e 2,69x na largura), a projeção da câmera ganha FOV horizontal com o mesmo vertical do 16:9 (Hor+: 80° → 96,9° na vila em 21:9, 118° em 32:9) e o culling usa o ângulo largo, então nada some nas laterais. O 2D do jogo volta para a área 16:9 do meio, triângulo por triângulo: o que cobre a largura toda (escurecimentos, faixas de cinema, a passada final da cena) continua indo de borda a borda, e os fundos dos menus dão zoom para preencher a tela. O HUD fica sempre na área 16:9 (a antiga opção HUD EM 16:9, que levava os cantos do HUD às bordas, saiu). Os vídeos Bink ficam em 16:9 com faixas pretas. As cenas do motor também são Hor+. DLSS/FSR, iluminação remaster, motion blur e profundidade de campo funcionam igual (trabalham em coordenadas normalizadas). Em 16:10 (Steam Deck, 1280x800) é o contrário: mesma largura de visão do 16:9 e um pouco mais em cima e embaixo. Capturas em `build\ultrawide\` (local) e detalhes em `runtime/NOTES.md`, "Ultrawide".
 
 **Compilação de shaders** (SETTINGS > GRÁFICOS > COMPILAÇÃO DE SHADERS; `[graphics] shader_compilation`, vale na hora): na **ASSÍNCRONA** (o padrão) um efeito que aparece pela primeira vez não trava mais o jogo. Com placas e drivers que têm `VK_EXT_graphics_pipeline_library` (NVIDIA e AMD com driver recente; a linha `[vulkan] shader compilation` do log diz se a placa tem), cada shader é compilado uma vez só, em segundo plano, e cada combinação nova de estado é montada a partir dessas partes em menos de 1 ms; uma versão otimizada a substitui assim que fica pronta. O jogo também guarda a lista dos pipelines que já usou (`userdata\shadercache\pipeline_keys.bin`) e os recompila em segundo plano ao abrir (instantâneo com o cache do driver; depois de atualizar o driver aparece "PREPARANDO SHADERS... n%" num canto enquanto isso). Sem a extensão, só essa recompilação ao abrir fica em segundo plano. A **SINCRONIZADA** compila cada efeito novo na hora em que ele aparece (engasgos curtos, como antes): use se a assíncrona der problema num driver. No `settings.toml` existe ainda `aggressive`: assíncrona e, enquanto compila, pula por alguns quadros os desenhos que podem esperar (só cor, na cena 3D; nunca profundidade, stencil das sombras ou limpezas), então um efeito pode aparecer um instante depois. Medidas e detalhes: `runtime/NOTES.md`, "Compilação de shaders assíncrona".
 
@@ -605,12 +606,13 @@ music = 100      # 0-100, vale na hora (como effects e voice)
 effects = 100
 voice = 100
 [video]
-window = "windowed"      # windowed | borderless | fullscreen
+window = "borderless"    # windowed | borderless (padrão) | fullscreen
 vsync = false
 fps_limit = 30           # 30 (original) | 60 | 120 | 0 = sem limite
 resolution = "1280x720"  # 1280x720 | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160 (ao sair da tela); a largura segue aspect
 aspect = "auto"          # auto | 16:9 | 16:10 | 21:9 | 32:9 (ao sair da tela)
-hud_16_9 = true          # HUD e menus em 16:9 no meio; false = cantos do HUD nas bordas (na hora)
+gamma = 100              # 50-150 %, gamma da imagem final (100 = original; na hora)
+saturation = 100         # 0-200 %, saturação das cores da imagem final (100 = original; na hora)
 overlay = "off"          # off | fps | frametime | full (F1 alterna)
 antialiasing = "off"     # off | fxaa | smaa
 [graphics]
@@ -802,7 +804,7 @@ Tirados do próprio jogo: o mapa de entradas (`script\mixins\inputmap_methods.lu
 | Ação | Teclas padrão | Vira |
 |---|---|---|
 | Andar | W A S D | analógico esquerdo |
-| Andar devagar | Alt esquerdo (segurar) | analógico a 40% (`walk_speed`) |
+| Andar devagar | Alt esquerdo (segurar) | analógico a 40% |
 | Câmera | mouse (na gameplay) / setas | analógico direito |
 | Pular | Espaço | A |
 | Ataque leve | botão esquerdo do mouse / J | X |
@@ -829,14 +831,13 @@ jump = "SPACE"
 light_attack = "MOUSE1, J"     # até duas teclas por ação; "none" = nenhuma
 rotate_stick = "Q"
 mouse_sensitivity = 100        # 10-400 %
-walk_speed = 40                # 10-90 %
 mouse_camera = true
 invert_y = false
-mouse_menus = true
+vibration = true               # vibração dos controles (XInput, DualSense e os do SDL)
 prompts = "auto"               # auto | xbox | playstation | keyboard
 ```
 
-Nomes das teclas: `A`-`Z`, `0`-`9`, `F1`-`F24`, `SPACE`, `ENTER`, `ESC`, `TAB`, `BACKSPACE`, `LSHIFT`, `RSHIFT`, `LCTRL`, `RCTRL`, `LALT`, `RALT`, `UP`/`DOWN`/`LEFT`/`RIGHT`, `MOUSE1` (esquerdo), `MOUSE2` (direito), `MOUSE3` (meio), `MOUSE4`, `MOUSE5`, `WHEELUP`, `WHEELDOWN`, `NUM0`-`NUM9`, etc. A aba CONTROLES também tem os ícones, a câmera e a sensibilidade do mouse, o andar devagar e o mouse nos menus. Tudo vale na hora.
+Nomes das teclas: `A`-`Z`, `0`-`9`, `F1`-`F24`, `SPACE`, `ENTER`, `ESC`, `TAB`, `BACKSPACE`, `LSHIFT`, `RSHIFT`, `LCTRL`, `RCTRL`, `LALT`, `RALT`, `UP`/`DOWN`/`LEFT`/`RIGHT`, `MOUSE1` (esquerdo), `MOUSE2` (direito), `MOUSE3` (meio), `MOUSE4`, `MOUSE5`, `WHEELUP`, `WHEELDOWN`, `NUM0`-`NUM9`, etc. A aba CONTROLES também tem os ícones, a vibração e a câmera e a sensibilidade do mouse. Tudo vale na hora. As antigas opções `walk_speed` (o andar devagar fica sempre em 40%) e `mouse_menus` (o mouse nos menus fica sempre ligado) saíram; um `settings.toml` antigo com elas carrega sem erro.
 
 ### Mouse nos menus
 
@@ -844,7 +845,7 @@ Como num jogo de PC. Nos menus do jogo (menu principal, saves, dificuldade, menu
 
 Na tela **SETTINGS**: passar o mouse numa linha a seleciona; clique numa **aba** abre a aba (clique em LB / RB passa para a vizinha); clique nas **setas** ◄ ► muda o valor; clique numa **barra de estrelas** põe o valor ali (a 5ª estrela = 50%) e arrastar com o botão apertado ajusta; clique na linha é o A (liga/desliga, troca, ou na aba CONTROLES espera a tecla nova); a **roda** muda de linha (na aba CONTROLES a lista rola junto); clique em **(B) VOLTAR** / **SELECIONAR (A)** e nas respostas de "Reiniciar o jogo agora?" faz o mesmo que o botão; botão direito sai.
 
-O cursor aparece nos menus e na tela SETTINGS e some depois de 3 s parado (volta ao mexer); na gameplay fica escondido (e preso na janela com `mouse_camera`). `mouse_menus = false` (MOUSE NOS MENUS, aba CONTROLES) desliga tudo isso.
+O cursor aparece nos menus e na tela SETTINGS e some depois de 3 s parado (volta ao mexer); na gameplay fica escondido (e preso na janela com `mouse_camera`).
 
 Como funciona: o menu ativo é o da ação de menu da árvore do frontend (`CMenuAction::vf05`, `sub_820B2E98`, `this+24`); os itens e o índice selecionado vêm do objeto `Menu` do Scrooby, e o tamanho de cada item, das páginas dos pacotes do frontend. O cursor é levado da janela (com as barras pretas e a escala da saída) à imagem 1280x720 do jogo e à página 640x480. Passar por cima chama o `SetSelection` do próprio jogo (`sub_822F2E40`), e a roda o "anterior / próximo" dele. Telas sem menu do Scrooby (a fileira de personagens do episódio) e os botões de dica do jogo ("CONTINUE STORY (Y)") não são clicáveis; use as teclas. O teclado da tela do nome e o X APAGAR / a pergunta da tela de slots são do runtime e são clicáveis (veja "Nome e saves no PC").
 
@@ -860,7 +861,7 @@ O jogo desenha os botões com 14 ícones (A B X Y BACK START RT RB analógico < 
 
 ### Controles PlayStation (HID)
 
-DualSense (inclusive Edge) e DualShock 4, por USB ou Bluetooth, são lidos direto pelo HID do Windows: ✕ = A, ○ = B, □ = X, △ = Y, L1/R1 = LB/RB, L2/R2 = LT/RT, Options = START, Create/Share e o clique do touchpad = BACK, L3/R3. Ligar e desligar com o jogo aberto funciona (o runtime procura de novo quando o Windows avisa e a cada 2 s). Cada um é um jogador (veja "Co-op local"). A **vibração** do jogo vai para o DualSense/DualShock do jogador, ou para o Xbox virtual quando o DSX/DS4Windows mostra o mesmo controle. Se outro programa estiver com o controle (DSX/DS4Windows), o runtime usa o Xbox virtual dele e mostra ícones de PlayStation.
+DualSense (inclusive Edge) e DualShock 4, por USB ou Bluetooth, são lidos direto pelo HID do Windows: ✕ = A, ○ = B, □ = X, △ = Y, L1/R1 = LB/RB, L2/R2 = LT/RT, Options = START, Create/Share e o clique do touchpad = BACK, L3/R3. Ligar e desligar com o jogo aberto funciona (o runtime procura de novo quando o Windows avisa e a cada 2 s). Cada um é um jogador (veja "Co-op local"). A **vibração** do jogo vai para o DualSense/DualShock do jogador, ou para o Xbox virtual quando o DSX/DS4Windows mostra o mesmo controle. SETTINGS > CONTROLES > VIBRAÇÃO (`[controls] vibration`) a desliga para todos os controles (`input::slots::SetVibration` manda os motores a 0). Se outro programa estiver com o controle (DSX/DS4Windows), o runtime usa o Xbox virtual dele e mostra ícones de PlayStation.
 
 - `CrashRecomp.exe --hid-monitor 30`: lista os controles PlayStation e mostra cada botão/analógico por 30 s (✕ segurado faz vibrar); `--hid-selftest` confere os formatos de relatório. `CRASH_HID_TRACE=1` registra os relatórios crus; `CRASH_NO_HID=1` desliga a leitura HID.
 - **Conferido** com um DualSense de verdade por USB: os 14 botões, L2/R2 até o fim e os dois analógicos no curso todo (`docs\capturas\controles\hid_monitor_dualsense.txt`). Por Bluetooth, o DualSense desta máquina estava com o DSX (acesso negado, reconhecido como "em uso por outro programa").

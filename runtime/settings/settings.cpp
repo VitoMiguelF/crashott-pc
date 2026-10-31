@@ -234,7 +234,18 @@ namespace settings
                     ok = false;
             }
             else if (name == "video.hud_16_9")
-                ok = ParseBool(lower, values.hud16x9);
+            {
+                // Removed option: the HUD and menus are always in the middle 16:9 area now.
+            }
+            else if (name == "video.gamma")
+            {
+                int percent;
+                ok = ParsePercent(value, percent, 150) && percent >= 50;
+                if (ok)
+                    values.gamma = percent;
+            }
+            else if (name == "video.saturation")
+                ok = ParsePercent(value, values.saturation, 200);
             else if (name == "video.overlay")
                 ok = ParseOverlayMode(lower, values.overlay);
             else if (name == "video.show_fps")  // before the overlay modes
@@ -460,7 +471,8 @@ namespace settings
                    "fps_limit = " << v.fpsLimit << "   # 30 (original) | 60 | 120 | 0 = sem limite\n"
                    "resolution = \"" << ResolutionOf(v.aspect, v.renderHeight).name << "\"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160; 21:9 2560x1080 | 3440x1440...; 32:9 5120x1440...; 16:10 1280x800... (a largura segue aspect; vale ao sair da tela SETTINGS)\n"
                    "aspect = \"" << AspectName(v.aspect) << "\"   # auto (o do monitor) | 16:9 (original) | 16:10 | 21:9 | 32:9: telas mais largas veem mais dos lados (vale ao sair da tela SETTINGS)\n"
-                   "hud_16_9 = " << (v.hud16x9 ? "true" : "false") << "   # HUD e menus na area 16:9 do meio; false = cantos do HUD nas bordas da tela (vale na hora)\n"
+                   "gamma = " << v.gamma << "   # 50-150 %, gamma da imagem final (acima de 100 = mais clara; 100 = original), vale na hora\n"
+                   "saturation = " << v.saturation << "   # 0-200 %, saturacao das cores da imagem final (100 = original), vale na hora\n"
                    "overlay = \"" << OverlayModeName(v.overlay) << "\"   # off | fps | frametime | full (F1 alterna)\n"
                    "antialiasing = \"" << AntiAliasingName(v.antiAliasing) << "\"   # off | fxaa | smaa (pos-processamento da imagem final)\n"
                    "gpu_safe_mode = \"" << v.gpuSafeMode << "\"   # off | on | lista: barriers, instances, serial, memory, depth, present, cache (telas pretas em alguns drivers; ao reiniciar)\n"
@@ -789,10 +801,10 @@ namespace settings
             Log("[settings] CRASH_SETTINGS overrides: %s", overrides);
         }
         g_values = g_startup = values;
-        Log("[settings] audio %d/%d/%d/%d, window %s, vsync %s, fps limit %d, resolution %s, overlay %s, aa %s, language %s, mojo colors %s", values.masterVolume,
+        Log("[settings] audio %d/%d/%d/%d, window %s, vsync %s, fps limit %d, resolution %s, overlay %s, aa %s, gamma %d%%, saturation %d%%, language %s, mojo colors %s", values.masterVolume,
             values.musicVolume, values.effectsVolume, values.voiceVolume, WindowModeName(values.window), values.vsync ? "on" : "off",
             values.fpsLimit, ResolutionOf(values.aspect, values.renderHeight).name,
-            OverlayModeName(values.overlay), AntiAliasingName(values.antiAliasing), values.language.c_str(),
+            OverlayModeName(values.overlay), AntiAliasingName(values.antiAliasing), values.gamma, values.saturation, values.language.c_str(),
             values.ps2MojoColors ? "ps2" : "xbox360");
         Log("[settings] graphics: upscaler %s (%s), sharpness %d%%, motion blur %d%%, depth of field %d%%, anisotropic %dx, shadow softness %d%%, "
             "shader compilation %s, hd textures %s, texture dump %s, hd ai remaster %s",

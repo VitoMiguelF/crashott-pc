@@ -66,8 +66,7 @@ map = "TAB"
 mouse_camera = true   # o mouse gira a camera na gameplay
 mouse_sensitivity = 100   # 10-400 %, mouse -> camera
 invert_y = false   # inverte o eixo vertical da camera (mouse e teclas)
-walk_speed = 40   # 10-90 %, analogico enquanto 'walk' esta apertado (andar em vez de correr)
-mouse_menus = true   # menus do jogo pelo mouse (passar por cima seleciona, clique confirma, botao direito volta)
+vibration = true   # vibracao dos controles (XInput, DualSense e os do SDL), vale na hora
 prompts = "auto"   # icones dos botoes: auto (o ultimo usado) | xbox | playstation | keyboard
 
 [camera]

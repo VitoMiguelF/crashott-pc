@@ -275,10 +275,10 @@ namespace settings
             valid = ParseBool(lower, controls.mouseCamera);
         else if (key == "invert_y")
             valid = ParseBool(lower, controls.invertY);
-        else if (key == "walk_speed")
-            valid = ParseInt(lower, controls.walkSpeed, 10, 90);
-        else if (key == "mouse_menus")
-            valid = ParseBool(lower, controls.mouseMenus);
+        else if (key == "walk_speed" || key == "mouse_menus")
+            ;  // removed options: walking is always at WALK_SPEED, the menus always follow the mouse
+        else if (key == "vibration")
+            valid = ParseBool(lower, controls.vibration);
         else if (key == "player1" || key == "player2")
         {
             valid = ValidPlayerDevice(lower);
@@ -341,8 +341,7 @@ namespace settings
         out << "mouse_camera = " << (c.mouseCamera ? "true" : "false") << "   # o mouse gira a camera na gameplay\n"
             << "mouse_sensitivity = " << c.mouseSensitivity << "   # 10-400 %, mouse -> camera\n"
             << "invert_y = " << (c.invertY ? "true" : "false") << "   # inverte o eixo vertical da camera (mouse e teclas)\n"
-            << "walk_speed = " << c.walkSpeed << "   # 10-90 %, analogico enquanto 'walk' esta apertado (andar em vez de correr)\n"
-            << "mouse_menus = " << (c.mouseMenus ? "true" : "false") << "   # menus do jogo pelo mouse (passar por cima seleciona, clique confirma, botao direito volta)\n"
+            << "vibration = " << (c.vibration ? "true" : "false") << "   # vibracao dos controles (XInput, DualSense e os do SDL), vale na hora\n"
             << "prompts = \"" << PromptStyleName(c.prompts) << "\"   # icones dos botoes: auto (o ultimo usado) | xbox | playstation | keyboard\n"
             << "player1 = \"" << c.players[0] << "\"   # co-op local, controle do jogador 1: auto | keyboard | xbox1..xbox4 (XInput) | playstation1..playstation4\n"
             << "player2 = \"" << c.players[1] << "\"   # controle do jogador 2 (com um controle so, ele e o jogador 1, junto com o teclado; keyboard: o teclado e so dele)\n"
