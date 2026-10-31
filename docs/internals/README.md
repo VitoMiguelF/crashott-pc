@@ -19,6 +19,7 @@ second `PPC_FUNC` for the same address will not link. Extend the existing one.
 | [free-camera.md](free-camera.md) | The experimental third-person free camera, camera/collision managers |
 | [performance.md](performance.md) | Where the CPU time goes, the D3D ring, optimizations done, benchmark tooling |
 | [native-gpu-plan.md](native-gpu-plan.md) | The native GPU path: the Pure3D xn / Xbox D3D layers, what is done (one-pass scene, native D3D flush, shader warm-up), the road to 100% native and the task board |
+| [achievements.md](achievements.md) | The Xbox 360 achievements: where the game awards them (XMsg 0xFB / 0xB0008), the SPA in the image, the store, the screen and BACK |
 | [dev-tools.md](dev-tools.md) | In-game Lua, cheats/invincibility/teleport, the developer console, skins, the Lua decompiler |
 | [linux_port.md](linux_port.md) | The Linux / Steam Deck port: Windows dependencies, the platform layer (`runtime/platform`, SDL3 backends), build status, x86-only code |
 | [android_port.md](android_port.md) | The Android port plan: ARM64 (SIMDe/NEON, fences, FPCR, store emulation, 16 KB pages), Vulkan on Adreno/Mali, storage, touch, the APK built on the player's PC |

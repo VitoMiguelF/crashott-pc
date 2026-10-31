@@ -981,6 +981,47 @@ dev_console = [
 input = [["@gameplay_ready"], [5.2, "SHOT"], [7.4, "SHOT"], ["@gameplay_ready#2"], [1, "SHOT"], [3.8, "SHOT"], [5, "SHOT"], ["@gameplay_ready#3"], [2, "SHOT"], [8, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready", "console_open", "console_cmd"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[console\] > unlock all', 'dev.unlock_all queued', 'dev.mojo 500', 'invincible on', 'skin 22 \(Crash_Hulk \(unused\)\) applied', 'Crash_Hulk: physics ellipsoid', 'skin 9 \(Ratcicle\) applied', 'level L1_E2: UberManager SetLevelIndex\(1\) \+ ForceReload', 'event level_start .*L1_E2'] }
 
+[profiles.conquistas]
+description = "Conquistas do Xbox 360 no L1_E1 sem cena: 'achievement 31' no console concede pelo caminho do próprio jogo (fila do CObjectiveManager -> XUserWriteAchievements, XMsg 0xFB/0xB0008): popup com som; a pausa mostra o hint, BACK abre a tela (a 31 colorida, com data), navega e B fecha; grava achievements.toml na userdata da execução"
+test = true
+timeout = 50
+audio = false
+overlay = "off"
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_console = [
+    ["@gameplay_ready+1", "!toggle"],
+    ["@gameplay_ready+1.5", "achievement 31"],
+    ["@gameplay_ready+2", "!toggle"],
+]
+input = [["@gameplay_ready"], [2.6, "SHOT"], [4, "SHOT"], [9, "START"], [10.5, "SHOT"], [11, "BACK"], [12, "SHOT"], [12.5, "RIGHT"], [13, "RIGHT"], [13.5, "DOWN"], [14, "SHOT"], [14.5, "LEFT"], [15, "UP"], [15.5, "SHOT"], [16, "B"], [17, "SHOT"], [17.5, "START"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "pause", "achievement_unlocked", "achievements_screen"], log_absent = ['\[fatal\]', '\[crash\]', 'unknown achievement'], log_contains = ['XUserWriteAchievements: user 0, achievement 31', 'unlocked 31 ', 'screen opened \(BACK\)', 'screen closed \(B\)'] }
+
+[profiles.conquistas_menu]
+description = "Conquistas no menu principal: o hint (BACK) CONQUISTAS embaixo, BACK abre a tela (tudo bloqueado numa userdata nova), anda pela grade, BACK fecha; depois um clique no hint abre de novo e B fecha"
+test = true
+timeout = 40
+fps_limit = 60
+audio = false
+overlay = "off"
+userdata_mode = "copy"
+skip_intros = true
+input = [["@main_menu"], [3, "SHOT"], [3.5, "BACK"], [4.5, "SHOT"], [5, "LEFT"], [5.5, "UP"], [6, "SHOT"], [6.5, "BACK"], [7.5, "SHOT"], [8.5, "CLICK", 640, 643], [9.5, "SHOT"], [10, "B"], [11, "SHOT"]]
+expect = { exit = ["timeout"], events = ["main_menu", "achievements_screen#2"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['screen opened \(BACK\)', 'screen opened \(click on the hint\)', 'achievements\] 47 achievements, 1000 gamerscore'] }
+
+[profiles.conquistas_hub]
+description = "Conquistas no HUB (LOAD GAME do slot 1, para no menu do episódio): BACK abre a tela, B fecha e o HUB continua com o Y (CONTINUE STORY)"
+test = true
+timeout = 45
+fps_limit = 60
+audio = false
+overlay = "off"
+userdata_mode = "copy"
+boot = "load:1:hub"
+input = [["@hub"], [3, "SHOT"], [3.5, "BACK"], [4.5, "SHOT"], [5, "B"], [6, "SHOT"], [7, "Y"]]
+expect = { exit = ["timeout"], events = ["hub", "achievements_screen", "level_start"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['screen opened \(BACK\)', 'screen closed \(B\)'] }
+
 [profiles.console_hulk]
 description = "DEV: a skin Crash_Hulk (não usada no jogo original) pelo console no L1_E1: skin hulk now reinicia a fase com ela; o Crash tem de ficar no chão (pos com y perto de 0) e aparecer nas capturas"
 test = true

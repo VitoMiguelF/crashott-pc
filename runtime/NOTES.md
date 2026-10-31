@@ -2715,3 +2715,29 @@ O limite de ±100 000 do `mojo <n>` caiu. O mojo é o stat 21 (`EStatInt_MojoCou
 - **Titã em 1 golpe**: o atordoamento é a estamina do `CJackingBehaviour` (`sub_8211FD78`, delta em f1; em <= 0 o estado `+1116` vira 2). Os golpes chegam pelo `vf09` com `-dano`; o cheat troca qualquer perda por -1e9, menos dentro do `ResetStun` (`sub_82120880`).
 - **IA**: o `CAIManager::vf10` (`sub_82099058`, hook do `mp_net.cpp`, que o pula inteiro no cliente) chama `sub_82098DB8`, `sub_820985E0` e `sub_82097E68`; o cheat pula os três.
 - Verificado sem abrir o jogo: build do PC e do Android, e `--cheats-preview` (84 PNGs: 7 idiomas, 3 tamanhos, 4 estados). Falta testar no jogo: o código nos três jeitos, o HUD de vidas, os titãs, os inimigos parados e os desbloqueios no save, e se o `vf10` dos scripts roda com a pausa aberta (os sons e o +1 vida dependem dele).
+
+## Conquistas do Xbox 360 (2026-10-31, branch `achievements`) (`achievements/*`, `kernel/xmsg_imports.cpp`, `kernel/xam_input_imports.cpp`)
+
+- **Onde o jogo desbloqueia**: não há import `XUserWriteAchievements` nem `XamUserCreateAchievementEnumerator`.
+  O `XUserWriteAchievements` da biblioteca do título (`sub_822649A0`) é `XMsgStartIORequest(0xFB, 0x000B0008,
+  overlapped, { count, XUSER_ACHIEVEMENT* }, 8)` (o mesmo número da mensagem XGI no Xenia). Quem chama é o
+  `CObjectiveManager::vf10` (`sub_8220A7A0`), que tira da fila (`this+252`, entradas de 28 bytes: até 3
+  `{ user, id }` + contagem) o que `sub_8220A708(objectives, XUSER_ACHIEVEMENT*, count)` pôs; o objective manager é
+  `sub_821FA440(sub_821FB4F0(), 10)`. Nove pontos do jogo chamam o `sub_8220A708`. O jogo nunca lê as conquistas de
+  volta. A outra mensagem 0xFB que aparece no log (0xB0006, 24 bytes) é o `XUserSetContext`.
+- **SPA**: recurso `565507E4` do cabeçalho 0x000002FF do XEX, 614 921 bytes em 0x82530000 da imagem. XDBF com
+  'XACH' (47 conquistas, registros de 36 bytes), 'XSTC' (idioma padrão 1), tabelas 'XSTR' dos idiomas 1, 3, 4, 5, 6
+  (inglês, alemão, francês, espanhol, italiano) e 52 PNGs. Sete conquistas não têm a flag 0x8 ("mostrar
+  bloqueada"): são secretas e aparecem como "?" até desbloquear.
+- **Universais**: `userdata\achievements.toml`, gravado (arquivo temporário + rename) a cada desbloqueio. Uma
+  repetida não faz nada (o jogo reenvia, como no console).
+- **Som**: o "select" do banco `FE_SFX` pelo tocador do frontend, no hook do `CScriptManager::vf10` (fases) e no
+  das condições do frontend (`sub_820F9BA8`, menus), quando o aviso aparece.
+- **BACK**: nessas telas o runtime tira o BACK do controle do jogo (as dicas do jogo ali só falam de B / A / Y, e o
+  B continua voltando); na gameplay o BACK fica com o jogo (o mapa de entradas da gameplay não tem SELECT, mas não
+  mexemos). O painel do HUB online tem prioridade
+  (`mp::menu::HiddenButtons`). No teclado o Tab é o Y dos menus (`pc_input`), então a tela lê a tecla da ação MAPA
+  direto (`KeyHeld`) no menu principal e na pausa; no HUB só abre por ela se não for uma das teclas fixas dos
+  menus.
+- Testado: `conquistas`, `conquistas_menu`, `conquistas_hub` passam; o `achievement 31` do console vai pela fila
+  do jogo e volta pelo XMsg (`XUserWriteAchievements: user 0, achievement 31`). Build do Android linka.

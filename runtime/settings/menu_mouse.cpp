@@ -10,6 +10,7 @@
 #include "save_screens.h"
 #include "../online/mp_menu.h"
 #include "../dev/cheat_menu.h"
+#include "../achievements/achievements.h"
 #include "../platform/platform.h"
 #include "../gpu/widescreen.h"
 
@@ -223,7 +224,7 @@ namespace
         bool moved = moves != s_moves;
         s_moves = moves;
         if (settings::menu::BlocksGameInput() || settings::save_screens::BlocksMenuMouse() ||
-            mp::menu::BlocksGameInput() || dev::cheat_menu::BlocksGameInput())
+            mp::menu::BlocksGameInput() || dev::cheat_menu::BlocksGameInput() || achievements::BlocksGameInput())
         {
             // The settings screen (drawn over the PS2 options menu, which also runs) has the mouse.
             input::pc::TakeMenuClick();

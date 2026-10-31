@@ -18,6 +18,7 @@
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
 #include "../dev/cheat_menu.h"
+#include "../achievements/achievements.h"
 #include "../online/mp.h"
 #include "../online/mp_menu.h"
 #include "../platform/platform.h"
@@ -421,7 +422,7 @@ namespace
                 connected = true;
             // The settings screen and the console hide every controller from the game, not only player 1's.
             if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput() || mp::menu::BlocksGameInput() ||
-                dev::cheat_menu::BlocksGameInput())
+                dev::cheat_menu::BlocksGameInput() || achievements::BlocksGameInput())
                 state.Gamepad = {};
         }
         if (user == playerOne)
@@ -459,6 +460,8 @@ namespace
             cutscenes::FilterGameInput(state.Gamepad, poll);
             // The cheat menu's code in the pause, and the menu (dev/cheat_menu.h).
             dev::cheat_menu::FilterGameInput(state.Gamepad, poll);
+            // BACK opens the achievements on the main menu, the HUB and the pause (achievements.h).
+            achievements::FilterGameInput(state.Gamepad, poll);
             if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput() || mp::menu::BlocksGameInput())
                 state.Gamepad = {};
             state.Gamepad.wButtons &= ~mp::menu::HiddenButtons();  // BACK opens the lobby at the HUB

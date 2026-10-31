@@ -14,6 +14,7 @@
 #include "save_screens.h"
 #include "settings_menu.h"
 #include "../dev/dev_console.h"
+#include "../achievements/achievements.h"
 #include "../online/mp_menu.h"
 #include "../kernel/kernel.h"
 #include "../kernel/pc_input.h"
@@ -131,6 +132,11 @@ PPC_FUNC(sub_820F9BA8)
     if (t_conditionDepth == 1)
         exit = mp::menu::OverrideExit(ctx, base, tree, node, exit);  // MULTIPLAYER: host / client flows
     ctx.r3.s64 = exit;
+    if (t_conditionDepth == 1)
+    {
+        PPCContext saved = ctx;
+        achievements::RunPending(saved, base);  // the achievements screen's sounds in the menus
+    }
     t_conditionDepth--;
 }
 

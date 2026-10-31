@@ -57,6 +57,7 @@
 #include "../settings/ui_text.h"
 #include "../dev/dev_console.h"
 #include "../dev/cheat_menu.h"
+#include "../achievements/achievements.h"
 #include "../online/mp_menu.h"
 #include "../subtitles/subtitle_draw.h"
 #include "../platform/platform.h"
@@ -4564,6 +4565,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         settings::menu::Draw(g_backBufferWidth, g_backBufferHeight);
         mp::menu::Draw(g_backBufferWidth, g_backBufferHeight);  // MULTIPLAYER (online/mp_menu.h)
         dev::cheat_menu::Draw(g_backBufferWidth, g_backBufferHeight);  // the cheat menu (pause + code)
+        achievements::Draw(g_backBufferWidth, g_backBufferHeight);  // achievements: hint, screen, popup
         dev::console::Draw(g_backBufferWidth, g_backBufferHeight);  // the developer console
 
         // Screenshots are taken before the overlay is drawn unless CRASH_SCREENSHOT_OVERLAY is set.
