@@ -2635,3 +2635,9 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   toque perto das setas do jogo (área bem maior que o desenho) troca a skin, e o SIM/NÃO aceita toque (o bloqueio
   da versão anterior pegava a pergunta). Perfis `dev_planta_grande`, `dev_planta_pequena`, `mp_plantagrande*`,
   `mp_skin_toque_c`. O crash do host ao salvar (depois da planta destruída inteira) não reproduziu no PC.
+- **Online: volta no checkpoint, log sempre no PC** (2026-10-30): quem é nocauteado volta no ponto de volta da
+  fase (o último `DO_SetPlayerResetPosition`, matriz por `sub_8220F1A0`, posição em +48), não mais atrás do
+  companheiro de menor slot (o host voltava ao começo ao lado de quem tinha ficado lá); antes do primeiro
+  checkpoint continua atrás do companheiro. `mp_ponto_volta`. O PC grava `userdata\crashrecomp_log.txt` sempre (e
+  `_prev`), como o Android: o crash do host ao sair salvando não reproduziu (pelo lobby, com clique ou A no
+  CONTINUE, com as configurações da dist: `mp_sair_host`, `mp_sair_host_a`, `mp_sair_host_pt`, `sair_salvando`).

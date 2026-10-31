@@ -281,8 +281,12 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   all and lay there for good). Online (or with `CRASH_MP_PLAYERS`) every player is knocked out the same way
   instead, on that action or on its hitpoints reaching 0: it lies for the game's knock-out time (float at
   0x82002328, 5 s), then its actor is reset (`sub_82090370`, actor +0x1C vtable +0x3C, what the game's
-  respawn calls: up again, full hitpoints; two values kept as `sub_8220D830` does) and teleported behind the
-  on-foot teammate with the lowest slot, 1.2 apart per slot (the same place on every machine).
+  respawn calls: up again, full hitpoints; two values kept as `sub_8220D830` does) and teleported to the
+  level's reset position, 1.2 apart per slot: the last `DO_SetPlayerResetPosition` locator (the objectives'
+  `WhumpaE1ResetVolumeN` -> `WhumpaE1ResetLocatorN`; current action at 0x824A7DC8, its 4x4 matrix from
+  `sub_8220F1A0`, position at +48; `sub_8220D6F8` is the game's reset of a lone player there). Before the first
+  one, behind the on-foot teammate with the lowest slot. Behind the teammate always, the host came back at the
+  level's start beside a player who had stayed there (`mp_ponto_volta`: dies in volume 3, back at locator 3).
 - **Players' hitpoints are the host's**: player records carry hitpoints as a fraction of the maximum (P1/P2
   start at the game's 30, P3/P4 at the template's 90: they get P1's maximum; machines may differ with the
   upgrades); the client drops its own hits on players and applies the host's fraction through

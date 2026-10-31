@@ -71,6 +71,7 @@ PPC_EXTERN_FUNC(sub_8228A110);             // controller input: its value from t
 PPC_EXTERN_FUNC(sub_82090370);             // CActor: reset (vtable +0x3c), what a respawn does
 PPC_EXTERN_FUNC(sub_82142608);             // CActor::GetBehaviour
 PPC_EXTERN_FUNC(sub_82143698);             // CPhysicsBehaviour: collision on / off
+PPC_EXTERN_FUNC(sub_8220F1A0);             // the players' reset position (DO_SetPlayerResetPosition's locator): r3 = a 4x4 matrix out, true if set
 PPC_EXTERN_FUNC(sub_82098E68);             // CAIManager: removes an AI target (RemoveTarget)
 PPC_EXTERN_FUNC(sub_82154A58);             // Crash: shows a player (behaviours on, collision, AI target), as leaving the backpack does
 extern "C" PPC_FUNC(__imp__sub_821ED6C0);  // CInputManager: registers a player's input binding with its controller's device
@@ -651,8 +652,11 @@ namespace mp
     }
 
     // A knocked-out player whose time is up: reset (the respawn's reset keeps two of the actor's values,
-    // behaviours 0xF / 0x11, when the first is above the threshold, as sub_8220D830 does) and put next to
-    // the teammate on foot with the lowest slot (itself, where it lies, when nobody is).
+    // behaviours 0xF / 0x11, when the first is above the threshold, as sub_8220D830 does) and put at the
+    // level's reset position (the last checkpoint the players reached, where the game resets a lone player:
+    // sub_8220D6F8), 1.2 apart per slot; before the first one, next to the teammate on foot with the lowest
+    // slot (itself, where it lies, when nobody is). Next to a teammate, the host came back at the level's start
+    // beside a player who had stayed there.
     void Revive(PPCContext& ctx, uint8_t* base, const Knockout& k)
     {
         uint32_t physics = LoadBE32(k.crash + 0xDC), actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
@@ -692,6 +696,19 @@ namespace mp
             StoreBE32(kept2, values[1]);
         }
         g_revivedAt[k.index] = NowMs();
+        static uint32_t reset = GuestAlloc(64);
+        call = ctx;
+        call.r3.u64 = reset;
+        if (reset)
+            sub_8220F1A0(call, base);
+        if (reset && call.r3.u8)
+        {
+            float x = LoadF(reset + 48) + 1.2f * PlayerSlot(k.index), y = LoadF(reset + 52) + 0.5f, z = LoadF(reset + 56);
+            bool moved = TeleportCrash(ctx, base, k.crash, x, y, z);
+            Log("[mp] player %u back at the reset position (%.1f, %.1f, %.1f)%s, hitpoints %.1f of %.1f", k.index + 1, x, y, z,
+                moved ? "" : ", not moved", PlayerHitpoints(k.index), PlayerMaxHitpoints(k.index));
+            return;
+        }
         if (!GuestPointer(xform))
             return;
         // Behind the teammate's line, 1.2 apart per slot (not on the players who came up beside player 1, nor

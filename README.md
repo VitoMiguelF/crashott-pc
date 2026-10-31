@@ -221,7 +221,8 @@ Details for developers: [docs/internals/linux_port.md](docs/internals/linux_port
 - **Black screen flicker on some GPUs (reported on an Intel UHD iGPU, issue #3).** With the game closed,
   set `gpu_safe_mode = "on"` and `gpu_diagnostics = true` under `[video]` in `userdata\settings.toml`.
   The safe mode turns off the renderer's riskier optimizations (it costs some FPS); the diagnostics
-  write `userdata\crashrecomp_log.txt` (GPU, driver, limits) to attach to the issue. If the safe mode
+  add the GPU, driver and limits to `userdata\crashrecomp_log.txt` (written on every run; the previous
+  run's is `crashrecomp_log_prev.txt`) to attach to the issue. If the safe mode
   helps, a list instead of `"on"` (`"barriers"`, `"serial"`, `"present"`, ...) narrows down which part
   does it. `tools\gpu_report.bat` runs all of these in turn and packs the logs into `gpu_report.zip`.
 
@@ -503,8 +504,8 @@ Detalhes para desenvolvedores: [docs/internals/linux_port.md](docs/internals/lin
 - **Tela preta piscando em algumas GPUs (relatado numa Intel UHD integrada, issue #3).** Com o jogo
   fechado, ponha `gpu_safe_mode = "on"` e `gpu_diagnostics = true` em `[video]` no
   `userdata\settings.toml`. O modo seguro desliga as otimizações mais arriscadas do renderizador (custa
-  um pouco de FPS); o diagnóstico grava `userdata\crashrecomp_log.txt` (GPU, driver, limites) para anexar
-  à issue. Se o modo seguro resolver, uma lista no lugar de `"on"` (`"barriers"`, `"serial"`,
+  um pouco de FPS); o diagnóstico põe GPU, driver e limites no `userdata\crashrecomp_log.txt` (gravado sempre; o da
+  vez anterior fica em `crashrecomp_log_prev.txt`) para anexar à issue. Se o modo seguro resolver, uma lista no lugar de `"on"` (`"barriers"`, `"serial"`,
   `"present"`, ...) mostra qual parte resolve. O `tools\gpu_report.bat` roda tudo isso em sequência e
   junta os logs em `gpu_report.zip`.
 

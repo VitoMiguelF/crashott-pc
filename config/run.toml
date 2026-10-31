@@ -1531,6 +1531,90 @@ input = [
 ]
 expect = { exit = ["timeout"], events = ["hub", "cinematic", "cinematic_skipped"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] level .* started with 3 player', 'after the cutscene: player'] }
 
+[profiles.mp_sair_host]
+description = "Host pelo lobby com mp_cine_c1 e mp_cine_c2 (como o mp_cine_host): depois da cena, pausa > sair da fase salvando, e o CONTINUE da contagem de mojo é clicado na dica (como um toque): o host caía aí"
+test = false
+timeout = 190
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_FRONTEND_TRACE = "1", CRASH_MP_NAME = "HOST", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_MENU_AUTOPILOT = "96:A:2000,96:Y:1500,105:A+:1500,154:A+:1500,165:DOWN:1500,165:A:1000,320:A+:1000", CRASH_RESTART_WINDOW = "0,0,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [7, "A"],
+    ["@hub"], [2, "SHOT"], [18, "SHOT"], [19, "A"],
+    ["@cinematic"], [4, "SHOT"], [5, "B", 1.5], [7, "SHOT"],
+    ["@cinematic_done"], [2, "SHOT"], [4, "START"], [5, "DOWN"], [5.5, "DOWN"], [6, "SHOT"], [6.5, "A"], [7.5, "LEFT"], [8, "SHOT"], [8.5, "A"], [10, "SHOT"], [12, "SHOT"], [14, "SHOT"], [16, "SHOT"], [18, "SHOT"], [20, "SHOT"], [21, "CLICK", 939, 648], [22, "SHOT"], [24, "SHOT"], [28, "SHOT"], [31, "SHOT"], [32, "CLICK", 906, 642], [33, "SHOT"], [35, "SHOT"], [38, "SHOT"], [42, "SHOT"], [48, "SHOT"], [55, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["hub", "cinematic", "cinematic_skipped"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] level .* started with 3 player'] }
+
+[profiles.mp_sair_host_pt]
+description = "Como o mp_sair_host, com as configurações da dist do jogador (português, legendas, pular cenas, 4K)"
+test = false
+timeout = 190
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_SETTINGS = "game.language=pt-br;game.subtitles=true;game.skip_cutscenes=true;video.resolution=3840x2160;video.overlay=fps", CRASH_FRONTEND_TRACE = "1", CRASH_MP_NAME = "HOST", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_MENU_AUTOPILOT = "96:A:2000,96:Y:1500,105:A+:1500,154:A+:1500,165:DOWN:1500,165:A:1000,320:A+:1000", CRASH_RESTART_WINDOW = "0,0,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [7, "A"],
+    ["@hub"], [2, "SHOT"], [18, "SHOT"], [19, "A"],
+    ["@cinematic"], [4, "SHOT"], [5, "B", 1.5], [7, "SHOT"],
+    ["@cinematic_done"], [2, "SHOT"], [4, "START"], [5, "DOWN"], [5.5, "DOWN"], [6, "SHOT"], [6.5, "A"], [7.5, "LEFT"], [8, "SHOT"], [8.5, "A"], [10, "SHOT"], [12, "SHOT"], [14, "SHOT"], [16, "SHOT"], [18, "SHOT"], [20, "SHOT"], [21, "CLICK", 939, 648], [22, "SHOT"], [24, "SHOT"], [28, "SHOT"], [31, "SHOT"], [32, "CLICK", 906, 642], [33, "SHOT"], [35, "SHOT"], [38, "SHOT"], [42, "SHOT"], [48, "SHOT"], [55, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["hub", "cinematic", "cinematic_skipped"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] level .* started with 3 player'] }
+
+[profiles.mp_sair_host_a]
+description = "Como o mp_sair_host, mas o CONTINUE da contagem de mojo é o A (para comparar com o clique)"
+test = false
+timeout = 160
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_FRONTEND_TRACE = "1", CRASH_MP_NAME = "HOST", CRASH_MP_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_MENU_AUTOPILOT = "96:A:2000,96:Y:1500,105:A+:1500,154:A+:1500,165:DOWN:1500,165:A:1000,320:A+:1000", CRASH_RESTART_WINDOW = "0,0,1920,1080" }
+input = [
+    ["@main_menu"], [2, "DOWN"], [2.5, "DOWN"], [3.5, "A"], [5.5, "A"], [7, "A"],
+    ["@hub"], [2, "SHOT"], [18, "SHOT"], [19, "A"],
+    ["@cinematic"], [4, "SHOT"], [5, "B", 1.5], [7, "SHOT"],
+    ["@cinematic_done"], [2, "SHOT"], [4, "START"], [5, "DOWN"], [5.5, "DOWN"], [6, "SHOT"], [6.5, "A"], [7.5, "LEFT"], [8, "SHOT"], [8.5, "A"], [10, "SHOT"], [12, "SHOT"], [14, "SHOT"], [16, "SHOT"], [18, "SHOT"], [20, "SHOT"], [21, "A"], [22, "SHOT"], [24, "SHOT"], [28, "SHOT"], [33, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["hub", "cinematic", "cinematic_skipped"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[lobby\] level .* started with 3 player'] }
+
+[profiles.sair_salvando]
+description = "Um jogador (sem multijogador): do save 1 no L1_E1, pausa > SAVE AND EXIT > SIM, CONTINUE da contagem de mojo: compara com o mp_sair_host (o host ficava em Saving...)"
+test = false
+timeout = 75
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+boot = "load:1:L1_E1"
+skip_cinematics = true
+env = { CRASH_FRONTEND_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1" }
+input = [["@gameplay_ready"], [2, "SHOT"], [4, "START"], [5, "DOWN"], [5.5, "DOWN"], [6, "SHOT"], [6.5, "A"], [7.5, "LEFT"], [8, "SHOT"], [8.5, "A"], [10, "SHOT"], [12, "SHOT"], [14, "SHOT"], [16, "SHOT"], [18, "SHOT"], [20, "SHOT"], [25, "SHOT"], [26, "A"], [27, "SHOT"], [30, "SHOT"], [34, "SHOT"], [40, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready", "hub#2"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_ponto_volta]
+description = "Host do L1_E1 com 3 jogadores (os remotos parados no começo, sem rede): o P1 é levado para a área do 3º ponto de volta (WhumpaE1ResetVolume3) e depois morre (dev.damage): deve voltar ao WhumpaE1ResetLocator3 (93.7, 17.2, 18.0), não ao começo"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_PLAYERS = "3", CRASH_MP_TRACE = "1", CRASH_MP_STREAM = "all" }
+dev_console = [
+    ["@gameplay_ready+1", "!toggle"],
+    ["@gameplay_ready+1.5", "tp 97.7 20.4 18.2"],
+    ["@gameplay_ready+2", "pos"],
+    ["@gameplay_ready+6", "lua dev.damage(100)"],
+    ["@gameplay_ready+15", "pos"],
+    ["@gameplay_ready+16", "!esc"],
+]
+input = [["@gameplay_ready"], [3, "SHOT"], [5, "SHOT"], [9, "SHOT"], [14, "SHOT"], [18, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
 [profiles.mp_cine_c1]
 description = "Cliente do mp_cine_host pelo CÓDIGO (127.0.0.1): segura B na cena de abertura (o cliente não pula: a cena só acaba quando o host pula)"
 test = false
