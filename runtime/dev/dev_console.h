@@ -13,6 +13,8 @@
 // Tab completes the command or its argument (again: the next match), PageUp / PageDown and the
 // wheel scroll the output, Ctrl+V pastes, Ctrl+L clears the output, Ctrl+C / Ctrl+U clears the line.
 //
+// Its help and messages follow game.language (settings/ui_text.h); the command names don't change.
+//
 // Commands (help lists them): unlock all, unlock skin <name>, mojo <n>, god on|off, tp x y z, pos,
 // shadow on|off, bighead on|off, skin [<name> [now]], level [<name>], reload, lua <code> (lua
 // =<expr> prints the value), clear, help [command]. Lua's devprint output and Lua errors show up

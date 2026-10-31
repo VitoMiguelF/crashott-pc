@@ -18,6 +18,7 @@
 #include "../paths.h"
 #include "../settings/direct_boot.h"
 #include "../settings/settings.h"
+#include "../settings/ui_text.h"
 #include "../platform/platform.h"
 
 #include "../platform/keys.h"
@@ -193,27 +194,158 @@ namespace dev::console
                 out << line << "\n";
         }
 
+        // ---- texts (settings/ui_text.h: game.language; the command names are the same in all) ----
+        using settings::Tr;
+        using settings::UiText;
+        const UiText T_COMMANDS = { "Commands:", "Comandos:", "Commandes :", "Befehle:", "Comandos:", "Comandi:", "Opdrachten:" };
+        const UiText T_UNKNOWN_COMMAND = { "unknown command: ", "comando desconhecido: ", "commande inconnue : ", "unbekannter Befehl: ",
+                                           "comando desconocido: ", "comando sconosciuto: ", "onbekende opdracht: " };
+        // " (\"help\" lists them)": %s is the command that lists them.
+        const UiText T_LISTED_BY = { " (\"%s\" lists them)", " (\"%s\" lista)", " (\"%s\" les liste)", " (\"%s\" listet sie auf)",
+                                     " (\"%s\" los lista)", " (\"%s\" li elenca)", " (\"%s\" toont ze)" };
+        const UiText T_USAGE = { "usage: ", "uso: ", "usage : ", "Verwendung: ", "uso: ", "uso: ", "gebruik: " };
+        const UiText T_ERROR = { "error: ", "erro: ", "erreur : ", "Fehler: ", "error: ", "errore: ", "fout: " };
+        const UiText T_NO_LUA = { "the game's Lua state doesn't exist yet", "o estado Lua do jogo ainda não existe",
+                                  "l'état Lua du jeu n'existe pas encore", "der Lua-Zustand des Spiels existiert noch nicht",
+                                  "el estado Lua del juego aún no existe", "lo stato Lua del gioco non esiste ancora",
+                                  "de Lua-toestand van het spel bestaat nog niet" };
+        const UiText T_UNUSABLE = { "  ((x) = can't be used)", "  ((x) = não dá para usar)", "  ((x) = inutilisable)", "  ((x) = nicht nutzbar)",
+                                    "  ((x) = no se puede usar)", "  ((x) = non utilizzabile)", "  ((x) = niet bruikbaar)" };
+        const UiText T_LEVELS = { "levels: ", "fases: ", "niveaux : ", "Level: ", "niveles: ", "livelli: ", "levels: " };
+        const UiText T_NO_LEVELS = { "the level list doesn't exist yet", "a lista de fases ainda não existe",
+                                     "la liste des niveaux n'existe pas encore", "die Levelliste existiert noch nicht",
+                                     "la lista de niveles aún no existe", "l'elenco dei livelli non esiste ancora", "de levellijst bestaat nog niet" };
+        const UiText T_UNKNOWN_LEVEL = { "unknown level: ", "fase desconhecida: ", "niveau inconnu : ", "unbekanntes Level: ",
+                                         "nivel desconocido: ", "livello sconosciuto: ", "onbekend level: " };
+        const UiText T_GOING_TO = { "going to ", "indo para ", "direction ", "gehe zu ", "yendo a ", "vado a ", "naar " };
+        const UiText T_FROM_MENUS = { " (through the HUB or the main menu)", " (pelo HUB ou pelo menu principal)", " (par le HUB ou le menu principal)",
+                                      " (über den HUB oder das Hauptmenü)", " (por el HUB o el menú principal)", " (dall'HUB o dal menu principale)",
+                                      " (via de HUB of het hoofdmenu)" };
+        const UiText T_RELOADING = { "restarting the level", "reiniciando a fase", "relance du niveau", "Level wird neu gestartet",
+                                     "reiniciando el nivel", "riavvio del livello", "level wordt herstart" };
+        const UiText T_CURRENT_SKIN = { "current skin: ", "skin atual: ", "skin actuel : ", "aktueller Skin: ", "skin actual: ", "skin attuale: ",
+                                        "huidige skin: " };
+        const UiText T_NEXT_LEVEL = { " (next level: ", " (próxima fase: ", " (prochain niveau : ", " (nächstes Level: ", " (próximo nivel: ",
+                                      " (prossimo livello: ", " (volgend level: " };
+        const UiText T_UNKNOWN_SKIN = { "unknown skin: ", "skin desconhecida: ", "skin inconnu : ", "unbekannter Skin: ", "skin desconocido: ",
+                                        "skin sconosciuta: ", "onbekende skin: " };
+        const UiText T_REFUSED = { "refused: ", "recusado: ", "refusé : ", "abgelehnt: ", "rechazado: ", "rifiutato: ", "geweigerd: " };
+        const UiText T_WELCOME = { "CrashRecomp - developer console. \"help\" lists the commands.",
+                                   "CrashRecomp - console de desenvolvedor. \"help\" lista os comandos.",
+                                   "CrashRecomp - console de développement. \"help\" liste les commandes.",
+                                   "CrashRecomp - Entwicklerkonsole. \"help\" listet die Befehle auf.",
+                                   "CrashRecomp - consola de desarrollador. \"help\" lista los comandos.",
+                                   "CrashRecomp - console sviluppatore. \"help\" elenca i comandi.",
+                                   "CrashRecomp - ontwikkelaarsconsole. \"help\" toont de opdrachten." };
+        const UiText T_KEYS = { "Tab completes, Up/Down arrows = history, PageUp/PageDown scroll, Esc closes.",
+                                "Tab completa, setas para cima/baixo = histórico, PageUp/PageDown rolam, Esc fecha.",
+                                "Tab complète, flèches haut/bas = historique, PageUp/PageDown font défiler, Esc ferme.",
+                                "Tab ergänzt, Pfeil hoch/runter = Verlauf, PageUp/PageDown blättern, Esc schließt.",
+                                "Tab completa, flechas arriba/abajo = historial, PageUp/PageDown desplazan, Esc cierra.",
+                                "Tab completa, frecce su/giù = cronologia, PageUp/PageDown scorrono, Esc chiude.",
+                                "Tab vult aan, pijlen omhoog/omlaag = geschiedenis, PageUp/PageDown scrollen, Esc sluit." };
+        const UiText T_HEADER = { "DEVELOPER CONSOLE  -  help: commands   Tab: complete   ↑↓: history   Esc/F10: close",
+                                  "CONSOLE DE DESENVOLVEDOR  -  help: comandos   Tab: completar   ↑↓: histórico   Esc/F10: fechar",
+                                  "CONSOLE DE DÉVELOPPEMENT  -  help : commandes   Tab : compléter   ↑↓ : historique   Esc/F10 : fermer",
+                                  "ENTWICKLERKONSOLE  -  help: Befehle   Tab: ergänzen   ↑↓: Verlauf   Esc/F10: schließen",
+                                  "CONSOLA DE DESARROLLADOR  -  help: comandos   Tab: completar   ↑↓: historial   Esc/F10: cerrar",
+                                  "CONSOLE SVILUPPATORE  -  help: comandi   Tab: completa   ↑↓: cronologia   Esc/F10: chiudi",
+                                  "ONTWIKKELAARSCONSOLE  -  help: opdrachten   Tab: aanvullen   ↑↓: geschiedenis   Esc/F10: sluiten" };
+        // "[+12 lines]": the output is scrolled up that many lines.
+        const UiText T_SCROLLED = { "lines", "linhas", "lignes", "Zeilen", "líneas", "righe", "regels" };
+
+        // `text` with its "%s" replaced by `value`.
+        std::string Fill(const char* text, const std::string& value)
+        {
+            std::string out = text;
+            if (size_t at = out.find("%s"); at != std::string::npos)
+                out.replace(at, 2, value);
+            return out;
+        }
+
         // ---- commands ----
         struct Command
         {
             const char* name;
-            const char* usage;
-            const char* help;
+            UiText usage;
+            UiText help;
         };
         const Command COMMANDS[] = {
-            { "help", "help [comando]", "lista os comandos, ou explica um" },
-            { "unlock", "unlock all | unlock levels | unlock skin <nome>", "desbloqueia tudo (20 skins + Crash_Hulk, fases, golpes), so as fases (as skins ficam trancadas) ou uma skin" },
-            { "mojo", "mojo <n>", "da n de mojo (o HUD acompanha)" },
-            { "god", "god [on|off]", "invencibilidade (o HP nao desce; poços ainda matam)" },
-            { "tp", "tp <x> <y> <z>", "teleporta o jogador 1 (y = altura; veja pos)" },
-            { "pos", "pos", "mostra a posicao do jogador 1" },
-            { "shadow", "shadow [on|off]", "cheat Shadow Crash do jogo" },
-            { "bighead", "bighead [on|off]", "cheat Big Head do jogo" },
-            { "skin", "skin [<nome> [now]]", "veste uma skin (na fase: na proxima carga; now reinicia a fase); sem nome lista" },
-            { "level", "level [<nome>]", "vai para a fase (de dentro de uma fase, do HUB ou do menu principal); sem nome lista" },
-            { "reload", "reload", "reinicia a fase atual (UberManager:ForceReload)" },
-            { "lua", "lua <codigo> | lua =<expressao>", "roda Lua no estado do jogo (devprint escreve aqui)" },
-            { "clear", "clear", "limpa a saida (Ctrl+L)" },
+            { "help",
+              { "help [command]", "help [comando]", "help [commande]", "help [befehl]", "help [comando]", "help [comando]", "help [opdracht]" },
+              { "lists the commands, or explains one", "lista os comandos, ou explica um", "liste les commandes, ou en explique une",
+                "listet die Befehle auf oder erklärt einen", "lista los comandos o explica uno", "elenca i comandi o ne spiega uno",
+                "toont de opdrachten, of legt er een uit" } },
+            { "unlock",
+              { "unlock all | unlock levels | unlock skin <name>", "unlock all | unlock levels | unlock skin <nome>",
+                "unlock all | unlock levels | unlock skin <nom>", "unlock all | unlock levels | unlock skin <name>",
+                "unlock all | unlock levels | unlock skin <nombre>", "unlock all | unlock levels | unlock skin <nome>",
+                "unlock all | unlock levels | unlock skin <naam>" },
+              { "unlocks everything (20 skins + Crash_Hulk, levels, moves), only the levels (the skins stay locked) or one skin",
+                "desbloqueia tudo (20 skins + Crash_Hulk, fases, golpes), só as fases (as skins ficam trancadas) ou uma skin",
+                "débloque tout (20 skins + Crash_Hulk, niveaux, coups), seulement les niveaux (les skins restent verrouillés) ou un skin",
+                "schaltet alles frei (20 Skins + Crash_Hulk, Level, Angriffe), nur die Level (die Skins bleiben gesperrt) oder einen Skin",
+                "desbloquea todo (20 skins + Crash_Hulk, niveles, golpes), solo los niveles (los skins siguen bloqueados) o un skin",
+                "sblocca tutto (20 skin + Crash_Hulk, livelli, mosse), solo i livelli (le skin restano bloccate) o una skin",
+                "ontgrendelt alles (20 skins + Crash_Hulk, levels, aanvallen), alleen de levels (de skins blijven op slot) of één skin" } },
+            { "mojo", { "mojo <n>", "mojo <n>", "mojo <n>", "mojo <n>", "mojo <n>", "mojo <n>", "mojo <n>" },
+              { "gives n mojo (the HUD follows)", "dá n de mojo (o HUD acompanha)", "donne n de mojo (le HUD suit)", "gibt n Mojo (das HUD zieht mit)",
+                "da n de mojo (el HUD se actualiza)", "dà n di mojo (l'HUD si aggiorna)", "geeft n mojo (de HUD volgt)" } },
+            { "god", { "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]" },
+              { "invincibility (HP doesn't go down; pits still kill)", "invencibilidade (o HP não desce; poços ainda matam)",
+                "invincibilité (les PV ne baissent pas ; les gouffres tuent toujours)", "Unverwundbarkeit (die HP sinken nicht; Abgründe töten trotzdem)",
+                "invencibilidad (la vida no baja; los pozos siguen matando)", "invincibilità (gli HP non scendono; i burroni uccidono comunque)",
+                "onkwetsbaarheid (de HP daalt niet; afgronden doden nog steeds)" } },
+            { "tp", { "tp <x> <y> <z>", "tp <x> <y> <z>", "tp <x> <y> <z>", "tp <x> <y> <z>", "tp <x> <y> <z>", "tp <x> <y> <z>", "tp <x> <y> <z>" },
+              { "teleports player 1 (y = height; see pos)", "teleporta o jogador 1 (y = altura; veja pos)",
+                "téléporte le joueur 1 (y = hauteur ; voir pos)", "teleportiert Spieler 1 (y = Höhe; siehe pos)",
+                "teletransporta al jugador 1 (y = altura; ver pos)", "teletrasporta il giocatore 1 (y = altezza; vedi pos)",
+                "teleporteert speler 1 (y = hoogte; zie pos)" } },
+            { "pos", { "pos", "pos", "pos", "pos", "pos", "pos", "pos" },
+              { "shows player 1's position", "mostra a posição do jogador 1", "affiche la position du joueur 1", "zeigt die Position von Spieler 1",
+                "muestra la posición del jugador 1", "mostra la posizione del giocatore 1", "toont de positie van speler 1" } },
+            { "shadow",
+              { "shadow [on|off]", "shadow [on|off]", "shadow [on|off]", "shadow [on|off]", "shadow [on|off]", "shadow [on|off]", "shadow [on|off]" },
+              { "the game's Shadow Crash cheat", "cheat Shadow Crash do jogo", "le code Shadow Crash du jeu", "der Shadow-Crash-Cheat des Spiels",
+                "el truco Shadow Crash del juego", "il trucco Shadow Crash del gioco", "de Shadow Crash-cheat van het spel" } },
+            { "bighead",
+              { "bighead [on|off]", "bighead [on|off]", "bighead [on|off]", "bighead [on|off]", "bighead [on|off]", "bighead [on|off]", "bighead [on|off]" },
+              { "the game's Big Head cheat", "cheat Big Head do jogo", "le code Big Head du jeu", "der Big-Head-Cheat des Spiels",
+                "el truco Big Head del juego", "il trucco Big Head del gioco", "de Big Head-cheat van het spel" } },
+            { "skin",
+              { "skin [<name> [now]]", "skin [<nome> [now]]", "skin [<nom> [now]]", "skin [<name> [now]]", "skin [<nombre> [now]]", "skin [<nome> [now]]",
+                "skin [<naam> [now]]" },
+              { "puts on a skin (in a level: at the next load; now restarts the level); without a name, lists them",
+                "veste uma skin (na fase: na próxima carga; now reinicia a fase); sem nome lista",
+                "met un skin (dans un niveau : au prochain chargement ; now relance le niveau) ; sans nom, les liste",
+                "zieht einen Skin an (im Level: beim nächsten Laden; now startet das Level neu); ohne Namen: Liste",
+                "pone un skin (en un nivel: en la próxima carga; now reinicia el nivel); sin nombre, los lista",
+                "indossa una skin (in un livello: al prossimo caricamento; now riavvia il livello); senza nome le elenca",
+                "trekt een skin aan (in een level: bij het volgende laden; now herstart het level); zonder naam: lijst" } },
+            { "level",
+              { "level [<name>]", "level [<nome>]", "level [<nom>]", "level [<name>]", "level [<nombre>]", "level [<nome>]", "level [<naam>]" },
+              { "goes to the level (from inside a level, the HUB or the main menu); without a name, lists them",
+                "vai para a fase (de dentro de uma fase, do HUB ou do menu principal); sem nome lista",
+                "va au niveau (depuis un niveau, le HUB ou le menu principal) ; sans nom, les liste",
+                "geht zum Level (aus einem Level, dem HUB oder dem Hauptmenü); ohne Namen: Liste",
+                "va al nivel (desde un nivel, el HUB o el menú principal); sin nombre, los lista",
+                "va al livello (da un livello, dall'HUB o dal menu principale); senza nome li elenca",
+                "gaat naar het level (vanuit een level, de HUB of het hoofdmenu); zonder naam: lijst" } },
+            { "reload", { "reload", "reload", "reload", "reload", "reload", "reload", "reload" },
+              { "restarts the current level (UberManager:ForceReload)", "reinicia a fase atual (UberManager:ForceReload)",
+                "relance le niveau actuel (UberManager:ForceReload)", "startet das aktuelle Level neu (UberManager:ForceReload)",
+                "reinicia el nivel actual (UberManager:ForceReload)", "riavvia il livello attuale (UberManager:ForceReload)",
+                "herstart het huidige level (UberManager:ForceReload)" } },
+            { "lua",
+              { "lua <code> | lua =<expression>", "lua <código> | lua =<expressão>", "lua <code> | lua =<expression>", "lua <code> | lua =<ausdruck>",
+                "lua <código> | lua =<expresión>", "lua <codice> | lua =<espressione>", "lua <code> | lua =<expressie>" },
+              { "runs Lua in the game's state (devprint writes here)", "roda Lua no estado do jogo (devprint escreve aqui)",
+                "exécute du Lua dans l'état du jeu (devprint écrit ici)", "führt Lua im Zustand des Spiels aus (devprint schreibt hierher)",
+                "ejecuta Lua en el estado del juego (devprint escribe aquí)", "esegue Lua nello stato del gioco (devprint scrive qui)",
+                "voert Lua uit in de toestand van het spel (devprint schrijft hier)" } },
+            { "clear", { "clear", "clear", "clear", "clear", "clear", "clear", "clear" },
+              { "clears the output (Ctrl+L)", "limpa a saída (Ctrl+L)", "efface la sortie (Ctrl+L)", "leert die Ausgabe (Strg+L)",
+                "borra la salida (Ctrl+L)", "pulisce l'output (Ctrl+L)", "wist de uitvoer (Ctrl+L)" } },
         };
 
         std::vector<std::string> CommandNames()
@@ -360,8 +492,8 @@ namespace dev::console
                 LoadHistory();
                 if (g_lines.empty())
                 {
-                    AddLine("CrashRecomp - console de desenvolvedor. \"help\" lista os comandos.", Tone::Help);
-                    AddLine("Tab completa, setas para cima/baixo = historico, PageUp/PageDown rolam, Esc fecha.", Tone::Dim);
+                    AddLine(Tr(T_WELCOME), Tone::Help);
+                    AddLine(Tr(T_KEYS), Tone::Dim);
                 }
                 g_generation++;
             }
@@ -397,9 +529,9 @@ namespace dev::console
             {
                 std::lock_guard lock(g_mutex);
                 if (error.empty())
-                    AddLine("erro: o estado Lua do jogo ainda nao existe", Tone::Error);
+                    AddLine(std::string(Tr(T_ERROR)) + Tr(T_NO_LUA), Tone::Error);
                 else if (error != g_lastTraceback)
-                    AddLine("erro: " + error, Tone::Error);
+                    AddLine(Tr(T_ERROR) + error, Tone::Error);
             }
             return ok;
         }
@@ -432,29 +564,30 @@ namespace dev::console
                 {
                     if (Lower(topic) == c.name)
                     {
-                        Reply(c.usage, Tone::Help);
-                        Reply("  " + std::string(c.help), Tone::Normal);
+                        Reply(Tr(c.usage), Tone::Help);
+                        Reply("  " + std::string(Tr(c.help)), Tone::Normal);
                         if (std::string(c.name) == "skin" || std::string(c.name) == "unlock")
-                            Reply("  skins: " + skins::List() + "  ((x) = nao da para usar)", Tone::Dim);
+                            Reply("  skins: " + skins::List() + Tr(T_UNUSABLE), Tone::Dim);
                         if (std::string(c.name) == "level" && !g_levels.empty())
                         {
                             std::string list;
                             for (const std::string& l : g_levels)
                                 list += (list.empty() ? "" : " ") + l;
-                            Reply("  fases: " + list, Tone::Dim);
+                            Reply("  " + std::string(Tr(T_LEVELS)) + list, Tone::Dim);
                         }
                         return;
                     }
                 }
-                Reply("comando desconhecido: " + topic, Tone::Error);
+                Reply(Tr(T_UNKNOWN_COMMAND) + topic, Tone::Error);
                 return;
             }
-            Reply("Comandos:", Tone::Help);
+            Reply(Tr(T_COMMANDS), Tone::Help);
             for (const Command& c : COMMANDS)
             {
-                std::string usage = c.usage;
-                usage.resize(std::max<size_t>(usage.size(), 34), ' ');
-                Reply("  " + usage + c.help, Tone::Normal);
+                // Padded to 34 characters (not bytes: the usages have accented letters).
+                std::string usage = Tr(c.usage);
+                usage.append(size_t(std::max(34 - int(Wide(usage).size()), 0)), ' ');
+                Reply("  " + usage + Tr(c.help), Tone::Normal);
             }
         }
 
@@ -467,7 +600,7 @@ namespace dev::console
             auto usage = [&](const char* name) {
                 for (const Command& c : COMMANDS)
                     if (std::string(c.name) == name)
-                        Reply(std::string("uso: ") + c.usage, Tone::Error);
+                        Reply(std::string(Tr(T_USAGE)) + Tr(c.usage), Tone::Error);
             };
 
             if (command == "help" || command == "?")
@@ -577,18 +710,18 @@ namespace dev::console
                 if (words.size() < 2)
                 {
                     int current = skins::Current(ctx, base), pending = skins::Pending();
-                    Reply(std::string("skin atual: ") + (current >= 0 ? skins::Label(current) : "?") +
-                              (pending >= 0 ? std::string(" (proxima fase: ") + skins::Label(pending) + ")" : ""),
+                    Reply(std::string(Tr(T_CURRENT_SKIN)) + (current >= 0 ? skins::Label(current) : "?") +
+                              (pending >= 0 ? std::string(Tr(T_NEXT_LEVEL)) + skins::Label(pending) + ")" : ""),
                           Tone::Help);
-                    Reply("skins: " + skins::List() + "  ((x) = nao da para usar)", Tone::Dim);
+                    Reply("skins: " + skins::List() + Tr(T_UNUSABLE), Tone::Dim);
                     return;
                 }
                 int skin = skins::ByName(words[1]);
                 bool now = words.size() > 2 && Lower(words[2]) == "now";
                 if (skin < 0)
-                    Reply("skin desconhecida: " + words[1] + " (skins: " + skins::List() + ")", Tone::Error);
+                    Reply(Tr(T_UNKNOWN_SKIN) + words[1] + " (skins: " + skins::List() + ")", Tone::Error);
                 else if (!skins::Wearable(skin))
-                    Reply(std::string("recusado: ") + skins::Label(skin), Tone::Error);
+                    Reply(std::string(Tr(T_REFUSED)) + skins::Label(skin), Tone::Error);
                 else
                     Reply(skins::Select(ctx, base, skin, now), Tone::Ok);
             }
@@ -601,7 +734,7 @@ namespace dev::console
                     std::string list;
                     for (const std::string& l : g_levels)
                         list += (list.empty() ? "" : " ") + l;
-                    Reply(list.empty() ? "a lista de fases ainda nao existe" : "fases: " + list, Tone::Help);
+                    Reply(list.empty() ? std::string(Tr(T_NO_LEVELS)) : Tr(T_LEVELS) + list, Tone::Help);
                     return;
                 }
                 std::string name;
@@ -610,7 +743,7 @@ namespace dev::console
                         name = l;
                 if (name.empty())
                 {
-                    Reply("fase desconhecida: " + words[1] + " (\"level\" lista)", Tone::Error);
+                    Reply(Tr(T_UNKNOWN_LEVEL) + words[1] + Fill(Tr(T_LISTED_BY), "level"), Tone::Error);
                     return;
                 }
                 if (skins::InLevel())
@@ -621,19 +754,19 @@ namespace dev::console
                     size_t index = size_t(std::find(g_levels.begin(), g_levels.end(), name) - g_levels.begin());
                     Log("[console] level %s: UberManager SetLevelIndex(%zu) + ForceReload", name.c_str(), index);
                     if (ConsoleLua(ctx, base, "local u = getobj(':UberManager') u:SetLevelIndex(" + std::to_string(index) + ") u:ForceReload()"))
-                        Reply("indo para " + name, Tone::Ok);
+                        Reply(Tr(T_GOING_TO) + name, Tone::Ok);
                     return;
                 }
                 // In the frontend the level starts at the next evaluation of the HUB or the main
                 // menu (OverrideExit): Frontend:StartLevel alone doesn't leave the menu.
                 g_levelRequest = int32_t(std::find(g_levels.begin(), g_levels.end(), name) - g_levels.begin());
                 Log("[console] level %s: requested from the frontend", name.c_str());
-                Reply("indo para " + name + " (pelo HUB ou pelo menu principal)", Tone::Ok);
+                Reply(Tr(T_GOING_TO) + name + Tr(T_FROM_MENUS), Tone::Ok);
             }
             else if (command == "reload")
             {
                 if (ConsoleLua(ctx, base, "Managers.UberManager:ForceReload()"))
-                    Reply("reiniciando a fase", Tone::Ok);
+                    Reply(Tr(T_RELOADING), Tone::Ok);
             }
             else if (command == "lua")
             {
@@ -647,7 +780,7 @@ namespace dev::console
                     ConsoleLua(ctx, base, code);
             }
             else
-                Reply("comando desconhecido: " + words[0] + " (\"help\" lista)", Tone::Error);
+                Reply(Tr(T_UNKNOWN_COMMAND) + words[0] + Fill(Tr(T_LISTED_BY), "help"), Tone::Error);
         }
 
         // ---- the test script (CRASH_DEV_CONSOLE_SCRIPT) ----
@@ -864,9 +997,14 @@ namespace dev::console
     void Print(const std::string& text, Tone tone)
     {
         std::lock_guard lock(g_mutex);
+        // "erro: " starts the Lua errors of _TRACEBACK (dev_tools.cpp; the log keeps it as is).
         if (tone == Tone::Error && text.rfind("erro: ", 0) == 0)
+        {
             g_lastTraceback = text.substr(6);
-        AddLine(text, tone);
+            AddLine(Tr(T_ERROR) + g_lastTraceback, tone);
+        }
+        else
+            AddLine(text, tone);
         if (tone != Tone::Input)
             Log("[console] %s", text.c_str());
     }
@@ -1012,7 +1150,7 @@ namespace dev::console
             int columns = std::max((c.w - 2 * pad) / c.charW, 8);
 
             // Header.
-            Text(pad, 2, "CONSOLE DE DESENVOLVEDOR  -  help: comandos   Tab: completar   ↑↓: historico   Esc/F10: fechar", Tone::Dim);
+            Text(pad, 2, Tr(T_HEADER), Tone::Dim);
             int top = c.lineH + 4;
             // Input line at the bottom.
             int inputY = c.h - c.lineH - 4;
@@ -1049,7 +1187,10 @@ namespace dev::console
                 }
             }
             if (scroll > 0)
-                Text(c.w - pad - 12 * c.charW, inputY, "[+" + std::to_string(scroll) + " linhas]", Tone::Dim);
+            {
+                std::string mark = "[+" + std::to_string(scroll) + " " + Tr(T_SCROLLED) + "]";
+                Text(c.w - pad - (int(Wide(mark).size()) + 1) * c.charW, inputY, mark, Tone::Dim);
+            }
             c.text.Flush();
 
             // Coverage (white text on black) -> straight-alpha RGBA over the panel's background.

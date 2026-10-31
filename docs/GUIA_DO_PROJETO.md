@@ -348,7 +348,7 @@ Provas (um perfil por recurso, capturas em `build\dev\`): `dev_api` (lista a API
 
 Desligado por padrão. Liga em **SETTINGS > DEFINITIVE EDITION > CONSOLE DE DESENVOLVEDOR** (ou no launcher; `[dev] console = true` no `settings.toml`, vale na hora), com `--dev-console` ou `CRASH_DEV_CONSOLE=1`. Aí a **tecla antes do 1** (`'` no ABNT2, `` ` `` no teclado americano; vale a posição, qualquer layout) ou **F10** abre o console por cima do jogo; Esc, F10 ou a mesma tecla com a linha vazia fecham. Aberto, ele fica com o teclado e o mouse e o jogo vê um controle parado (o jogo continua rodando).
 
-Enter roda a linha; setas para cima/baixo andam no histórico (guardado em `userdata\console_history.txt`); Tab completa o comando, a skin, a fase ou on/off (Tab de novo passa para a próxima opção); PageUp/PageDown e a roda rolam a saída; Ctrl+V cola, Ctrl+L limpa a saída, Ctrl+C/Ctrl+U limpa a linha. O `devprint` do Lua e os erros de Lua aparecem no console (em vermelho) e no log (`[console] ...`).
+Enter roda a linha; setas para cima/baixo andam no histórico (guardado em `userdata\console_history.txt`); Tab completa o comando, a skin, a fase ou on/off (Tab de novo passa para a próxima opção); PageUp/PageDown e a roda rolam a saída; Ctrl+V cola, Ctrl+L limpa a saída, Ctrl+C/Ctrl+U limpa a linha. O `devprint` do Lua e os erros de Lua aparecem no console (em vermelho) e no log (`[console] ...`). A ajuda e as mensagens seguem o idioma do jogo (`game.language`); os nomes dos comandos são os mesmos em todos.
 
 | Comando | O que faz |
 |---|---|
