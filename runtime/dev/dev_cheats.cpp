@@ -173,7 +173,25 @@ PPC_FUNC(sub_82110448)
         }
         ctx.f1.f64 = 0.0;
     }
+    uint32_t debugged = getenv("CRASH_DEV_DAMAGE_DEBUG") && ctx.f1.f64 != 0.0 ? ctx.r3.u32 : 0;
+    auto hitpoints = [](uint32_t d) {
+        float value;
+        uint32_t bits = LoadBE32(LoadBE32(d + DAMAGEABLE_HITPOINTS));
+        memcpy(&value, &bits, 4);
+        return value;
+    };
+    float before = debugged ? hitpoints(debugged) : 0.0f;
+    double delta = ctx.f1.f64;
+    uint32_t by = ctx.r5.u32;
     __imp__sub_82110448(ctx, base);
+    if (debugged)
+    {
+        float field136;
+        uint32_t bits = LoadBE32(debugged + 136);
+        memcpy(&field136, &bits, 4);
+        Log("[dev] hitpoints 0x%08X: %.2f %+.2f -> %.2f (by 0x%08X; +136 %.2f, +260 %02X)", debugged, before, delta,
+            hitpoints(debugged), by, field136, LoadBE32(debugged + 260) >> 24);
+    }
 }
 
 // CActionUnlockSkin::vf02 (sub_82215FD0), the objective step DO_UnlockSkin(skin): appends the skin
@@ -193,4 +211,14 @@ PPC_FUNC(sub_82215FD0)
             list += " " + std::to_string(value);
     }
     Log("[dev] unlock skin %u -> unlocked:%s", skin, list.c_str());
+}
+
+// CDamageableBehaviour::SetCurrentHitpoints (sub_821108B0): logged with CRASH_DEV_DAMAGE_DEBUG (a broken
+// prop's hitpoints back at its maximum come this way).
+extern "C" PPC_FUNC(__imp__sub_821108B0);
+PPC_FUNC(sub_821108B0)
+{
+    if (getenv("CRASH_DEV_DAMAGE_DEBUG"))
+        Log("[dev] SetCurrentHitpoints 0x%08X to %.2f", ctx.r3.u32, ctx.f1.f64);
+    __imp__sub_821108B0(ctx, base);
 }

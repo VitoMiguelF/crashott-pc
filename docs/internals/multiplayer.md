@@ -243,6 +243,20 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   `ApplyHits`, dealt by that player's copy); on the host a remote player's copy deals no damage to non-players. The
   client keeps the hitpoints it took for 0.7 s (`predictedUntil`) and a break it made is its `brokenAt`; the host's
   0 finds an actor's damageable through its behaviour controller (`FindDamageable`), not only one the client hit.
+- **Breakables' stages** (lobby version 10; `dev_planta_grande`, `mp_plantagrande_host` + `_c`,
+  `mp_plantagrande3_host` + `_p2` + `_p3`, `mp_plantagrande3_salva`): a mojo plant goes 1 -> 0 -> 1 on every hit
+  that lands, big or small (`CRASH_DEV_DAMAGE_DEBUG` logs each change): at 0 the hit handler (`sub_82113470`)
+  sends the damage result (type 8, kind 4: `sub_82093BE0`, `sub_82090268`) and the plant's `BreakableBase` takes
+  its next stage (`sub_8214FF10`: the hitpoints back at 1, mojo spawned; a small plant's stump). Each stage sets
+  the strength a hit needs at damageable +136: 0 for a big plant's first two, 15 (a titan's) for its last.
+  A hit from another machine lands the same way (`LandHit`: AdjustHitpoints, then at 0 that message to the
+  actor). The HIT packet carries the strength its stage needed on the hitter's machine; the host refuses a hit
+  whose actor needs more there (another player's hits took it further): a crash's hit on a plant still at its
+  first stage on one machine broke the host's, at its last, whole. When a hit takes a non-player to 0 the host
+  sends a STAGE packet ("CMB1": sequence, the slot that already has it, the name, the strength; twice) and every
+  other client lands it, so a third player sees each stage; the records' 0 (`brokenUntil`) lands only when no
+  STAGE came for `ZERO_WAIT_MS`, and after a landed stage the records wait `PREDICTED_MS` (their 1, written first,
+  left a plant a stage behind).
 - **Menus over the level**: a remote player's pad reads empty while this machine's frontend shows a menu over the
   level (`input::pc::InMenus`: the pause, a tutorial): the frontend takes any controller's buttons, so player 2
   moved player 1's pause.
@@ -508,14 +522,16 @@ PURPLE, BLUE, CYAN, GREEN, YELLOW, BROWN, WHITE (the jacked palette, P2's pale f
   skin to start on goes in the frontend manager +16640 (what the HUB doll's `Frontend:SetSkinToDisplay` does;
   writing the preview's own struct at 0x82497508 instead made it skip the template load and crash). While it
   shows, its left / right go through every wearable skin but Crash_Hulk (`dev_skins.cpp`'s next / previous
-  `sub_822159F8` and unlocked `sub_82215900` hooks), up / down (or a tap on the arrows) change the colour, drawn
+  `sub_822159F8` and unlocked `sub_82215900` hooks; a tap or click from the colour's arrows to near the preview,
+  either side, is the game's left / right, except under WEAR SKIN's YES / NO, a live menu that takes its own taps;
+  a click with no live menu is not A here), up / down (or a tap on the arrows) change the colour, drawn
   in the screen's own look (the COLOR title as the skin's name, the menus' arrow turned a quarter,
   `menu_art::DrawIconTurned`, the hint between BACK and WEAR SKIN), and the preview wears it
   (`mp_colors.cpp` `PaintPreview`: base palette jacked for WHITE, a Tint after the blend). The host's
   ExitConfirmed / ExitBack go to its HUB as usual and the lobby opens again; a client's go to the wait instead
   (exit 91 with the SETTINGS marker), wearing the skin through the frontend's `SelectSkin` (the menus' scene
   loads as a level, so `dev::skins::Select` is told to). The skin then goes to the others in PING / ROSTER.
-  `mp_skin_cor` (host), `mp_skin_cor_c` (a client, with `mp_lobby_host_new`).
+  `mp_skin_cor` (host), `mp_skin_cor_c` (a client, with `mp_lobby_host_new`), `mp_skin_toque_c` (the same by clicks).
 
 ## Internet (no server of ours)
 

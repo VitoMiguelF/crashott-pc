@@ -222,9 +222,8 @@ namespace
         bool moved = moves != s_moves;
         s_moves = moves;
         if (!settings::Get().controls.mouseMenus || settings::menu::BlocksGameInput() || settings::save_screens::BlocksMenuMouse() ||
-            mp::menu::BlocksGameInput() || mp::menu::PickerOpen())
+            mp::menu::BlocksGameInput())
         {
-            // (SKIN AND COLOR: its own taps, the arrows; a tap elsewhere was WEAR SKIN.)
             // The settings screen (drawn over the PS2 options menu, which also runs) has the mouse.
             input::pc::TakeMenuClick();
             input::pc::TakeMenuWheel();

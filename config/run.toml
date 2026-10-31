@@ -1617,6 +1617,38 @@ input = [
 ]
 expect = { exit = ["timeout"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SKIN AND COLOR: the skin screen', 'SKIN AND COLOR: back to the wait', 'menu opened at the lobby'] }
 
+[profiles.mp_skin_toque_c]
+description = "SKIN E COR do cliente pelo mouse/toque (com mp_lobby_host_new): na tela de skins, cliques perto da seta direita e da esquerda do jogo (trocam a skin; a área de toque vai além do desenho), clique fora delas (nada), A (VESTIR SKIN) e clique no SIM da pergunta"
+test = false
+timeout = 80
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "CLIENTE", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MOUSE_TRACE = "1", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1080" }
+input = [
+    ["@main_menu"], [3, "DOWN"], [3.5, "DOWN"], [4.5, "A"], [6, "DOWN"], [6.5, "A"], [7.3, "DOWN"], [7.8, "A"], [11, "SHOT"], [12, "START"], [16, "SHOT"], [20, "Y"], [25, "SHOT"],
+    [26, "CLICK", 860, 300], [27.5, "SHOT"], [28, "CLICK", 980, 480], [29.5, "SHOT"], [30, "CLICK", 420, 480], [31.5, "SHOT"], [32, "CLICK", 640, 200], [33.5, "SHOT"],
+    [34, "A"], [35.5, "SHOT"], [36, "CLICK", 500, 445], [38, "SHOT"], [42, "SHOT"],
+]
+expect = { exit = ["timeout"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SKIN AND COLOR: the skin screen', 'SKIN AND COLOR: back to the wait'] }
+
+[profiles.mp_skin_toque_largo_c]
+description = "SKIN E COR do cliente pelo mouse/toque numa tela 21:9 (os celulares são mais largos que 16:9) (com mp_lobby_host_new): na tela de skins, cliques perto da seta direita e da esquerda do jogo (trocam a skin; a área de toque vai além do desenho), clique fora delas (nada), A (VESTIR SKIN) e clique no SIM da pergunta"
+test = false
+timeout = 80
+fps_limit = 60
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+env = { CRASH_MP_NAME = "CLIENTE", CRASH_MP_CODE = "3Z000-03EP2", CRASH_MOUSE_TRACE = "1", CRASH_SETTINGS = "video.aspect=21:9", CRASH_SCREENSHOT_OVERLAY = "1", CRASH_RESTART_WINDOW = "1280,0,2520,1080" }
+input = [
+    ["@main_menu"], [3, "DOWN"], [3.5, "DOWN"], [4.5, "A"], [6, "DOWN"], [6.5, "A"], [7.3, "DOWN"], [7.8, "A"], [11, "SHOT"], [12, "START"], [16, "SHOT"], [20, "Y"], [25, "SHOT"],
+    [26, "CLICK", 836, 394], [27.5, "SHOT"], [28, "CLICK", 900, 480], [29.5, "SHOT"], [30, "CLICK", 444, 394], [31.5, "SHOT"], [32, "CLICK", 640, 200], [33.5, "SHOT"],
+    [34, "A"], [35.5, "SHOT"], [36, "CLICK", 500, 445], [38, "SHOT"], [42, "SHOT"],
+]
+expect = { exit = ["timeout"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['SKIN AND COLOR: the skin screen', 'SKIN AND COLOR: back to the wait'] }
+
 [profiles.nome_entrada]
 description = "NEW GAME: rajada de capturas na entrada da tela do nome (o teclado aparecia antes do resto da tela) e a tela parada"
 test = false
@@ -1643,6 +1675,36 @@ env = { CRASH_SETTINGS = "controls.player2=keyboard" }
 input = [["@gameplay_ready"], [1, "SHOT"], [3, "KEY_E"], [5, "SHOT"], [8, "KEY_ESCAPE"], [9.5, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['P2 = teclado'] }
 
+[profiles.dev_planta_grande]
+description = "DEV: o Crash é levado até a planta grande L1_E1_testbreakable3 (perto do início da vila) e bate (X); CRASH_DEV_DAMAGE_DEBUG mostra cada dano (golpe normal só solta mojo, o titã quebra)"
+test = false
+timeout = 30
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_at = "gameplay_ready+1"
+dev_teleport = [-52.2, -1.5, 50.4]
+env = { CRASH_DEV_DAMAGE_DEBUG = "1" }
+input = [["@gameplay_ready"], [1.5, "SHOT"], [2.5, "X"], [2.9, "X"], [3.3, "X"], [3.7, "X"], [4.4, "SHOT"], [5.0, "X"], [5.4, "X"], [5.8, "X"], [6.5, "SHOT"], [7.0, "X"], [7.4, "X"], [8.5, "SHOT"], [9.5, "X"], [9.9, "X"], [10.3, "X"], [11, "SHOT"], [12, "Y"], [13, "Y"], [14, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.dev_planta_pequena]
+description = "DEV: o Crash é levado até a planta pequena L1_E1_testbreakable10 e bate (X); CRASH_DEV_DAMAGE_DEBUG mostra cada dano (compare com dev_planta_grande)"
+test = false
+timeout = 30
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_at = "gameplay_ready+1"
+dev_teleport = [-50.96, -1.8, 37.0]
+env = { CRASH_DEV_DAMAGE_DEBUG = "1" }
+input = [["@gameplay_ready"], [1.5, "SHOT"], [2.5, "X"], [3.0, "X"], [3.5, "X"], [4.0, "SHOT"], [6.6, "X"], [7.0, "X"], [7.4, "X"], [7.8, "X"], [8.2, "X"], [8.6, "SHOT"], [9.0, "X"], [9.4, "X"], [10, "SHOT"], [12, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
 [profiles.mp_planta_host]
 description = "Host do L1_E1 parado; rode junto com mp_planta_c: o cliente anda para a direita até as plantas de mojo e bate (as plantas que o cliente quebrava só quebravam no host)"
 test = false
@@ -1667,6 +1729,90 @@ skip_cinematics = true
 dev_invincible = true
 env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_DEV_DAMAGE_DEBUG = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1100" }
 input = [["@gameplay_ready"], [3, "SHOT"], [4, "LS", 1, 0, 2.5], [6.6, "X"], [7.0, "X"], [7.4, "X"], [7.8, "X"], [8.2, "X"], [8.6, "SHOT"], [9.0, "X"], [9.4, "X"], [10, "SHOT"], [12, "SHOT"], [14, "SHOT"], [18, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_plantagrande_host]
+description = "Host do L1_E1 parado; rode junto com mp_plantagrande_c (o cliente vai até a planta grande L1_E1_testbreakable3 e bate: golpe normal só solta mojo, nas duas janelas)"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_TRACE = "1", CRASH_DEV_DAMAGE_DEBUG = "1", CRASH_RESTART_WINDOW = "0,0,1920,1100" }
+input = [["@gameplay_ready"], [3, "SHOT"], [6, "SHOT"], [8, "SHOT"], [11, "SHOT"], [16, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_plantagrande_c]
+description = "Cliente do mp_plantagrande_host: levado até a planta grande, bate (X); depois até as pequenas à esquerda dela e bate"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_at = "gameplay_ready+1"
+dev_teleport = [-52.2, -1.5, 50.4]
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_DEV_DAMAGE_DEBUG = "1", CRASH_RESTART_WINDOW = "1920,0,1920,1100" }
+input = [["@gameplay_ready"], [1.5, "SHOT"], [2.5, "X"], [2.9, "X"], [3.3, "X"], [3.7, "X"], [4.4, "SHOT"], [5.0, "X"], [5.4, "X"], [5.8, "X"], [6.5, "SHOT"], [7.0, "X"], [7.4, "X"], [8.5, "SHOT"], [11, "SHOT"], [16, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_plantagrande3_host]
+description = "Host do L1_E1 parado; 3 jogadores; rode junto com mp_plantagrande3_p2 e mp_plantagrande3_p3 (o P3 vai até a planta grande L1_E1_testbreakable3 e bate: golpe normal só solta mojo, nas três janelas, o P2 vê cada golpe)"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_PLAYERS = "3", CRASH_MP_TRACE = "1", CRASH_DEV_DAMAGE_DEBUG = "1", CRASH_RESTART_WINDOW = "0,0,1280,1100" }
+input = [["@gameplay_ready"], [3, "SHOT"], [6, "SHOT"], [8, "SHOT"], [11, "SHOT"], [16, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_plantagrande3_salva]
+description = "Host do L1_E1 (do save 1), 3 jogadores, parado; rode junto com mp_plantagrande3_p2 e mp_plantagrande3_p3 (o P3 bate na planta grande); depois sai da fase salvando (pausa > EXIT LEVEL > SIM): o save caía depois da planta grande destruída"
+test = false
+timeout = 80
+audio = false
+userdata_mode = "copy"
+boot = "load:1:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_PLAYERS = "3", CRASH_MP_TRACE = "1", CRASH_DEV_DAMAGE_DEBUG = "1", CRASH_RESTART_WINDOW = "0,0,1280,1100" }
+input = [["@gameplay_ready"], [3, "SHOT"], [8, "SHOT"], [31, "SHOT"], [35, "START"], [36, "SHOT"], [36.5, "DOWN"], [37, "DOWN"], [37.5, "SHOT"], [38, "A"], [39, "SHOT"], [39.5, "LEFT"], [40, "A"], [41, "SHOT"], [44, "SHOT"], [46, "A"], [49, "SHOT"], [51, "A"], [54, "SHOT"], [60, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_plantagrande3_p2]
+description = "Cliente P2 do mp_plantagrande3_host: a planta grande deve soltar mojo a cada golpe do P3 (STAGE do host), sem quebrar; depois o P2 vai até ela e bate (no último estágio só o titã quebra: o golpe do P2 não pode quebrá-la)"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_at = "gameplay_ready+9"
+dev_teleport = [-52.2, -1.5, 50.4]
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SLOT = "1", CRASH_MP_PLAYERS = "3", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_DEV_DAMAGE_DEBUG = "1", CRASH_RESTART_WINDOW = "1280,0,1280,1100" }
+input = [["@gameplay_ready"], [3, "SHOT"], [6, "SHOT"], [8, "SHOT"], [10.5, "X"], [10.9, "X"], [11.3, "X"], [11.7, "X"], [12.5, "SHOT"], [13, "X"], [13.4, "X"], [14, "SHOT"], [16, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_plantagrande3_p3]
+description = "Cliente P3 do mp_plantagrande3_host: levado até a planta grande, bate (X); depois até as pequenas à esquerda dela e bate"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_at = "gameplay_ready+1"
+dev_teleport = [-52.2, -1.5, 50.4]
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SLOT = "2", CRASH_MP_PLAYERS = "3", CRASH_MP_SUPPRESS = "none", CRASH_MP_TRACE = "1", CRASH_DEV_DAMAGE_DEBUG = "1", CRASH_RESTART_WINDOW = "2560,0,1280,1100" }
+input = [["@gameplay_ready"], [1.5, "SHOT"], [2.5, "X"], [2.9, "X"], [3.3, "X"], [3.7, "X"], [4.4, "SHOT"], [5.0, "X"], [5.4, "X"], [5.8, "X"], [6.5, "SHOT"], [7.0, "X"], [7.4, "X"], [8.5, "SHOT"], [11, "SHOT"], [16, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
 
 [profiles.mp_planta3_host]

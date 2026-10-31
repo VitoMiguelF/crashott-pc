@@ -2625,3 +2625,13 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   `sub_82219908`: +8 o volume, +20 o modo; ponto médio = `sub_82152810`, dentro = `sub_8213B280`) valem online com
   qualquer jogador em jogo dentro: os inimigos só nasciam com todos os Crashes perto. Perfis `mp_planta3_host` +
   `mp_planta3_c` (o P3 bate na planta: "hit from slot 3" no host).
+- **Online: estágios das plantas, SIM/NÃO e setas da SKIN E COR por toque** (2026-10-30, lobby versão 10): toda
+  planta de mojo faz 1 -> 0 -> 1 a cada golpe que pega (`CRASH_DEV_DAMAGE_DEBUG` mostra): no 0 o jogo manda o
+  resultado do dano (tipo 8, kind 4) e o `BreakableBase` passa de estágio (`sub_8214FF10`, a vida volta a 1); cada
+  estágio põe em damageable +136 a força que o golpe precisa (planta grande: 0, 0 e 15 = titã). O golpe de outra
+  máquina entra igual (`LandHit`); o HIT leva a força do estágio no aparelho de quem bateu e o host recusa se o dele
+  já pede mais (o P2, com a planta no 1º estágio, quebrava inteira a do host, já no último); o host manda STAGE
+  ("CMB1") para os outros clientes, que passam de estágio junto (o P2 não via os golpes do P3). Na SKIN E COR o
+  toque perto das setas do jogo (área bem maior que o desenho) troca a skin, e o SIM/NÃO aceita toque (o bloqueio
+  da versão anterior pegava a pergunta). Perfis `dev_planta_grande`, `dev_planta_pequena`, `mp_plantagrande*`,
+  `mp_skin_toque_c`. O crash do host ao salvar (depois da planta destruída inteira) não reproduziu no PC.

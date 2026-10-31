@@ -80,6 +80,9 @@ extern "C" PPC_FUNC(__imp__sub_82099058);  // CAIManager::vf10
 extern "C" PPC_FUNC(__imp__sub_8220AC38);  // CObjectiveManager::vf10
 extern "C" PPC_FUNC(__imp__sub_822210E0);  // CCharacterObject::~CCharacterObject
 PPC_EXTERN_FUNC(sub_82110448);             // CDamageableBehaviour::AdjustHitpoints(this, f1 = delta, r5 = damager)
+PPC_EXTERN_FUNC(sub_82093BE0);             // the damage result message (type 8; +16 kind, +28 actor, +32 param)
+PPC_EXTERN_FUNC(sub_82093C48);             // its destructor
+PPC_EXTERN_FUNC(sub_82090268);             // CActor: sends a message to its behaviours (actor, message)
 PPC_EXTERN_FUNC(sub_820972D0);             // CActionTeleport::CActionTeleport(msg, const Vector*, flags)
 PPC_EXTERN_FUNC(sub_82097348);             // its destructor
 PPC_EXTERN_FUNC(sub_82145358);             // CPhysicsBehaviour: the teleport message (type 40) handler
@@ -91,9 +94,15 @@ namespace
     constexpr uint32_t MAGIC = 0x434D5031;  // "CMP1"
     constexpr uint32_t INPUT_MAGIC = 0x434D4932;  // "CMI2"
     // A client player's hit on an actor the host mirrors: magic, slot, sequence, the actor's name (2 words), the
-    // delta (float). Sent twice (UDP); the host keeps the sequences it applied.
+    // delta (float), the strength its stage needed there (float, DAMAGEABLE_STRENGTH). Sent twice (UDP); the host
+    // keeps the sequences it applied.
     constexpr uint32_t HIT_MAGIC = 0x434D4831;  // "CMH1"
-    constexpr size_t HIT_PACKET = 24;
+    constexpr size_t HIT_PACKET = 28;
+    // Host: a hit took an actor's hitpoints to 0 (a breakable's next stage, a death): magic, sequence, the slot whose
+    // machine already has it (or ~0), the actor's name (2 words), the strength its stage needed on the host (float).
+    // Sent twice; each client lands it once (LandHit).
+    constexpr uint32_t STAGE_MAGIC = 0x434D4231;  // "CMB1"
+    constexpr size_t STAGE_PACKET = 24;
     // magic, slot, sequence, the pad, camera forward (x, z), the player's position (x, y, z), in play
     constexpr size_t PAD_PACKET = 12 + 12 + 8 + 12 + 4;
     constexpr uint32_t GAME_DATABASE = 0x824A76A4;  // CGameDatabase: players at +16 / +20
@@ -103,7 +112,9 @@ namespace
     constexpr size_t MAX_PACKET = 1200;     // under the usual internet MTU
     constexpr uint32_t CACTOR_VTABLE = 0x820007A4;
     // CDamageableBehaviour: its actor at +28, -> hitpoints at +64 (dev/dev_cheats.cpp)
-    constexpr uint32_t BEHAVIOUR_ACTOR = 28, DAMAGEABLE_HITPOINTS = 64;
+    // DAMAGEABLE_STRENGTH: the strength a hit needs to deal damage, set by a breakable's stage (BreakableBase,
+    // sub_8214FF10): 0 for a big mojo plant's first two, 15 (a titan's) for its last.
+    constexpr uint32_t BEHAVIOUR_ACTOR = 28, DAMAGEABLE_HITPOINTS = 64, DAMAGEABLE_STRENGTH = 136;
     constexpr uint32_t DAMAGEABLE_VTABLE = 0x8201145C;  // CDamageableBehaviour
 
     // Heap pointers the game hands out: virtual (0x40000000..) or physical (0xA0000000..) memory.
@@ -209,6 +220,7 @@ namespace
         // Client: when the host's 0 was applied to an actor (name): once per hold, the stump (hitpoints back at
         // 1 at once) is not broken again.
         std::unordered_map<uint64_t, uint64_t> brokenAt;
+        std::unordered_map<uint64_t, uint64_t> zeroSince;  // when the records' 0 for an actor began
         // Client: its own player's hits (Hitpoints): the actor's hitpoints are this machine's until then (the
         // host's records are a round trip behind), and the HIT packets' sequence.
         std::unordered_map<uint64_t, uint64_t> predictedUntil;
@@ -219,11 +231,21 @@ namespace
         {
             uint32_t slot = 0;
             uint64_t name = 0;
-            float delta = 0;
+            float delta = 0, strength = 0;
         };
         std::vector<Hit> hits;
         std::deque<uint32_t> hitsDone[mp::MAX_PLAYERS];
         bool applyingHit = false;
+        uint32_t hitSlot = ~0u;  // the slot whose hit is being applied
+        // Host: the STAGE packets' sequence. Client: the stages to land (names) and the sequences landed.
+        uint32_t stageSequence = 0;
+        struct Stage
+        {
+            uint64_t name = 0;
+            float strength = 0;
+        };
+        std::vector<Stage> stages;
+        std::deque<uint32_t> stagesDone;
         uint64_t hitsApplied = 0, copyHitsDropped = 0;
     };
 
@@ -469,6 +491,39 @@ namespace
         return 0;
     }
 
+    constexpr uint64_t BROKEN_HOLD_MS = 1500, ZERO_WAIT_MS = 400;
+    constexpr uint64_t PREDICTED_MS = 700;  // a client's own hit: its hitpoints win over the host's records this long
+
+    // A hit that came from another machine, the way the game's hit handler ends one (ApplyEnemyHit,
+    // sub_82113470): the hitpoints, then at 0 the damage result (kind 4) to the actor. A breakable takes it as
+    // its next stage (BreakableBase, sub_8214FF10: the stump of a small mojo plant; a big one only drops mojo,
+    // its hitpoints back at 1); the hitpoints alone left at 0 broke a big plant whole, like a titan's hit.
+    void LandHit(PPCContext& ctx, uint8_t* base, uint32_t damageable, double delta, uint32_t damager)
+    {
+        PPCContext call = ctx;
+        call.r3.u64 = damageable;
+        call.r5.u64 = damager;
+        call.f1.f64 = delta;
+        sub_82110448(call, base);
+        uint32_t actor = LoadBE32(damageable + BEHAVIOUR_ACTOR);
+        static uint32_t message = GuestAlloc(128);
+        if (!message || !GuestPointer(actor) || LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)) > 0)
+            return;
+        call = ctx;
+        call.r3.u64 = message;
+        call.r4.u64 = 4;
+        call.r5.u64 = actor;
+        call.r6.u64 = 0;
+        sub_82093BE0(call, base);
+        call = ctx;
+        call.r3.u64 = actor;
+        call.r4.u64 = message;
+        sub_82090268(call, base);
+        call = ctx;
+        call.r3.u64 = message;
+        sub_82093C48(call, base);
+    }
+
     // The host's hitpoints for an actor it mirrors: its hits (and the deaths they bring) land here too.
     void ApplyHitpoints(PPCContext& ctx, uint8_t* base, Net& n, uint32_t actor, const Record& r, uint64_t name, bool player = false)
     {
@@ -490,17 +545,27 @@ namespace
             return;
         if (!player && wanted <= 0)
         {
+            // The host's STAGE packet lands it first; the records' 0 only when that packet was lost (seen
+            // for ZERO_WAIT_MS with no stage landed).
+            uint64_t now = mp::NowMs(), &since = n.zeroSince[name];
+            if (!since || now - since > BROKEN_HOLD_MS)
+                since = now;
             uint64_t& at = n.brokenAt[name];
-            if (at && mp::NowMs() - at < 2500)
+            if ((at && now - at < 2500) || now - since < ZERO_WAIT_MS)
                 return;
-            at = mp::NowMs();
+            at = now;
         }
-        PPCContext call = ctx;
-        call.r3.u64 = damageable;
-        call.r5.u64 = 0;
-        call.f1.f64 = double(wanted) - local;
         n.applyingHitpoints = true;
-        sub_82110448(call, base);
+        if (player)
+        {
+            PPCContext call = ctx;
+            call.r3.u64 = damageable;
+            call.r5.u64 = 0;
+            call.f1.f64 = double(wanted) - local;
+            sub_82110448(call, base);
+        }
+        else
+            LandHit(ctx, base, damageable, double(wanted) - local, 0);
         n.applyingHitpoints = false;
         n.hitpointsApplied++;
         if (mp::Trace())
@@ -802,6 +867,8 @@ namespace
         hit.name = (uint64_t(Get32(buffer + 12)) << 32) | Get32(buffer + 16);
         uint32_t bits = Get32(buffer + 20);
         memcpy(&hit.delta, &bits, 4);
+        bits = Get32(buffer + 24);
+        memcpy(&hit.strength, &bits, 4);
         if (hit.delta < 0 && hit.delta > -1000.0f)
             n.hits.push_back(hit);
     }
@@ -843,13 +910,20 @@ namespace
             float hitpoints = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS));
             if (hitpoints <= 0)
                 continue;  // already down (another player's hit)
-            PPCContext call = ctx;
-            call.r3.u64 = damageable;
-            call.r5.u64 = PlayerActor(LocalIndex(n.slot, hit.slot));
-            call.f1.f64 = double(hit.delta);
+            // A stage further on here (the other players' hits): the hit was strong enough on its machine only
+            // (a big mojo plant's last stage needs a titan; a crash's hit landed there broke it whole).
+            if (float needs = LoadF(damageable + DAMAGEABLE_STRENGTH); needs > hit.strength + 0.01f)
+            {
+                if (mp::Trace())
+                    Log("[mp] host: hit from slot %u on %08X refused (needs %.0f here, %.0f there)", hit.slot + 1,
+                        uint32_t(hit.name), needs, hit.strength);
+                continue;
+            }
             n.applyingHit = true;
-            sub_82110448(call, base);
+            n.hitSlot = hit.slot;
+            LandHit(ctx, base, damageable, double(hit.delta), PlayerActor(LocalIndex(n.slot, hit.slot)));
             n.applyingHit = false;
+            n.hitSlot = ~0u;
             n.hitsApplied++;
             if (mp::Trace())
                 Log("[mp] host: hit from slot %u on %08X for %.1f (hitpoints %.1f)", hit.slot + 1, uint32_t(hit.name), -hit.delta, hitpoints);
@@ -977,6 +1051,22 @@ namespace
                 break;
             if (!SameAddress(from, n.peer))
                 continue;  // only the host's (it passes the other clients' pads on)
+            if (got >= int(STAGE_PACKET) && Get32(buffer) == STAGE_MAGIC)
+            {
+                uint32_t sequence = Get32(buffer + 4);
+                if (Get32(buffer + 8) == n.slot ||
+                    std::find(n.stagesDone.begin(), n.stagesDone.end(), sequence) != n.stagesDone.end())
+                    continue;
+                n.stagesDone.push_back(sequence);
+                if (n.stagesDone.size() > 64)
+                    n.stagesDone.pop_front();
+                Net::Stage stage;
+                stage.name = (uint64_t(Get32(buffer + 12)) << 32) | Get32(buffer + 16);
+                uint32_t bits = Get32(buffer + 20);
+                memcpy(&stage.strength, &bits, 4);
+                n.stages.push_back(stage);
+                continue;
+            }
             if (got < int(HEADER) || Get32(buffer) != MAGIC)
             {
                 ReceivePad(n, buffer, got, from);
@@ -1026,6 +1116,28 @@ namespace
         n.local.clear();
         for (uint32_t actor : Actors())
             n.local[NameOf(actor)] = actor;
+        // The host's stages (another player's hit took an actor to 0): landed here as that hit, once each; the
+        // records' 0 for it (BROKEN_HOLD_MS) is then not applied again.
+        for (const Net::Stage& stage : n.stages)
+        {
+            uint64_t name = stage.name;
+            auto it = n.local.find(name);
+            uint32_t damageable = it == n.local.end() ? 0 : FindDamageable(n, it->second);
+            float hitpoints = damageable ? LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS)) : 0.0f;
+            if (hitpoints <= 0 || LoadF(damageable + DAMAGEABLE_STRENGTH) > stage.strength + 0.01f)
+                continue;  // down already, or a stage further on here
+            n.brokenAt[name] = mp::NowMs();
+            // The breakable takes its stage from the 0 a moment later: the records' 1 written first left it a
+            // stage behind (its last stage never came, and a crash's hit broke it there).
+            n.predictedUntil[name] = mp::NowMs() + PREDICTED_MS;
+            n.applyingHitpoints = true;
+            LandHit(ctx, base, damageable, -double(hitpoints), 0);
+            n.applyingHitpoints = false;
+            n.hitpointsApplied++;
+            if (mp::Trace())
+                Log("[mp] client: %08X's next stage (host)", uint32_t(name));
+        }
+        n.stages.clear();
         // Players run on their own inputs here (input mirroring) and their positions come from their own
         // machines (CorrectRemotePlayers): the host's records give them only their hitpoints.
         for (auto& [recordName, r] : n.latest)
@@ -1155,11 +1267,7 @@ namespace mp
         return true;
     }
 
-    constexpr uint64_t BROKEN_HOLD_MS = 1500;
-
-    constexpr uint64_t PREDICTED_MS = 700;  // a client's own hit: its hitpoints win over the host's records this long
-
-    void SendHit(Net& n, uint64_t name, float delta)
+    void SendHit(Net& n, uint64_t name, float delta, float strength)
     {
         std::vector<uint8_t> packet;
         Put32(packet, HIT_MAGIC);
@@ -1170,8 +1278,25 @@ namespace mp
         uint32_t bits;
         memcpy(&bits, &delta, 4);
         Put32(packet, bits);
+        memcpy(&bits, &strength, 4);
+        Put32(packet, bits);
         for (int copy = 0; copy < 2; ++copy)
             SendToPeers(n, packet.data(), packet.size());
+    }
+
+    void SendStage(Net& n, uint64_t name, uint32_t except, float strength)
+    {
+        std::vector<uint8_t> packet;
+        Put32(packet, STAGE_MAGIC);
+        Put32(packet, ++n.stageSequence);
+        Put32(packet, except);
+        Put32(packet, uint32_t(name >> 32));
+        Put32(packet, uint32_t(name));
+        uint32_t bits;
+        memcpy(&bits, &strength, 4);
+        Put32(packet, bits);
+        for (int copy = 0; copy < 2; ++copy)
+            SendToPeers(n, packet.data(), packet.size(), except);
     }
 
     bool IsPlayerActor(uint32_t actor)
@@ -1210,7 +1335,11 @@ namespace mp
         {
             float hitpoints = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS));
             if (hitpoints > 0 && hitpoints + float(delta) <= 0)
+            {
                 n.brokenUntil[NameOf(actor)] = NowMs() + BROKEN_HOLD_MS;
+                if (!IsPlayerActor(actor))
+                    SendStage(n, NameOf(actor), n.applyingHit ? n.hitSlot : ~0u, LoadF(damageable + DAMAGEABLE_STRENGTH));
+            }
         }
         if (n.role != Role::Client || delta >= 0 || n.applyingHitpoints)
             return delta;
@@ -1229,7 +1358,7 @@ namespace mp
             float hitpoints = LoadF(LoadBE32(damageable + DAMAGEABLE_HITPOINTS));
             if (hitpoints > 0 && hitpoints + float(delta) <= 0)
                 n.brokenAt[name] = now;  // the host's 0 for it then is this break
-            SendHit(n, name, float(delta));
+            SendHit(n, name, float(delta), LoadF(damageable + DAMAGEABLE_STRENGTH));
             if (Trace())
                 Log("[mp] client: hit %08X for %.1f sent to the host", uint32_t(name), -delta);
             return delta;

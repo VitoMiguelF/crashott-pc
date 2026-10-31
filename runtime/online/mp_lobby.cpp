@@ -32,11 +32,12 @@ namespace mp::lobby
 {
     namespace
     {
-        constexpr uint32_t VERSION = 9;  // 2: the password goes hashed (PasswordHash); 3: cutscene skips in the roster; 4: positions in the pads;
+        constexpr uint32_t VERSION = 10;  // 2: the password goes hashed (PasswordHash); 3: cutscene skips in the roster; 4: positions in the pads;
                                          // 5: up to 8 players; 6: the players' colours (HELLO / PING: asked for, ROSTER: given);
                                          // 7: the players' skins (HELLO / PING / ROSTER); 8: cutscenes start together (PING: where a
                                          // client waits, ROSTER: the host's go);
-                                         // 9: a client's hits go to the host (HIT packets, mp_net.cpp)
+                                         // 9: a client's hits go to the host (HIT packets, mp_net.cpp);
+                                         // 10: hits carry the stage's strength, the host sends STAGE packets
         constexpr uint64_t RESEND_MS = 500, TIMEOUT_MS = 6000, DISCOVER_MS = 1000, SERVER_TTL_MS = 3500, JOIN_TIMEOUT_MS = 6000;
         constexpr uint64_t SKIP_KEEP_MS = 20000;  // a client still not at the cutscene the host skipped: forgotten after this
         // Waiting for the others at a cutscene (HoldAtCutscene): at most this long, at a level's start (the loads) and

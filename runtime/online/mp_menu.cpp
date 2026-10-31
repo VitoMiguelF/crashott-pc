@@ -980,8 +980,12 @@ namespace mp::menu
             case Hit::Look: return XINPUT_GAMEPAD_Y;
             case Hit::Up: return XINPUT_GAMEPAD_DPAD_UP;
             case Hit::Down: return XINPUT_GAMEPAD_DPAD_DOWN;
-            case Hit::GameLeft: PressForGame(XINPUT_GAMEPAD_DPAD_LEFT); return 0;
-            case Hit::GameRight: PressForGame(XINPUT_GAMEPAD_DPAD_RIGHT); return 0;
+            case Hit::GameLeft:
+            case Hit::GameRight:
+                // Not under the game's YES / NO (WEAR SKIN's question, a menu of its own: its taps are its).
+                if (input::menu_mouse::Menu live; !input::menu_mouse::Live(live))
+                    PressForGame(zone->hit == Hit::GameLeft ? XINPUT_GAMEPAD_DPAD_LEFT : XINPUT_GAMEPAD_DPAD_RIGHT);
+                return 0;
             }
             return 0;
         }
@@ -1478,12 +1482,19 @@ namespace mp::menu
             AddZone(hx - 10.0f, HINT_Y - 8.0f, hx + hintW + 10.0f, HINT_Y + HINT_CELL + 8.0f, Hit::Down);
             // The game's own arrows around the preview (its left / right: the skin), for the mouse and the touch.
             // On its page (640 x 480) at x 189 and 451, y 394 of the 1280 x 720 picture; the page is 2 picture
-            // units a page unit wide, 1.5 on a picture that is not 16:9 (settings/menu_mouse.h).
+            // units a page unit wide, 1.5 on a picture that is not 16:9 (settings/menu_mouse.h). A finger's zone:
+            // from the colour's arrows to near the preview, most of the screen's height (only the arrow's own
+            // drawing missed most taps on a phone).
             float page = input::menu_mouse::PageScale();
             for (int side = 0; side < 2; side++)
             {
-                float x = VIRTUAL_W * 0.5f + ((side ? 451.0f : 189.0f) - 320.0f) * page, half = 34.0f * page;
-                AddZone(x - half, 330.0f, x + half, 460.0f, side ? Hit::GameRight : Hit::GameLeft);
+                float x = VIRTUAL_W * 0.5f + ((side ? 451.0f : 189.0f) - 320.0f) * page, half = 70.0f * page;
+                float x0 = x - half, x1 = x + half;
+                if (side)
+                    x0 = std::max(x0, VIRTUAL_W * 0.5f + 60.0f * page);
+                else
+                    x0 = std::max(x0, CX + 90.0f), x1 = std::min(x1, VIRTUAL_W * 0.5f - 60.0f * page);
+                AddZone(x0, 200.0f, x1, 580.0f, side ? Hit::GameRight : Hit::GameLeft);
             }
         }
 
