@@ -543,23 +543,25 @@ env = { CRASH_FRONTEND_TRACE = "1" }
 expect = { exit = ["timeout"], events = ["gameplay_ready", "pause"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['keyboard: walking \(left stick at 40%\)', 'keyboard: rotating the left stick \(spin attack\)', 'game: left stick rotation detected', 'XamContentCreateEx\(.*\(opened\)'] }
 
 [profiles.camera_livre]
-description = "Câmera livre (experimental): boot no slot 1 (episódio 2) com camera.free_camera ligada; gira com o analógico direito, anda (relativo à câmera), pula, R3 recentra, olha para cima e para trás"
+description = "Câmera livre (experimental): boot no slot 1 (episódio 2) com camera.free_camera ligada; gira com o analógico direito, anda (relativo à câmera), pula, R3 segurado recentra, olha para cima e para trás, zoom pelo R3 e pela roda"
 test = true
-timeout = 45
+timeout = 55
 audio = false
 userdata_mode = "copy"
 boot = "load:1"
 # A partir de @gameplay_ready: RS para a esquerda 1,5 s, anda 4 s com um pulo e RS para a direita
-# no meio, R3 (recentra atrás do Crash, que fica de costas para uma parede invisível: a câmera para
-# a 1,4 dele), anda para a esquerda, olha para cima, anda e pula, anda para trás (em direção à câmera).
+# no meio, R3 segurado (recentra atrás do Crash, que fica de costas para uma parede invisível: a
+# câmera para a 1,4 dele), anda para a esquerda, olha para cima, anda e pula, anda para trás (em
+# direção à câmera). Zoom: R3 tocado (160 %), roda 3 dentes para trás (200 %, o máximo), R3 (volta a 60 %).
 input = [
     ["@gameplay_ready"],
-    [2, "RS", -1.0, 0.0, 1.5], [2, "SHOT"], [4, "LS", 0.0, 1.0, 4], [4.5, "SHOT"], [5, "A"], [5.4, "RS", 0.6, 0.0, 1.2], [7, "SHOT"], [9, "R3"], [9, "SHOT"],
+    [2, "RS", -1.0, 0.0, 1.5], [2, "SHOT"], [4, "LS", 0.0, 1.0, 4], [4.5, "SHOT"], [5, "A"], [5.4, "RS", 0.6, 0.0, 1.2], [7, "SHOT"], [9, "R3", 0.6], [9, "SHOT"],
     [10.2, "SHOT"], [11.5, "SHOT"], [12, "LS", -1.0, 0.0, 2], [14, "SHOT"], [14.5, "RS", 0.0, 0.7, 1], [16, "LS", 0.0, 1.0, 4], [16.5, "A"], [17, "SHOT"],
     [20, "SHOT"], [21, "LS", 0.0, -1.0, 3], [23, "SHOT"],
+    [24, "R3"], [25, "SHOT"], [26, "WHEEL", -3], [27, "SHOT"], [28, "R3"], [29, "SHOT"],
 ]
 env = { CRASH_SETTINGS = "camera.free_camera=true", CRASH_CAMERA_PROBE = "1" }
-expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['free camera: active', 'free camera: recenter behind the player'] }
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['free camera: active', 'free camera: recenter behind the player', 'free camera: R3 zoom 160%', 'free camera: zoom 200%', 'free camera: R3 zoom 60%'] }
 
 [profiles.camera_livre_abertura]
 description = "Câmera livre: NEW GAME (sobrescreve o slot 1 da cópia, piloto automático) com camera.free_camera ligada; a cena de abertura fica com a câmera do jogo e a câmera livre assume na vila (gira, anda, R3)"

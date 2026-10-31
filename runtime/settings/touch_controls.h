@@ -7,8 +7,8 @@
 //   it stays there, the knob stopping at the edge),
 //   A / B / X / Y on the right in the pad's diamond, RT (block / dodge) and a spin button (the
 //   left stick going round with X tapped, like the keyboard's spin attack) beside it, START and
-//   BACK at the top right. A drag on the rest of the right half turns the camera (right stick).
-//   A finger may slide from one button to the next.
+//   BACK at the top right. A drag on the rest of the right half turns the camera (right stick);
+//   two fingers there pinch the free camera's zoom (camera/free_camera.h). A finger may slide from one button to the next.
 //   The action buttons show Crash's shadow doing the action on a see-through fire plate (A jump,
 //   X punch, Y flying kick, B reaching for a mutant, RT guard, spin), drawn from shapes here.
 // - In the menus (the frontend's screens, the pause menu, the intro videos) nothing is drawn and

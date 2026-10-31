@@ -175,7 +175,6 @@ namespace settings
         bool freeCamera = false;      // free_camera: orbit camera around the player instead of the game's
         int cameraSensitivity = 100;  // sensitivity: % of the stick / mouse turn speed (25..300)
         bool cameraInvertY = false;   // invert_y
-        int cameraDistance = 100;     // distance: % of the default distance (50..200)
         // [lighting]: the lighting remaster (gpu/lighting.h), live
         AoQuality ssao = AoQuality::Off;  // ssao: screen-space ambient occlusion
         bool gi = false;                  // gi: one-bounce indirect light (screen space)

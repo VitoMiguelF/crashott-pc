@@ -37,6 +37,7 @@ namespace input::pc
         std::atomic<int> g_rawX{ 0 }, g_rawY{ 0 };          // for the right stick
         std::atomic<int> g_lookX{ 0 }, g_lookY{ 0 };        // for MouseLookDelta
         std::atomic<bool> g_lookTaken{ false };
+        std::atomic<int> g_lookWheel{ 0 };                  // for MouseLookWheel (+ = up)
         std::atomic<uint64_t> g_lastMouseMove{ 0 };
         // The cursor (client pixels) and the window's client size; mouse events for the menus.
         std::atomic<int> g_cursorX{ -1 }, g_cursorY{ -1 }, g_clientW{ 0 }, g_clientH{ 0 };
@@ -340,6 +341,13 @@ namespace input::pc
 
     void OnWheel(int notches)
     {
+        // The mouse look's owner (the free camera's zoom) takes the wheel in gameplay: no key press.
+        if (g_lookTaken && !InMenus() && !settings::menu::IsOpen() && !dev::console::IsOpen())
+        {
+            g_lookWheel += notches;
+            NoteDevice(Device::Keyboard);
+            return;
+        }
         // Each notch counts as a key press lasting two game reads.
         if (notches > 0)
             g_wheelUp += 2 * notches;
@@ -886,6 +894,12 @@ namespace input::pc
     {
         g_lookTaken = take;
         g_lookX = g_lookY = 0;
+        g_lookWheel = 0;
+    }
+
+    int MouseLookWheel()
+    {
+        return g_lookWheel.exchange(0);
     }
 
     void MouseLookDelta(float& dx, float& dy)

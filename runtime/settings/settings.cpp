@@ -413,12 +413,7 @@ namespace settings
             else if (name == "camera.invert_y")
                 ok = ParseBool(lower, values.cameraInvertY);
             else if (name == "camera.distance")
-            {
-                int percent;
-                ok = ParsePercent(value, percent, 200) && percent >= 50;
-                if (ok)
-                    values.cameraDistance = percent;
-            }
+                ;  // the old free camera distance option, now the zoom in game (camera/free_camera.h): ignored
             else if (name == "multiplayer.color")
             {
                 ok = !lower.empty() && lower.size() < 16 && std::all_of(lower.begin(), lower.end(), [](char c) { return c >= 'a' && c <= 'z'; });
@@ -507,8 +502,7 @@ namespace settings
             out << "\n[camera]\n"
                 << "free_camera = " << (v.freeCamera ? "true" : "false") << "   # camera livre em terceira pessoa (experimental; README \"Camera livre\"), vale na hora\n"
                 << "sensitivity = " << v.cameraSensitivity << "   # 25-300 %, velocidade do analogico direito / mouse\n"
-                << "invert_y = " << (v.cameraInvertY ? "true" : "false") << "   # inverte o eixo vertical da camera\n"
-                << "distance = " << v.cameraDistance << "   # 50-200 %, distancia da camera ao personagem\n";
+                << "invert_y = " << (v.cameraInvertY ? "true" : "false") << "   # inverte o eixo vertical da camera\n";
             out << "\n[lighting]\n"
                 << "ssao = \"" << AoQualityName(v.ssao) << "\"   # off | low (meia resolucao) | high (resolucao cheia): oclusao de ambiente em espaco de tela (README \"Iluminacao (remaster)\"), vale na hora\n"
                 << "gi = " << (v.gi ? "true" : "false") << "   # luz indireta de um rebote em espaco de tela (a cor das superficies proximas), vale na hora\n"

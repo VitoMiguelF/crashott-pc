@@ -9,6 +9,11 @@ Profiles `camera_livre`, `camera_livre_abertura`.
 - `CCameraBehaviourController::vf08` sub_820E0498, phase 3, writes it (not called during cinematics).
 - Walking (sub_821EBC70) uses that camera, so overriding it makes movement camera-relative for free.
 - World ray test: sub_821C5EA0(coll + 4, {from, to, -1, -1, 0}, hit, 1) -> hit[0] = distance.
-- R3 (recenter) must be read through `input::MenuButtons`: input-map channels move with the control scheme.
+- R3 must be read through `input::MenuButtons`: input-map channels move with the control scheme.
+- The game never uses R3/L3: its `EControllerValue` enum has no thumb buttons. The mod uses R3 tap =
+  zoom step (0.6 / 1 / 1.6), R3 held 0.4 s = recenter.
+- Zoom (no setting since 2026-10-31; old `camera.distance` is ignored): `camera::ZoomFreeCamera(factor)`
+  from any thread (touch pinch), wheel via `input::pc::MouseLookWheel` (eaten from the bindings while
+  the mouse look is taken), range 0.5..2, eased by a critically damped spring (omega 11/s, exact step).
 - Mounted Crash's actor rides on the titan (position follows the titan).
 - Extend `free_camera.cpp` instead of adding a second `PPC_FUNC` for these functions.

@@ -70,7 +70,7 @@ namespace settings::options
             { "definitive", { "DEFINITIVE EDITION", "DEFINITIVE EDITION" },
               { Item::MojoColors, Item::HdRemaster, Item::HeaderLighting, Item::LightSsao, Item::LightGi, Item::LightGiIntensity,
                 Item::LightContactShadows, Item::LightSoftShadows, Item::HeaderCamera, Item::FreeCamera, Item::CameraSensitivity,
-                Item::CameraInvertY, Item::CameraDistance, Item::HeaderDev, Item::DevConsole } },
+                Item::CameraInvertY, Item::HeaderDev, Item::DevConsole } },
         };
 #if defined(__ANDROID__)
         // Android has no HD AI Remaster (by design), no DLSS / FSR and no window mode: those rows go.
@@ -138,7 +138,6 @@ namespace settings::options
         case Item::FreeCamera: return "camera.free_camera";
         case Item::CameraSensitivity: return "camera.sensitivity";
         case Item::CameraInvertY: return "camera.invert_y";
-        case Item::CameraDistance: return "camera.distance";
         case Item::DevConsole: return "dev.console";
         case Item::LightSsao: return "lighting.ssao";
         case Item::LightGi: return "lighting.gi";
@@ -201,7 +200,6 @@ namespace settings::options
         case Item::FreeCamera: return t({ "FREE CAMERA (EXPERIMENTAL)", "CÂMERA LIVRE (EXPERIMENTAL)" });
         case Item::CameraSensitivity: return t({ "CAMERA SENSITIVITY", "SENSIBILIDADE DA CÂMERA" });
         case Item::CameraInvertY: return t({ "INVERT CAMERA Y", "INVERTER EIXO Y" });
-        case Item::CameraDistance: return t({ "CAMERA DISTANCE", "DISTÂNCIA DA CÂMERA" });
         case Item::LightSsao: return t({ "AMBIENT OCCLUSION (SSAO)", "OCLUSÃO DE AMBIENTE (SSAO)" });
         case Item::LightGi: return t({ "INDIRECT LIGHT (SSGI)", "LUZ INDIRETA (SSGI)" });
         case Item::LightGiIntensity: return t({ "INDIRECT LIGHT INTENSITY", "INTENSIDADE DA LUZ INDIRETA" });
@@ -484,15 +482,12 @@ namespace settings::options
         case Item::SubtitleBackground:
             return { t({ "Opacity of the box behind the text.", "Opacidade da caixa atrás do texto." }), t({ "0% = outline only.", "0% = só o contorno." }) };
         case Item::FreeCamera:
-            return { t({ "Third-person orbit camera: right stick / mouse,", "Câmera orbital em terceira pessoa: analógico" }),
-                     t({ "R3 recenters. Cutscenes keep the game's camera.", "direito / mouse, R3 recentra. Cenas: a do jogo." }) };
+            return { t({ "Orbit camera (right stick / mouse). Zoom: R3,", "Câmera orbital (analógico direito / mouse)." }),
+                     t({ "wheel or pinch; hold R3 to recenter.", "Zoom: R3, roda ou pinça; segure R3: recentra." }) };
         case Item::CameraSensitivity:
             return { t({ "Turn speed of the free camera.", "Velocidade de giro da câmera livre." }), t({ "100% = default.", "100% = padrão." }) };
         case Item::CameraInvertY:
             return { t({ "Up on the stick / mouse looks down.", "Para cima no analógico / mouse olha para baixo." }), t({ "Free camera only.", "Só na câmera livre." }) };
-        case Item::CameraDistance:
-            return { t({ "Distance from the camera to the character.", "Distância da câmera ao personagem." }),
-                     t({ "Walls bring it closer by themselves.", "Paredes a aproximam sozinhas." }) };
         case Item::DevConsole:
             return { t({ "The key left of 1 (or F10) opens a console:", "A tecla antes do 1 (ou F10) abre um console:" }),
                      t({ "unlock all, mojo, god, skin, level, lua... (help).", "unlock all, mojo, god, skin, level, lua... (help)." }) };
@@ -565,7 +560,6 @@ namespace settings::options
         case Item::SubtitleSize: value = &values.subtitleSize; stepValue = 25; min = 50; max = 200; break;
         case Item::SubtitleBackground: value = &values.subtitleBackground; stepValue = 25; break;
         case Item::CameraSensitivity: value = &values.cameraSensitivity; stepValue = 25; min = 25; max = 300; break;
-        case Item::CameraDistance: value = &values.cameraDistance; stepValue = 10; min = 50; max = 200; break;
         case Item::LightGiIntensity: value = &values.giIntensity; stepValue = 10; max = 200; break;
         case Item::MouseSensitivity: value = &values.controls.mouseSensitivity; stepValue = 10; min = 10; max = 400; break;
         case Item::Gamma: value = &values.gamma; min = 50; max = 150; break;
