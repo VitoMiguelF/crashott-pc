@@ -729,8 +729,9 @@ phone builds its own.
 
 ## Audio
 
-`audio/audio_device_sdl.cpp` is unchanged. SDL3 uses AAudio (API 27+) or OpenSL ES, so the output
-works with nothing new. The XMA decoder needs FFmpeg's WMA Pro (see the bionic table). The latency
+`audio/audio_device_sdl.cpp` is shared with Linux. SDL3 uses AAudio (API 27+) or OpenSL ES, so the output
+works with nothing new. SPEAKERS 5.1 / 7.1 opens that many channels only when the default device reports
+them (an HDMI sink), else stereo. The XMA decoder needs FFmpeg's WMA Pro (see the bionic table). The latency
 and buffer size (`SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES`) still need tuning on the device.
 
 ## Storage: where the game files live on the phone

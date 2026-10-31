@@ -19,6 +19,7 @@ namespace settings::options
     enum class Item
     {
         Master, Music, Effects, Voice,
+        AudioOutput, AudioTest,  // AudioTest: the game's SETTINGS screen only (it plays through the game's output)
         Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay, Aspect, Gamma, Saturation,
         Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, ShaderCompilation, HdRemaster,
         Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Storage,
@@ -67,6 +68,8 @@ namespace settings::options
         bool canRestart = true;        // the game restarts by itself for the options it reads at boot
         bool dlss = true, fsr = true;  // the upscalers can run here (DLSS: an NVIDIA RTX GPU with DLSS installed)
         bool haveSubtitles = true;     // there are subtitles for the chosen language
+        int outputChannels = 0;        // channels the audio device plays (audio::OutputChannels), 0 = unknown
+        int testSpeaker = -1;          // the speaker the AUDIO TEST is playing on (audio::TestSpeaker), -1 = none
     };
     bool Portuguese(const Values& values);
 

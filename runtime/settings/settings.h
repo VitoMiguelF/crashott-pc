@@ -73,6 +73,9 @@ namespace settings
     // (async, the default), when a draw needs one (sync), or async and skipping the draws that can
     // wait (aggressive, settings.toml only).
     enum class ShaderCompilation : uint8_t { Async, Sync, Aggressive };
+    // Where the game's 5.1 mix goes (audio/audio_output.h): folded to stereo, or 5.1 / 7.1
+    // multichannel PCM (stereo when the device has no such speakers). Applies live.
+    enum class AudioOutput : uint8_t { Stereo, Surround51, Surround71 };
 
     struct Language
     {
@@ -127,6 +130,7 @@ namespace settings
         int musicVolume = 100;
         int effectsVolume = 100;
         int voiceVolume = 100;
+        AudioOutput audioOutput = AudioOutput::Stereo;
         WindowMode window = WindowMode::Borderless;
         bool vsync = false;  // off = as before (Present without waiting for the vblank)
         int fpsLimit = 30;   // 30 (the original), 60, 120 or 0 = no limit (gpu::SetFrameLimit)
@@ -244,6 +248,7 @@ namespace settings
 
     // Shortcuts read often.
     float MasterVolume();  // 0..1
+    AudioOutput AudioOutputMode();
     const Language& StartupLanguage();
 
     // Applies co-op mode, invert axis and autosave to the game (game_options.cpp). Game thread,
@@ -285,5 +290,6 @@ namespace settings
     const char* OverlayModeName(OverlayMode mode);              // "off", "fps", "frametime", "full"
     const char* AoQualityName(AoQuality quality);               // "off", "low", "high"
     const char* ShaderCompilationName(ShaderCompilation mode);  // "async", "sync", "aggressive"
+    const char* AudioOutputName(AudioOutput output);            // "stereo", "5.1", "7.1"
     bool ParseOverlayMode(const std::string& text, OverlayMode& mode);  // also true/false, 1/0
 }

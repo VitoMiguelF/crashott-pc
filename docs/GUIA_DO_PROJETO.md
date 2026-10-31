@@ -489,6 +489,8 @@ Capturas da organização atual das abas em `docs\capturas\settings_abas\`: cada
 | **Áudio** | | |
 | Volume geral | 0–100% (padrão 50%) | na hora (mixagem final do runtime) |
 | Música, efeitos, vozes | 0–100%. Substituem as estrelas DIÁLOGOS / MÚSICA / EFEITOS do menu de opções original do jogo (que fica escondido) | na hora (`docs\capturas\settings_aplicar\volume_musica_ao_vivo_*.wav`) |
+| Saída de som | ESTÉREO (padrão) / SURROUND 5.1 / SURROUND 7.1: o jogo mistura em 5.1 (como no Xbox 360, inclusive os vídeos Bink 5.1); em SURROUND os canais vão separados em PCM multicanal (receiver HDMI, TV com eARC: o dispositivo precisa estar configurado como 5.1 / 7.1 no sistema). Se o dispositivo não tiver as caixas, toca em estéreo e o valor mostra "(DISPOSITIVO ESTÉREO)"; o log diz `[audio] the device has no 5.1 speakers`. No 7.1 os surrounds vão para as caixas laterais e traseiras (-3 dB em cada) | na hora (o dispositivo é reaberto) |
+| Testar áudio | A (ou clique) toca um som em cada caixa, uma por vez (1 s cada: frente esquerda, central, frente direita, surround direito, [traseiras,] surround esquerdo, subwoofer com um tom de 50 Hz), com o nome da caixa na linha; o jogo fica em silêncio durante o teste. Só no jogo (o launcher não tem) | — |
 | *Legendas* (sub-grupo da aba ÁUDIO, abaixo dos volumes) | | |
 | Legendas | desligado (padrão) / ligado: legendas nas cenas e nas falas do Aku Aku, no idioma dos textos (veja "Legendas") | na hora |
 | Tamanho da legenda | 50–200% (padrão 100%) | na hora |
@@ -617,6 +619,7 @@ master = 50      # 0-100, vale na hora
 music = 100      # 0-100, vale na hora (como effects e voice)
 effects = 100
 voice = 100
+output = "stereo"  # stereo | 5.1 | 7.1 (vale na hora)
 [video]
 window = "borderless"    # windowed | borderless (padrão) | fullscreen
 vsync = false

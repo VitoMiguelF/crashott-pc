@@ -59,7 +59,7 @@ namespace settings::options
         static Tab tabs[TAB_COUNT] = {
             { "game", { "GAME", "JOGO" }, { Item::Language, Item::CoopMode, Item::InvertAxis, Item::Autosave, Item::SkipCutscenes, Item::Storage } },
             { "audio", { "AUDIO", "ÁUDIO" },
-              { Item::Master, Item::Music, Item::Effects, Item::Voice, Item::HeaderSubtitles, Item::Subtitles, Item::SubtitleSize,
+              { Item::Master, Item::Music, Item::Effects, Item::Voice, Item::AudioOutput, Item::AudioTest, Item::HeaderSubtitles, Item::Subtitles, Item::SubtitleSize,
                 Item::SubtitleBackground } },
             { "video", { "VIDEO", "VÍDEO" }, { Item::Window, Item::Resolution, Item::FpsLimit, Item::VSync, Item::AntiAliasing, Item::Overlay, Item::Aspect,
                 Item::Gamma, Item::Saturation } },
@@ -107,6 +107,8 @@ namespace settings::options
         case Item::Music: return "audio.music";
         case Item::Effects: return "audio.effects";
         case Item::Voice: return "audio.voice";
+        case Item::AudioOutput: return "audio.output";
+        case Item::AudioTest: return "audio.test";
         case Item::Window: return "video.window";
         case Item::Resolution: return "video.resolution";
         case Item::FpsLimit: return "video.fps_limit";
@@ -169,6 +171,8 @@ namespace settings::options
         case Item::Music: return t({ "MUSIC", "MÚSICA" });
         case Item::Effects: return t({ "EFFECTS", "EFEITOS" });
         case Item::Voice: return t({ "VOICES", "VOZES" });
+        case Item::AudioOutput: return t({ "SPEAKERS", "SAÍDA DE SOM" });
+        case Item::AudioTest: return t({ "AUDIO TEST", "TESTAR ÁUDIO" });
         case Item::Window: return t({ "DISPLAY MODE", "MODO DE TELA" });
         case Item::Resolution: return t({ "RESOLUTION", "RESOLUÇÃO" });
         case Item::FpsLimit: return t({ "FPS LIMIT", "LIMITE DE FPS" });
@@ -254,6 +258,31 @@ namespace settings::options
             case WindowMode::Fullscreen: return t({ "FULLSCREEN", "TELA CHEIA" });
             default: return t({ "WINDOWED", "JANELA" });
             }
+        case Item::AudioOutput:
+        {
+            // A device with fewer speakers than chosen plays what it can (audio_device.h).
+            int chosen = values.audioOutput == AudioOutput::Surround71 ? 8 : values.audioOutput == AudioOutput::Surround51 ? 6 : 2;
+            std::string name = chosen == 8 ? "SURROUND 7.1" : chosen == 6 ? "SURROUND 5.1" : t({ "STEREO", "ESTÉREO" });
+            if (context.outputChannels > 0 && context.outputChannels < chosen)
+                name += context.outputChannels == 6 ? t({ " (5.1 DEVICE)", " (DISPOSITIVO 5.1)" }) : t({ " (STEREO DEVICE)", " (DISPOSITIVO ESTÉREO)" });
+            return name;
+        }
+        case Item::AudioTest:
+        {
+            bool stereo = context.outputChannels == 2;
+            switch (context.testSpeaker)
+            {
+            case 0: return stereo ? t({ "LEFT", "ESQUERDA" }) : t({ "FRONT LEFT", "FRENTE ESQUERDA" });
+            case 1: return stereo ? t({ "RIGHT", "DIREITA" }) : t({ "FRONT RIGHT", "FRENTE DIREITA" });
+            case 2: return t({ "CENTER", "CENTRAL" });
+            case 3: return "SUBWOOFER (LFE)";
+            case 4: return t({ "SURROUND LEFT", "SURROUND ESQUERDO" });
+            case 5: return t({ "SURROUND RIGHT", "SURROUND DIREITO" });
+            case 6: return t({ "BACK LEFT", "TRASEIRA ESQUERDA" });
+            case 7: return t({ "BACK RIGHT", "TRASEIRA DIREITA" });
+            default: return t({ "PLAY", "TOCAR" });
+            }
+        }
         case Item::VSync: return OnOff(pt, values.vsync);
         case Item::AntiAliasing:
             switch (values.antiAliasing)
@@ -373,6 +402,16 @@ namespace settings::options
         case Item::Music: return { t({ "Volume of the music.", "Volume da música." }), live };
         case Item::Effects: return { t({ "Volume of the sound effects and ambience.", "Volume dos efeitos e do som ambiente." }), live };
         case Item::Voice: return { t({ "Volume of the dialogue.", "Volume das vozes." }), live };
+        case Item::AudioOutput:
+            if (values.audioOutput != AudioOutput::Stereo && context.outputChannels > 0 &&
+                context.outputChannels < (values.audioOutput == AudioOutput::Surround71 ? 8 : 6))
+                return { t({ "The device has fewer speakers: set it to 5.1 / 7.1", "O dispositivo tem menos caixas: configure-o como 5.1 / 7.1" }),
+                         t({ "in the system's sound settings (speaker setup).", "nas opções de som do sistema (configuração das caixas)." }) };
+            return { t({ "SURROUND: the game's 5.1 mix in multichannel PCM", "SURROUND: o som 5.1 do jogo em PCM multicanal" }),
+                     t({ "(HDMI receiver, eARC TV). STEREO: on 2 speakers.", "(receiver HDMI, TV com eARC). ESTÉREO: em 2 caixas." }) };
+        case Item::AudioTest:
+            return { t({ "Plays a sound on each speaker in turn, its name", "Toca um som em cada caixa, uma por vez, com o" }),
+                     t({ "shown here (the game goes quiet meanwhile).", "nome dela aqui (o jogo fica em silêncio)." }) };
         case Item::Window:
             return { t({ "Window, borderless (a window the size of the monitor)", "Janela, sem bordas (uma janela do tamanho do monitor)" }),
                      t({ "or exclusive fullscreen. Alt+Enter also switches.", "ou tela cheia exclusiva. Alt+Enter também alterna." }) };
@@ -591,6 +630,7 @@ namespace settings::options
         switch (item)
         {
         case Item::Window: values.window = Cycle(values.window, 3, direction); break;
+        case Item::AudioOutput: values.audioOutput = Cycle(values.audioOutput, 3, direction); break;
         case Item::VSync: values.vsync = !values.vsync; break;
         case Item::FpsLimit:
         {
