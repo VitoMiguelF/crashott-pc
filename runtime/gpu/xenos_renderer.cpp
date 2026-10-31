@@ -1681,12 +1681,17 @@ float4 main(float4 position : SV_Position) : SV_Target
         HudDraw HudTransform(bool sceneDraw, uint32_t pitch, uint32_t msaa, uint64_t psHash, bool readsResolve)
         {
             HudDraw hud;
-            if (g_stretch == 1.0f || sceneDraw || pitch != HUD_WIDTH || msaa)
+            // The Bink frame is drawn into the scene's (MSAA) target, not a 2D one: it is a video too.
+            if (g_stretch == 1.0f || ((sceneDraw || msaa) && psHash != BINK_PS) || pitch != HUD_WIDTH)
                 return g_drawHud = hud;
             hud.scaleX = std::min(1.0f, 1.0f / g_stretch);
             hud.scaleY = std::min(1.0f, g_stretch);
             // A video: the game draws the decoded Bink frame as a full-screen 2D quad.
             hud.video = psHash == BINK_PS || (cutscenes::VideoPlaying() && !readsResolve);
+            // The game's own 4:3 (widescreen::GameAspect) laid its 2D out for the picture: only the
+            // videos (16:9) go between bars.
+            if (!hud.video && widescreen::GameAspect() != widescreen::BASE_ASPECT)
+                return g_drawHud = HudDraw{};
             if (hud.video)
                 hud.mode = 4;
             else
@@ -4549,22 +4554,31 @@ float4 main(float4 position : SV_Position) : SV_Target
         g_pageNoted = false;
         // Drawn over the image at the window's resolution, through the overlay's bitmaps.
         overlay::BeginPresent(backBuffer);
+        // Our menus and texts lay out in the window, or in the game's own 4:3 in the picture, where
+        // its 2D is (widescreen::OverlayArea; the mouse maps the same, input::pc::CursorInClient).
+        float areaX, areaY, areaWidth, areaHeight;
+        widescreen::OverlayArea(g_backBufferWidth, g_backBufferHeight, areaX, areaY, areaWidth, areaHeight);
+        const uint32_t overlayWidth = uint32_t(areaWidth), overlayHeight = uint32_t(areaHeight);
+        overlay::SetOrigin(int(areaX), int(areaY));
         // Subtitles (subtitles/subtitle_draw.h): part of the image, so screenshots have them.
-        subtitles::Draw(g_backBufferWidth, g_backBufferHeight);
+        subtitles::Draw(overlayWidth, overlayHeight);
         // The "hold to skip" prompt of the cutscenes and videos (skip_cinematics.h).
-        cutscenes::Draw(g_backBufferWidth, g_backBufferHeight);
+        cutscenes::Draw(overlayWidth, overlayHeight);
         // The skin challenges' counters in a level (challenge_counters.h).
-        settings::challenges::Draw(g_backBufferWidth, g_backBufferHeight);
-        // The on-screen touch controls (Android, touch_controls.h).
+        settings::challenges::Draw(overlayWidth, overlayHeight);
+        // The on-screen touch controls (Android, touch_controls.h): the whole screen.
+        overlay::SetOrigin(0, 0);
         touch_controls::Draw(g_backBufferWidth, g_backBufferHeight);
+        overlay::SetOrigin(int(areaX), int(areaY));
 
         // The name entry's keyboard and the slot screen's DELETE (save_screens.h), then the settings
         // screen (settings_menu.h).
-        settings::save_screens::Draw(g_backBufferWidth, g_backBufferHeight);
-        settings::menu::Draw(g_backBufferWidth, g_backBufferHeight);
-        mp::menu::Draw(g_backBufferWidth, g_backBufferHeight);  // MULTIPLAYER (online/mp_menu.h)
-        dev::cheat_menu::Draw(g_backBufferWidth, g_backBufferHeight);  // the cheat menu (pause + code)
-        dev::console::Draw(g_backBufferWidth, g_backBufferHeight);  // the developer console
+        settings::save_screens::Draw(overlayWidth, overlayHeight);
+        settings::menu::Draw(overlayWidth, overlayHeight);
+        mp::menu::Draw(overlayWidth, overlayHeight);  // MULTIPLAYER (online/mp_menu.h)
+        dev::cheat_menu::Draw(overlayWidth, overlayHeight);  // the cheat menu (pause + code)
+        dev::console::Draw(overlayWidth, overlayHeight);  // the developer console
+        overlay::SetOrigin(0, 0);
 
         // Screenshots are taken before the overlay is drawn unless CRASH_SCREENSHOT_OVERLAY is set.
         uint64_t frame = g_stats.swaps;

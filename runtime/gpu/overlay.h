@@ -42,6 +42,9 @@ namespace gpu::overlay
     bool InScreenshots();
     // The back buffer of this present: Draw, DrawImage and DrawBitmap draw into it (width x height).
     void BeginPresent(rhi::Texture* target);
+    // Where (0, 0) of the next draws is in the back buffer (BeginPresent: the corner): the game's own
+    // 4:3 puts the menus and texts in the picture (gpu/widescreen.h OverlayArea).
+    void SetOrigin(int x, int y);
     void Draw(uint32_t width, uint32_t height);
     // Shows "PRINT" in the status line for a moment.
     void NoteScreenshot(uint64_t frame);

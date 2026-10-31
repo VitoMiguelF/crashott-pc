@@ -394,7 +394,7 @@ namespace settings::options
                      t({ "With DLSS/FSR on it can stay off.", "Com DLSS/FSR ligado pode ficar desligado." }) };
         case Item::Aspect:
             return { t({ "Wider screens see more to the sides (21:9, 32:9);", "Telas mais largas veem mais dos lados (21:9, 32:9);" }),
-                     t({ "AUTO uses the monitor's; 16:10 sees more above.", "AUTO usa a do monitor; 16:10 vê mais em cima." }) };
+                     t({ "AUTO uses the monitor's; 4:3 is the 360's 4:3 mode.", "AUTO usa a do monitor; 4:3 é o modo 4:3 do 360." }) };
         case Item::Gamma:
             return { t({ "Gamma of the final image: above 100% brighter,", "Gamma da imagem final: acima de 100% mais clara," }),
                      t({ "below darker. 100% = original.", "abaixo mais escura. 100% = original." }) };
@@ -616,7 +616,7 @@ namespace settings::options
         }
         case Item::Aspect:
             // The resolution follows: the same height, or the nearest one of the new aspect's list.
-            values.aspect = Cycle(values.aspect, 5, direction);
+            values.aspect = Cycle(values.aspect, ASPECT_COUNT, direction);
             values.renderHeight = ResolutionOf(values.aspect, values.renderHeight).height;
             break;
         case Item::AntiAliasing: values.antiAliasing = Cycle(values.antiAliasing, 3, direction); break;

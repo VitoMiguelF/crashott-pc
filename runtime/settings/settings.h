@@ -8,7 +8,7 @@
 //   [video]   window = "windowed" | "borderless" | "fullscreen", vsync = true|false,
 //             fps_limit = 30 | 60 | 120 | 0 (no limit), resolution = "1280x720" | "1600x900" |
 //             "1920x1080" | "2560x1440" | "3840x2160" | the other aspects' (internal),
-//             aspect = "auto" | "16:9" | "16:10" | "21:9" | "32:9" (gpu/widescreen.h),
+//             aspect = "auto" | "4:3" | "16:9" | "16:10" | "21:9" | "32:9" (gpu/widescreen.h),
 //             gamma = 50..150 (%), saturation = 0..200 (%) (the present pass, gpu/xenos_renderer.cpp),
 //             overlay = "off" | "fps" | "frametime" | "full" (show_fps = true|false still read),
 //             antialiasing = "off" | "fxaa" | "smaa", gpu_safe_mode = "off" | "on" | a list (gpu/rhi.h
@@ -98,8 +98,10 @@ namespace settings
 
     // Aspect ratio of the picture (video.aspect): the game is laid out for 16:9; wider screens
     // see more to the sides (Hor+, camera/hor_plus.cpp), 16:10 a little more above and below,
-    // and the HUD stays in a 16:9 area (gpu/widescreen.h). Auto: the monitor's.
-    enum class Aspect : uint8_t { Auto, R16_9, R16_10, R21_9, R32_9 };
+    // and the HUD stays in a 16:9 area (gpu/widescreen.h). 4:3 is the game's own 4:3 mode (its
+    // FOV, HUD and menus), between black bars on a wider screen. Auto: the monitor's.
+    enum class Aspect : uint8_t { Auto, R4_3, R16_9, R16_10, R21_9, R32_9 };
+    constexpr int ASPECT_COUNT = 6;
 
     // Internal render resolutions: the game draws 1280x720, the renderer scales its render targets
     // and resolves by height / 720 (and, for another aspect than 16:9, wider or narrower; see
@@ -277,7 +279,7 @@ namespace settings
     void EnableHdRemaster();
 
     const char* WindowModeName(WindowMode mode);
-    const char* AspectName(Aspect aspect);                        // "auto", "16:9", "16:10", "21:9", "32:9"
+    const char* AspectName(Aspect aspect);                        // "auto", "4:3", "16:9", "16:10", "21:9", "32:9"
     const char* AntiAliasingName(AntiAliasing mode);
     const char* UpscalerName(Upscaler upscaler);                  // "off", "dlss", "fsr"
     const char* UpscalerQualityName(UpscalerQuality quality);     // "native", "quality", ...

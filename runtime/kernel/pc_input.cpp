@@ -610,7 +610,9 @@ namespace input::pc
         int cx = g_cursorX, cy = g_cursorY, w = g_clientW, h = g_clientH;
         if (cx < 0 || w <= 0 || h <= 0)
             return false;
-        u = (cx + 0.5f) / float(w), v = (cy + 0.5f) / float(h);
+        float x, y, areaWidth, areaHeight;
+        gpu::widescreen::OverlayArea(uint32_t(w), uint32_t(h), x, y, areaWidth, areaHeight);
+        u = (cx + 0.5f - x) / areaWidth, v = (cy + 0.5f - y) / areaHeight;
         return true;
     }
 

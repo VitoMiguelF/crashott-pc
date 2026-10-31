@@ -177,6 +177,7 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
 
 Full write-up: `runtime/NOTES.md` "Ultrawide". Settings `[video] aspect` (auto / 16:9 / 16:10 / 21:9 /
 32:9), `resolution` (WxH; the width follows the aspect's list). The HUD always stays in the 16:9 area.
+4:3 (issue #11) is different: the game's own 4:3 mode, see the last bullet.
 
 - The guest keeps 16:9 at 1280x720. Host targets and resolves are `g_stretch` (= aspect / 16:9) times
   wider: every guest x goes through `XScale(scale)` (targets, resolves, clears, viewport, scissor,
@@ -209,7 +210,18 @@ Full write-up: `runtime/NOTES.md` "Ultrawide". Settings `[video] aspect` (auto /
   sprites through a pure3d camera (W = 0.5), already placed by Hor+; big ones past the 16:9 area zoom.
   The anchored HUD of the removed `hud_16_9 = false` (HUD corners at the edges) is gone from the C++;
   HUD_GS / `xe_hud_transform` still handle mode bit 8, never set (left so the shader keys don't change). Bink: the decoded frame is drawn by the generic 2D shader, so videos
-  are known from `cutscenes::VideoPlaying()`; scaled and the bars cleared.
+  are known from `cutscenes::VideoPlaying()`; scaled and the bars cleared. The Bink frame itself (`BINK_PS`)
+  is drawn into the scene's MSAA target, which `HudTransform` skips: it is let through (before 2026-10-31
+  videos were stretched on every non-16:9 picture).
+- 4:3 (`video.aspect = "4:3"`, `widescreen::GameAspect()`): `xnDisplay::InitDisplay` sub_8238F5B0 keeps
+  XGetVideoMode's flags at +1656 (64 wide, 128 HD; HD sets both) and sub_8238F2B0 derives +1680/+1684 and
+  +1688/+1692 (16:9 wide, 4:3 not; the 360 had 4:3 only at 640x480). `GetAspect` sub_8238F438 and `vf21`
+  sub_8238F448 return 4/3 instead: SetFOV builds a 4:3 TV's projection (same horizontal FOV), Hor+ leaves
+  non-16:9 projections alone, the targets are 0.75x as wide, `HudTransform` leaves the 2D alone (the game
+  lays it out itself, in a 16:9 band across the 4:3 picture) except videos, and the present pillarboxes.
+  Our overlays draw into the picture, not the window (`widescreen::OverlayArea`, `overlay::SetOrigin`;
+  `input::pc::CursorInClient` measures the cursor there), so their 1280x720 virtual screen lands on that
+  band; touch controls keep the whole screen. AUTO picks 4:3 below 1.47.
 - `CRASH_NO_HOR_PLUS=1` (16:9 view stretched), `CRASH_HUD_NO_GS=1` (2D per vertex), `CRASH_WINDOW_SIZE=WxH`
   (client in screen pixels, may exceed the monitor: captures), `CRASH_MONITOR=WxH` (what AUTO sees).
 

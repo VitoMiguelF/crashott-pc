@@ -125,7 +125,7 @@ namespace input::menu_mouse
     float PageScale()
     {
         uint64_t frontend = g_pageTime.load(std::memory_order_relaxed);
-        bool wide = fabsf(gpu::widescreen::Aspect() - gpu::widescreen::BASE_ASPECT) >= 0.001f;
+        bool wide = fabsf(gpu::widescreen::Aspect() - gpu::widescreen::GameAspect()) >= 0.001f;
         return frontend && plat::TickCountMs() - frontend <= 250 && wide ? 1.5f : 2.0f;
     }
 
