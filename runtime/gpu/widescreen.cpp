@@ -32,9 +32,4 @@ namespace gpu::widescreen
         x = (w - areaWidth) * 0.5f;
         y = (h - areaHeight) * 0.5f;
     }
-
-    bool HudCentered()
-    {
-        return settings::Get().hud16x9;
-    }
 }

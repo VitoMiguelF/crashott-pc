@@ -2389,6 +2389,28 @@ Onde vale: `RemapPad`, logo depois de `input::slots::Read` (todos os controles f
 
 **Conferido**: `mapeamento_controle` (a linha troca para PS2, salva, o log da gameplay mostra o mapa) e `controles_tela` (PULAR = K com 14 setas), antes das trocas do PS2 entrarem. Com a versão de 16 linhas, o mesmo `RemapPad` trocou A e X na fase (o X físico pulou) e o usuário conferiu com o controle dele. O usuário testou no jogo: bloqueio no R1, chute no R2, START no aviso e CHUTE FREEJACK deram certo; o B/Y passou do HUB para todos os menus depois disso. Aí as dicas (nó 1170 TutorialScreen, que a fase abre pela saída 640) viraram "menu": o B/Y trocava nelas e o ícone de B que flutua sobre o inimigo aparecia como Triângulo enquanto a dica estava aberta; o 1170 passou a contar como gameplay. O log do mapa agora diz o nó do frontend. Depois, o mesmo ícone (o B sobre a pedra de dica) aparecia como Triângulo com a **pausa** aberta (1081, a fase continua desenhada atrás): nas telas de pausa os botões trocam (Y volta), mas os ícones de PlayStation ficam os da fase, já que a pausa não tem ícones de B/Y próprios. Ainda assim o ícone ficou Triângulo na fase: o estilo dos ícones era calculado no começo do quadro e a troca decidida de novo na hora de desenhar; saindo da pausa o nó mudava entre os dois e o ícone desenhado como "menu" ficava no cache do renderizador sob o estilo da fase. Agora a tela fica guardada junto com o estilo (`g_styleScreens`). Também as logos da intro (nós antes da tela título, 59) estavam trocando B/Y, e o B não pulava: lá os botões não trocam mais, e o aviso continua mostrando START com PS2, como nas cenas (o usuário quer a seta nos dois).
 
+## Limpeza das opções: sem bordas e vibração (2026-10-31, branch `options-cleanup`, issue #5) (`settings/*`, `kernel/pad_slots.cpp`, `gpu/xenos_renderer.cpp`)
+
+Pedido: o modo de tela padrão vira SEM BORDAS; saem HUD EM 16:9 (sempre ligado), MOUSE NOS MENUS (sempre
+ligado) e VELOCIDADE AO ANDAR (sempre 40%, `settings::WALK_SPEED`); entra VIBRAÇÃO (aba CONTROLES, depois de
+MAPEAMENTO DO CONTROLE).
+
+- **Chaves antigas**: `video.hud_16_9`, `controls.walk_speed` e `controls.mouse_menus` são aceitas e ignoradas
+  (nem "unknown setting" nem "invalid value" no log); o próximo save já não as escreve. Sem `video.window` no
+  arquivo, vale `borderless` (o padrão de `Values`); os testes continuam em janela porque o
+  `tests\userdata_base\settings.toml` diz `window = "windowed"`.
+- **Vibração**: `input::slots::SetVibration` (o único caminho do `XamInputSetState` até os motores: XInput,
+  DualSense/DS4 pelo HID no Windows, SDL no Linux/Android, inclusive o `SDL_RumbleGamepad` das duas bandas) manda
+  0/0 com `[controls] vibration = false`. Desligar com um motor girando: a tela SETTINGS manda 0/0 aos 4
+  controles do jogo na hora (`Apply`).
+- **HUD nas bordas removido do C++**: `g_hudCentered`, o ramo do `HudTransform` que ligava o bit 8 e
+  `HudDrawSide` saíram. O bit 8 continua tratado no `HUD_GS`, no `xe_hud_transform` e no caminho da CPU (nunca
+  ligado): mexer no HLSL desses mudaria a chave de todos os shaders traduzidos.
+- **Testes**: `controles_tela` desce 13 linhas até PULAR (eram 14). A aba VÍDEO ficou com 7 linhas: ainda a
+  44 px, mas centradas (`rowsY` = 158), LIMITE DE FPS vai para y 246-290 e o `mouse_menus` clica em y 264 (era
+  244). Sem abrir o jogo: `--settings-preview` com um `settings.toml` antigo (sem `window`, com as três chaves
+  removidas) carrega `window borderless` e nenhuma linha de erro.
+
 ## Multijogador online (protótipo, 2026-10-28, branch `online-coop`) (`online/*`, perfis `mp_*`)
 
 Viabilidade de um modo online de até 5 jogadores. Tudo desligado sem `CRASH_MP=1`. Resumo em inglês e

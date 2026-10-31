@@ -675,6 +675,9 @@ namespace settings::menu
             if (g_values.musicVolume != before.musicVolume || g_values.effectsVolume != before.effectsVolume ||
                 g_values.voiceVolume != before.voiceVolume)
                 audio::volumes::SetPercent(g_values.musicVolume, g_values.effectsVolume, g_values.voiceVolume);
+            if (!g_values.controls.vibration && before.controls.vibration)
+                for (uint32_t user = 0; user < 4; user++)  // a rumble going on stops now
+                    input::slots::SetVibration(user, 0, 0);
             // The renderer reads the graphics options (anti-aliasing, motion blur, ...) every frame.
         }
 
@@ -855,7 +858,7 @@ namespace settings::menu
             if (!held)
                 g_dragRow = -1;
             float u, v;
-            if (g_restartAt || g_capturing || !g_values.controls.mouseMenus || g_drawnW <= 0 || g_drawnH <= 0 || !input::pc::CursorInClient(u, v))
+            if (g_restartAt || g_capturing || g_drawnW <= 0 || g_drawnH <= 0 || !input::pc::CursorInClient(u, v))
                 return 0;
             float s = std::min(g_drawnW / VIRTUAL_W, g_drawnH / VIRTUAL_H);
             float x = (u * g_drawnW - (g_drawnW - VIRTUAL_W * s) * 0.5f) / s, y = (v * g_drawnH - (g_drawnH - VIRTUAL_H * s) * 0.5f) / s;

@@ -1,6 +1,6 @@
 #pragma once
 
-// Wide (and 16:10) screens (settings [video] aspect / resolution / hud_16_9; runtime/NOTES.md
+// Wide (and 16:10) screens (settings [video] aspect / resolution; runtime/NOTES.md
 // "Ultrawide"; docs/internals/graphics.md). The game draws for 16:9 at 1280x720 and keeps doing
 // so: nothing in guest memory changes size. Instead:
 //
@@ -17,9 +17,8 @@
 //   rectangle-list clears): scaled around the centre, except triangles spanning the screen's
 //   width (fades, full-screen passes, bars), which keep its edges; backgrounds zoom to fill it. The frontend's sprites, drawn
 //   through a pure3d camera (W = 0.5), are already placed by the projection; only their big
-//   background sprites zoom. With hud_16_9 off, in gameplay, a HUD draw whose vertices all lie in
-//   the left or right 40% keeps its distance to that screen edge instead (HUD corners at the
-//   edges).
+//   background sprites zoom. The HUD always stays in that area (the old hud_16_9 = false, HUD
+//   corners at the screen's edges, is gone; the shaders' anchor bit 8 is never set).
 // - The Bink videos (while cutscenes::VideoPlaying) stay 16:9 between black bars.
 // - Our own overlays (settings screen, subtitles, prompts, console) lay out by the height, centred.
 
@@ -37,7 +36,4 @@ namespace gpu::widescreen
 
     // The 16:9 area of a `width` x `height` picture (all of it at 16:9): x, y, width, height.
     void HudArea(uint32_t width, uint32_t height, float& x, float& y, float& areaWidth, float& areaHeight);
-
-    // The HUD in the 16:9 area (settings video.hud_16_9) or its corners at the screen's edges.
-    bool HudCentered();
 }

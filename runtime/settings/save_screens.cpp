@@ -166,11 +166,10 @@ namespace settings::save_screens
         int g_confirmSlot = 0;
         bool g_refreshPending = false, g_restorePending = false, g_leftSlots = false;
         int g_restoreIndex = 0;
-        bool g_portuguese = false, g_mouseMenus = true;
+        bool g_portuguese = false;
         uint64_t g_optionsTime = 0;
 
-        // The options these screens follow (the language of their texts, mouse in menus), read
-        // twice a second.
+        // The option these screens follow (the language of their texts), read twice a second.
         void ReadOptions()
         {
             uint64_t now = plat::TickCountMs();
@@ -179,7 +178,6 @@ namespace settings::save_screens
             g_optionsTime = now;
             settings::Values values = settings::Get();
             g_portuguese = values.language.rfind("pt", 0) == 0;
-            g_mouseMenus = values.controls.mouseMenus;
         }
 
         bool Portuguese()
@@ -270,7 +268,7 @@ namespace settings::save_screens
             if (takeClick)
                 input::pc::TakeMenuClick();
             ReadOptions();
-            m.on = g_mouseMenus && input::pc::CursorOnImage(m.x, m.y);
+            m.on = input::pc::CursorOnImage(m.x, m.y);
             if (!m.on)
                 m.moved = m.clicked = false;
             return m;

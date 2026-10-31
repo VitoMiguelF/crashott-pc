@@ -176,7 +176,7 @@ textures), "Iluminação (remaster)", "Janela". Test profiles: `iluminacao`, `il
 ## Wide screens (`gpu/widescreen.*`, `camera/hor_plus.cpp`, HUD_GS in `xenos_renderer.cpp`)
 
 Full write-up: `runtime/NOTES.md` "Ultrawide". Settings `[video] aspect` (auto / 16:9 / 16:10 / 21:9 /
-32:9), `resolution` (WxH; the width follows the aspect's list), `hud_16_9`.
+32:9), `resolution` (WxH; the width follows the aspect's list). The HUD always stays in the 16:9 area.
 
 - The guest keeps 16:9 at 1280x720. Host targets and resolves are `g_stretch` (= aspect / 16:9) times
   wider: every guest x goes through `XScale(scale)` (targets, resolves, clears, viewport, scissor,
@@ -207,8 +207,8 @@ Full write-up: `runtime/NOTES.md` "Ultrawide". Settings `[video] aspect` (auto /
   virtual through c4-c7) scale around the centre unless they span the width; full-screen ones zoom when
   they read no render target. Triangles with the same W != 1 on the three vertices are the frontend's
   sprites through a pure3d camera (W = 0.5), already placed by Hor+; big ones past the 16:9 area zoom.
-  Anchored HUD (`hud_16_9 = false`): only in node 638, per draw, from the vertices of the 2D VS
-  aecab5202246c470 (HudDrawSide). Bink: the decoded frame is drawn by the generic 2D shader, so videos
+  The anchored HUD of the removed `hud_16_9 = false` (HUD corners at the edges) is gone from the C++;
+  HUD_GS / `xe_hud_transform` still handle mode bit 8, never set (left so the shader keys don't change). Bink: the decoded frame is drawn by the generic 2D shader, so videos
   are known from `cutscenes::VideoPlaying()`; scaled and the bars cleared.
 - `CRASH_NO_HOR_PLUS=1` (16:9 view stretched), `CRASH_HUD_NO_GS=1` (2D per vertex), `CRASH_WINDOW_SIZE=WxH`
   (client in screen pixels, may exceed the monitor: captures), `CRASH_MONITOR=WxH` (what AUTO sees).
@@ -217,4 +217,5 @@ Full write-up: `runtime/NOTES.md` "Ultrawide". Settings `[video] aspect` (auto /
 
 The present keeps the aspect ratio with black bars and the process is per-monitor DPI aware (on a high-DPI
 screen the window used to be half resolution and stretched). The window opens at the picture's aspect
-(720 lines at 96 DPI), fitted into the primary monitor's work area.
+(720 lines at 96 DPI), fitted into the primary monitor's work area. The default `video.window` is
+`borderless` (since 2026-10-31; the test userdata says `windowed`).

@@ -19,14 +19,14 @@ namespace settings::options
     enum class Item
     {
         Master, Music, Effects, Voice,
-        Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay, Aspect, Hud16x9,
+        Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay, Aspect,
         Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, ShaderCompilation, HdRemaster,
         Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Storage,
         Subtitles, SubtitleSize, SubtitleBackground,
         FreeCamera, CameraSensitivity, CameraInvertY, CameraDistance,
         LightSsao, LightGi, LightGiIntensity, LightContactShadows, LightSoftShadows,
         Lighting,  // every [lighting] option at once (LightingPreset): the launcher's simple view
-        Prompts, ControllerLayout, MouseCamera, MouseSensitivity, MouseInvertY, WalkSpeed, MouseMenus,
+        Prompts, ControllerLayout, Vibration, MouseCamera, MouseSensitivity, MouseInvertY,
         Player1, Player2,
         DevConsole,
         GameFolder, ModsFolder, SavesFolder, ExtraData,  // the launcher's SETUP tab (launcher.cpp)

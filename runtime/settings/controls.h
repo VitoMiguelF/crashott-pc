@@ -15,6 +15,7 @@
 //   player1 = "auto"            # local co-op: the controller of each player (kernel/pad_slots.h):
 //   player2 = "auto"            # auto | xbox1..xbox4 (XInput) | playstation1..playstation4
 //   pad_layout = "xbox360"      # controller mapping: xbox360 (the game's) | ps2
+//   vibration = true            # the controllers' rumble (every kind of pad)
 //
 // The game's own controls (scripts\mixins\inputmap_methods.lua, Crash.bfig/Crashlua.blua; see
 // runtime/NOTES.md "Controles de PC"): A jump, X light attack, Y heavy attack, B action/jack/
@@ -30,7 +31,7 @@ namespace settings
     enum class Action : uint8_t
     {
         MoveForward, MoveBack, MoveLeft, MoveRight,
-        Walk,          // left stick at walk_speed % instead of full
+        Walk,          // left stick at WALK_SPEED % instead of full
         Jump,          // A
         LightAttack,   // X
         HeavyAttack,   // Y
@@ -48,6 +49,7 @@ namespace settings
     };
     constexpr size_t ACTION_COUNT = size_t(Action::Count);
     constexpr size_t KEYS_PER_ACTION = 2;
+    constexpr int WALK_SPEED = 40;  // % of the left stick while Walk is held
 
     // Pseudo key codes for the mouse wheel (unassigned virtual key codes).
     constexpr uint16_t KEY_WHEEL_UP = 0x0E, KEY_WHEEL_DOWN = 0x0F;
@@ -81,9 +83,8 @@ namespace settings
         int mouseSensitivity = 100;  // %: mouse -> right stick (camera)
         bool mouseCamera = true;     // the mouse turns the camera in gameplay
         bool invertY = false;        // mouse / camera keys up = down
-        int walkSpeed = 40;          // % of the left stick while Walk is held
         PromptStyle prompts = PromptStyle::Auto;
-        bool mouseMenus = true;      // the frontend menus follow the mouse
+        bool vibration = true;       // the controllers' rumble (kernel/pad_slots.cpp SetVibration), live
         // Local co-op: the controller of player 1 / player 2 (PlayerDeviceKey; "auto" = connection
         // order, and START on the title screen picks player 1). A single pad is always player 1.
         std::array<std::string, 2> players{ "auto", "auto" };

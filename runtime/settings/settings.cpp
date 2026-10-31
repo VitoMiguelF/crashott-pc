@@ -234,7 +234,9 @@ namespace settings
                     ok = false;
             }
             else if (name == "video.hud_16_9")
-                ok = ParseBool(lower, values.hud16x9);
+            {
+                // Removed option: the HUD and menus are always in the middle 16:9 area now.
+            }
             else if (name == "video.overlay")
                 ok = ParseOverlayMode(lower, values.overlay);
             else if (name == "video.show_fps")  // before the overlay modes
@@ -460,7 +462,6 @@ namespace settings
                    "fps_limit = " << v.fpsLimit << "   # 30 (original) | 60 | 120 | 0 = sem limite\n"
                    "resolution = \"" << ResolutionOf(v.aspect, v.renderHeight).name << "\"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160; 21:9 2560x1080 | 3440x1440...; 32:9 5120x1440...; 16:10 1280x800... (a largura segue aspect; vale ao sair da tela SETTINGS)\n"
                    "aspect = \"" << AspectName(v.aspect) << "\"   # auto (o do monitor) | 16:9 (original) | 16:10 | 21:9 | 32:9: telas mais largas veem mais dos lados (vale ao sair da tela SETTINGS)\n"
-                   "hud_16_9 = " << (v.hud16x9 ? "true" : "false") << "   # HUD e menus na area 16:9 do meio; false = cantos do HUD nas bordas da tela (vale na hora)\n"
                    "overlay = \"" << OverlayModeName(v.overlay) << "\"   # off | fps | frametime | full (F1 alterna)\n"
                    "antialiasing = \"" << AntiAliasingName(v.antiAliasing) << "\"   # off | fxaa | smaa (pos-processamento da imagem final)\n"
                    "gpu_safe_mode = \"" << v.gpuSafeMode << "\"   # off | on | lista: barriers, instances, serial, memory, depth, present, cache (telas pretas em alguns drivers; ao reiniciar)\n"

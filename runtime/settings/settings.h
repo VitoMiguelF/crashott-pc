@@ -8,8 +8,7 @@
 //   [video]   window = "windowed" | "borderless" | "fullscreen", vsync = true|false,
 //             fps_limit = 30 | 60 | 120 | 0 (no limit), resolution = "1280x720" | "1600x900" |
 //             "1920x1080" | "2560x1440" | "3840x2160" | the other aspects' (internal),
-//             aspect = "auto" | "16:9" | "16:10" | "21:9" | "32:9", hud_16_9 = true|false
-//             (gpu/widescreen.h),
+//             aspect = "auto" | "16:9" | "16:10" | "21:9" | "32:9" (gpu/widescreen.h),
 //             overlay = "off" | "fps" | "frametime" | "full" (show_fps = true|false still read),
 //             antialiasing = "off" | "fxaa" | "smaa", gpu_safe_mode = "off" | "on" | a list (gpu/rhi.h
 //             SafeMode), gpu_diagnostics = true|false (on the next launch)
@@ -125,7 +124,7 @@ namespace settings
         int musicVolume = 100;
         int effectsVolume = 100;
         int voiceVolume = 100;
-        WindowMode window = WindowMode::Windowed;
+        WindowMode window = WindowMode::Borderless;
         bool vsync = false;  // off = as before (Present without waiting for the vblank)
         int fpsLimit = 30;   // 30 (the original), 60, 120 or 0 = no limit (gpu::SetFrameLimit)
 #if defined(__ANDROID__)
@@ -134,7 +133,6 @@ namespace settings
         int renderHeight = 720;  // internal resolution (Resolutions(aspect)), with `aspect`
 #endif
         Aspect aspect = Aspect::Auto;
-        bool hud16x9 = true;      // video.hud_16_9: the HUD and menus in the middle 16:9 area (else the HUD corners at the screen's edges)
         OverlayMode overlay = OverlayMode::Off;
         AntiAliasing antiAliasing = AntiAliasing::Off;
         // gpu_safe_mode: "off", "on" or a list of the renderer's conservative paths (gpu/rhi.h

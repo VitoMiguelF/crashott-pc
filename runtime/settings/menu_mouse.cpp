@@ -221,7 +221,7 @@ namespace
         uint32_t moves = input::pc::CursorMoves();
         bool moved = moves != s_moves;
         s_moves = moves;
-        if (!settings::Get().controls.mouseMenus || settings::menu::BlocksGameInput() || settings::save_screens::BlocksMenuMouse() ||
+        if (settings::menu::BlocksGameInput() || settings::save_screens::BlocksMenuMouse() ||
             mp::menu::BlocksGameInput())
         {
             // The settings screen (drawn over the PS2 options menu, which also runs) has the mouse.

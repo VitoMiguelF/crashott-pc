@@ -25,7 +25,7 @@ namespace input::slots
     // The physical controller on game controller `user` (0-3) now; false when none is there. The
     // keyboard and the scripted pads (CRASH_INPUT_SCRIPT) are added by xam_input_imports.cpp.
     bool Read(uint32_t user, XINPUT_GAMEPAD& pad);
-    // XamInputSetState's motors (0..65535) for the device on `user`.
+    // XamInputSetState's motors (0..65535) for the device on `user`; 0 with [controls] vibration off.
     void SetVibration(uint32_t user, uint16_t left, uint16_t right);
 
     // The game controller of player 1 (the one the game took on the title screen), where the

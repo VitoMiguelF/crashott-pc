@@ -25,8 +25,8 @@ namespace settings::options
 
         std::vector<Item> ControlItems()
         {
-            std::vector<Item> items = { Item::Player1, Item::Player2, Item::Prompts, Item::ControllerLayout, Item::MouseCamera, Item::MouseSensitivity,
-                                        Item::MouseInvertY, Item::WalkSpeed, Item::MouseMenus };
+            std::vector<Item> items = { Item::Player1, Item::Player2, Item::Prompts, Item::ControllerLayout, Item::Vibration, Item::MouseCamera,
+                                        Item::MouseSensitivity, Item::MouseInvertY };
             for (int i = 0; i < int(ACTION_COUNT); i++)
                 items.push_back(BindingItem(Action(i)));
             return items;
@@ -61,8 +61,7 @@ namespace settings::options
             { "audio", { "AUDIO", "ÁUDIO" },
               { Item::Master, Item::Music, Item::Effects, Item::Voice, Item::HeaderSubtitles, Item::Subtitles, Item::SubtitleSize,
                 Item::SubtitleBackground } },
-            { "video", { "VIDEO", "VÍDEO" }, { Item::Window, Item::Resolution, Item::FpsLimit, Item::VSync, Item::AntiAliasing, Item::Overlay, Item::Aspect,
-                Item::Hud16x9 } },
+            { "video", { "VIDEO", "VÍDEO" }, { Item::Window, Item::Resolution, Item::FpsLimit, Item::VSync, Item::AntiAliasing, Item::Overlay, Item::Aspect } },
             { "graphics", { "GRAPHICS", "GRÁFICOS" },
               { Item::Upscaler, Item::UpscalerQuality, Item::Sharpness, Item::MotionBlur, Item::DepthOfField, Item::Anisotropy,
                 Item::ShadowSoftness, Item::ShaderCompilation } },
@@ -114,7 +113,6 @@ namespace settings::options
         case Item::AntiAliasing: return "video.antialiasing";
         case Item::Overlay: return "video.overlay";
         case Item::Aspect: return "video.aspect";
-        case Item::Hud16x9: return "video.hud_16_9";
         case Item::Upscaler: return "graphics.upscaler";
         case Item::UpscalerQuality: return "graphics.upscaler_quality";
         case Item::Sharpness: return "graphics.sharpness";
@@ -152,8 +150,7 @@ namespace settings::options
         case Item::MouseCamera: return "controls.mouse_camera";
         case Item::MouseSensitivity: return "controls.mouse_sensitivity";
         case Item::MouseInvertY: return "controls.invert_y";
-        case Item::WalkSpeed: return "controls.walk_speed";
-        case Item::MouseMenus: return "controls.mouse_menus";
+        case Item::Vibration: return "controls.vibration";
         default: break;
         }
         return "";
@@ -177,7 +174,6 @@ namespace settings::options
         case Item::AntiAliasing: return "ANTI-ALIASING";
         case Item::Overlay: return "OVERLAY (F1)";
         case Item::Aspect: return t({ "ASPECT RATIO", "PROPORÇÃO" });
-        case Item::Hud16x9: return t({ "HUD AT 16:9", "HUD EM 16:9" });
         case Item::Upscaler: return "DLSS / FSR";
         case Item::UpscalerQuality: return t({ "UPSCALER MODE", "MODO DO UPSCALER" });
         case Item::Sharpness: return t({ "SHARPNESS (FSR)", "NITIDEZ (FSR)" });
@@ -214,8 +210,7 @@ namespace settings::options
         case Item::MouseCamera: return t({ "MOUSE CAMERA", "CÂMERA PELO MOUSE" });
         case Item::MouseSensitivity: return t({ "MOUSE SENSITIVITY", "SENSIBILIDADE DO MOUSE" });
         case Item::MouseInvertY: return t({ "INVERT MOUSE Y", "INVERTER Y DO MOUSE" });
-        case Item::WalkSpeed: return t({ "WALK SPEED", "VELOCIDADE AO ANDAR" });
-        case Item::MouseMenus: return t({ "MOUSE IN MENUS", "MOUSE NOS MENUS" });
+        case Item::Vibration: return t({ "VIBRATION", "VIBRAÇÃO" });
         case Item::GameFolder: return t({ "GAME FOLDER", "PASTA DO JOGO" });
         case Item::ModsFolder: return "MODS";
         case Item::SavesFolder: return t({ "SAVES AND OPTIONS", "SAVES E OPÇÕES" });
@@ -277,7 +272,6 @@ namespace settings::options
             if (values.aspect == Aspect::Auto)
                 return std::string("AUTO (") + AspectName(EffectiveAspect(Aspect::Auto)) + ")";
             return std::string(AspectName(values.aspect)) + (values.aspect == Aspect::R16_9 ? " (ORIGINAL)" : "");
-        case Item::Hud16x9: return OnOff(pt, values.hud16x9);
         case Item::FpsLimit:
             return values.fpsLimit ? std::to_string(values.fpsLimit) + (values.fpsLimit == 30 ? " (ORIGINAL)" : "") : t({ "UNLIMITED", "SEM LIMITE" });
         case Item::Upscaler:
@@ -355,7 +349,7 @@ namespace settings::options
         }
         case Item::MouseCamera: return OnOff(pt, values.controls.mouseCamera);
         case Item::MouseInvertY: return OnOff(pt, values.controls.invertY);
-        case Item::MouseMenus: return OnOff(pt, values.controls.mouseMenus);
+        case Item::Vibration: return OnOff(pt, values.controls.vibration);
         default: return "";
         }
     }
@@ -394,9 +388,6 @@ namespace settings::options
         case Item::Aspect:
             return { t({ "Wider screens see more to the sides (21:9, 32:9);", "Telas mais largas veem mais dos lados (21:9, 32:9);" }),
                      t({ "AUTO uses the monitor's; 16:10 sees more above.", "AUTO usa a do monitor; 16:10 vê mais em cima." }) };
-        case Item::Hud16x9:
-            return { t({ "On: HUD and menus in the middle 16:9 area.", "Ligado: HUD e menus na área 16:9 do meio." }),
-                     t({ "Off: the HUD corners go to the screen's edges.", "Desligado: os cantos do HUD vão às bordas da tela." }) };
         case Item::Overlay:
             return { t({ "Performance overlay: FPS, frame time and graph.", "Overlay de desempenho: FPS, frame time e gráfico." }),
                      t({ "F1 switches it at any time.", "O F1 alterna a qualquer momento." }) };
@@ -539,12 +530,8 @@ namespace settings::options
         case Item::MouseSensitivity:
             return { t({ "Mouse movement -> camera speed.", "Movimento do mouse -> velocidade da câmera." }), t({ "100% = default.", "100% = padrão." }) };
         case Item::MouseInvertY: return { t({ "Mouse / camera keys: up looks down.", "Mouse / teclas da câmera: para cima olha para baixo." }), "" };
-        case Item::WalkSpeed:
-            return { t({ "How far the stick goes while WALK is held", "Quanto o analógico vai com ANDAR DEVAGAR apertado" }),
-                     t({ "(Crash walks instead of running).", "(o Crash anda em vez de correr)." }) };
-        case Item::MouseMenus:
-            return { t({ "Pointing at an item selects it, click accepts,", "Apontar um item seleciona, clique confirma," }),
-                     t({ "right button goes back, the wheel scrolls.", "botão direito volta, a roda rola." }) };
+        case Item::Vibration:
+            return { t({ "The controllers' rumble (Xbox, PlayStation and others).", "A vibração dos controles (Xbox, PlayStation e outros)." }), live };
         default: break;
         }
         return {};
@@ -570,7 +557,6 @@ namespace settings::options
         case Item::CameraDistance: value = &values.cameraDistance; stepValue = 10; min = 50; max = 200; break;
         case Item::LightGiIntensity: value = &values.giIntensity; stepValue = 10; max = 200; break;
         case Item::MouseSensitivity: value = &values.controls.mouseSensitivity; stepValue = 10; min = 10; max = 400; break;
-        case Item::WalkSpeed: value = &values.controls.walkSpeed; stepValue = 5; min = 10; max = 90; break;
         default: break;
         }
         if (minimum)
@@ -619,7 +605,6 @@ namespace settings::options
             values.aspect = Cycle(values.aspect, 5, direction);
             values.renderHeight = ResolutionOf(values.aspect, values.renderHeight).height;
             break;
-        case Item::Hud16x9: values.hud16x9 = !values.hud16x9; break;
         case Item::AntiAliasing: values.antiAliasing = Cycle(values.antiAliasing, 3, direction); break;
         case Item::Overlay: values.overlay = Cycle(values.overlay, 4, direction); break;
         case Item::Upscaler:
@@ -695,7 +680,7 @@ namespace settings::options
         }
         case Item::MouseCamera: values.controls.mouseCamera = !values.controls.mouseCamera; break;
         case Item::MouseInvertY: values.controls.invertY = !values.controls.invertY; break;
-        case Item::MouseMenus: values.controls.mouseMenus = !values.controls.mouseMenus; break;
+        case Item::Vibration: values.controls.vibration = !values.controls.vibration; break;
         default: return false;
         }
         return true;
