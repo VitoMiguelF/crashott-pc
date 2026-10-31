@@ -22,4 +22,10 @@ namespace camera
     // usual. The right stick is read from the game's own controller state (so pads, the keyboard
     // mapping, CRASH_INPUT_SCRIPT and the F5 replay all drive it): it must keep reaching the game.
     bool FreeCameraActive();
+
+    // Zoom in game (any thread): the distance to the player times `factor` (> 1 = farther), within
+    // 50..200 % of the default, eased in over ~0.4 s (a critically damped spring). The mouse wheel (input::pc::MouseLookWheel,
+    // read by the camera itself) and the touch screen's pinch (settings/touch_controls.cpp) zoom
+    // freely; R3 steps through three fixed distances. Ignored while the free camera is not active.
+    void ZoomFreeCamera(float factor);
 }

@@ -23,7 +23,7 @@ namespace settings::options
         Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, ShaderCompilation, HdRemaster,
         Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Storage,
         Subtitles, SubtitleSize, SubtitleBackground,
-        FreeCamera, CameraSensitivity, CameraInvertY, CameraDistance,
+        FreeCamera, CameraSensitivity, CameraInvertY,
         LightSsao, LightGi, LightGiIntensity, LightContactShadows, LightSoftShadows,
         Lighting,  // every [lighting] option at once (LightingPreset): the launcher's simple view
         Prompts, ControllerLayout, MouseCamera, MouseSensitivity, MouseInvertY, WalkSpeed, MouseMenus,

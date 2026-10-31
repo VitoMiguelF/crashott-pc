@@ -201,7 +201,7 @@ O `run_game.py` também imprime `jogo: PID ..., sessão ..., até N s` ao inicia
 | `nome_teclado_mouse` | O mesmo pelo mouse: MOUSE clicando nas teclas, APAGAR e PRONTO; slot 5 | 50 s |
 | `apagar_save` | LOAD GAME: X no slot 2; B cancela, NÃO cancela, SIM apaga; a lista é lida de novo (slot 2 vazio, os outros no lugar) e o slot 1 ainda carrega | 60 s |
 | `apagar_save_mouse` | LOAD GAME pelo teclado e mouse: Delete no slot 3 e clique direito cancela; clique em X APAGAR no slot 4 e em SIM apaga | 60 s |
-| `camera_livre` | `boot = "load:1"` com a câmera livre ligada: gira, anda relativo à câmera, pula, R3 recentra (veja "Câmera livre") | 45 s |
+| `camera_livre` | `boot = "load:1"` com a câmera livre ligada: gira, anda relativo à câmera, pula, R3 segurado recentra, zoom pelo R3 e pela roda (veja "Câmera livre") | 55 s |
 | `camera_livre_abertura` | NEW GAME (piloto automático) com a câmera livre ligada: a cena de abertura com a câmera do jogo, depois a câmera livre na vila | 165 s |
 | `gravar` | Abre o jogo numa cópia dos saves gravando o controle desde o boot; F5 ou fechar a janela salva um perfil em `config/recorded` (veja "Gravando um perfil jogando") | — |
 | `gravado_<data>` | Perfis gravados com F5 (`config/recorded/<nome>.toml`): repetem do boot o que foi jogado | o gravado + 1 s |
@@ -637,7 +637,6 @@ skip_cutscenes = true    # segurar B / Esc pula cenas e vídeos, com um aviso no
 free_camera = false      # camera livre em terceira pessoa (experimental; veja "Camera livre")
 sensitivity = 100        # 25-300 %
 invert_y = false
-distance = 100           # 50-200 %
 [lighting]
 ssao = "off"             # off | low | high (veja "Iluminação (remaster)")
 gi = false               # luz indireta
@@ -678,10 +677,14 @@ Teste: perfil `snipe_azul` (`CRASH_FORCE_SKIN_VARIANT=1` faz todo Snipe nascer a
 |---|---|
 | Analógico direito / mouse | gira a câmera em volta do Crash (horizontal e vertical, de −20° a 70°) |
 | Analógico esquerdo | anda relativo à câmera: para cima = para onde a câmera olha |
-| R3 (clique do analógico direito) | recentra a câmera atrás do Crash |
+| R3 (clique do analógico direito), toque curto | zoom: alterna entre três distâncias fixas (60 %, 100 % e 160 % da padrão) |
+| R3 segurado (0,4 s) | recentra a câmera atrás do Crash |
+| Roda do mouse | zoom livre, ~10 % por dente (para frente = mais perto), de 50 % a 200 % |
+| Pinça (dois dedos na metade direita da tela de toque) | zoom livre: afastar os dedos aproxima a câmera |
 
-- **Sensibilidade**, **inverter eixo Y** e **distância** ficam na mesma aba, no sub-grupo CÂMERA EM TERCEIRA PESSOA (`sensitivity`, `invert_y`, `distance`). O mouse usa também a sensibilidade e o inverter de `[controls]`.
-- **Colisão**: a câmera se aproxima quando uma parede ou o chão ficaria entre ela e o Crash, e sobe para olhar por cima quando isso dá mais espaço; volta para a distância escolhida aos poucos.
+- **Zoom**: a distância muda suave (chega em ~0,4 s) e vale até fechar o jogo; não é salva. A antiga opção DISTÂNCIA DA CÂMERA saiu do menu, e um `distance = ...` antigo no `settings.toml` é ignorado sem aviso. O jogo original não usa R3 para nada (os mapas de entrada do jogo nem têm L3/R3). Com a câmera livre ativa, a roda só faz zoom: não aperta ações ligadas a `WHEELUP` / `WHEELDOWN`.
+- **Sensibilidade** e **inverter eixo Y** ficam na mesma aba, no sub-grupo CÂMERA EM TERCEIRA PESSOA (`sensitivity`, `invert_y`). O mouse usa também a sensibilidade e o inverter de `[controls]`.
+- **Colisão**: a câmera se aproxima quando uma parede ou o chão ficaria entre ela e o Crash, e sobe para olhar por cima quando isso dá mais espaço; volta para a distância do zoom aos poucos.
 - **Titãs**: montado num titã, a câmera continua no Crash (que vai nos ombros dele) e se afasta 1,6×.
 - **Cenas e momentos roteirizados**: as cinemáticas (cenas com faixas pretas) e as câmeras de script continuam com a câmera do jogo, e a câmera livre volta sozinha depois, partindo de onde a câmera do jogo estava (mistura de 0,35 s). Na pausa a imagem fica parada.
 - **Como funciona**: a lógica de câmera do jogo continua rodando inteira (volumes, transições, tremor, FOV); o runtime troca só o resultado, a câmera de render do Pure3D, logo depois que o jogo a escreve. Como o próprio jogo converte o analógico esquerdo usando essa câmera, o andar fica relativo à câmera livre sem mais nada. Detalhes em `runtime/NOTES.md`, "Câmera livre em terceira pessoa".

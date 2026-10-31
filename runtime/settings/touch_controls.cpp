@@ -6,6 +6,7 @@
 #include "menu_art.h"
 #include "settings_menu.h"
 #include "skip_cinematics.h"
+#include "../camera/free_camera.h"
 #include "../dev/dev_console.h"
 #include "../diagnostics.h"
 #include "../gpu/overlay.h"
@@ -628,8 +629,25 @@ namespace touch_controls
             MoveStickLocked(px, py);
             break;
         case Role::Camera:
-            g_cameraX += dx, g_cameraY += dy;
+        {
+            // Two fingers on the camera side: a pinch zooms the free camera (apart = closer)
+            // instead of turning it.
+            const Finger* other = nullptr;
+            for (const Finger& o : g_fingers)
+            {
+                if (o.used && &o != f && o.role == Role::Camera)
+                    other = &o;
+            }
+            if (other && camera::FreeCameraActive())
+            {
+                float before = std::hypot(px - dx - other->x, py - dy - other->y), after = std::hypot(px - other->x, py - other->y);
+                if (before > 1.0f && after > 1.0f)
+                    camera::ZoomFreeCamera(before / after);
+            }
+            else
+                g_cameraX += dx, g_cameraY += dy;
             break;
+        }
         case Role::Button:
             if (phase == Phase::Move)
             {

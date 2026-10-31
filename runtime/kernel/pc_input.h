@@ -126,4 +126,7 @@ namespace input::pc
     void TakeMouseLook(bool take);
     // Raw counts since the last call (both 0 when the mouse camera is off, in menus or unfocused).
     void MouseLookDelta(float& dx, float& dy);
+    // Wheel notches since the last call while taken, in gameplay (+ = away from the user); those
+    // notches press no WHEELUP / WHEELDOWN binding.
+    int MouseLookWheel();
 }

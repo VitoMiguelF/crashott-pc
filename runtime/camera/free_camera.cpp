@@ -81,6 +81,11 @@ namespace
     constexpr float MOUNTED_DISTANCE = 1.6f;    // x distance while riding a titan
     constexpr float MOUNTED_HEIGHT = 1.8f;      // a bit above the rider, so the titan stays in view
     constexpr uint64_t MOUNTED_TICKS = 45;      // ground behaviour stopped this long (longer than a jump)
+    constexpr float ZOOM_MIN = 0.5f, ZOOM_MAX = 2.0f;      // x BASE_DISTANCE: the wheel and the pinch
+    constexpr float ZOOM_LEVELS[] = { 0.6f, 1.0f, 1.6f };  // R3: near, default, far
+    constexpr float ZOOM_PER_NOTCH = 0.1f;      // a wheel notch (log of the factor: ~10 %)
+    constexpr float ZOOM_SPRING = 11.0f;        // 1/s, critically damped spring to the zoom asked (~0.4 s)
+    constexpr float RECENTER_HOLD = 0.4f;       // R3 held this long recenters; a shorter press zooms
 
     struct Vec3
     {
@@ -171,9 +176,10 @@ namespace
         return on;
     }
 
-    // Shared state. Everything but g_active is touched only by the guest thread that runs the
-    // game's update (the hooks below).
+    // Shared state. Everything but g_active and g_zoomRequest is touched only by the guest thread
+    // that runs the game's update (the hooks below).
     std::atomic<bool> g_active{ false };
+    std::atomic<float> g_zoomRequest{ 0 };  // log of the zoom factors asked since the last update (ZoomFreeCamera)
     bool g_mouseTaken = false;
 
     // The mouse turns the free camera itself (kernel/pc_input.h) while it is active; otherwise it
@@ -215,6 +221,12 @@ namespace
         bool hasHeading = false;
         bool mounted = false;        // logged state
         bool r3Down = false;
+        float r3Seconds = 0;         // how long R3 has been held
+        bool r3Recentered = false;   // this press recentered (no zoom step on release)
+        float zoom = 1, zoomNow = 1; // the distance asked (x BASE_DISTANCE) and the eased one
+        float zoomSpeed = 0;         // of zoomNow, per second
+        float zoomLogged = 1;
+        uint64_t zoomLogTick = 0;
         int64_t lastTime{};
         const char* reason = "";     // why it is not active (log)
         bool loggedActive = false;
@@ -391,7 +403,8 @@ namespace
         g_active = on;
         TakeMouse(on);
 
-        // Input: right stick and mouse, R3 recenters behind the player.
+        // Input: right stick and mouse; R3 steps the zoom (held: recenters behind the player); the
+        // wheel and the pinch zoom.
         float sensitivity = std::max(values.cameraSensitivity, 10) / 100.0f;
         float invert = values.cameraInvertY ? -1.0f : 1.0f;
         // Mouse: raw counts, with the [controls] mouse sensitivity too; its invert_y is the
@@ -414,6 +427,12 @@ namespace
         // R3 from controller 0 itself: the input map's button channels follow the current
         // control scheme (R3 showed up as channel 12 in one run and 15 in another).
         bool r3 = (input::MenuButtons() & XINPUT_GAMEPAD_RIGHT_THUMB) != 0;
+        // Zoom: the requests since the last update (ZoomFreeCamera: the pinch), the wheel away from
+        // the user brings the camera closer.
+        float zoomStep = g_zoomRequest.exchange(0.0f);
+        if (g_mouseTaken)
+            zoomStep -= float(input::pc::MouseLookWheel()) * ZOOM_PER_NOTCH;
+        float zoomBefore = g.zoomNow;
         if (on && !paused)
         {
             float yawInput = stickX * YAW_SPEED * dt + mouseX * MOUSE_DEG_PER_PIXEL;
@@ -422,18 +441,55 @@ namespace
                 g.recentering = false;
             g.yaw = WrapAngle(g.yaw + yawInput * sensitivity * g.yawSign);
             g.pitch = std::clamp(g.pitch + pitchInput * sensitivity * invert, PITCH_MIN, PITCH_MAX);
-            if (r3 && !g.r3Down)
+            if (r3)
             {
-                // Behind where the player last walked (the game's own stick -> world result): the
-                // rows of the actor's matrix do not follow its facing reliably.
-                Vec3 facing = g.hasHeading ? g.heading : PlayerFacing();
-                if (facing.x * facing.x + facing.z * facing.z > 1e-4f)
+                if (!g.r3Down)
+                    g.r3Seconds = 0, g.r3Recentered = false;
+                g.r3Seconds += dt;
+                if (!g.r3Recentered && g.r3Seconds >= RECENTER_HOLD)
                 {
-                    g.recenterYaw = std::atan2(facing.x, facing.z);
-                    g.recentering = true;
-                    Log("[camera] free camera: recenter behind the player (yaw %.0f -> %.0f)", g.yaw / DEG, g.recenterYaw / DEG);
+                    g.r3Recentered = true;
+                    // Behind where the player last walked (the game's own stick -> world result):
+                    // the rows of the actor's matrix do not follow its facing reliably.
+                    Vec3 facing = g.hasHeading ? g.heading : PlayerFacing();
+                    if (facing.x * facing.x + facing.z * facing.z > 1e-4f)
+                    {
+                        g.recenterYaw = std::atan2(facing.x, facing.z);
+                        g.recentering = true;
+                        Log("[camera] free camera: recenter behind the player (yaw %.0f -> %.0f)", g.yaw / DEG, g.recenterYaw / DEG);
+                    }
                 }
             }
+            else if (g.r3Down && !g.r3Recentered)
+            {
+                // A short press: the next fixed distance farther than the one asked now; after
+                // the farthest, the nearest.
+                float next = ZOOM_LEVELS[0];
+                for (float level : ZOOM_LEVELS)
+                {
+                    if (level > g.zoom + 0.01f)
+                    {
+                        next = level;
+                        break;
+                    }
+                }
+                g.zoom = g.zoomLogged = next;
+                g.zoomLogTick = g.tick;
+                Log("[camera] free camera: R3 zoom %.0f%%", next * 100.0f);
+            }
+            if (zoomStep != 0.0f)
+                g.zoom = std::clamp(g.zoom * std::exp(zoomStep), ZOOM_MIN, ZOOM_MAX);
+            if (std::fabs(g.zoom - g.zoomLogged) > 0.001f && g.tick - g.zoomLogTick > 15)
+            {
+                Log("[camera] free camera: zoom %.0f%%", g.zoom * 100.0f);
+                g.zoomLogged = g.zoom;
+                g.zoomLogTick = g.tick;
+            }
+            // The spring's exact step (stable at any frame time): starts and stops gently, no overshoot.
+            float offset = g.zoomNow - g.zoom, decay = std::exp(-ZOOM_SPRING * dt);
+            float push = (g.zoomSpeed + ZOOM_SPRING * offset) * dt;
+            g.zoomNow = g.zoom + (offset + push) * decay;
+            g.zoomSpeed = (g.zoomSpeed - ZOOM_SPRING * push) * decay;
             if (g.recentering)
             {
                 float k = 1.0f - std::exp(-RECENTER_RATE * dt);
@@ -444,6 +500,8 @@ namespace
                     g.recentering = false;
             }
         }
+        else
+            g.r3Recentered = true;  // a press that began or ended outside: no step on its release
         g.r3Down = r3;
         if (Probe())
         {
@@ -468,7 +526,9 @@ namespace
         if (mounted != g.mounted && on)
             Log("[camera] free camera: %s", mounted ? "riding (titan): farther away" : "on foot");
         g.mounted = mounted;
-        float wantedDistance = BASE_DISTANCE * std::clamp(values.cameraDistance, 25, 300) / 100.0f * (mounted ? MOUNTED_DISTANCE : 1.0f);
+        float scale = BASE_DISTANCE * (mounted ? MOUNTED_DISTANCE : 1.0f);
+        float wantedDistance = scale * g.zoomNow;
+        float zoomGrowth = std::max(g.zoomNow - zoomBefore, 0.0f) * scale;  // zooming out: follow it at once
         // A wall close behind the player: look from higher up, over it, if that leaves more room
         // (the line of sight from above is usually free; the camera would otherwise sit in the
         // player's head).
@@ -489,7 +549,7 @@ namespace
         if (free < g.distance)
             g.distance = free;
         else
-            g.distance = std::min(free, g.distance + DISTANCE_RETURN * dt);
+            g.distance = std::min(free, g.distance + DISTANCE_RETURN * dt + zoomGrowth);
 
         Vec3 position = g.target - direction * g.distance;
 
@@ -513,6 +573,17 @@ namespace camera
     bool FreeCameraActive()
     {
         return g_active;
+    }
+
+    void ZoomFreeCamera(float factor)
+    {
+        if (!g_active || !(factor > 0.0f) || !std::isfinite(factor))
+            return;
+        float step = std::log(factor);
+        float old = g_zoomRequest.load();
+        while (!g_zoomRequest.compare_exchange_weak(old, old + step))
+        {
+        }
     }
 }
 
