@@ -102,6 +102,9 @@ namespace mp
 
     // mp_net.cpp
     void NetTick(PPCContext& ctx, uint8_t* base);
+    // dev/dev_skins.cpp's CStreamManager::vf05 hook: a level load (the names of the actors spawned in it
+    // start again, the same on every machine).
+    void LevelLoaded();
     // The UDP socket, opened by CRASH_MP_ROLE at startup or by the lobby (mp_lobby.cpp). One I/O thread
     // owns its receiving: lobby packets ("CML1") go to lobby::OnPacket on that thread, the rest is queued
     // for the game thread. Addresses are IPv4, host byte order.

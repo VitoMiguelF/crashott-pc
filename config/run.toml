@@ -1899,6 +1899,34 @@ env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SLOT = "2", CRASH_MP_
 input = [["@gameplay_ready"], [1.5, "SHOT"], [2.5, "X"], [2.9, "X"], [3.3, "X"], [3.7, "X"], [4.4, "SHOT"], [5.0, "X"], [5.4, "X"], [5.8, "X"], [6.5, "SHOT"], [7.0, "X"], [7.4, "X"], [8.5, "SHOT"], [11, "SHOT"], [16, "SHOT"]]
 expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
 
+[profiles.mp_pula_host]
+description = "Host do L1_E1 parado no começo; rode junto com mp_pula_c (o cliente cai no cogumelo BouncePad5, longe do host: tem que quicar alto). Com --set env com CRASH_MP_MIRROR = \"all\" nos dois: o espelho de antes (todo ator), em que o cogumelo não quicava"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "host", CRASH_MP_STREAM = "union", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "0,0,1280,1100" }
+input = [["@gameplay_ready"], [3, "SHOT"], [10, "SHOT"], [16, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
+[profiles.mp_pula_c]
+description = "Cliente do mp_pula_host: levado para cima do cogumelo BouncePad5 (280.9, 36.5, 97.0), longe do host; cai nele e pula nele (A): o rastro [mp] anim mostra a altura do P1"
+test = false
+timeout = 40
+audio = false
+userdata_mode = "copy"
+boot = "level:L1_E1"
+skip_cinematics = true
+dev_invincible = true
+dev_lua_at = "gameplay_ready+3"
+dev_teleport = [280.9, 40.5, 97.0]
+env = { CRASH_MP = "1", CRASH_MP_ROLE = "client", CRASH_MP_SLOT = "1", CRASH_MP_SUPPRESS = "none", CRASH_MP_STREAM = "union", CRASH_MP_TRACE = "1", CRASH_RESTART_WINDOW = "1280,0,1280,1100" }
+input = [["@gameplay_ready"], [3.6, "SHOT"], [4.2, "SHOT"], [4.8, "SHOT"], [5.4, "SHOT"], [8, "A"], [8.6, "SHOT"], [9.2, "SHOT"], [12, "A"], [12.6, "SHOT"], [13.2, "SHOT"], [16, "SHOT"]]
+expect = { exit = ["timeout"], events = ["gameplay_ready"], log_absent = ['\[fatal\]', '\[crash\]'] }
+
 [profiles.mp_planta3_host]
 description = "Host do L1_E1 com 3 jogadores, parado; rode junto com mp_planta3_c (o P3 anda até as plantas de mojo e bate: o P3+ não quebrava nada)"
 test = false

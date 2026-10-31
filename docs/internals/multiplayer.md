@@ -16,6 +16,8 @@ opened from the main menu's MULTIPLAYER** ("Lobby" below); with it off no hook c
 | `CRASH_MP_PLAYERS=<n>` | 2-8 players (the game's own limit is 4, 5-8 are experimental: "8 players" below); with more than 2, players 3-8 are spawned on every machine |
 | `CRASH_MP_SLOT=<n>` | client: its player, 1-7 (default 1; UDP port + slot); the host is 0 |
 | `CRASH_MP_SNAP=<units>` | client: a player further than this from the host's record is put back through its physics (default 1.0) |
+| `CRASH_MP_CHARACTER_SNAP=<units>` | client: an enemy further than this from the host's record goes there through its physics (default 0.75) |
+| `CRASH_MP_MIRROR=all` / `CRASH_MP_SPAWN_NAMES=0` | tests: mirror every actor's transform as before / keep the game's spawn names |
 | `CRASH_MP_NAME=<name>` | the player's name in the lobby when none was saved (`[multiplayer] name`, typed on the MULTIPLAYER screens; default: the OS user's, A-Z 0-9, 12 letters); it also skips the first-time name screen |
 | `CRASH_MP_PASSWORD` / `CRASH_MP_CODE` | tests: the host's password and what a client's password field starts with / what ENTER CODE starts with |
 | `CRASH_MP_TELEPORT=x,y,z` | host, tests: once both players are on foot, put P1 there and P2 2 units further along x (`mp_m3_host`: the first fight of L1_E1) |
@@ -257,6 +259,31 @@ arrays). So up to 4 players, all native Crashes, no puppets:
   other client lands it, so a third player sees each stage; the records' 0 (`brokenUntil`) lands only when no
   STAGE came for `ZERO_WAIT_MS`, and after a landed stage the records wait `PREDICTED_MS` (their 1, written first,
   left a plant a stage behind).
+- **Characters through their physics, nothing else by transform** (lobby version 11; `mp_m3_host` + `mp_m3_client`,
+  `mp_pula_host` + `mp_pula_c`): writing the host's matrix only moved an enemy's picture: its physics keeps its own
+  position and puts it back every frame, so on a client the AI, its hits, the hits on it and its accessories stayed
+  where the local AI had taken it (up to 15 units off before the write in `mp_m3_client`). A character more than
+  0.75 (`CRASH_MP_CHARACTER_SNAP`) off the host's record now goes there through its physics (`TeleportPhysics`: a
+  `CActionTeleport` to the `CPhysicsBehaviour`'s handler, vtable 0x8201563C, found among the controller's pointers
+  with its actor at +96; at most every 200 ms): 1-2.6 units in the same test; the client's stats line says
+  "characters up to X off before the write, N moved". Only characters are mirrored by transform (`IsCharacter`: the
+  controller's vtable is NPCBase 0x82017B04, NPCBaseJackable 0x82017B8C, Fodder 0x82017D5C, Strong 0x82017E5C, Bear
+  0x82017F0C, Captain 0x82017CDC, Boss 0x82017C5C, or Accessory 0x8201662C; not Projectile 0x82017DDC, the thrown
+  weapons): the mushroom pads (`prp_pformFun_Whumpa`), teeters and whumpa bridges are `Platform` physics bodies that
+  sink under a player and throw it back, and the host's matrix (where nobody stood on that pad, or out of step)
+  held them still: far from the host a pad never bounced (y stuck at 33.9 with `CRASH_MP_MIRROR=all`, the old
+  mirror; now 36.8 -> 43.2 by itself, 50 with A). The host sends only what a client uses (players, characters,
+  anything with hitpoints); a client forgets a record not refreshed for 3 s (the host sends all once a second); the
+  sequence counts only sent packets (empty snapshots showed as lost).
+- **Spawned names** (`SpawnNames`): Lua names what is spawned without a name (`CreateGeneratorSpawnName`) after the
+  template and `objectManager.nextID`, the number of script objects that machine has made: different on every
+  machine (each loads the other players' skins, menus differ), so the host's records of accessories, drops, mojo
+  and pickups found nothing on a client. Online, before the objectives' first update of each level (a level load,
+  `mp::LevelLoaded` from the `CStreamManager::vf05` hook, starts the counts again), `GenerateObjectWithoutGenerator`
+  is wrapped: `<template>_<x>_<y>_<z>_mp<n>` (the place rounded, n = how many of those this level); checked again
+  every 2 s; `CRASH_MP_SPAWN_NAMES=0` keeps the game's. The `DO_SpawnEnemy` enemies' ids (actor +8) do not come from
+  that name (the same with other names: the objectives pre-spawn them, `DO_PreSpawnActor`, and the game gives the
+  id).
 - **Menus over the level**: a remote player's pad reads empty while this machine's frontend shows a menu over the
   level (`input::pc::InMenus`: the pause, a tutorial): the frontend takes any controller's buttons, so player 2
   moved player 1's pause.

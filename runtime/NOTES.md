@@ -2641,3 +2641,24 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   checkpoint continua atrás do companheiro. `mp_ponto_volta`. O PC grava `userdata\crashrecomp_log.txt` sempre (e
   `_prev`), como o Android: o crash do host ao sair salvando não reproduziu (pelo lobby, com clique ou A no
   CONTINUE, com as configurações da dist: `mp_sair_host`, `mp_sair_host_a`, `mp_sair_host_pt`, `sair_salvando`).
+- **Online: inimigos iguais em todo aparelho, cogumelos longe do host** (2026-10-31, lobby versão 11): (1) o
+  cliente escrevia a matriz do host em todo ator espelhado, mas a física de cada inimigo guarda a própria posição e a
+  põe de volta a cada quadro: só o desenho ia para o lugar do host; a IA, os golpes dele, os golpes nele e os
+  acessórios ficavam onde a IA local o levou (medido no `mp_m3_client`: até 15 unidades antes da escrita). Agora um
+  personagem a mais de 0,75 do registro vai para lá pela física (`CActionTeleport` no handler da
+  `CPhysicsBehaviour`, vtable 0x8201563C, achada entre os ponteiros do controller como o damageable; no máximo a cada
+  200 ms; `CRASH_MP_CHARACTER_SNAP`): 1-2,6 unidades no mesmo teste, as estatísticas do cliente dizem "characters up
+  to X off before the write, N moved". (2) Só personagens são espelhados pela matriz (`IsCharacter`: controller
+  NPCBase / NPCBaseJackable / Fodder / Strong / Bear / Captain / Boss, e Accessory; não Projectile): os cogumelos
+  (`prp_pformFun_Whumpa`), gangorras e pontes de whumpa são `Platform`, corpos de física que afundam e devolvem o
+  jogador; a matriz do host (onde ninguém pisava no cogumelo, ou pisava fora de fase) os segurava parados: longe do
+  host o cogumelo não quicava (`mp_pula_host` + `mp_pula_c`: y parado em 33,9 com `CRASH_MP_MIRROR=all`, o espelho
+  antigo; agora quica sozinho 36,8 -> 43,2 e com A até 50). O host só manda o que o cliente usa (jogadores,
+  personagens e quem tem vida), registros sem notícia há 3 s são esquecidos (antes ficavam para sempre e inflavam o
+  "without a local actor"), e a sequência só conta pacotes mandados. (3) Os nomes que o Lua dá ao que nasce sem nome
+  (`CreateGeneratorSpawnName`: modelo + `objectManager.nextID`, o número de objetos de script já feitos naquela
+  máquina) mudavam de aparelho para aparelho (cada um carrega as skins dos outros, menus diferentes...): online
+  `GenerateObjectWithoutGenerator` é trocado antes da primeira atualização dos objetivos de cada fase por um que
+  chama "modelo_x_y_z_mpN" (lugar arredondado + contagem na fase; `CRASH_MP_SPAWN_NAMES=0` desliga). O id dos
+  inimigos dos `DO_SpawnEnemy` (actor +8) não vem desse nome (igual com nomes trocados: o jogo os pré-cria,
+  `DO_PreSpawnActor`, e dá o id por conta própria); os acessórios, mojos, vidas e drops sim.

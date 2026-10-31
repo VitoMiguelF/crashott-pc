@@ -37,6 +37,7 @@
 #include "mp_lobby.h"
 #include "mp_nat.h"
 #include "../diagnostics.h"
+#include "../dev/dev_tools.h"
 #include "../kernel/xinput_types.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
@@ -116,6 +117,11 @@ namespace
     // sub_8214FF10): 0 for a big mojo plant's first two, 15 (a titan's) for its last.
     constexpr uint32_t BEHAVIOUR_ACTOR = 28, DAMAGEABLE_HITPOINTS = 64, DAMAGEABLE_STRENGTH = 136;
     constexpr uint32_t DAMAGEABLE_VTABLE = 0x8201145C;  // CDamageableBehaviour
+    constexpr uint32_t PHYSICS_VTABLE = 0x8201563C;     // CPhysicsBehaviour
+    // Client: a character further than this from the host's record goes there through its physics, at most
+    // every CHARACTER_SNAP_MS (CRASH_MP_CHARACTER_SNAP, units).
+    constexpr float CHARACTER_SNAP = 0.75f;
+    constexpr uint64_t CHARACTER_SNAP_MS = 200;
 
     // Heap pointers the game hands out: virtual (0x40000000..) or physical (0xA0000000..) memory.
     bool GuestPointer(uint32_t p) { return (p >= 0x40000000 && p < 0x7F000000) || (p >= 0xA0000000 && p < 0xC0000000); }
@@ -143,7 +149,44 @@ namespace
         float m[12]{};     // rows 0-3, xyz
         float hitpoints = -1;
         uint32_t flags = 0;
+        uint64_t at = 0;   // client: when it came (an actor the host no longer has is forgotten, RECORD_KEEP_MS)
     };
+
+    constexpr uint64_t RECORD_KEEP_MS = 3000;  // the host sends every actor at least once a second
+
+    // The characters the AI moves: the behaviour controller (actor +0x1C) of an NPCBase (Fodder, the
+    // jackable titans, Boss...; private/symbols/rtti.json). Only theirs are mirrored by transform: every
+    // other actor runs the same on every machine, and the props a player stands on are physics bodies
+    // (Platform: the mushroom pads, teeters, whumpa bridges) that the host's transform held still under a
+    // player the host's world had elsewhere: a pad far from the host never bounced. Not the Projectile
+    // class (thrown weapons: each machine's own, reused round-robin by the launchers). With the enemies their
+    // Accessory actors (a Chiratta's hat and goggles), which stayed where they were spawned on a client.
+    // CRASH_MP_MIRROR=all (tests): every actor, as before.
+    bool IsCharacter(uint32_t actor)
+    {
+        static const bool all = [] {
+            const char* e = getenv("CRASH_MP_MIRROR");
+            return e && !strcmp(e, "all");
+        }();
+        if (all)
+            return true;
+        uint32_t controller = LoadBE32(actor + 0x1C);
+        if (!GuestPointer(controller))
+            return false;
+        switch (LoadBE32(controller))
+        {
+        case 0x82017B04:  // NPCBase
+        case 0x82017B8C:  // NPCBaseJackable
+        case 0x82017D5C:  // Fodder
+        case 0x82017E5C:  // Strong
+        case 0x82017F0C:  // Bear
+        case 0x82017CDC:  // Captain
+        case 0x82017C5C:  // Boss
+        case 0x8201662C:  // Accessory
+            return true;
+        }
+        return false;
+    }
 
     struct Net
     {
@@ -177,8 +220,9 @@ namespace
         std::unordered_map<uint64_t, Record> latest;
         std::unordered_map<uint64_t, uint32_t> local;
         uint64_t applied = 0, missing = 0, received = 0;
+        float maxDrift = 0;  // client: the largest distance between a character and the host's record before the write
         uint32_t lastSequence = 0, lost = 0;
-        uint64_t lastSyncTrace = 0, lastPacketAt = 0, teleports = 0;
+        uint64_t lastSyncTrace = 0, lastPacketAt = 0, teleports = 0, lastPrune = 0;
         // M2: the client's pad on the host / sent by the client
         std::mutex padMutex;  // the pads and the clients' addresses (the input thread reads them)
         XINPUT_GAMEPAD remotePad[mp::MAX_PLAYERS]{};  // by slot
@@ -207,6 +251,10 @@ namespace
         // Each actor's damageable behaviour, learnt from AdjustHitpoints (it sets every character's
         // hitpoints when it comes up); client: the host's hitpoints being applied, damage dropped
         std::unordered_map<uint32_t, uint32_t> damageables;
+        std::unordered_map<uint32_t, uint32_t> physics;          // client: each character's physics behaviour (FindPhysics)
+        std::unordered_map<uint64_t, uint64_t> characterSnapAt;  // client: a character's last move through its physics
+        float characterSnap = CHARACTER_SNAP;
+        uint64_t characterSnaps = 0;
         bool applyingHitpoints = false;
         float recordHitpoints[mp::MAX_PLAYERS] = {-1, -1, -1, -1, -1, -1, -1, -1};
         uint32_t interests[mp::MAX_PLAYERS]{};  // the players' camera interests (LocalCamera)
@@ -369,6 +417,8 @@ namespace
             }
             if (const char* snap = getenv("CRASH_MP_SNAP"))
                 n.snap = float(atof(snap));
+            if (const char* snap = getenv("CRASH_MP_CHARACTER_SNAP"))
+                n.characterSnap = float(atof(snap));
             if (const char* s = getenv("CRASH_MP_SUPPRESS"))
             {
                 n.suppressAi = strstr(s, "ai") != nullptr;
@@ -522,6 +572,56 @@ namespace
         call = ctx;
         call.r3.u64 = message;
         sub_82093C48(call, base);
+    }
+
+    // Moves an actor through its physics only: a CActionTeleport (message type 40) to the physics behaviour's
+    // own handler (sub_82145358: the body, the transform, the stream manager). Writing the transform is not
+    // enough: the physics keeps its own position and puts it back every frame.
+    bool TeleportPhysics(PPCContext& ctx, uint8_t* base, uint32_t physics, float x, float y, float z)
+    {
+        uint32_t actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
+        if (!GuestPointer(actor))
+            return false;
+        static uint32_t message = GuestAlloc(128), vector = GuestAlloc(16);
+        if (!message || !vector)
+            return false;
+        StoreF(vector, x);
+        StoreF(vector + 4, y);
+        StoreF(vector + 8, z);
+        StoreF(vector + 12, 1.0f);
+        PPCContext call = ctx;
+        call.r3.u64 = message;
+        call.r4.u64 = vector;
+        call.r5.u64 = 0;
+        sub_820972D0(call, base);
+        call = ctx;
+        call.r3.u64 = physics;
+        call.r4.u64 = actor;
+        call.r5.u64 = message;
+        sub_82145358(call, base);
+        call = ctx;
+        call.r3.u64 = message;
+        sub_82097348(call, base);
+        return true;
+    }
+
+    // A character's physics behaviour (CPhysicsBehaviour, vtable 0x8201563C, its actor at +96): one of the
+    // pointers of the actor's behaviour controller (Lua m_BehaviourController.m_PhysicsBehaviour).
+    uint32_t FindPhysics(Net& n, uint32_t actor)
+    {
+        auto it = n.physics.find(actor);
+        if (it != n.physics.end() && LoadBE32(it->second) == PHYSICS_VTABLE && LoadBE32(it->second + 96) == actor)
+            return it->second;
+        uint32_t controller = GuestPointer(actor) ? LoadBE32(actor + 0x1C) : 0;
+        if (!GuestPointer(controller))
+            return 0;
+        for (uint32_t o = 0; o < 0x400; o += 4)
+            if (uint32_t p = LoadBE32(controller + o); GuestPointer(p) && LoadBE32(p) == PHYSICS_VTABLE && LoadBE32(p + 96) == actor)
+            {
+                n.physics[actor] = p;
+                return p;
+            }
+        return 0;
     }
 
     // The host's hitpoints for an actor it mirrors: its hits (and the deaths they bring) land here too.
@@ -789,6 +889,10 @@ namespace
     {
         if (!count)
             return;
+        // The sequence only for what is sent (a client counts the gaps as lost).
+        uint32_t sequence = ++n.sequence;
+        for (int i = 0; i < 4; ++i)
+            packet[4 + i] = uint8_t(sequence >> (24 - 8 * i));
         packet[8] = uint8_t(count >> 24);
         packet[9] = uint8_t(count >> 16);
         packet[10] = uint8_t(count >> 8);
@@ -931,6 +1035,73 @@ namespace
         n.hits.clear();
     }
 
+    // The names Lua gives what is spawned without one (the objectives' pre-spawned pools, accessories, drops,
+    // pickups: GenerateObject -> GenerateObjectWithoutGenerator -> CreateGeneratorSpawnName) are the template's
+    // and objectManager.nextID, the number of script objects this machine has made so far: not the same on two
+    // machines (each loads the other players' skins, their menus differ), so the host's records of them found
+    // no actor of that name on a client. Online every machine names them after the template, where it was
+    // spawned (rounded to a unit) and how many of those this level has spawned there:
+    // "Accessories_cbt_chiratta_scientist_m22_63_382_mp1". The game's own names (a spawn given one) stay. The
+    // DO_SpawnEnemy enemies' ids (actor +8) do not come from this name: they are the same either way.
+    // Installed before the objectives' first update of each level (the counts start again) and checked
+    // again every 2 s (a script that defines the function again). CRASH_MP_SPAWN_NAMES=0 (tests): the game's names.
+    uint32_t g_levelSerial = 0;
+
+    void SpawnNames(PPCContext& ctx, uint8_t* base)
+    {
+        static const bool off = [] {
+            const char* e = getenv("CRASH_MP_SPAWN_NAMES");
+            return e && !strcmp(e, "0");
+        }();
+        if (off)
+            return;
+        static uint32_t serial = ~0u;
+        static uint64_t lastCheck = 0;
+        uint64_t now = mp::NowMs();
+        bool reset = serial != g_levelSerial;
+        if (!reset && now - lastCheck < 2000)
+            return;
+        lastCheck = now;
+        std::string code = std::string("local s = mp_spawn or {} mp_spawn = s ") + (reset ? "s.count = {} " : "") +
+                           "s.count = s.count or {} s.trace = " + (mp::Trace() ? "true" : "false") + R"lua(
+            if GenerateObjectWithoutGenerator ~= s.wrapped then
+              local original = GenerateObjectWithoutGenerator
+              local function n(v)
+                local r = math.floor(v + 0.5)
+                if r < 0 then return "m" .. tostring(0 - r) end
+                return tostring(r)
+              end
+              s.name = function(genName, position)
+                local key = string.gsub(genName, ":", "_")
+                if position then
+                  local x, y, z = position.x, position.y, position.z
+                  if type(x) == "number" and type(y) == "number" and type(z) == "number" then
+                    key = key .. "_" .. n(x) .. "_" .. n(y) .. "_" .. n(z)
+                  end
+                end
+                local c = (s.count[key] or 0) + 1
+                s.count[key] = c
+                return key .. "_mp" .. tostring(c)
+              end
+              s.wrapped = function(genName, spawner, parent, spawnName, position, rotation, scale)
+                if (not spawnName or spawnName == 0 or spawnName == "") and type(genName) == "string" then
+                  local ok, name = pcall(s.name, genName, position)
+                  if ok and name then
+                    spawnName = name
+                    if s.trace then devprint("[mp] spawned as " .. name) end
+                  end
+                end
+                return original(genName, spawner, parent, spawnName, position, rotation, scale)
+              end
+              GenerateObjectWithoutGenerator = s.wrapped
+              if s.trace then devprint("[mp] spawn names installed") end
+            end)lua";
+        std::string error;
+        serial = g_levelSerial;
+        if (!dev::RunLua(ctx, base, code.c_str(), "mp_spawn_names", &error) && reset)
+            Log("[mp] spawn names: %s", error.c_str());
+    }
+
     // Tests: CRASH_MP_TELEPORT=x,y,z puts both of the host's players there (P2 2 units along x), once,
     // 2 s after both are on foot.
     void HostTestTeleport(PPCContext& ctx, uint8_t* base)
@@ -982,7 +1153,7 @@ namespace
         auto begin = [&] {
             packet.clear();
             Put32(packet, MAGIC);
-            Put32(packet, ++n.sequence);
+            Put32(packet, 0);  // the sequence (Flush)
             Put32(packet, 0);
             Put32(packet, uint32_t(n.frames));
             count = 0;
@@ -992,6 +1163,10 @@ namespace
         {
             Record r;
             if (!Read(ctx, base, actor, r))
+                continue;
+            // What a client uses: the players' hitpoints, the characters' transforms (IsCharacter) and the
+            // hitpoints of whatever can be hit (a breakable's 0).
+            if (!(r.flags & 1) && r.hitpoints < 0 && !IsCharacter(actor))
                 continue;
             auto it = n.sent.find(r.name);
             if (!full && it != n.sent.end() && !Changed(it->second, r))
@@ -1091,6 +1266,7 @@ namespace
                 uint32_t bits = Get32(p + 56);
                 memcpy(&r.hitpoints, &bits, 4);
                 r.flags = Get32(p + 60);
+                r.at = mp::NowMs();
                 n.latest[r.name] = r;
                 n.received++;
             }
@@ -1102,6 +1278,12 @@ namespace
     {
         if (n.latest.empty())
             return;
+        // An actor the host removed (a dead enemy, a pickup taken) is no longer in its snapshots.
+        if (uint64_t now = mp::NowMs(); now - n.lastPrune >= 500)
+        {
+            n.lastPrune = now;
+            std::erase_if(n.latest, [now](const auto& e) { return now - e.second.at > RECORD_KEEP_MS; });
+        }
         // The client plays its own slot as player 1: the host's record of player index g (slot g) goes on
         // this machine's player LocalIndex(slot, g); the players have the same names everywhere.
         uint32_t players[mp::MAX_PLAYERS];
@@ -1175,10 +1357,31 @@ namespace
                     ApplyHitpoints(ctx, base, n, it->second, r, name, true);
                 continue;
             }
-            for (int row = 0; row < 4; ++row)
-                for (int c = 0; c < 3; ++c)
-                    StoreF(xform + row * 16 + c * 4, r.m[row * 3 + c]);
-            n.applied++;
+            if (IsCharacter(it->second))
+            {
+                // How far this machine's own update had taken it from the host's place (stats).
+                // The transform alone only moved the picture: the client's own physics kept the character where its
+                // AI took it (up to 15 units away in a fight), and its hits, the players' hits on it and its
+                // accessories were there. Past CHARACTER_SNAP it goes to the host's place through its physics.
+                float dx = LoadF(xform + 48) - r.m[9], dy = LoadF(xform + 52) - r.m[10], dz = LoadF(xform + 56) - r.m[11];
+                float drift = std::sqrt(dx * dx + dy * dy + dz * dz);
+                n.maxDrift = std::max(n.maxDrift, drift);
+                uint64_t& snapAt = n.characterSnapAt[name];
+                if (drift > n.characterSnap && r.hitpoints != 0 && mp::NowMs() - snapAt >= CHARACTER_SNAP_MS)
+                    if (uint32_t physics = FindPhysics(n, it->second))
+                    {
+                        snapAt = mp::NowMs();
+                        TeleportPhysics(ctx, base, physics, r.m[9], r.m[10], r.m[11]);
+                        n.characterSnaps++;
+                        if (mp::Trace() && drift > 2.0f)
+                            Log("[mp] client: %08X moved %.1f to the host's (%.1f, %.1f, %.1f), hp %.1f", uint32_t(name), drift,
+                                r.m[9], r.m[10], r.m[11], r.hitpoints);
+                    }
+                for (int row = 0; row < 4; ++row)
+                    for (int c = 0; c < 3; ++c)
+                        StoreF(xform + row * 16 + c * 4, r.m[row * 3 + c]);
+                n.applied++;
+            }
             ApplyHitpoints(ctx, base, n, it->second, r, name);
         }
         if (mp::Trace() && mp::NowMs() - n.lastSyncTrace >= 250)
@@ -1196,12 +1399,14 @@ namespace
                     player = &r;
             Log("[mp] client: %zu actors mirrored (%llu writes, %llu without a local actor), %llu records received, "
                 "%u packets lost; host player at (%.1f, %.1f, %.1f); %llu player teleports; hitpoints: %llu from the "
-                "host, %llu local damages dropped",
+                "host, %llu local damages dropped; characters up to %.2f off before the write, %llu moved",
                 n.latest.size(), (unsigned long long)n.applied, (unsigned long long)n.missing,
                 (unsigned long long)n.received, n.lost, player ? player->m[9] : 0.f, player ? player->m[10] : 0.f,
                 player ? player->m[11] : 0.f, (unsigned long long)n.teleports, (unsigned long long)n.hitpointsApplied,
-                (unsigned long long)n.damageDropped);
+                (unsigned long long)n.damageDropped, n.maxDrift, (unsigned long long)n.characterSnaps);
             n.teleports = n.hitpointsApplied = n.damageDropped = 0;
+            n.maxDrift = 0;
+            n.characterSnaps = 0;
             n.lastStats = now;
             n.applied = n.missing = 0;
         }
@@ -1240,31 +1445,7 @@ namespace mp
 
     bool TeleportCrash(PPCContext& ctx, uint8_t* base, uint32_t crash, float x, float y, float z)
     {
-        uint32_t physics = GuestPointer(crash) ? LoadBE32(crash + 0xDC) : 0;
-        uint32_t actor = GuestPointer(physics) ? LoadBE32(physics + 96) : 0;
-        if (!GuestPointer(actor))
-            return false;
-        static uint32_t message = GuestAlloc(128), vector = GuestAlloc(16);
-        if (!message || !vector)
-            return false;
-        StoreF(vector, x);
-        StoreF(vector + 4, y);
-        StoreF(vector + 8, z);
-        StoreF(vector + 12, 1.0f);
-        PPCContext call = ctx;
-        call.r3.u64 = message;
-        call.r4.u64 = vector;
-        call.r5.u64 = 0;
-        sub_820972D0(call, base);
-        call = ctx;
-        call.r3.u64 = physics;
-        call.r4.u64 = actor;
-        call.r5.u64 = message;
-        sub_82145358(call, base);
-        call = ctx;
-        call.r3.u64 = message;
-        sub_82097348(call, base);
-        return true;
+        return TeleportPhysics(ctx, base, GuestPointer(crash) ? LoadBE32(crash + 0xDC) : 0, x, y, z);
     }
 
     void SendHit(Net& n, uint64_t name, float delta, float strength)
@@ -1713,6 +1894,8 @@ namespace mp
         n.latest.clear();
         n.local.clear();
         n.damageables.clear();
+        n.physics.clear();
+        n.characterSnapAt.clear();
         n.lastSequence = 0;
         memset(n.lookDone, 0, sizeof(n.lookDone));
         memset(n.interests, 0, sizeof(n.interests));
@@ -1720,6 +1903,8 @@ namespace mp
         memset(n.snapRepeats, 0, sizeof(n.snapRepeats));
         Log("[mp] net: level up as %s, player %u of %u", n.role == Role::Host ? "host" : "client", n.slot + 1, n.players);
     }
+
+    void LevelLoaded() { g_levelSerial++; }
 
     void NetTick(PPCContext& ctx, uint8_t* base)
     {
@@ -1774,6 +1959,8 @@ PPC_FUNC(sub_8220AC38)
 {
     if (ClientSuppresses(N().suppressObjectives))
         return;
+    if (mp::Online())
+        SpawnNames(ctx, base);
     __imp__sub_8220AC38(ctx, base);
 }
 

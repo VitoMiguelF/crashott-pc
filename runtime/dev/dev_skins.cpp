@@ -480,6 +480,7 @@ PPC_FUNC(sub_8224E068)
     if (g_hulkHash && LoadBE32(CURRENT_SKIN) == g_hulkHash)
         HoldNormalCrash(ctx, base);
     mp::skins::LevelLoad(ctx, base);  // online: the other players' skins too
+    mp::LevelLoaded();                // online: the spawned actors' names start again
     __imp__sub_8224E068(ctx, base);
     g_inLevel = true;
 }
