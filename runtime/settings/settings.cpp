@@ -34,6 +34,10 @@ namespace settings
         std::vector<Language> LANGUAGES(std::begin(GAME_LANGUAGES), std::end(GAME_LANGUAGES));
 
         // The resolutions of each aspect (the usual monitor sizes; 21:9 monitors are 64:27 or 43:18).
+        const std::vector<Resolution> RESOLUTIONS_4_3 = {
+            { "960x720", 960, 720 }, { "1024x768", 1024, 768 }, { "1280x960", 1280, 960 }, { "1440x1080", 1440, 1080 },
+            { "1600x1200", 1600, 1200 }, { "1920x1440", 1920, 1440 }, { "2880x2160", 2880, 2160 },
+        };
         const std::vector<Resolution> RESOLUTIONS_16_9 = {
             { "1280x720", 1280, 720 }, { "1600x900", 1600, 900 }, { "1920x1080", 1920, 1080 }, { "2560x1440", 2560, 1440 }, { "3840x2160", 3840, 2160 },
         };
@@ -56,6 +60,7 @@ namespace settings
         {
             switch (aspect)
             {
+            case Aspect::R4_3: return RESOLUTIONS_4_3;
             case Aspect::R16_10: return RESOLUTIONS_16_10;
             case Aspect::R21_9: return RESOLUTIONS_21_9;
             case Aspect::R32_9: return RESOLUTIONS_32_9;
@@ -114,8 +119,22 @@ namespace settings
         const std::vector<Resolution>& ResolutionList(Aspect aspect)
         {
 #if defined(__ANDROID__)
-            // Always the phone's screen shape, whatever video.aspect says.
-            (void)aspect;
+            // The phone's screen shape, whatever video.aspect says, except 4:3 (the game's own 4:3,
+            // between black bars): the phone's heights at 4:3.
+            if (aspect == Aspect::R4_3)
+            {
+                static std::vector<Resolution> list;
+                static std::once_flag once;
+                std::call_once(once, [] {
+                    for (const Resolution& resolution : AutoResolutions())
+                    {
+                        int width = int(std::lround(resolution.height * 4.0 / 3.0 / 2.0)) * 2;
+                        g_autoNames.push_back(std::to_string(width) + "x" + std::to_string(resolution.height));
+                        list.push_back({ g_autoNames.back().c_str(), width, resolution.height });
+                    }
+                });
+                return list;
+            }
             return AutoResolutions();
 #endif
             return aspect == Aspect::Auto ? AutoResolutions() : NamedResolutions(aspect);
@@ -222,6 +241,8 @@ namespace settings
             {
                 if (lower == "auto")
                     values.aspect = Aspect::Auto;
+                else if (lower == "4:3")
+                    values.aspect = Aspect::R4_3;
                 else if (lower == "16:9")
                     values.aspect = Aspect::R16_9;
                 else if (lower == "16:10")
@@ -466,8 +487,8 @@ namespace settings
                    "window = \"" << WindowModeName(v.window) << "\"   # windowed | borderless | fullscreen\n"
                    "vsync = " << (v.vsync ? "true" : "false") << "\n"
                    "fps_limit = " << v.fpsLimit << "   # 30 (original) | 60 | 120 | 0 = sem limite\n"
-                   "resolution = \"" << ResolutionOf(v.aspect, v.renderHeight).name << "\"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160; 21:9 2560x1080 | 3440x1440...; 32:9 5120x1440...; 16:10 1280x800... (a largura segue aspect; vale ao sair da tela SETTINGS)\n"
-                   "aspect = \"" << AspectName(v.aspect) << "\"   # auto (o do monitor) | 16:9 (original) | 16:10 | 21:9 | 32:9: telas mais largas veem mais dos lados (vale ao sair da tela SETTINGS)\n"
+                   "resolution = \"" << ResolutionOf(v.aspect, v.renderHeight).name << "\"   # resolucao interna: 1280x720 (original) | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160; 21:9 2560x1080 | 3440x1440...; 32:9 5120x1440...; 16:10 1280x800...; 4:3 960x720, 1440x1080... (a largura segue aspect; vale ao sair da tela SETTINGS)\n"
+                   "aspect = \"" << AspectName(v.aspect) << "\"   # auto (o do monitor) | 4:3 (o 4:3 do jogo, com barras) | 16:9 (original) | 16:10 | 21:9 | 32:9: telas mais largas veem mais dos lados (vale ao sair da tela SETTINGS)\n"
                    "gamma = " << v.gamma << "   # 50-150 %, gamma da imagem final (acima de 100 = mais clara; 100 = original), vale na hora\n"
                    "saturation = " << v.saturation << "   # 0-200 %, saturacao das cores da imagem final (100 = original), vale na hora\n"
                    "overlay = \"" << OverlayModeName(v.overlay) << "\"   # off | fps | frametime | full (F1 alterna)\n"
@@ -598,14 +619,15 @@ namespace settings
         int width, height;
         MonitorSize(width, height);
         float ratio = float(width) / float(height);
-        // Between the aspects: 16:10 1.6, 16:9 1.78, 21:9 2.37-2.4, 32:9 3.56.
-        return ratio < 1.69f ? Aspect::R16_10 : ratio < 2.05f ? Aspect::R16_9 : ratio < 2.9f ? Aspect::R21_9 : Aspect::R32_9;
+        // Between the aspects: 4:3 1.33 (and 5:4 1.25), 16:10 1.6, 16:9 1.78, 21:9 2.37-2.4, 32:9 3.56.
+        return ratio < 1.47f ? Aspect::R4_3 : ratio < 1.69f ? Aspect::R16_10 : ratio < 2.05f ? Aspect::R16_9 : ratio < 2.9f ? Aspect::R21_9 : Aspect::R32_9;
     }
 
     const char* AspectName(Aspect aspect)
     {
         switch (aspect)
         {
+        case Aspect::R4_3: return "4:3";
         case Aspect::R16_9: return "16:9";
         case Aspect::R16_10: return "16:10";
         case Aspect::R21_9: return "21:9";

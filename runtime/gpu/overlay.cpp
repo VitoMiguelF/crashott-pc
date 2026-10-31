@@ -87,6 +87,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         rhi::Pipeline* g_pipeline = nullptr;
         rhi::Buffer* g_upload = nullptr;
         rhi::Texture* g_target = nullptr;  // BeginPresent
+        int g_originX = 0, g_originY = 0;  // SetOrigin
         uint32_t g_slice = 0;
         std::vector<uint32_t> g_image(size_t(IMAGE_W) * IMAGE_H);
         int g_imageW = IMAGE_W, g_imageH = IMAGE_H;  // the current mode's size
@@ -411,13 +412,15 @@ float4 main(float4 position : SV_Position) : SV_Target
         {
             if (!g_target)
                 return;
+            x += g_originX, y += g_originY;
+            int32_t right = g_originX + int32_t(width), bottom = g_originY + int32_t(height);
             int32_t constants[8] = { x, y, imageWidth, imageHeight, std::max(scale, 1) };
             rhi::PassDraw pass;
             pass.pipeline = g_pipeline;
             pass.targets[0] = g_target;
-            pass.viewport = { 0.0f, 0.0f, float(width), float(height) };
-            pass.scissor = { std::max(x, 0), std::max(y, 0), std::min(x + imageWidth * constants[4], int32_t(width)),
-                             std::min(y + imageHeight * constants[4], int32_t(height)) };
+            pass.viewport = { 0.0f, 0.0f, float(right), float(bottom) };
+            pass.scissor = { std::max(x, g_originX), std::max(y, g_originY), std::min(x + imageWidth * constants[4], right),
+                             std::min(y + imageHeight * constants[4], bottom) };
             if (pass.scissor.left >= pass.scissor.right || pass.scissor.top >= pass.scissor.bottom)
                 return;
             pass.buffer = buffer;
@@ -576,6 +579,12 @@ float4 main(float4 position : SV_Position) : SV_Target
     void BeginPresent(rhi::Texture* target)
     {
         g_target = target;
+        g_originX = g_originY = 0;
+    }
+
+    void SetOrigin(int x, int y)
+    {
+        g_originX = x, g_originY = y;
     }
 
     void Draw(uint32_t width, uint32_t height)

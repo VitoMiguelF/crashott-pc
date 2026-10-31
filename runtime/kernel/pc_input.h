@@ -99,7 +99,8 @@ namespace input::pc
     // The cursor on the 1280x720 game image (the image is fitted into the window and centred);
     // false outside it or with no cursor yet.
     bool CursorOnImage(float& x, float& y);
-    // The cursor in the window's client area, 0..1 (the settings screen maps it itself).
+    // The cursor in the overlays' area, 0..1 (gpu/widescreen.h OverlayArea: the client, or the picture
+    // in the game's own 4:3; the settings screen maps it itself).
     bool CursorInClient(float& u, float& v);
     // Incremented whenever the cursor moves (hover reacts to motion only).
     uint32_t CursorMoves();

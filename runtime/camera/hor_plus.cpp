@@ -25,6 +25,14 @@
 //   camera itself stays 16:9: other code reads its derived
 //   fields (writing the wider FOV, scales or planes into it made the ice shards of the village
 //   blink once the camera moved), and +20 / +24 keep what the game asked for.
+//
+// 4:3 (gpu::widescreen::GameAspect) is not Hor+: it is the game's own 4:3 mode. xnDisplay::InitDisplay
+// (sub_8238F5B0) takes XGetVideoMode's widescreen / HD flags into +1656 (bit 64 wide, 128 HD) and
+// sub_8238F2B0 derives +1680 / +1684 and +1688 / +1692 from them: 1 / 0.5625 (16:9) when wide, 1 /
+// 0.75 (4:3) on a 4:3 TV; HD always sets both flags (720p is 16:9 to it), so the 360 had 4:3 only
+// at 640x480. GetAspect (+1688 / +1692) and vf21 (+1680 / +1684) here say 4:3 instead, at 1280x720:
+// SetFOV then makes the projection of a 4:3 TV (+212 * aspect * 4:3, the same horizontal FOV) and
+// the projections are no longer 16:9, so Widen leaves them alone.
 
 #include "../gpu/widescreen.h"
 #include "../kernel/kernel.h"
@@ -39,6 +47,8 @@ extern "C" PPC_FUNC(__imp__sub_82316E58);  // pure3d::Camera::vf11 (a plane of t
 extern "C" PPC_FUNC(__imp__sub_82393980);  // pure3d::pddiBaseContext::vf29 (SetProjection(near, far, fov, aspect))
 extern "C" PPC_FUNC(__imp__sub_823939A8);  // pure3d::pddiBaseContext::vf30 (GetProjection(&near, &far, &fov, &aspect))
 extern "C" PPC_FUNC(__imp__sub_8238D248);  // pure3d::xnContext::vf119 (builds the projection matrix)
+extern "C" PPC_FUNC(__imp__sub_8238F438);  // pure3d::xnDisplay::GetAspect (+1688 / +1692)
+extern "C" PPC_FUNC(__imp__sub_8238F448);  // pure3d::xnDisplay::vf21 (+1680 / +1684)
 
 namespace
 {
@@ -210,4 +220,24 @@ PPC_FUNC(sub_8238D248)
         StoreF(state + 44, p.givenFov);
         StoreF(state + 48, p.givenAspect);
     }
+}
+
+// The display's aspect: 4:3 in the game's 4:3 mode (gpu::widescreen::GameAspect), else the game's.
+static void DisplayAspect(PPCContext& ctx)
+{
+    float aspect = gpu::widescreen::GameAspect();
+    if (!g_disabled && aspect != gpu::widescreen::BASE_ASPECT && fabs(ctx.f1.f64 - gpu::widescreen::BASE_ASPECT) < 0.01)
+        ctx.f1.f64 = aspect;
+}
+
+PPC_FUNC(sub_8238F438)
+{
+    __imp__sub_8238F438(ctx, base);
+    DisplayAspect(ctx);
+}
+
+PPC_FUNC(sub_8238F448)
+{
+    __imp__sub_8238F448(ctx, base);
+    DisplayAspect(ctx);
 }
