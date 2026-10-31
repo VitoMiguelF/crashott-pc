@@ -230,6 +230,48 @@ namespace dev::console
         const UiText T_UNKNOWN_SKIN = { "unknown skin: ", "skin desconhecida: ", "skin inconnu : ", "unbekannter Skin: ", "skin desconocido: ",
                                         "skin sconosciuta: ", "onbekende skin: " };
         const UiText T_REFUSED = { "refused: ", "recusado: ", "refusé : ", "abgelehnt: ", "rechazado: ", "rifiutato: ", "geweigerd: " };
+        // The cheat commands' replies.
+        const UiText T_ON = { "on", "ligado", "activé", "an", "activado", "attivo", "aan" };
+        const UiText T_OFF = { "off", "desligado", "désactivé", "aus", "desactivado", "disattivato", "uit" };
+        const UiText T_INVINCIBLE = { " (invincible)", " (invencível)", " (invincible)", " (unverwundbar)", " (invencible)", " (invincibile)",
+                                      " (onkwetsbaar)" };
+        const UiText T_NO_PLAYER = { " (no player right now: applies in the level)", " (nenhum jogador agora: vale na fase)",
+                                     " (aucun joueur pour l'instant : s'applique dans le niveau)", " (gerade kein Spieler: gilt im Level)",
+                                     " (ningún jugador ahora: vale en el nivel)", " (nessun giocatore ora: vale nel livello)",
+                                     " (nu geen speler: geldt in het level)" };
+        const UiText T_UNLOCKED_ALL = { "unlock all: the game's 20 skins, levels and moves (game goals) + Crash_Hulk in the skin menu",
+                                        "unlock all: 20 skins do jogo, fases e golpes (objetivos do jogo) + Crash_Hulk no menu de skins",
+                                        "unlock all : les 20 skins du jeu, niveaux et coups (objectifs du jeu) + Crash_Hulk dans le menu des skins",
+                                        "unlock all: die 20 Skins des Spiels, Level und Angriffe (Spielziele) + Crash_Hulk im Skin-Menü",
+                                        "unlock all: las 20 skins del juego, niveles y golpes (objetivos del juego) + Crash_Hulk en el menú de skins",
+                                        "unlock all: le 20 skin del gioco, livelli e mosse (obiettivi del gioco) + Crash_Hulk nel menu delle skin",
+                                        "unlock all: de 20 skins van het spel, levels en aanvallen (speldoelen) + Crash_Hulk in het skinmenu" };
+        const UiText T_UNLOCKED_LEVELS = { "unlock levels: the levels and episodes (game goal); skins and moves stay as they are",
+                                           "unlock levels: as fases e episódios (objetivo do jogo); skins e golpes continuam como estão",
+                                           "unlock levels : les niveaux et épisodes (objectif du jeu) ; skins et coups restent tels quels",
+                                           "unlock levels: die Level und Episoden (Spielziel); Skins und Angriffe bleiben, wie sie sind",
+                                           "unlock levels: los niveles y episodios (objetivo del juego); skins y golpes siguen como están",
+                                           "unlock levels: i livelli e gli episodi (obiettivo del gioco); skin e mosse restano come sono",
+                                           "unlock levels: de levels en afleveringen (speldoel); skins en aanvallen blijven zoals ze zijn" };
+        const UiText T_SAVED_LATER = { "  (the game writes it to the save when it saves)", "  (o jogo grava no save quando ele salvar)",
+                                       "  (le jeu l'écrit dans la sauvegarde quand il sauvegarde)",
+                                       "  (das Spiel schreibt es beim nächsten Speichern in den Spielstand)",
+                                       "  (el juego lo graba en la partida cuando guarde)", "  (il gioco lo scrive nel salvataggio quando salva)",
+                                       "  (het spel schrijft het in de save zodra het opslaat)" };
+        const UiText T_HULK_UNLOCKED = { "Crash_Hulk unlocked in the skin menu (without taking a slot in the game's list; [dev] hulk_skin)",
+                                         "Crash_Hulk desbloqueada no menu de skins (sem ocupar vaga da lista do jogo; [dev] hulk_skin)",
+                                         "Crash_Hulk débloqué dans le menu des skins (sans prendre de place dans la liste du jeu ; [dev] hulk_skin)",
+                                         "Crash_Hulk im Skin-Menü freigeschaltet (ohne einen Platz in der Liste des Spiels; [dev] hulk_skin)",
+                                         "Crash_Hulk desbloqueado en el menú de skins (sin ocupar un hueco de la lista del juego; [dev] hulk_skin)",
+                                         "Crash_Hulk sbloccato nel menu delle skin (senza occupare un posto nella lista del gioco; [dev] hulk_skin)",
+                                         "Crash_Hulk ontgrendeld in het skinmenu (zonder een plek in de lijst van het spel; [dev] hulk_skin)" };
+        const UiText T_CRASH_UNLOCKED = { "the normal Crash is already unlocked", "o Crash normal já vem desbloqueado", "le Crash normal est déjà débloqué",
+                                          "der normale Crash ist schon freigeschaltet", "el Crash normal ya viene desbloqueado",
+                                          "il Crash normale è già sbloccato", "de gewone Crash is al ontgrendeld" };
+        const UiText T_SKIN_UNLOCKED = { "skin %s unlocked (game's list, 20 slots)", "skin %s desbloqueada (lista do jogo, 20 vagas)",
+                                         "skin %s débloqué (liste du jeu, 20 places)", "Skin %s freigeschaltet (Liste des Spiels, 20 Plätze)",
+                                         "skin %s desbloqueado (lista del juego, 20 huecos)", "skin %s sbloccata (lista del gioco, 20 posti)",
+                                         "skin %s ontgrendeld (lijst van het spel, 20 plekken)" };
         const UiText T_WELCOME = { "CrashRecomp - developer console. \"help\" lists the commands.",
                                    "CrashRecomp - console de desenvolvedor. \"help\" lista os comandos.",
                                    "CrashRecomp - console de développement. \"help\" liste les commandes.",
@@ -620,34 +662,34 @@ namespace dev::console
                     if (ConsoleLua(ctx, base, "dev.unlock_all()"))
                     {
                         skins::UnlockHulk(true);
-                        Reply("unlock all: 20 skins do jogo, fases e golpes (objetivos do jogo) + Crash_Hulk no menu de skins", Tone::Ok);
-                        Reply("  (o jogo grava no save quando ele salvar)", Tone::Dim);
+                        Reply(Tr(T_UNLOCKED_ALL), Tone::Ok);
+                        Reply(Tr(T_SAVED_LATER), Tone::Dim);
                     }
                 }
                 else if (what == "levels")
                 {
                     if (ConsoleLua(ctx, base, "dev.unlock_levels()"))
                     {
-                        Reply("unlock levels: as fases e episodios (objetivo do jogo); skins e golpes continuam como estao", Tone::Ok);
-                        Reply("  (o jogo grava no save quando ele salvar)", Tone::Dim);
+                        Reply(Tr(T_UNLOCKED_LEVELS), Tone::Ok);
+                        Reply(Tr(T_SAVED_LATER), Tone::Dim);
                     }
                 }
                 else if (what == "skin" && words.size() > 2)
                 {
                     int skin = skins::ByName(words[2]);
                     if (skin < 0)
-                        Reply("skin desconhecida: " + words[2] + " (skins: " + skins::List() + ")", Tone::Error);
+                        Reply(Tr(T_UNKNOWN_SKIN) + words[2] + " (skins: " + skins::List() + ")", Tone::Error);
                     else if (!skins::Wearable(skin))
-                        Reply(std::string("recusado: ") + skins::Label(skin), Tone::Error);
+                        Reply(std::string(Tr(T_REFUSED)) + skins::Label(skin), Tone::Error);
                     else if (skin == skins::HULK)
                     {
                         skins::UnlockHulk(true);
-                        Reply("Crash_Hulk desbloqueada no menu de skins (sem ocupar vaga da lista do jogo; [dev] hulk_skin)", Tone::Ok);
+                        Reply(Tr(T_HULK_UNLOCKED), Tone::Ok);
                     }
                     else if (skin == skins::CRASH)
-                        Reply("o Crash normal ja vem desbloqueado", Tone::Normal);
+                        Reply(Tr(T_CRASH_UNLOCKED), Tone::Normal);
                     else if (ConsoleLua(ctx, base, "dev.unlock_skin(" + std::to_string(skin) + ")"))
-                        Reply(std::string("skin ") + skins::Label(skin) + " desbloqueada (lista do jogo, 20 vagas)", Tone::Ok);
+                        Reply(Fill(Tr(T_SKIN_UNLOCKED), skins::Label(skin)), Tone::Ok);
                 }
                 else
                     usage("unlock");
@@ -668,7 +710,7 @@ namespace dev::console
                 else
                 {
                     SetInvincible(on != 0);
-                    Reply(on ? "god: ligado (invencivel)" : "god: desligado", Tone::Ok);
+                    Reply(on ? std::string("god: ") + Tr(T_ON) + Tr(T_INVINCIBLE) : std::string("god: ") + Tr(T_OFF), Tone::Ok);
                 }
             }
             else if (command == "tp" || command == "teleport")
@@ -702,7 +744,7 @@ namespace dev::console
                 {
                     bigHead = on != 0;
                     int players = SetBigHead(ctx, base, bigHead);
-                    Reply(std::string("bighead: ") + (bigHead ? "ligado" : "desligado") + (players ? "" : " (nenhum jogador agora: vale na fase)"), Tone::Ok);
+                    Reply(std::string("bighead: ") + Tr(bigHead ? T_ON : T_OFF) + (players ? "" : Tr(T_NO_PLAYER)), Tone::Ok);
                 }
             }
             else if (command == "skin")

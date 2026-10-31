@@ -49,6 +49,7 @@
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
 #include "../settings/settings.h"
+#include "../settings/ui_text.h"
 #include "../online/mp.h"
 #include "../online/mp_menu.h"
 
@@ -87,6 +88,28 @@ namespace
     constexpr uint32_t UNLOCKED_SKINS = 0x824A8218;  // 20 ints, -1 = free
     constexpr uint32_t UNLOCKED_COUNT = 20;
     constexpr uint32_t CURRENT_SKIN = 0x824A8270;    // template hash
+
+    // The console's replies, in the game's language ("skin <label>" comes before each).
+    using settings::Tr;
+    using settings::UiText;
+    const UiText T_CANT_USE = { " can't be used", " não pode ser usada", " ne peut pas être utilisé", " kann nicht benutzt werden",
+                                " no se puede usar", " non può essere usata", " kan niet gebruikt worden" };
+    const UiText T_NO_FRONTEND = { "the frontend doesn't exist yet", "o frontend ainda não existe", "le frontend n'existe pas encore",
+                                   "das Frontend gibt es noch nicht", "el frontend aún no existe", "il frontend non esiste ancora",
+                                   "de frontend bestaat nog niet" };
+    const UiText T_CHOSEN = { " chosen: applies in the next level", " escolhida: vale na próxima fase", " choisi : s'applique au prochain niveau",
+                              " gewählt: gilt im nächsten Level", " elegido: vale en el próximo nivel", " scelta: vale nel prossimo livello",
+                              " gekozen: geldt in het volgende level" };
+    const UiText T_RESTARTING = { ": restarting the level", ": reiniciando a fase", " : redémarrage du niveau", ": Level wird neu gestartet",
+                                  ": reiniciando el nivel", ": riavvio del livello", ": level wordt herstart" };
+    const UiText T_NEXT_LOAD = { ": applies when the next level loads (\"reload\" or \"skin <name> now\" restarts this one)",
+                                 ": vale ao carregar a próxima fase (\"reload\" ou \"skin <nome> now\" reinicia esta)",
+                                 " : s'applique au chargement du prochain niveau (\"reload\" ou \"skin <nom> now\" redémarre celui-ci)",
+                                 ": gilt beim Laden des nächsten Levels (\"reload\" oder \"skin <name> now\" startet dieses neu)",
+                                 ": vale al cargar el próximo nivel (\"reload\" o \"skin <nombre> now\" reinicia este)",
+                                 ": vale al caricamento del prossimo livello (\"reload\" o \"skin <nome> now\" riavvia questo)",
+                                 ": geldt bij het laden van het volgende level (\"reload\" of \"skin <naam> now\" herstart dit)" };
+    const UiText T_APPLIED = { " applied", " aplicada", " appliqué", " angewendet", " aplicado", " applicata", " toegepast" };
 
     struct Skin
     {
@@ -349,7 +372,7 @@ namespace dev::skins
     std::string Select(PPCContext& ctx, uint8_t* base, int skin, bool now, bool frontend)
     {
         if (!Wearable(skin))
-            return std::string("skin ") + std::to_string(skin) + " (" + Label(skin) + ") nao pode ser usada";
+            return std::string("skin ") + std::to_string(skin) + " (" + Label(skin) + ")" + Tr(T_CANT_USE);
         Hashes(ctx, base);
         if (skin == HULK)
             HoldNormalCrash(ctx, base);
@@ -358,23 +381,23 @@ namespace dev::skins
             // Frontend: what the skin screen's "wear" does (Frontend:SelectSkin).
             uint32_t manager = FrontendManager(ctx, base);
             if (!manager)
-                return "o frontend ainda nao existe";
+                return Tr(T_NO_FRONTEND);
             PPCContext call = ctx;
             call.r3.u64 = manager;
             call.r4.u64 = uint32_t(skin);
             sub_821D9270(call, base);
             g_pending = -1;
             Log("[dev] skin %d (%s) selected in the frontend", skin, Label(skin));
-            return std::string("skin ") + Label(skin) + " escolhida: vale na proxima fase";
+            return std::string("skin ") + Label(skin) + Tr(T_CHOSEN);
         }
         g_pending = skin;
         Log("[dev] skin %d (%s) pending for the next level load%s", skin, Label(skin), now ? " (restarting the level)" : "");
         if (now)
         {
             RunLua(ctx, base, "Managers.UberManager:ForceReload()", "console_reload");
-            return std::string("skin ") + Label(skin) + ": reiniciando a fase";
+            return std::string("skin ") + Label(skin) + Tr(T_RESTARTING);
         }
-        return std::string("skin ") + Label(skin) + ": vale ao carregar a proxima fase (\"reload\" ou \"skin <nome> now\" reinicia esta)";
+        return std::string("skin ") + Label(skin) + Tr(T_NEXT_LOAD);
     }
 }
 
@@ -475,7 +498,7 @@ PPC_FUNC(sub_8224E068)
         sub_82215730(call, base);
         StoreBE32(CURRENT_SKIN, call.r3.u32);
         Log("[dev] skin %d (%s) applied at the level load", skin, dev::skins::Label(skin));
-        dev::console::Print(std::string("skin ") + dev::skins::Label(skin) + " aplicada", dev::console::Tone::Ok);
+        dev::console::Print(std::string("skin ") + dev::skins::Label(skin) + Tr(T_APPLIED), dev::console::Tone::Ok);
     }
     if (g_hulkHash && LoadBE32(CURRENT_SKIN) == g_hulkHash)
         HoldNormalCrash(ctx, base);
