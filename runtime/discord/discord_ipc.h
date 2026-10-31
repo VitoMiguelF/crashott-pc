@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace discord::ipc
 {
@@ -19,4 +20,9 @@ namespace discord::ipc
     long Available();
     // Exactly `size` bytes (call after Available said they are there, or to finish a frame); false = broken.
     bool Read(void* data, size_t size);
+
+    // Lets Discord start this game (a friend's "Join" with the game closed): the URL protocol
+    // discord-<application id> runs this exe. Windows: HKEY_CURRENT_USER\Software\Classes\discord-<id>, as
+    // discord-rpc's Discord_Register did (rewritten only when it points elsewhere). Elsewhere nothing yet.
+    void RegisterLaunch(const std::string& applicationId);
 }

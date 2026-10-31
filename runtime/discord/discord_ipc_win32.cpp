@@ -1,10 +1,12 @@
 // Discord IPC on Windows: the named pipe \\.\pipe\discord-ipc-N (discord_ipc.h).
 
 #include "discord_ipc.h"
+#include "../diagnostics.h"
 
 #include <windows.h>
 
 #include <cstdio>
+#include <string>
 
 namespace discord::ipc
 {
@@ -72,6 +74,36 @@ namespace discord::ipc
             return -1;
         }
         return long(available);
+    }
+
+    void RegisterLaunch(const std::string& applicationId)
+    {
+        wchar_t exe[MAX_PATH];
+        DWORD length = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        if (!length || length >= MAX_PATH)
+            return;
+        std::wstring id(applicationId.begin(), applicationId.end());  // digits
+        std::wstring key = L"Software\\Classes\\discord-" + id;
+        std::wstring command = L"\"" + std::wstring(exe) + L"\"";
+        // Already there, pointing at this exe: nothing to write.
+        wchar_t current[MAX_PATH + 8];
+        DWORD size = sizeof(current);
+        if (RegGetValueW(HKEY_CURRENT_USER, (key + L"\\shell\\open\\command").c_str(), nullptr, RRF_RT_REG_SZ, nullptr, current, &size) ==
+                ERROR_SUCCESS &&
+            command == current)
+            return;
+        auto set = [](const std::wstring& path, const wchar_t* name, const std::wstring& value) {
+            HKEY handle;
+            if (RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_WRITE, nullptr, &handle, nullptr) != ERROR_SUCCESS)
+                return false;
+            LONG result = RegSetValueExW(handle, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()), DWORD((value.size() + 1) * sizeof(wchar_t)));
+            RegCloseKey(handle);
+            return result == ERROR_SUCCESS;
+        };
+        bool ok = set(key, nullptr, L"URL:Run game " + id + L" protocol") && set(key, L"URL Protocol", L"") &&
+                  set(key + L"\\DefaultIcon", nullptr, exe) && set(key + L"\\shell\\open\\command", nullptr, command);
+        Log("[discord] %s the discord-%s protocol (Discord starts this exe for a friend's Join)", ok ? "registered" : "could not register",
+            applicationId.c_str());
     }
 
     bool Read(void* data, size_t size)

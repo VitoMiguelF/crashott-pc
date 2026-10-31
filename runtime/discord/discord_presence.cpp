@@ -8,13 +8,23 @@
 // "nonce":".."} sets the presence, "activity":null clears it; the client allows about 5 per 20 s, so one
 // goes at most every 5 s, and only when the text changed. The client removes the presence by itself when
 // the connection closes (the game quits).
+//
+// Joining from Discord: in an online session the activity has a party (its id from the host's invite code, its
+// size) and, while the host is not in a level and there is room, the join secret = the invite code. Friends get
+// "Join" / "Ask to Join" on the profile; the game SUBSCRIBEs to ACTIVITY_JOIN_REQUEST (a friend asked: accepted
+// with SEND_ACTIVITY_JOIN_INVITE; the lobby's password and kick still apply) and ACTIVITY_JOIN (the secret, on
+// the friend's side: mp::menu::JoinInvite joins it from the main menu). For a friend whose game is closed,
+// Discord starts it through the discord-<application id> URL protocol, registered on Windows at startup
+// (discord_ipc_win32.cpp); the game then gets ACTIVITY_JOIN once connected.
 
 #include "discord_presence.h"
 #include "discord_ipc.h"
 #include "../dev/dev_tools.h"
 #include "../diagnostics.h"
 #include "../kernel/memory.h"
+#include "../gpu/overlay.h"
 #include "../online/mp_lobby.h"
+#include "../online/mp_menu.h"
 #include "../platform/platform.h"
 #include "../settings/settings.h"
 #include "../settings/title_logo.h"
@@ -37,8 +47,8 @@ namespace discord
         // The Discord application (discord.com/developers/applications): its name is the game's name on the
         // profile ("Playing Crash of the Titans"), and its Rich Presence art assets hold the large image.
         // >>> Put the application's id here (or set CRASH_DISCORD_APP_ID); empty = no presence. <<<
-        constexpr const char* APPLICATION_ID = "";
-        constexpr const char* LARGE_IMAGE = "crash_icon";  // the art asset's name (the title's icon, private/discord)
+        constexpr const char* APPLICATION_ID = "1566112788483678289";  // "Crash of the Titans DE"
+        constexpr const char* LARGE_IMAGE = "crashrecomp";  // the art asset's name (the title's icon, private/discord)
         constexpr const char* GAME_NAME = "Crash of the Titans";
 
         constexpr uint32_t OP_HANDSHAKE = 0, OP_FRAME = 1, OP_CLOSE = 2, OP_PING = 3, OP_PONG = 4;
@@ -54,6 +64,9 @@ namespace discord
         // level's name ("L1_E1") at +32; the first 20 are the story's episodes, in order (index + 1).
         constexpr uint32_t MANAGERS = 0x824A7A24, LEVEL_INDEX = 24, LEVELS = 156, LEVEL_COUNT = 316, LEVEL_NAME = 32;
         constexpr int32_t STORY_LEVELS = 20;
+        // Crash* by player index (online/mp_players.cpp); Crash +300 = the co-op state: 0 not joined, 1 in the
+        // backpack, 2 on foot (docs/internals/multiplayer.md).
+        constexpr uint32_t CRASH_TABLE = 0x8249D778, COOP_STATE = 300;
 
         enum class Menu : uint8_t { Starting, Main, Hub };
         std::atomic<Menu> g_menu{ Menu::Starting };  // the last of the main menu (or title) and the HUB shown
@@ -126,11 +139,20 @@ namespace discord
             return text;
         }
 
+        // Local co-op: player 2 joined the level (in the backpack or on foot).
+        bool LocalCoop()
+        {
+            uint32_t p2 = LoadBE32(CRASH_TABLE + 4);
+            bool pointer = (p2 >= 0x40000000 && p2 < 0x7F000000) || (p2 >= 0xA0000000 && p2 < 0xC0000000);  // the heaps (mp_net.cpp)
+            return pointer && LoadBE32(p2 + COOP_STATE) != 0;
+        }
+
         // The activity's JSON object.
         std::string Activity()
         {
             std::string details;
-            if (dev::skins::InLevel())
+            bool inLevel = dev::skins::InLevel();
+            if (inLevel)
                 details = LevelText(int32_t(LoadBE32(MANAGERS + LEVEL_INDEX)));
             else if (g_menu.load() == Menu::Hub)
                 details = "HUB";
@@ -143,15 +165,28 @@ namespace discord
             mp::lobby::State state = mp::lobby::GetState();
             if (state == mp::lobby::State::Hosting || state == mp::lobby::State::Joined)
             {
-                // "Online multiplayer (3 of 4)": Discord adds the party's size after the state.
-                size_t players = mp::lobby::Players().size();
+                // "Online multiplayer (3 of 4)": Discord adds the party's size after the state. The party is the
+                // session's (the host's code, the same on every machine); the join secret is that code while a
+                // friend can still come in (the lobby refuses joins once the host has started a level).
+                size_t players = std::max<size_t>(mp::lobby::Players().size(), 1);
                 uint32_t most = std::max<uint32_t>(mp::lobby::GetOptions().maxPlayers, uint32_t(players));
+                std::string code = mp::lobby::InviteCode();
                 json += ",\"state\":\"" +
                         Escape(settings::Tr({ "Online multiplayer", "Multijogador online", "Multijoueur en ligne", "Online-Mehrspieler", "Multijugador en línea",
                                     "Multigiocatore online", "Online multiplayer" })) +
-                        "\",\"party\":{\"id\":\"crashrecomp-mp\",\"size\":[" + std::to_string(std::max<size_t>(players, 1)) + "," +
+                        "\",\"party\":{\"id\":\"crashrecomp-" + Escape(code.empty() ? "mp" : code) + "\",\"size\":[" + std::to_string(players) + "," +
                         std::to_string(most) + "]}";
+                if (!code.empty() && players < most && !mp::lobby::HostInGame())
+                    json += ",\"secrets\":{\"join\":\"" + Escape(code) + "\"}";
             }
+            else if (inLevel && LocalCoop())
+                json += ",\"state\":\"" +
+                        Escape(settings::Tr({ "Local co-op", "Co-op local", "Coop local", "Lokaler Koop", "Cooperativo local", "Cooperativa locale",
+                                              "Lokale co-op" })) +
+                        "\",\"party\":{\"id\":\"crashrecomp-local\",\"size\":[2,2]}";
+            else if (inLevel || g_menu.load() == Menu::Hub)
+                json += ",\"state\":\"" +
+                        Escape(settings::Tr({ "Playing solo", "Jogando solo", "En solo", "Solo", "Jugando solo", "In solitario", "Solo" })) + "\"";
             json += ",\"timestamps\":{\"start\":" + std::to_string(g_startTime) + "}";
             json += ",\"assets\":{\"large_image\":\"" + Escape(LargeImage()) + "\",\"large_text\":\"" + GAME_NAME + "\"}";
             json += ",\"instance\":false}";
@@ -206,6 +241,42 @@ namespace discord
             return {};
         }
 
+        uint32_t g_nonce = 0;
+
+        std::string Nonce() { return std::to_string(++g_nonce); }
+
+        // A FRAME from the client: an error, or the events SUBSCRIBEd to (joining from Discord).
+        void Event(const std::string& json)
+        {
+            std::string evt = Field(json, "evt");
+            if (evt == "ERROR")
+                Log("[discord] error from the Discord client: %s", Field(json, "message").c_str());
+            else if (evt == "ACTIVITY_JOIN")
+            {
+                // This player clicked "Join" (or was accepted): the host's code.
+                std::string secret = Field(json, "secret");
+                if (secret.empty())
+                    return;
+                Log("[discord] join from Discord");
+                mp::menu::JoinInvite(secret);
+                if (g_menu.load() != Menu::Main || dev::skins::InLevel())
+                    gpu::overlay::Notice(settings::Tr({ "DISCORD: JOINING FROM THE MAIN MENU", "DISCORD: ENTRANDO PELO MENU PRINCIPAL",
+                                                   "DISCORD : CONNEXION DEPUIS LE MENU PRINCIPAL", "DISCORD: BEITRITT UBER DAS HAUPTMENU",
+                                                   "DISCORD: UNIENDOSE DESDE EL MENU PRINCIPAL", "DISCORD: INGRESSO DAL MENU PRINCIPALE",
+                                                   "DISCORD: DEELNEMEN VIA HET HOOFDMENU" }));
+            }
+            else if (evt == "ACTIVITY_JOIN_REQUEST")
+            {
+                // A friend asked to join this session: accepted (the lobby still asks its password, the host can kick).
+                size_t user = json.find("\"user\"");
+                std::string id = user == std::string::npos ? std::string() : Field(json.substr(user), "id");
+                if (id.empty())
+                    return;
+                Log("[discord] a friend asked to join: invited");
+                Send(OP_FRAME, "{\"cmd\":\"SEND_ACTIVITY_JOIN_INVITE\",\"args\":{\"user_id\":\"" + Escape(id) + "\"},\"nonce\":\"" + Nonce() + "\"}");
+            }
+        }
+
         // The answers that came: PING -> PONG, CLOSE, errors to the log. False = no connection anymore.
         bool Pump(bool& refused)
         {
@@ -226,8 +297,8 @@ namespace discord
                     refused = true;
                     ipc::Close();
                 }
-                else if (op == OP_FRAME && Field(json, "evt") == "ERROR")
-                    Log("[discord] error from the Discord client: %s", Field(json, "message").c_str());
+                else if (op == OP_FRAME)
+                    Event(json);
             }
             return ipc::IsOpen();
         }
@@ -257,6 +328,8 @@ namespace discord
                 if (op == OP_FRAME && Field(json, "evt") == "READY")
                 {
                     Log("[discord] connected to the Discord client");
+                    for (const char* evt : { "ACTIVITY_JOIN", "ACTIVITY_JOIN_REQUEST" })
+                        Send(OP_FRAME, std::string("{\"cmd\":\"SUBSCRIBE\",\"evt\":\"") + evt + "\",\"args\":{},\"nonce\":\"" + Nonce() + "\"}");
                     return true;
                 }
                 if (op == OP_CLOSE)
@@ -276,17 +349,16 @@ namespace discord
             return false;
         }
 
-        std::string SetActivity(const std::string& activity, uint32_t nonce)
+        std::string SetActivity(const std::string& activity)
         {
             return "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" + std::to_string(plat::CurrentProcessId()) + ",\"activity\":" + activity +
-                   "},\"nonce\":\"" + std::to_string(nonce) + "\"}";
+                   "},\"nonce\":\"" + Nonce() + "\"}";
         }
 
         void Thread(std::string id)
         {
             plat::SetCurrentThreadName("discord presence");
             uint64_t nextTry = 0, lastSend = 0;
-            uint32_t nonce = 0;
             std::string sent;  // the activity the client has
             for (;;)
             {
@@ -296,7 +368,7 @@ namespace discord
                 {
                     if (ipc::IsOpen())
                     {
-                        Send(OP_FRAME, SetActivity("null", ++nonce));
+                        Send(OP_FRAME, SetActivity("null"));
                         ipc::Close();
                         Log("[discord] presence off (game.discord = false)");
                     }
@@ -326,7 +398,7 @@ namespace discord
                 std::string activity = Activity();
                 if (activity != sent && now - lastSend >= MIN_UPDATE_MS)
                 {
-                    if (!Send(OP_FRAME, SetActivity(activity, ++nonce)))
+                    if (!Send(OP_FRAME, SetActivity(activity)))
                         continue;
                     Log("[discord] presence: %s", activity.c_str());
                     sent = activity;
@@ -347,6 +419,12 @@ namespace discord
             Log("[discord] no Discord application id (discord_presence.cpp APPLICATION_ID or CRASH_DISCORD_APP_ID): no Rich Presence");
             return;
         }
+        // Tests: CRASH_DISCORD_JOIN=<code> = an ACTIVITY_JOIN with that secret.
+        if (const char* join = getenv("CRASH_DISCORD_JOIN"); join && *join)
+            mp::menu::JoinInvite(join);
+        // Discord can start the game for a friend's "Join" (not from the timed test runs: run_game.py's builds).
+        if (!getenv("CRASH_TIMEOUT"))
+            ipc::RegisterLaunch(id);
         g_startTime = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         std::thread(Thread, id).detach();
 #endif

@@ -27,6 +27,7 @@
 // level start (InGame, node 630, from the HUB) is what the clients follow.
 
 #include <cstdint>
+#include <string>
 
 struct PPCContext;
 
@@ -39,6 +40,10 @@ namespace mp::menu
     void RequestOpen();
     // The SETTINGS marker opens these screens (at the lobby): a client back from the host's level.
     bool ReopensLobby();
+    // Any thread: a Discord invite (discord/discord_presence.cpp, "Join" on a friend's profile): the host's
+    // code. Once the main menu has shown for a moment, these screens open by themselves and join it (a
+    // password, if the host has one, is asked as usual).
+    void JoinInvite(const std::string& code);
 
     // The game must see a neutral controller (a screen open, or its buttons still held).
     bool BlocksGameInput();
