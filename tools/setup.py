@@ -60,6 +60,7 @@ import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import time
@@ -231,6 +232,30 @@ def build_env():
     return _ENV
 
 
+def certificate_error(error):
+    """True for urlopen's CERTIFICATE_VERIFY_FAILED (an ssl.SSLCertVerificationError, maybe in a URLError)."""
+    return isinstance(error, ssl.SSLCertVerificationError) or isinstance(getattr(error, "reason", None), ssl.SSLCertVerificationError)
+
+
+def download_with_windows(url, part):
+    """The same download through Windows' own TLS (curl.exe, Schannel, Windows 10 1803+): Python's ssl only
+    knows the root certificates already in the Windows store, and Windows adds a missing one (GitHub's,
+    on a machine that never needed it) only when its own TLS asks; an antivirus that inspects HTTPS
+    signs with a root that only Windows trusts. The certificate is still checked, by Windows."""
+    curl = shutil.which("curl.exe") if os.name == "nt" else None
+    if not curl:
+        return False
+    say("o Python não confiou no certificado do servidor; tentando pelo TLS do Windows ...")
+    out = subprocess.run([curl, "--fail", "--location", "--silent", "--show-error", "--ssl-revoke-best-effort",
+                          "--user-agent", "CrashRecomp-setup", "--output", str(part), url],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        part.unlink(missing_ok=True)
+        say(f"curl.exe falhou: {(out.stderr or out.stdout).strip()[-300:]}")
+        return False
+    return True
+
+
 def download(url, dest, expected=None, label=None):
     """Downloads url to dest (via a .part file), checking the SHA-256 when given."""
     dest = Path(dest)
@@ -252,7 +277,8 @@ def download(url, dest, expected=None, label=None):
                     say(f"@@download {label or dest.name} {done} {total}")
     except OSError as error:
         part.unlink(missing_ok=True)
-        fail(f"não consegui baixar {url}: {error}")
+        if not (certificate_error(error) and download_with_windows(url, part)):
+            fail(f"não consegui baixar {url}: {error}")
     if expected and sha256(part) != expected:
         part.unlink(missing_ok=True)
         fail(f"{dest.name}: o arquivo baixado não confere (SHA-256)")
