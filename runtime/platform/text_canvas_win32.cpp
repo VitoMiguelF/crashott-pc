@@ -38,7 +38,7 @@ namespace plat
         HFONT font = face == FontFace::Monospace
                          ? CreateFontW(-pixelHeight, 0, 0, 0, semibold ? FW_SEMIBOLD : FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                        OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas")
-                         : CreateFontW(-pixelHeight, 0, 0, 0, semibold ? FW_SEMIBOLD : FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                         : CreateFontW(-pixelHeight, 0, 0, 0, face == FontFace::UiBold ? FW_HEAVY : semibold ? FW_SEMIBOLD : FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                        OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
         if (!font || !m_impl->dc)
             return false;

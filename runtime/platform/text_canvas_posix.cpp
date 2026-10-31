@@ -51,7 +51,7 @@ namespace plat
         struct FcPattern;
         using FcChar8 = unsigned char;
         using FcBool = int;
-        constexpr int FcMatchPattern = 0, FcResultMatch = 0, FC_WEIGHT_REGULAR = 80, FC_WEIGHT_SEMIBOLD = 180;
+        constexpr int FcMatchPattern = 0, FcResultMatch = 0, FC_WEIGHT_REGULAR = 80, FC_WEIGHT_SEMIBOLD = 180, FC_WEIGHT_BLACK = 210;
 
         struct Api
         {
@@ -155,7 +155,7 @@ namespace plat
             {
                 FcPattern* pattern = fc.FcPatternCreate();
                 fc.FcPatternAddString(pattern, "family", reinterpret_cast<const FcChar8*>(face == FontFace::Monospace ? "monospace" : "sans-serif"));
-                fc.FcPatternAddInteger(pattern, "weight", semibold ? FC_WEIGHT_SEMIBOLD : FC_WEIGHT_REGULAR);
+                fc.FcPatternAddInteger(pattern, "weight", face == FontFace::UiBold ? FC_WEIGHT_BLACK : semibold ? FC_WEIGHT_SEMIBOLD : FC_WEIGHT_REGULAR);
                 fc.FcPatternAddBool(pattern, "scalable", 1);
                 fc.FcConfigSubstitute(nullptr, pattern, FcMatchPattern);
                 fc.FcDefaultSubstitute(pattern);
@@ -244,7 +244,7 @@ namespace plat
                                                            "/system/fonts/Roboto-Regular.ttf", "/system/fonts/DroidSans.ttf" };
             static const std::vector<const char*> monospace = { "/system/fonts/DroidSansMono.ttf", "/system/fonts/CutiveMono.ttf",
                                                                 "/system/fonts/Roboto-Regular.ttf" };
-            for (const char* file : face == FontFace::Monospace ? monospace : semibold ? bold : regular)
+            for (const char* file : face == FontFace::Monospace ? monospace : semibold || face == FontFace::UiBold ? bold : regular)
                 if (access(file, R_OK) == 0)
                     return file;
             return {};

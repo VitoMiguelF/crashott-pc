@@ -13,6 +13,7 @@ namespace plat
     {
         Ui,        // Segoe UI (every accent of the subtitles)
         Monospace, // Consolas
+        UiBold,    // Segoe UI at its heaviest (the PlayStation button labels, prompt_icons.cpp)
     };
 
 #ifndef _WIN32

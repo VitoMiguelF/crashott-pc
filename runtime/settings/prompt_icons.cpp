@@ -8,6 +8,8 @@
 #include "../kernel/pc_input.h"
 #include "../kernel/xinput_types.h"
 #include "../platform/platform.h"
+#include "../platform/text.h"
+#include "../platform/text_canvas.h"
 #include "../diagnostics.h"
 #include "../gpu/png_writer.h"
 
@@ -308,6 +310,50 @@ namespace settings::prompts
             menu_art::DrawGameText(canvas, menu_art::FontId::Large, u, cx - width * 0.5f, cy - cell * 0.5f, cell, style);
         }
 
+        // The PlayStation labels (L1 R2 ...) in a heavy sans-serif, as the PS2 version's buttons
+        // have them: the OS's font (plat::TextCanvas), the ink centred on (cx, cy), capitals
+        // `height` high, at most `maxWidth` wide. False without that font (Label then).
+        bool SansLabel(menu_art::Canvas& canvas, const std::string& text, float cx, float cy, float height, float maxWidth, menu_art::Color color)
+        {
+            std::wstring wide = plat::WidenUtf8(text);
+            plat::TextCanvas t;
+            int em = std::max(4, int(std::lround(height / 0.72f)));  // capitals are ~0.72 of the em
+            if (!t.SetFont(plat::FontFace::UiBold, em))
+                return false;
+            if (int width = t.TextWidth(wide); width > maxWidth && maxWidth > 0)
+            {
+                em = std::max(4, int(em * maxWidth / float(width)));
+                t.SetFont(plat::FontFace::UiBold, em);
+            }
+            int charWidth, lineHeight, pad = 2;
+            t.Metrics(charWidth, lineHeight);
+            if (!t.Resize(t.TextWidth(wide) + pad * 2, lineHeight + pad * 2))
+                return false;
+            t.Clear();
+            t.Draw(pad, pad, wide);
+            t.Flush();
+            const uint32_t* px = t.Pixels();
+            int minX = t.Width(), minY = t.Height(), maxX = -1, maxY = -1;
+            for (int y = 0; y < t.Height(); y++)
+                for (int x = 0; x < t.Width(); x++)
+                    if (px[size_t(y) * t.Width() + x] & 0xFF)
+                        minX = std::min(minX, x), maxX = std::max(maxX, x), minY = std::min(minY, y), maxY = std::max(maxY, y);
+            if (maxX < 0)
+                return true;
+            menu_art::Image ink;
+            ink.w = maxX - minX + 1, ink.h = maxY - minY + 1;
+            ink.px.resize(size_t(ink.w) * ink.h);
+            for (int y = 0; y < ink.h; y++)
+                for (int x = 0; x < ink.w; x++)
+                {
+                    uint32_t coverage = px[size_t(minY + y) * t.Width() + minX + x] & 0xFF;
+                    auto scale = [&](uint8_t v) { return uint32_t(v) * coverage / 255; };
+                    ink.px[size_t(y) * ink.w + x] = scale(color.r) | scale(color.g) << 8 | scale(color.b) << 16 | scale(color.a) << 24;  // premultiplied
+                }
+            canvas.Blit(ink, int(std::lround(cx - ink.w * 0.5f)), int(std::lround(cy - ink.h * 0.5f)));
+            return true;
+        }
+
         menu_art::Image ToImage(const Canvas& c)
         {
             menu_art::Image image;
@@ -374,6 +420,23 @@ namespace settings::prompts
             c.Shape(Rgb(0x050506), [&](float x, float y) { return RoundRect(x, y, cx, cy, hw, hh, radius); });
             c.Shape(Rgb(0x6A6C73), [&](float x, float y) { return RoundRect(x, y, cx, cy, hw - edge, hh - edge, radius * 0.85f); });
             c.Shape(Rgb(0x1B1C20), [&](float x, float y) { return RoundRect(x, y, cx, cy + edge * 0.4f, hw - edge * 1.8f, hh - edge * 2.0f, radius * 0.7f); });
+        }
+
+        // L2 / R2 as on the PS2's icons: a dark key, flat on top, its bottom edge bowed down.
+        void TriggerKey(Canvas& c, float cx, float cy, float hw, float hh)
+        {
+            float bulge = hh * 0.2f, radius = std::min(hw, hh) * 0.3f, bottom = cy + hh;
+            float R = (hw * hw + bulge * bulge) / (2 * bulge);  // through the bottom corners and the bottom's middle
+            float edge = std::max(1.0f, std::min(hw, hh) * 0.11f);
+            auto shape = [&](float inset, float dy) {
+                return [=](float x, float y) {
+                    y -= dy;
+                    return std::max(RoundRect(x, y, cx, cy, hw - inset, hh - inset, std::max(radius - inset, 0.5f)), Circle(x, y, cx, bottom - R, R - inset));
+                };
+            };
+            c.Shape(Rgb(0x050506), shape(0, 0));
+            c.Shape(Rgb(0x6A6C73), shape(edge, 0));
+            c.Shape(Rgb(0x1B1C20), shape(edge * 1.9f, edge * 0.4f));
         }
 
         // A mouse with button `button` (1 left, 2 right, 3 middle) lit.
@@ -602,6 +665,7 @@ namespace settings::prompts
         std::string text;
         menu_art::Color textColor{ 24, 24, 26, 255 };
         float textHeight = 0, textWidth = 0, textY = cy;
+        bool sans = false;  // the PlayStation labels: SansLabel
 
         if (device == Device::PlayStation)
         {
@@ -634,15 +698,21 @@ namespace settings::prompts
             }
             case 0xB7: case 0xB8: case 0xBD: case 0xBE:  // R2 R1 L2 L1
             {
+                // The PS2's proportions: L2 / R2 a little wider than high with a bowed bottom,
+                // L1 / R1 flat and wide; as large as the game's icon area lets them be.
                 bool trigger = icon == 0xB7 || icon == 0xBD;
-                // Triggers stand up (like the game's RT / LT), bumpers lie down.
-                float kw = trigger ? std::min(bw, bh * 0.62f) : bw, kh = trigger ? bh : std::min(bh, bw * 0.55f);
-                DarkKey(shapes, cx - kw * 0.5f, cy - kh * 0.5f, cx + kw * 0.5f, cy + kh * 0.5f, std::min(kw, kh) * 0.3f);
+                float aspect = trigger ? 1.12f : 1.6f;
+                float kw = std::min(bw, bh * aspect), kh = kw / aspect;
+                if (trigger)
+                    TriggerKey(shapes, cx, cy, kw * 0.5f, kh * 0.5f);
+                else
+                    DarkKey(shapes, cx - kw * 0.5f, cy - kh * 0.5f, cx + kw * 0.5f, cy + kh * 0.5f, kh * 0.3f);
                 text = icon == 0xB7 ? "R2" : icon == 0xB8 ? "R1" : icon == 0xBD ? "L2" : "L1";
-                textColor = { 226, 227, 232, 255 };
-                textHeight = std::min(kw, kh) * 0.46f;
-                textWidth = kw * 0.74f;
-                textY = trigger ? cy + kh * 0.2f : cy + kh * 0.03f;
+                textColor = { 214, 215, 220, 255 };
+                textHeight = kh * (trigger ? 0.36f : 0.46f);
+                textWidth = kw * 0.72f;
+                textY = trigger ? cy - kh * 0.04f : cy + kh * 0.02f;
+                sans = true;
                 break;
             }
             default:
@@ -674,7 +744,7 @@ namespace settings::prompts
         menu_art::Canvas canvas;
         canvas.Reset(w, h);
         canvas.Blit(ToImage(shapes), 0, 0);
-        if (!text.empty())
+        if (!text.empty() && !(sans && SansLabel(canvas, text, cx, textY, textHeight, textWidth, textColor)))
             Label(canvas, text, cx, textY, textHeight, textWidth, textColor);
         Export(canvas, out);
         return true;
