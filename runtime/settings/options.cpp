@@ -61,7 +61,8 @@ namespace settings::options
             { "audio", { "AUDIO", "ÁUDIO" },
               { Item::Master, Item::Music, Item::Effects, Item::Voice, Item::HeaderSubtitles, Item::Subtitles, Item::SubtitleSize,
                 Item::SubtitleBackground } },
-            { "video", { "VIDEO", "VÍDEO" }, { Item::Window, Item::Resolution, Item::FpsLimit, Item::VSync, Item::AntiAliasing, Item::Overlay, Item::Aspect } },
+            { "video", { "VIDEO", "VÍDEO" }, { Item::Window, Item::Resolution, Item::FpsLimit, Item::VSync, Item::AntiAliasing, Item::Overlay, Item::Aspect,
+                Item::Gamma, Item::Saturation } },
             { "graphics", { "GRAPHICS", "GRÁFICOS" },
               { Item::Upscaler, Item::UpscalerQuality, Item::Sharpness, Item::MotionBlur, Item::DepthOfField, Item::Anisotropy,
                 Item::ShadowSoftness, Item::ShaderCompilation } },
@@ -113,6 +114,8 @@ namespace settings::options
         case Item::AntiAliasing: return "video.antialiasing";
         case Item::Overlay: return "video.overlay";
         case Item::Aspect: return "video.aspect";
+        case Item::Gamma: return "video.gamma";
+        case Item::Saturation: return "video.saturation";
         case Item::Upscaler: return "graphics.upscaler";
         case Item::UpscalerQuality: return "graphics.upscaler_quality";
         case Item::Sharpness: return "graphics.sharpness";
@@ -174,6 +177,8 @@ namespace settings::options
         case Item::AntiAliasing: return "ANTI-ALIASING";
         case Item::Overlay: return "OVERLAY (F1)";
         case Item::Aspect: return t({ "ASPECT RATIO", "PROPORÇÃO" });
+        case Item::Gamma: return "GAMMA";
+        case Item::Saturation: return t({ "SATURATION", "SATURAÇÃO" });
         case Item::Upscaler: return "DLSS / FSR";
         case Item::UpscalerQuality: return t({ "UPSCALER MODE", "MODO DO UPSCALER" });
         case Item::Sharpness: return t({ "SHARPNESS (FSR)", "NITIDEZ (FSR)" });
@@ -388,6 +393,12 @@ namespace settings::options
         case Item::Aspect:
             return { t({ "Wider screens see more to the sides (21:9, 32:9);", "Telas mais largas veem mais dos lados (21:9, 32:9);" }),
                      t({ "AUTO uses the monitor's; 16:10 sees more above.", "AUTO usa a do monitor; 16:10 vê mais em cima." }) };
+        case Item::Gamma:
+            return { t({ "Gamma of the final image: above 100% brighter,", "Gamma da imagem final: acima de 100% mais clara," }),
+                     t({ "below darker. 100% = original.", "abaixo mais escura. 100% = original." }) };
+        case Item::Saturation:
+            return { t({ "Colour saturation of the final image (above 100%:", "Saturação das cores da imagem final (acima de 100%:" }),
+                     t({ "stronger colours, as on the PS2). 100% = original.", "cores mais fortes, como no PS2). 100% = original." }) };
         case Item::Overlay:
             return { t({ "Performance overlay: FPS, frame time and graph.", "Overlay de desempenho: FPS, frame time e gráfico." }),
                      t({ "F1 switches it at any time.", "O F1 alterna a qualquer momento." }) };
@@ -557,6 +568,8 @@ namespace settings::options
         case Item::CameraDistance: value = &values.cameraDistance; stepValue = 10; min = 50; max = 200; break;
         case Item::LightGiIntensity: value = &values.giIntensity; stepValue = 10; max = 200; break;
         case Item::MouseSensitivity: value = &values.controls.mouseSensitivity; stepValue = 10; min = 10; max = 400; break;
+        case Item::Gamma: value = &values.gamma; min = 50; max = 150; break;
+        case Item::Saturation: value = &values.saturation; stepValue = 10; max = 200; break;
         default: break;
         }
         if (minimum)

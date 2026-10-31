@@ -2411,6 +2411,24 @@ MAPEAMENTO DO CONTROLE).
   244). Sem abrir o jogo: `--settings-preview` com um `settings.toml` antigo (sem `window`, com as três chaves
   removidas) carrega `window borderless` e nenhuma linha de erro.
 
+## Gamma e saturação (2026-10-31, branch `gamma-saturation`, issue #22) (`gpu/xenos_renderer.cpp`, `settings/*`)
+
+Pedido: cores mais parecidas com as do PS2, com GAMMA (50-150%) e SATURAÇÃO (0-200%) no fim da aba VÍDEO
+(`[video] gamma`, `saturation`, na hora), no PC e no Android, sem mudar a imagem nos padrões (100%).
+
+- **Onde**: no `PRESENT_PS`, o passe que desenha a imagem do jogo no back buffer (depois do FXAA/SMAA e dos
+  upscalers; antes dos menus do port, legendas e overlay, que ficam sem a correção). O cbuffer ganhou `gamma` e
+  `saturation` (floats 8 e 9, 48 bytes: `PRESENT_CONSTANTS`, `CreateBlitPipeline(..., constantBytes)`).
+  Saturação primeiro (`lerp` com a luma Rec.601), depois `pow(v, 1 / gamma)`; cada um só roda fora de 1,0,
+  então os padrões dão a mesma imagem de antes, bit a bit. A cópia 1:1 antes do AA usa 1/1.
+- **Android**: o HLSL do present mudou, então a chave SPIR-V dele muda; um aparelho sem `libdxcompiler.so`
+  precisa de um cache refeito no PC (os outros compilam sozinhos).
+- **Testes**: a aba VÍDEO tem 9 linhas, que já não cabem a 44 px: o passo cai para 40 (`ROWS_TOP`..
+  `ROWS_BOTTOM` / 9, `rowsY` = 132) e o `mouse_menus` clica em LIMITE DE FPS em y 230. Sem abrir o jogo:
+  `--settings-preview` com `gamma = 130` e `saturation = 250` carrega `gamma 130%, saturation 200%` sem linha
+  de erro; o `PRESENT_PS` compila com o DXC do Vulkan SDK (`-spirv`, as opções de `rhi_vulkan_shaders.cpp`) e o
+  `spirv-reflect` mostra o cbuffer de 48 bytes.
+
 ## Multijogador online (protótipo, 2026-10-28, branch `online-coop`) (`online/*`, perfis `mp_*`)
 
 Viabilidade de um modo online de até 5 jogadores. Tudo desligado sem `CRASH_MP=1`. Resumo em inglês e

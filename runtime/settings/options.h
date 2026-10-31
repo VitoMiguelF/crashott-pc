@@ -19,7 +19,7 @@ namespace settings::options
     enum class Item
     {
         Master, Music, Effects, Voice,
-        Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay, Aspect,
+        Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay, Aspect, Gamma, Saturation,
         Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, ShaderCompilation, HdRemaster,
         Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Storage,
         Subtitles, SubtitleSize, SubtitleBackground,

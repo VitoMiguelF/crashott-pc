@@ -9,6 +9,7 @@
 //             fps_limit = 30 | 60 | 120 | 0 (no limit), resolution = "1280x720" | "1600x900" |
 //             "1920x1080" | "2560x1440" | "3840x2160" | the other aspects' (internal),
 //             aspect = "auto" | "16:9" | "16:10" | "21:9" | "32:9" (gpu/widescreen.h),
+//             gamma = 50..150 (%), saturation = 0..200 (%) (the present pass, gpu/xenos_renderer.cpp),
 //             overlay = "off" | "fps" | "frametime" | "full" (show_fps = true|false still read),
 //             antialiasing = "off" | "fxaa" | "smaa", gpu_safe_mode = "off" | "on" | a list (gpu/rhi.h
 //             SafeMode), gpu_diagnostics = true|false (on the next launch)
@@ -34,7 +35,8 @@
 //   [launcher] view = "simple" | "advanced" (the launcher's last view; the game ignores it)
 //
 // Live: master volume, music/effects/voice volume (through the game's own volume categories,
-// audio/game_volumes.h), window mode, V-Sync, frame limit, FPS overlay, anti-aliasing, sharpness,
+// audio/game_volumes.h), window mode, V-Sync, frame limit, FPS overlay, anti-aliasing, gamma,
+// saturation, sharpness,
 // motion blur, depth of field, anisotropic filtering, shadow softness, subtitles, the lighting
 // remaster. When the settings
 // screen closes: the internal resolution and the upscaler and its quality (the renderer rebuilds
@@ -133,6 +135,10 @@ namespace settings
         int renderHeight = 720;  // internal resolution (Resolutions(aspect)), with `aspect`
 #endif
         Aspect aspect = Aspect::Auto;
+        // gamma / saturation: % of the final image's gamma (brighter above 100) and colour
+        // saturation, in the present pass; 100 = the image as the game draws it (live)
+        int gamma = 100;
+        int saturation = 100;
         OverlayMode overlay = OverlayMode::Off;
         AntiAliasing antiAliasing = AntiAliasing::Off;
         // gpu_safe_mode: "off", "on" or a list of the renderer's conservative paths (gpu/rhi.h

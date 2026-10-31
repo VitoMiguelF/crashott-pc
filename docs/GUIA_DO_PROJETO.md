@@ -487,6 +487,8 @@ Capturas da organização atual das abas em `docs\capturas\settings_abas\`: cada
 | Limite de FPS | 30 (original), 60, 120, sem limite | na hora |
 | V-Sync | ligado / desligado (padrão: desligado); com ele ligado o FPS também fica limitado à taxa do monitor | na hora |
 | Proporção | AUTO (padrão: a do monitor principal), 16:9 (original), 16:10, 21:9, 32:9. Mais larga que 16:9: vê mais dos lados (Hor+, o FOV vertical do 16:9); 16:10: vê mais em cima e embaixo. O HUD e os menus ficam na área 16:9 do meio, os fundos dos menus preenchem a tela, os vídeos ficam em 16:9 com faixas pretas (veja "Ultrawide") | ao sair da tela, sem reiniciar |
+| Gamma | 50–150% (padrão 100% = a imagem do jogo): acima de 100% a imagem fica mais clara, abaixo mais escura. Aplicado no último passe (o que desenha a imagem na janela), no PC e no Android; não mexe nos menus do port nem no overlay | na hora |
+| Saturação | 0–200% (padrão 100% = original): a saturação das cores da imagem final; acima de 100% as cores ficam mais fortes, mais perto do PS2 (issue #22) | na hora |
 | Anti-aliasing | desligado / FXAA / SMAA: pós-processamento da imagem final, na resolução interna (o FXAA amolece também o HUD; o SMAA quase não) | na hora (`docs\capturas\antigas\graficos\aa_sem_fxaa_smaa.jpg`) |
 | Overlay | desligado, só FPS, FPS + frame time, completo (o mesmo do F1; veja "Overlay de desempenho") | na hora |
 | **Gráficos** | | |
@@ -609,6 +611,8 @@ vsync = false
 fps_limit = 30           # 30 (original) | 60 | 120 | 0 = sem limite
 resolution = "1280x720"  # 1280x720 | 1600x900 | 1920x1080 | 2560x1440 | 3840x2160 (ao sair da tela); a largura segue aspect
 aspect = "auto"          # auto | 16:9 | 16:10 | 21:9 | 32:9 (ao sair da tela)
+gamma = 100              # 50-150 %, gamma da imagem final (100 = original; na hora)
+saturation = 100         # 0-200 %, saturação das cores da imagem final (100 = original; na hora)
 overlay = "off"          # off | fps | frametime | full (F1 alterna)
 antialiasing = "off"     # off | fxaa | smaa
 [graphics]

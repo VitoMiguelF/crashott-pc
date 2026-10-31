@@ -818,6 +818,7 @@ float4 main(XeVertexOutput input) : SV_Target0
 )";
         constexpr uint64_t DEPTH_ALIAS_PS_KEY = 0xDEA7A11A5C1EA700ull;
 
+        constexpr size_t PRESENT_CONSTANTS = 12;  // PRESENT_PS's cbuffer, in floats (with its padding)
         const char* PRESENT_PS = R"(
 Texture2D<float4> source : register(t0);
 SamplerState linearClamp : register(s0);
@@ -828,6 +829,8 @@ cbuffer constants : register(b0)
     uint flags;      // 1: swap red/blue, 2: no source (show a pattern), 4/8: raw debug views
     uint swizzle;    // front buffer fetch constant swizzle (3 bits per component)
     float2 origin;   // top-left of the image in the target (black bars before it keep the aspect ratio)
+    float gamma;     // [video] gamma / 100: above 1 brighter (1 = unchanged)
+    float saturation;  // [video] saturation / 100 (1 = unchanged)
 };
 float select(float4 v, uint s)
 {
@@ -852,6 +855,10 @@ float4 main(float4 position : SV_Position) : SV_Target
     }
     float3 v = float3(select(t, swizzle & 7u), select(t, (swizzle >> 3) & 7u), select(t, (swizzle >> 6) & 7u));
     if (flags & 1u) v = v.bgr;
+    if (saturation != 1.0)
+        v = saturate(lerp(dot(v, float3(0.299, 0.587, 0.114)).xxx, v, saturation));
+    if (gamma != 1.0)
+        v = pow(saturate(v), 1.0 / gamma);
     return float4(v, 1.0);
 }
 )";
@@ -1574,14 +1581,14 @@ float4 main(float4 position : SV_Position) : SV_Target
         }
 
         // Resolve and present passes: one texture, 8 dwords of constants, a linear clamp sampler.
-        rhi::Pipeline* CreateBlitPipeline(const char* name, const char* ps, DXGI_FORMAT target, uint32_t textures = 1)
+        rhi::Pipeline* CreateBlitPipeline(const char* name, const char* ps, DXGI_FORMAT target, uint32_t textures = 1, uint32_t constantBytes = 32)
         {
             rhi::PassPipelineDesc desc;
             desc.name = name;
             desc.ps = ps;
             desc.targets[0] = target;
             desc.textureCount = textures;
-            desc.constantBytes = 32;
+            desc.constantBytes = constantBytes;
             desc.samplers[0] = LinearClamp();
             desc.samplerCount = 1;
             rhi::Pipeline* pipeline = g_rhi->CreatePassPipeline(desc);
@@ -1616,7 +1623,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             auto it = g_presentPipelines.find(uint32_t(format));
             if (it != g_presentPipelines.end())
                 return it->second;
-            rhi::Pipeline* pipeline = CreateBlitPipeline("present", PRESENT_PS, format);
+            rhi::Pipeline* pipeline = CreateBlitPipeline("present", PRESENT_PS, format, 1, PRESENT_CONSTANTS * 4);
             g_presentPipelines[uint32_t(format)] = pipeline;
             return pipeline;
         }
@@ -4385,7 +4392,9 @@ float4 main(float4 position : SV_Position) : SV_Target
             imageY = std::floor((float(g_backBufferHeight) - imageHeight) * 0.5f);
         }
         bool bars = imageWidth < float(g_backBufferWidth) || imageHeight < float(g_backBufferHeight);
-        float constants[8] = { 1.0f, 1.0f, imageWidth, imageHeight, 0.0f, 0.0f, imageX, imageY };
+        // [video] gamma / saturation (live): only the present that draws into the back buffer.
+        float gamma = float(options.gamma) / 100.0f, saturation = float(options.saturation) / 100.0f;
+        float constants[PRESENT_CONSTANTS] = { 1.0f, 1.0f, imageWidth, imageHeight, 0.0f, 0.0f, imageX, imageY, gamma, saturation, 0.0f, 0.0f };
         uint32_t flags = g_swapRedBlue ? 1u : 0u;
         // The front buffer is read like a texture, through the swizzle of the fetch constant
         // VdSwap was given (as Xenia's RequestSwapTexture does). D3D resolves the frame with
@@ -4453,11 +4462,11 @@ float4 main(float4 position : SV_Position) : SV_Target
         }
         present.viewport = { imageX, imageY, imageWidth, imageHeight };
         present.scissor = { int32_t(imageX), int32_t(imageY), int32_t(imageX + imageWidth), int32_t(imageY + imageHeight) };
-        float presentConstants[8];
+        float presentConstants[PRESENT_CONSTANTS];
         if (antiAliasing)
         {
             // 1:1 copy with the swizzle, then FXAA / SMAA, then the scaled present below.
-            float copyConstants[8] = { constants[0], constants[1], float(g_aaWidth), float(g_aaHeight), constants[4], constants[5], 0.0f, 0.0f };
+            float copyConstants[PRESENT_CONSTANTS] = { constants[0], constants[1], float(g_aaWidth), float(g_aaHeight), constants[4], constants[5], 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f };
             rhi::PassDraw copy = present;
             copy.pipeline = GetPresentPipeline(DXGI_FORMAT_R8G8B8A8_UNORM);
             copy.targets[0] = g_aaInput;
@@ -4479,7 +4488,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
             // The scaled present of the result: no swizzle, no red/blue swap.
             present.textures[0] = { g_aaOutput };
-            float scaled[8] = { 1.0f, 1.0f, imageWidth, imageHeight, 0.0f, 0.0f, imageX, imageY };
+            float scaled[PRESENT_CONSTANTS] = { 1.0f, 1.0f, imageWidth, imageHeight, 0.0f, 0.0f, imageX, imageY, gamma, saturation, 0.0f, 0.0f };
             uint32_t identity = 0x688, noFlags = 0;
             memcpy(&scaled[4], &noFlags, 4);
             memcpy(&scaled[5], &identity, 4);

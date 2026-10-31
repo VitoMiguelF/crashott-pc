@@ -219,3 +219,8 @@ The present keeps the aspect ratio with black bars and the process is per-monito
 screen the window used to be half resolution and stretched). The window opens at the picture's aspect
 (720 lines at 96 DPI), fitted into the primary monitor's work area. The default `video.window` is
 `borderless` (since 2026-10-31; the test userdata says `windowed`).
+
+`video.gamma` (50-150 %) and `video.saturation` (0-200 %) are applied by `PRESENT_PS`, the pass that draws
+the game's picture into the back buffer (cbuffer floats 8 / 9, `PRESENT_CONSTANTS`): saturation (lerp to the
+Rec.601 luma), then `pow(v, 1 / gamma)`, each skipped at 1.0 so the defaults change nothing. The port's own
+menus, subtitles and the overlay are drawn after it, uncorrected.
