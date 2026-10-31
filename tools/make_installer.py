@@ -68,9 +68,10 @@ SKIP_PARTS = {"__pycache__", "_unpack"}
 # recompiler's config and patch), the play folder (languages, licenses) and setup.py's tools.
 INSTALL = ("CMakeLists.txt", "LICENSE", "THIRD_PARTY_NOTICES.md", "config/Crash.toml", "config/Crash_switch_tables.toml",
            "launcher/", "languages/", "patches/", "runtime/", "thirdparty/", "tools/setup.py", "tools/buildenv.py",
-           "tools/toolchain.py", "tools/make_dist.py", "tools/requirements.txt")
+           "tools/toolchain.py", "tools/make_dist.py", "tools/requirements.txt",
+           "tools/mp_skin_colours.py", "tools/p3d.py")  # the build runs mp_skin_colours.py (CMakeLists.txt)
 # ASSETS FOR MODDING only: tools/assets.py all, the scripts it runs and numpy / Pillow.
-MODDING = ("tools/assets.py", "tools/rcf.py", "tools/audio.py", "tools/textures.py", "tools/models.py", "tools/p3d.py",
+MODDING = ("tools/assets.py", "tools/rcf.py", "tools/audio.py", "tools/textures.py", "tools/models.py",
            "tools/assettool/", "toolchain/python/Lib/site-packages/numpy", "toolchain/python/Lib/site-packages/PIL",
            "toolchain/python/Lib/site-packages/pillow")
 ORDER = {"base": 0, "modding": 1, "dlss": 2}
