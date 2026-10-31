@@ -5,8 +5,9 @@
 //
 // - The overlay shows the frame number (the swap number that CRASH_SCREENSHOTS and
 //   screenshot_NNNNN.png use), the input clock (seconds since the game first read the controller,
-//   the zero of CRASH_INPUT_SCRIPT), FPS (swaps per second over the last second), frame time
-//   (current, and average / max / 1% low over the last 240 frames) and a frame-time graph.
+//   the zero of CRASH_INPUT_SCRIPT), FPS (swaps per second over the last second), the current
+//   frame time, min / average / max / 1% low FPS over the last 240 frames (the min FPS is the
+//   longest frame's) and a frame-time graph. Its texts follow game.language (settings/ui_text.h).
 // - Keys (window.cpp): F1 shows/hides it, F2 marks the current frame ([mark] in the log and a line
 //   in <screenshot dir>\marks.txt), F12 saves screenshot_NNNNN.png.
 // - Environment: CRASH_OVERLAY=1 starts with it visible, CRASH_SCREENSHOT_OVERLAY=1 keeps it in

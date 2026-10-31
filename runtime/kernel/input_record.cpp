@@ -38,6 +38,7 @@
 #include "input_record.h"
 #include "../diagnostics.h"
 #include "../fs/vfs.h"
+#include "../settings/ui_text.h"
 #include "../platform/platform.h"
 #include "../platform/crt.h"
 
@@ -831,7 +832,15 @@ namespace input
     const char* ToggleRecording()
     {
         bool stopping = Recording() != (g_toggleRequests.fetch_add(1) % 2 == 1);
-        return stopping ? "GRAVACAO SALVA EM CONFIG/RECORDED" : "GRAVANDO (F5 PARA PARAR)";
+        // The overlay's toast (upper case ASCII), in game.language.
+        const settings::UiText saved = { "RECORDING SAVED IN CONFIG/RECORDED", "GRAVACAO SALVA EM CONFIG/RECORDED",
+                                         "ENREGISTREMENT DANS CONFIG/RECORDED", "AUFNAHME IN CONFIG/RECORDED GESPEICHERT",
+                                         "GRABACION GUARDADA EN CONFIG/RECORDED", "REGISTRAZIONE SALVATA IN CONFIG/RECORDED",
+                                         "OPNAME OPGESLAGEN IN CONFIG/RECORDED" };
+        const settings::UiText recording = { "RECORDING (F5 TO STOP)", "GRAVANDO (F5 PARA PARAR)", "ENREGISTREMENT (F5 POUR ARRETER)",
+                                             "AUFNAHME (F5 ZUM STOPPEN)", "GRABANDO (F5 PARA PARAR)", "REGISTRAZIONE (F5 PER FERMARE)",
+                                             "OPNAME (F5 OM TE STOPPEN)" };
+        return settings::Tr(stopping ? saved : recording);
     }
 
     void StopRecording()

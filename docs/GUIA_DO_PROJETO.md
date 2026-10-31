@@ -348,7 +348,7 @@ Provas (um perfil por recurso, capturas em `build\dev\`): `dev_api` (lista a API
 
 Desligado por padrão. Liga em **SETTINGS > DEFINITIVE EDITION > CONSOLE DE DESENVOLVEDOR** (ou no launcher; `[dev] console = true` no `settings.toml`, vale na hora), com `--dev-console` ou `CRASH_DEV_CONSOLE=1`. Aí a **tecla antes do 1** (`'` no ABNT2, `` ` `` no teclado americano; vale a posição, qualquer layout) ou **F10** abre o console por cima do jogo; Esc, F10 ou a mesma tecla com a linha vazia fecham. Aberto, ele fica com o teclado e o mouse e o jogo vê um controle parado (o jogo continua rodando).
 
-Enter roda a linha; setas para cima/baixo andam no histórico (guardado em `userdata\console_history.txt`); Tab completa o comando, a skin, a fase ou on/off (Tab de novo passa para a próxima opção); PageUp/PageDown e a roda rolam a saída; Ctrl+V cola, Ctrl+L limpa a saída, Ctrl+C/Ctrl+U limpa a linha. O `devprint` do Lua e os erros de Lua aparecem no console (em vermelho) e no log (`[console] ...`).
+Enter roda a linha; setas para cima/baixo andam no histórico (guardado em `userdata\console_history.txt`); Tab completa o comando, a skin, a fase ou on/off (Tab de novo passa para a próxima opção); PageUp/PageDown e a roda rolam a saída; Ctrl+V cola, Ctrl+L limpa a saída, Ctrl+C/Ctrl+U limpa a linha. O `devprint` do Lua e os erros de Lua aparecem no console (em vermelho) e no log (`[console] ...`). A ajuda e as mensagens seguem o idioma do jogo (`game.language`); os nomes dos comandos são os mesmos em todos.
 
 | Comando | O que faz |
 |---|---|
@@ -376,12 +376,12 @@ Nos perfis, `dev_console = [["@gameplay_ready+1", "!toggle"], ["@gameplay_ready+
 
 O overlay tem quatro modos: **desligado**, **só FPS**, **FPS + frame time** (com o gráfico) e **completo**. O modo fica em `userdata\settings.toml` (`overlay = "off" | "fps" | "frametime" | "full"`) e muda pela tela SETTINGS ou pelo **F1**, que passa para o próximo modo e grava a escolha. Nos perfis, `overlay` em `run.toml` decide o modo daquela execução: `true` = completo (o padrão), `false` = o do `settings.toml`, ou o nome do modo (`"fps"`, `"frametime"`, `"full"`, `"off"`; também `"completo"` e `"desligado"`). Capturas de cada modo: `docs\capturas\antigas\overlay_modos\` (`off.jpg`, `fps.jpg`, `frametime.jpg`, `full.jpg`, `full_1080p.jpg` e `settings_tela.jpg`).
 
-O modo completo, no canto superior esquerdo da janela:
+Os textos do overlay seguem o idioma do jogo (`game.language`): inglês, português e os outros idiomas do jogo (francês, alemão, espanhol, italiano, holandês); um pacote de `languages\` usa os do seu idioma base. O modo completo em português, no canto superior esquerdo da janela:
 
 ```
-QUADRO 2400    INPUT 81.3 S          <- número do quadro (o mesmo de screenshots = [...] e de screenshot_NNNNN.png)
+QUADRO 2400    ENTRADA 81.3 S        <- número do quadro (o mesmo de screenshots = [...] e de screenshot_NNNNN.png)
 FPS  30.0       FRAME  33.3 MS        <- quadros por segundo (último 1 s) e tempo do último quadro
-MED  33.4 MAX  41.2 1%LOW  38.0       <- frame time médio, máximo e 1% low (ms) nos últimos 240 quadros
+MIN 24.3 MED 29.9 MAX 31.4 1%BAIXO 26.3 <- FPS mínimo (o do maior frame time), médio, máximo e 1% low nos últimos 240 quadros
 RENDER 2560X1440 (2X) -> 1920X1080    <- resolução interna (settings) e tamanho da janela
 PERFIL MENU_LOADED                    <- só quando o jogo foi aberto pelo run_game.py com um perfil
 BOTAO A @ 27.00 S Q810 SCRIPT         <- último botão: relógio do input, quadro, SCRIPT (input do perfil) ou JOGADOR
@@ -393,7 +393,7 @@ F1 MODO F2 MARCA F5 GRAVA F12 PRINT
 
 As linhas `PERFIL` e `BOTAO` aparecem só nas execuções do `run_game.py`, que passa o nome do perfil em `CRASH_PROFILE`; abrindo o `CrashRecomp.exe` direto elas não aparecem. O tempo e o quadro do `BOTAO` são os mesmos de `input = [...]` e `screenshots = [...]`, então servem para montar perfis.
 
-`INPUT` é o relógio dos botões do perfil: segundos desde a primeira leitura do controle (`--` antes disso). É o número que vai em `input = [[segundos, "BOTÃO"]]`.
+`ENTRADA` (`INPUT` em inglês) é o relógio dos botões do perfil: segundos desde a primeira leitura do controle (`--` antes disso). É o número que vai em `input = [[segundos, "BOTÃO"]]`.
 
 | Tecla | O que faz |
 |---|---|

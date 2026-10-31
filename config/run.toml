@@ -1019,7 +1019,7 @@ input = [["@gameplay_ready"], [5, "START"], [6.5, "DOWN"], [7, "DOWN"], [8, "A"]
          [14, "SHOT"], [14.5, "RIGHT"], [16, "SHOT"], [16.5, "RIGHT"], [18, "SHOT"], [18.5, "LEFT"], [20, "SHOT"], [20.5, "A"], [21.5, "LEFT"], [22.2, "SHOT"], [22.7, "A"], [25, "SHOT"], [27, "Y"],
          ["@gameplay_ready#2"], [1, "SHOT"], [4, "SHOT"]]
 env = { CRASH_FRONTEND_TRACE = "1" }
-expect = { exit = ["timeout"], events = ["hub", "gameplay_ready", "console_cmd"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['frontend node 1058', 'skin atual: Crash_Hulk', 'Crash_Hulk: physics ellipsoid'] }
+expect = { exit = ["timeout"], events = ["hub", "gameplay_ready", "console_cmd"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['frontend node 1058', 'current skin: Crash_Hulk', 'Crash_Hulk: physics ellipsoid'] }
 
 [profiles.console_level_hub]
 description = "DEV: o comando level do console fora de uma fase: LOAD GAME até o HUB e 'level L1_E3' (Frontend:StartLevel + a saída SkipToLevel da árvore, como o boot direto)"

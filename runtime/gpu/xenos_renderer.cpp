@@ -54,6 +54,7 @@
 #include "../settings/skip_cinematics.h"
 #include "../settings/touch_controls.h"
 #include "../settings/settings_menu.h"
+#include "../settings/ui_text.h"
 #include "../dev/dev_console.h"
 #include "../online/mp_menu.h"
 #include "../subtitles/subtitle_draw.h"
@@ -4326,7 +4327,10 @@ float4 main(float4 position : SV_Position) : SV_Target
             if (s_precompiling && done >= total)
                 s_precompiling = false;
             else if (s_precompiling && plat::TickCountMs() - s_start > 3000 && g_stats.swaps % 15 == 0)
-                overlay::Notice((settings::options::Portuguese(options) ? "PREPARANDO SHADERS... " : "PREPARING SHADERS... ") +
+                overlay::Notice(settings::Tr({ "PREPARING SHADERS... ", "PREPARANDO SHADERS... ", "PREPARATION DES SHADERS... ",
+                                               "SHADER WERDEN VORBEREITET... ", "PREPARANDO SHADERS... ", "PREPARAZIONE SHADER... ",
+                                               "SHADERS VOORBEREIDEN... " },
+                                             settings::UiLanguageOf(options.language)) +
                                 std::to_string(done * 100 / std::max(total, 1u)) + "%");
         }
         // F8: the lighting remaster off / on (not saved), with a notice on screen.
@@ -4334,8 +4338,19 @@ float4 main(float4 position : SV_Position) : SV_Target
         {
             bool on = lighting::ToggleBypass();
             bool any = on && (lighting::CurrentOptions().Any() || options.softShadows);
-            overlay::Notice(!on ? "ILUMINACAO REMASTER: DESLIGADA (F8)"
-                                : any ? "ILUMINACAO REMASTER: LIGADA (F8)" : "ILUMINACAO REMASTER: NADA ESCOLHIDO EM SETTINGS");
+            const settings::UiText off = { "LIGHTING REMASTER: OFF (F8)", "ILUMINACAO REMASTER: DESLIGADA (F8)",
+                                           "ECLAIRAGE REMASTER: DESACTIVE (F8)", "BELEUCHTUNG REMASTER: AUS (F8)",
+                                           "ILUMINACION REMASTER: DESACTIVADA (F8)", "ILLUMINAZIONE REMASTER: DISATTIVATA (F8)",
+                                           "VERLICHTING REMASTER: UIT (F8)" };
+            const settings::UiText enabled = { "LIGHTING REMASTER: ON (F8)", "ILUMINACAO REMASTER: LIGADA (F8)",
+                                               "ECLAIRAGE REMASTER: ACTIVE (F8)", "BELEUCHTUNG REMASTER: AN (F8)",
+                                               "ILUMINACION REMASTER: ACTIVADA (F8)", "ILLUMINAZIONE REMASTER: ATTIVATA (F8)",
+                                               "VERLICHTING REMASTER: AAN (F8)" };
+            const settings::UiText nothing = { "LIGHTING REMASTER: NOTHING CHOSEN IN SETTINGS", "ILUMINACAO REMASTER: NADA ESCOLHIDO EM SETTINGS",
+                                               "ECLAIRAGE REMASTER: RIEN CHOISI DANS SETTINGS", "BELEUCHTUNG REMASTER: NICHTS IN SETTINGS",
+                                               "ILUMINACION REMASTER: NADA ELEGIDO EN SETTINGS", "ILLUMINAZIONE REMASTER: NULLA IN SETTINGS",
+                                               "VERLICHTING REMASTER: NIETS IN SETTINGS" };
+            overlay::Notice(settings::Tr(!on ? off : any ? enabled : nothing, settings::UiLanguageOf(options.language)));
         }
         g_effects.jitter[2] = lighting::SoftShadows() ? 1.0f : 0.0f;
         g_lightingOptions = lighting::Ready() ? lighting::CurrentOptions() : lighting::Options{};
