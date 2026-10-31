@@ -384,6 +384,33 @@ nota no rodapé avisa. Textos em inglês, português, francês, alemão, espanho
 jogo). `CrashRecomp.exe --cheats-preview <pasta>` desenha o menu em PNG em todos os idiomas sem iniciar o jogo.
 Código em `runtime/dev/cheat_menu.*`; como cada cheat funciona por dentro: [docs/dev_features.md](docs/dev_features.md).
 
+#### Conquistas do Xbox 360
+
+As 47 conquistas originais (1000 G) vêm do recurso XDBF/SPA do `default.xex` do jogador, lido da imagem carregada a
+cada execução: nomes, descrições, gamerscore e ícones (PNG 64x64), em inglês, francês, alemão, espanhol ou italiano
+conforme o idioma do jogo (português e holandês usam o inglês; o SPA não tem esses idiomas). Nada disso é copiado
+para fora da memória nem vai para o git.
+
+- **Desbloqueio**: o próprio jogo chama `XUserWriteAchievements` (no jogo é um `XMsgStartIORequest` para o XAM,
+  app 0xFB, mensagem 0xB0008); o runtime grava a conquista em `userdata\achievements.toml` (`id = "data hora"`,
+  com o nome em comentário). É universal: não fica no save, vale em qualquer slot e num NEW GAME. Uma conquista que
+  o jogo manda de novo é ignorada, como o XAM faz. Apagar uma linha do arquivo bloqueia a conquista de novo.
+- **Aviso**: no estilo do Xbox 360, embaixo no meio da tela por ~5 s, com o ícone, "Conquista desbloqueada",
+  gamerscore e nome, e o som de "select" dos menus. Várias de uma vez aparecem uma depois da outra.
+- **Tela**: BACK no menu principal, no HUB e na pausa. No teclado, a tecla do BACK (MAPA, Tab por padrão) no menu
+  principal e na pausa (no HUB o Tab é o Y, CONTINUE STORY); mouse e toque: a dica "(BACK) CONQUISTAS" que aparece
+  embaixo no menu principal e na pausa. Grade com os 47 ícones (coloridos = desbloqueadas, cinza = bloqueadas,
+  "?" = secretas ainda bloqueadas), e à direita a selecionada: gamerscore, nome, descrição (o "como ganhar" enquanto
+  bloqueada) e a data. No topo, "X de 47 desbloqueadas" e o gamerscore. Direcional / analógico / setas andam, o
+  mouse aponta, B / BACK / START / Esc fecha. No painel do HUB de uma sessão online o BACK continua sendo o lobby.
+- **Console**: `achievement <id>` concede pela fila do próprio jogo (como se ganhasse); `achievement list` lista
+  ids, nomes e datas.
+- `CrashRecomp.exe --achievements-preview <pasta>` desenha a tela e o aviso em PNG em todos os idiomas sem iniciar
+  o jogo. Perfis: `conquistas` (console concede a 31 no L1_E1: aviso, pausa com a dica, BACK abre, anda, B fecha),
+  `conquistas_menu` (dica no menu principal, BACK e clique na dica) e `conquistas_hub` (BACK no HUB e o Y continua
+  funcionando). Código em `runtime/achievements/`; detalhes em
+  [docs/internals/achievements.md](internals/achievements.md).
+
 ### Overlay de desempenho, marcas e gravação de perfis
 
 O overlay tem quatro modos: **desligado**, **só FPS**, **FPS + frame time** (com o gráfico) e **completo**. O modo fica em `userdata\settings.toml` (`overlay = "off" | "fps" | "frametime" | "full"`) e muda pela tela SETTINGS ou pelo **F1**, que passa para o próximo modo e grava a escolha. Nos perfis, `overlay` em `run.toml` decide o modo daquela execução: `true` = completo (o padrão), `false` = o do `settings.toml`, ou o nome do modo (`"fps"`, `"frametime"`, `"full"`, `"off"`; também `"completo"` e `"desligado"`). Capturas de cada modo: `docs\capturas\antigas\overlay_modos\` (`off.jpg`, `fps.jpg`, `frametime.jpg`, `full.jpg`, `full_1080p.jpg` e `settings_tela.jpg`).

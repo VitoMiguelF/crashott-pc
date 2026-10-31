@@ -57,6 +57,7 @@
 #include "../settings/ui_text.h"
 #include "../dev/dev_console.h"
 #include "../dev/cheat_menu.h"
+#include "../achievements/achievements.h"
 #include "../online/mp_menu.h"
 #include "../subtitles/subtitle_draw.h"
 #include "../platform/platform.h"
@@ -4577,6 +4578,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         settings::menu::Draw(overlayWidth, overlayHeight);
         mp::menu::Draw(overlayWidth, overlayHeight);  // MULTIPLAYER (online/mp_menu.h)
         dev::cheat_menu::Draw(overlayWidth, overlayHeight);  // the cheat menu (pause + code)
+        achievements::Draw(overlayWidth, overlayHeight);  // achievements: hint, screen, popup
         dev::console::Draw(overlayWidth, overlayHeight);  // the developer console
         overlay::SetOrigin(0, 0);
 

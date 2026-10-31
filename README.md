@@ -239,6 +239,12 @@ touch screen or mouse: tap the top-left, top-right, top-left and top-right corne
 invincibility, +1 life, 1 hit titan, disable AI, and unlock all moves / skins / episodes / everything. The
 unlocks are permanent (the game writes them to your save); the rest lasts until you quit the game.
 
+**Achievements**: the original Xbox 360 achievements (47, 1000 G), read from your own `default.xex` (names,
+descriptions and icons in the game's language). Earning one shows the Xbox 360 style popup; they are kept in
+`userdata\achievements.toml` with the date, for every save slot (NEW GAME included). BACK on the main menu, the
+HUB or the pause (keyboard: Tab on the main menu and the pause; mouse / touch: the hint at the bottom) opens the
+list.
+
 Default settings are the original experience (1280x720, 30 fps, no upscaler, extras off). Turn things on
 in **SETTINGS** (main menu or pause > OPTIONS) or in the launcher; for the HD AI Remaster, install it and
 then switch **DEFINITIVE EDITION > HD AI REMASTER** on. The launcher opens on its simple view: **LIGHTING
@@ -527,6 +533,11 @@ cheia, F8 liga/desliga o remaster da iluminação e, com **DEFINITIVE EDITION > 
 tela de toque ou mouse: toque nos cantos de cima esquerdo, direito, esquerdo e direito) para o menu de trapaças:
 invencibilidade, +1 vida, titã em 1 golpe, desativar IA e desbloquear todos os golpes / skins / episódios /
 tudo. Os desbloqueios são permanentes (o jogo os grava no save); o resto vale até fechar o jogo.
+
+**Conquistas**: as conquistas originais do Xbox 360 (47, 1000 G), lidas do seu próprio `default.xex` (nomes,
+descrições e ícones no idioma do jogo). Ganhar uma mostra o aviso no estilo do Xbox 360; elas ficam em
+`userdata\achievements.toml` com a data e valem para todos os saves (NEW GAME também). BACK no menu principal, no
+HUB ou na pausa (teclado: Tab no menu principal e na pausa; mouse / toque: a dica embaixo) abre a lista.
 
 As opções padrão são a experiência original (1280x720, 30 fps, sem upscaler, extras desligados). Ligue o
 que quiser em **SETTINGS** (menu principal ou pausa > OPÇÕES) ou no launcher. Para o HD AI Remaster,

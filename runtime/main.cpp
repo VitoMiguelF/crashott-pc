@@ -14,6 +14,7 @@
 //               decrypting the XEX at startup (xex_image/)
 //   --settings-preview <folder>  draws the settings screen to PNG files and exits (settings_menu.h)
 //   --cheats-preview <folder>  draws the cheat menu to PNG files and exits (dev/cheat_menu.h)
+//   --achievements-preview <folder>  draws the achievements' screen and popup to PNG files and exits
 //   --hid-selftest  checks the PlayStation pad report parsing (kernel/hid_pads.h) and exits
 //   --hid-monitor [seconds]  lists the PlayStation pads and prints their input (kernel/hid_pads.h)
 //   --pads-selftest  checks which player each controller gets (local co-op, kernel/pad_slots.h) and exits
@@ -30,6 +31,7 @@
 #include "cpu/guest_thread.h"
 #include "dev/dev_console.h"
 #include "dev/cheat_menu.h"
+#include "achievements/achievements.h"
 #include "diagnostics.h"
 #include "discord/discord_presence.h"
 #include "fs/vfs.h"
@@ -157,6 +159,8 @@ int main(int argc, char** argv)
             return settings::menu::Preview(argv[i + 1]);
         if (strcmp(argv[i], "--cheats-preview") == 0)
             return dev::cheat_menu::Preview(argv[i + 1]);
+        if (strcmp(argv[i], "--achievements-preview") == 0)
+            return achievements::Preview(argv[i + 1]);
         if (strcmp(argv[i], "--prompt-preview") == 0)
             return settings::prompts::Preview(argv[i + 1]);
     }

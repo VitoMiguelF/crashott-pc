@@ -2786,3 +2786,29 @@ Pedido: a barra de luz do DualSense / DualShock 4 na cor do que o jogador contro
 - **DSX / DS4Windows**: a thread de busca de controles procura `dsx.exe`, `dualsensex.exe` e `ds4windows.exe` a cada 6 s; com um deles aberto nada é enviado. Desligar a opção manda uma vez o azul do PlayStation (0x0010C0) e para.
 - **Teste**: `barra_de_luz` (L1_E1): `dev.damage(1000)` derruba o Crash (o `SetCurrentHitpoints(0)` não mata), ele volta, um Espeto nasce (`DO_SpawnEnemy` em NIS_20, longe: teleportar o Crash até lá falha, então o Espeto é teleportado para 2,5 à frente dele, em -z), X o atordoa (`CRASH_DEV_ONE_HIT_TITANS=1`, novo: liga o "titã em 1 golpe" desde o início; `CRASH_DEV_NO_AI=1` idem para a IA parada), B o monta, START pausa. `CRASH_LIGHTBAR_TRACE=1` registra os pontos de vida e as palavras do `CGameDatabase` a cada montaria. Sem controle PlayStation conectado o log mostra os estados mesmo assim.
 - **Conferido** (`barra_de_luz`, PID 107596): `on foot` -> `knocked out` (pontos de vida 0) -> `on foot` -> `titan Spike, light 00FF30`, com `+16` = Crash e `+24` = o titã no log. Um titã montado não morre com `TakeDamage` pelo Lua. O log também mostrou `DSX / DS4Windows running: the light bars are theirs` (o DSX aberto nesta máquina) e nenhum controle conectado. Não visto: a luz num controle de verdade (USB e Bluetooth), a pausa "respirando" e o Android num aparelho.
+
+## Conquistas do Xbox 360 (2026-10-31, branch `achievements`) (`achievements/*`, `kernel/xmsg_imports.cpp`, `kernel/xam_input_imports.cpp`)
+
+- **Onde o jogo desbloqueia**: não há import `XUserWriteAchievements` nem `XamUserCreateAchievementEnumerator`.
+  O `XUserWriteAchievements` da biblioteca do título (`sub_822649A0`) é `XMsgStartIORequest(0xFB, 0x000B0008,
+  overlapped, { count, XUSER_ACHIEVEMENT* }, 8)` (o mesmo número da mensagem XGI no Xenia). Quem chama é o
+  `CObjectiveManager::vf10` (`sub_8220A7A0`), que tira da fila (`this+252`, entradas de 28 bytes: até 3
+  `{ user, id }` + contagem) o que `sub_8220A708(objectives, XUSER_ACHIEVEMENT*, count)` pôs; o objective manager é
+  `sub_821FA440(sub_821FB4F0(), 10)`. Nove pontos do jogo chamam o `sub_8220A708`. O jogo nunca lê as conquistas de
+  volta. A outra mensagem 0xFB que aparece no log (0xB0006, 24 bytes) é o `XUserSetContext`.
+- **SPA**: recurso `565507E4` do cabeçalho 0x000002FF do XEX, 614 921 bytes em 0x82530000 da imagem. XDBF com
+  'XACH' (47 conquistas, registros de 36 bytes), 'XSTC' (idioma padrão 1), tabelas 'XSTR' dos idiomas 1, 3, 4, 5, 6
+  (inglês, alemão, francês, espanhol, italiano) e 52 PNGs. Sete conquistas não têm a flag 0x8 ("mostrar
+  bloqueada"): são secretas e aparecem como "?" até desbloquear.
+- **Universais**: `userdata\achievements.toml`, gravado (arquivo temporário + rename) a cada desbloqueio. Uma
+  repetida não faz nada (o jogo reenvia, como no console).
+- **Som**: o "select" do banco `FE_SFX` pelo tocador do frontend, no hook do `CScriptManager::vf10` (fases) e no
+  das condições do frontend (`sub_820F9BA8`, menus), quando o aviso aparece.
+- **BACK**: nessas telas o runtime tira o BACK do controle do jogo (as dicas do jogo ali só falam de B / A / Y, e o
+  B continua voltando); na gameplay o BACK fica com o jogo (o mapa de entradas da gameplay não tem SELECT, mas não
+  mexemos). O painel do HUB online tem prioridade
+  (`mp::menu::HiddenButtons`). No teclado o Tab é o Y dos menus (`pc_input`), então a tela lê a tecla da ação MAPA
+  direto (`KeyHeld`) no menu principal e na pausa; no HUB só abre por ela se não for uma das teclas fixas dos
+  menus.
+- Testado: `conquistas`, `conquistas_menu`, `conquistas_hub` passam; o `achievement 31` do console vai pela fila
+  do jogo e volta pelo XMsg (`XUserWriteAchievements: user 0, achievement 31`). Build do Android linka.

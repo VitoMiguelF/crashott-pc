@@ -9,6 +9,7 @@
 
 #include "dev_console.h"
 #include "dev_tools.h"
+#include "../achievements/achievements.h"
 #include "../diagnostics.h"
 #include "../gpu/overlay.h"
 #include "../gpu/window.h"
@@ -345,6 +346,17 @@ namespace dev::console
                 "da n de mojo (negativo quita; total de 0 a 2147483647; el HUD se actualiza)",
                 "dà n di mojo (negativo toglie; totale da 0 a 2147483647; l'HUD si aggiorna)",
                 "geeft n mojo (negatief neemt af; totaal van 0 tot 2147483647; de HUD volgt)" } },
+            { "achievement",
+              { "achievement <id> | achievement list", "achievement <id> | achievement list", "achievement <id> | achievement list",
+                "achievement <id> | achievement list", "achievement <id> | achievement list", "achievement <id> | achievement list",
+                "achievement <id> | achievement list" },
+              { "awards an Xbox 360 achievement through the game (as if earned), or lists them with their ids",
+                "concede uma conquista do Xbox 360 pelo próprio jogo (como se ganha), ou lista todas com os ids",
+                "attribue un succès Xbox 360 par le jeu (comme s'il était gagné), ou les liste avec leurs ids",
+                "vergibt einen Xbox-360-Erfolg über das Spiel (wie verdient) oder listet sie mit ihren IDs auf",
+                "otorga un logro de Xbox 360 a través del juego (como si se ganara), o los lista con sus ids",
+                "assegna un obiettivo Xbox 360 tramite il gioco (come se guadagnato), o li elenca con i loro id",
+                "kent een Xbox 360-prestatie toe via het spel (alsof verdiend), of toont ze met hun id's" } },
             { "god", { "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]" },
               { "invincibility (HP doesn't go down; pits still kill)", "invencibilidade (o HP não desce; poços ainda matam)",
                 "invincibilité (les PV ne baissent pas ; les gouffres tuent toujours)", "Unverwundbarkeit (die HP sinken nicht; Abgründe töten trotzdem)",
@@ -717,6 +729,27 @@ namespace dev::console
                     Reply("mojo " + std::string(mojo.added < 0 ? "" : "+") + std::to_string(mojo.added) + " -> " + std::to_string(mojo.total) +
                               (mojo.clamped ? Fill(Tr(T_MOJO_LIMIT), std::to_string(MOJO_MAX)) : ""),
                           Tone::Ok);
+            }
+            else if (command == "achievement")
+            {
+                double id;
+                if (words.size() >= 2 && Lower(words[1]) == "list")
+                {
+                    std::string list = achievements::List(), line;
+                    for (char c : list)
+                    {
+                        if (c != '\n')
+                            line += c;
+                        else
+                            Reply(line, Tone::Normal), line.clear();
+                    }
+                }
+                else if (words.size() < 2 || !ParseNumber(words[1], id) || id < 0 || id > 65535 || id != double(int(id)))
+                    usage("achievement");
+                else if (!achievements::AwardThroughGame(ctx, base, uint32_t(id)))
+                    Reply(Tr(T_NO_GAME), Tone::Error);
+                else
+                    Reply("achievement " + std::to_string(int(id)), Tone::Ok);
             }
             else if (command == "god")
             {

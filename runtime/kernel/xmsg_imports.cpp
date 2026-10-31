@@ -4,10 +4,11 @@
 // was written back, XMPGetStatus left stack garbage in the state (sub_82247818 tests state == 0),
 // and the menu music was decoded but never mixed. Here the music player is always idle and the
 // title has playback control, as on a console with no background music. Message numbers and
-// layouts follow Xenia's xmp_app.cc. Other apps' messages (e.g. XUserSetContext, app 0xFB) still
-// succeed without doing anything.
+// layouts follow Xenia's xmp_app.cc. XUserWriteAchievements (app 0xFB, 0x000B0008) unlocks achievements
+// (achievements/achievements.h); other messages (e.g. XUserSetContext, app 0xFB) succeed without doing anything.
 
 #include "kernel.h"
+#include "../achievements/achievements.h"
 
 #include <atomic>
 
@@ -22,11 +23,16 @@ namespace
     constexpr uint32_t XMP_SET_PLAYBACK_CONTROLLER = 0x0007001A;
     constexpr uint32_t XMP_GET_PLAYBACK_CONTROLLER = 0x0007001B; // { client, u32* controller, u32* locked }
     constexpr uint32_t XMP_STATE_IDLE = 0;
+    // XGI (app 0xFB): XUserWriteAchievements = { u32 count, XUSER_ACHIEVEMENT* } (achievements.h).
+    constexpr uint32_t APP_XGI = 0xFB;
+    constexpr uint32_t XGI_WRITE_ACHIEVEMENTS = 0x000B0008;
 
     std::atomic<uint32_t> g_loggedXmp;
 
     uint32_t DispatchMessage(uint8_t* base, uint32_t app, uint32_t message, uint32_t buffer)
     {
+        if (app == APP_XGI && message == XGI_WRITE_ACHIEVEMENTS)
+            achievements::WriteMessage(buffer);
         if (app != APP_XMP)
             return X_ERROR_SUCCESS;
 
