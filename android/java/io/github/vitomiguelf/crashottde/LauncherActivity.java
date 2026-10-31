@@ -16,10 +16,12 @@ import android.provider.DocumentsContract;
 import android.provider.DocumentsContract.Document;
 import android.util.Log;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -40,9 +42,14 @@ import org.libsdl.app.SDLActivity;
 //
 // The language packs (languages/ of the project, in the APK's assets) are copied into the files
 // folder at each start, as the PC's make_dist.py copies them next to the exe.
+//
+// SKIP LAUNCHER ([launcher] skip in settings.toml): the icon opens the game itself, once it is built;
+// the launcher comes back from the icon's shortcut (res/xml/shortcuts.xml: SHOW_LAUNCHER) or the
+// LAUNCHER button the game shows while it opens (CrashActivity).
 public class LauncherActivity extends SDLActivity {
     private static final String TAG = "CrashLauncher";
     private static final int PICK_GAME = 0x4352;
+    public static final String SHOW_LAUNCHER = "io.github.vitomiguelf.crashottde.SHOW_LAUNCHER";
 
     // Import states and errors (launcher.cpp, Import*): the launcher words the errors, with
     // importDetail (the missing files, the digest, the sizes, the exception).
@@ -62,7 +69,8 @@ public class LauncherActivity extends SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         // The app's icon opens this activity's task, not the game's (CrashActivity, a task of its
         // own): with the game still running in the background, back to it instead of a launcher.
-        if (bringGameToFront()) {
+        boolean asked = getIntent() != null && SHOW_LAUNCHER.equals(getIntent().getAction());
+        if (!asked && bringGameToFront()) {
             super.onCreate(savedInstanceState);
             finishAndRemoveTask();
             return;
@@ -72,7 +80,34 @@ public class LauncherActivity extends SDLActivity {
         } catch (IOException e) {
             Log.w(TAG, "language packs not copied", e);
         }
+        if (!asked && skipLauncher(this) && GameInstaller.installed(this)) {
+            Log.i(TAG, "SKIP LAUNCHER: straight to the game");
+            startActivity(new Intent(this, CrashActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                              .putExtra(CrashActivity.SKIPPED_LAUNCHER, true));
+            super.onCreate(savedInstanceState);
+            finishAndRemoveTask();
+            return;
+        }
         super.onCreate(savedInstanceState);
+    }
+
+    // [launcher] skip = true in userdata/settings.toml (the launcher's SKIP LAUNCHER).
+    static boolean skipLauncher(Context context) {
+        File settings = new File(context.getExternalFilesDir(null), "userdata/settings.toml");
+        boolean launcher = false;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new java.io.FileInputStream(settings), "UTF-8"))) {
+            for (String line; (line = reader.readLine()) != null;) {
+                int comment = line.indexOf('#');
+                line = (comment >= 0 ? line.substring(0, comment) : line).replace(" ", "").replace("\t", "");
+                if (line.startsWith("["))
+                    launcher = line.equals("[launcher]");
+                else if (launcher && line.startsWith("skip="))
+                    return line.equals("skip=true");
+            }
+        } catch (IOException e) {
+            // no settings yet: the launcher
+        }
+        return false;
     }
 
     private boolean bringGameToFront() {
@@ -190,6 +225,14 @@ public class LauncherActivity extends SDLActivity {
     public static long subtitlesDone() { return Subtitles.done(); }
     public static long subtitlesTotal() { return Subtitles.total(); }
     public static String subtitlesError() { return Subtitles.error(); }
+
+    // From native code: UPDATE in the launcher's menu (launcher/updater.inc): Updates.java.
+    public static String updateInstalled() { return Updates.installed(SDL.getContext()); }
+    public static void checkForUpdate() { Updates.check(SDL.getContext(), null); }
+    public static int updateState() { return Updates.state(); }
+    public static String updateLatest() { return Updates.latest(); }
+    public static String updateError() { return Updates.error(); }
+    public static void openUpdate() { Updates.open(SDL.getContext()); }
 
     public static void cancelImport() { importCancel = true; }
     public static int importState() { return importState; }

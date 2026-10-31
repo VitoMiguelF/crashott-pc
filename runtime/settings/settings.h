@@ -32,7 +32,8 @@
 //   [multiplayer] color = "orange" | "red" | ... (the Crash's colour in a session, online/mp_colors.h)
 //   [dev]     console = true|false (the developer console, dev/dev_console.h), hulk_skin =
 //             true|false (the unused Crash_Hulk skin unlocked by the console, dev/dev_skins.cpp)
-//   [launcher] view = "simple" | "advanced" (the launcher's last view; the game ignores it)
+//   [launcher] view = "simple" | "advanced" (the launcher's last view; the game ignores it),
+//             skip = true|false (Android: the app opens the game, not the launcher)
 //
 // Live: master volume, music/effects/voice volume (through the game's own volume categories,
 // audio/game_volumes.h), window mode, V-Sync, frame limit, FPS overlay, anti-aliasing, gamma,
@@ -197,6 +198,8 @@ namespace settings
         // [launcher] view: the launcher opens on its last view, the few main options (simple) or
         // all the tabs (advanced); saved by the launcher as soon as it changes.
         bool launcherAdvanced = false;
+        // [launcher] skip (Android): the app's icon opens the game straight away (LauncherActivity.java).
+        bool launcherSkip = false;
 
         bool operator==(const Values&) const = default;
     };

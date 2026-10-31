@@ -464,6 +464,18 @@ SM-G781B, Snapdragon 865 (SM8250), Adreno 650, Android 13 (API 33), 4 KB pages, 
     Checked on the Tab S10 Ultra (a dump already in place): the toggle on the build's screen,
     the game built, then `english.txt` and `pt-br/subtitles.txt` in 1 s, the launcher again with
     the pt-br pack found.
+  - **SKIP LAUNCHER (2026-10-31, branch launcher-android-ux):** a launcher row (simple view and
+    SETUP), `[launcher] skip` in `settings.toml`. `LauncherActivity.onCreate` reads it (Java, before
+    the launcher's library runs) and, with the game built, starts `CrashActivity` with the extra
+    `skippedLauncher` and leaves. The game then shows a LAUNCHER button for 8 s (a non-focusable
+    Android view over SDL's surface: the controller keeps the game) that opens the launcher with the
+    action `SHOW_LAUNCHER` (it never skips itself on it) and ends the game's process; holding the
+    app's icon offers the same (`res/xml/shortcuts.xml`). Meanwhile `Updates.java` asks GitHub for
+    the latest release on its own thread (no delay to the boot): a newer tag than the APK's
+    (`assets/version.txt`, the newest `v*` tag of the build's commit, written by `android_build.py`)
+    with an `.apk` among its files shows a banner over the game for 20 s, UPDATE (the APK in the
+    browser) / NOT NOW (that version is not offered again in the game). The launcher's UPDATE uses
+    the same check (`updater.inc`'s Android branch, through `LauncherActivity.update*`).
   - **Next on the phone:** the cache step in `android_build.py` (record on the PC, precompile, put it in the APK or push
     it).
   - Seen on the way: when the screen locks during start-up Android takes the surface away and SDL

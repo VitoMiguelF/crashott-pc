@@ -158,6 +158,11 @@ namespace
         std::vector<Item> items;
     };
 
+    // The launcher's own rows, not options of the game (outside options.h's items): ADVANCED, the
+    // simple view's way to all the tabs, and SKIP LAUNCHER (Android: [launcher] skip, the app's
+    // icon opens the game; LauncherActivity.java).
+    constexpr Item ROW_ADVANCED = Item(0x7F00), ROW_SKIP_LAUNCHER = Item(0x7F01);
+
     // ADVANCED: the game's tabs (without its STORAGE row, a note about the main menu's Y; with a
     // heading over the key bindings) and SETUP.
     std::vector<Tab> MakeTabs()
@@ -177,18 +182,23 @@ namespace
             }
             tabs.push_back(std::move(copy));
         }
+#ifdef __ANDROID__
+        tabs.push_back({ { "SETUP", "INSTALAÇÃO" }, { Item::GameFolder, Item::ModsFolder, Item::SavesFolder, Item::ExtraData, ROW_SKIP_LAUNCHER } });
+#else
         tabs.push_back({ { "SETUP", "INSTALAÇÃO" }, { Item::GameFolder, Item::ModsFolder, Item::SavesFolder, Item::ExtraData } });
+#endif
         return tabs;
     }
     const std::vector<Tab> TABS = MakeTabs();
     const int SETUP_TAB = int(TABS.size()) - 1;
     // The simple view (the default): the main options on one page; LIGHTING sets all of the
-    // lighting remaster's at once (opt::LightingPreset).
+    // lighting remaster's at once (opt::LightingPreset). ADVANCED last, a little apart.
 #ifdef __ANDROID__
-    const Tab SIMPLE{ { "OPTIONS", "OPÇÕES" }, { Item::Language, Item::Resolution, Item::Aspect, Item::FpsLimit, Item::Lighting } };  // no HD AI Remaster
+    const Tab SIMPLE{ { "OPTIONS", "OPÇÕES" }, { Item::Language, Item::Resolution, Item::Aspect, Item::FpsLimit, Item::Lighting, ROW_SKIP_LAUNCHER, ROW_ADVANCED } };  // no HD AI Remaster
 #else
-    const Tab SIMPLE{ { "OPTIONS", "OPÇÕES" }, { Item::Language, Item::Resolution, Item::Aspect, Item::FpsLimit, Item::HdRemaster, Item::Lighting } };
+    const Tab SIMPLE{ { "OPTIONS", "OPÇÕES" }, { Item::Language, Item::Resolution, Item::Aspect, Item::FpsLimit, Item::HdRemaster, Item::Lighting, ROW_ADVANCED } };
 #endif
+    constexpr float ADVANCED_GAP = 26.0f;  // the extra room above the ADVANCED row
 
     // State.
     Values g_values, g_saved;
@@ -214,6 +224,16 @@ namespace
     bool g_focusFirstRow = true;    // select the first row of the tab (opening it)
     bool g_scrollToSelected = false;  // scroll the rows to show g_selected (moved by the keys)
     bool g_mouseMode = false;  // the selection follows the mouse until a key or the pad moves it
+    // A finger or the mouse dragging the rows up / down (DrawRows).
+    struct RowDrag
+    {
+        bool down = false, dragging = false;
+        ImVec2 from;
+        float scroll = 0.0f;
+        int* stars = nullptr;  // the stars the press began on, and their value then
+        int starsBefore = 0;
+    } g_rowDrag;
+    constexpr float DRAG_START = 14.0f;  // virtual units of vertical motion before a press becomes a drag
 #ifdef _WIN32
     HWND g_hwnd;
 #else
@@ -501,6 +521,10 @@ namespace
 
     std::string Label(Item item)
     {
+        if (item == ROW_ADVANCED)
+            return T({ "ADVANCED", "AVANÇADO" });
+        if (item == ROW_SKIP_LAUNCHER)
+            return T({ "SKIP LAUNCHER", "PULAR LAUNCHER" });
         return opt::Label(item, Pt());
     }
 
@@ -519,6 +543,10 @@ namespace
     {
         if (IsBinding(item) && g_capturing && item == g_selected)
             return T({ "PRESS A KEY...", "PRESSIONE UMA TECLA..." });
+        if (item == ROW_ADVANCED)
+            return {};
+        if (item == ROW_SKIP_LAUNCHER)
+            return OnOff(g_values.launcherSkip);
         switch (item)
         {
         case Item::Language: return Upper(opt::Value(item, g_values, OptionContext()));
@@ -552,6 +580,12 @@ namespace
             return { T({ "A / Enter / click: choose a key (it takes over the first one).", "A / Enter / clique: escolher a tecla (substitui a primeira)." }),
                      T({ "X / Backspace: back to the default.", "X / Backspace: volta ao padrão." }) };
         }
+        if (item == ROW_ADVANCED)
+            return { T({ "All the tabs: every option of the game, the controls and SETUP.", "Todas as abas: cada opção do jogo, os controles e a INSTALAÇÃO." }),
+                     T({ "Y / F2 also switches the view.", "Y / F2 também troca a vista." }) };
+        if (item == ROW_SKIP_LAUNCHER)
+            return { T({ "ON: the app's icon opens the game straight away.", "LIGADO: o ícone do app abre direto o jogo." }),
+                     T({ "Back here: hold the icon > Launcher, or LAUNCHER as the game opens.", "Para voltar: segure o ícone > Launcher, ou LAUNCHER na abertura." }) };
         switch (item)
         {
         case Item::GameFolder:
@@ -669,7 +703,10 @@ namespace
 
     void Change(Item item, int direction)
     {
-        opt::Change(item, g_values, direction, OptionContext());
+        if (item == ROW_SKIP_LAUNCHER)
+            g_values.launcherSkip = !g_values.launcherSkip;
+        else if (item != ROW_ADVANCED)
+            opt::Change(item, g_values, direction, OptionContext());
     }
 
     // A (Enter, click): change forward, or the row's own action.
@@ -692,7 +729,12 @@ namespace
 #endif
         case Item::ModsFolder: OpenFolder(paths::Mods()); break;
         case Item::SavesFolder: OpenFolder(paths::UserData()); break;
-        default: Change(item, +1); break;
+        default:
+            if (item == ROW_ADVANCED)
+                SetAdvanced(true);
+            else
+                Change(item, +1);
+            break;
         }
     }
 
@@ -1292,6 +1334,9 @@ namespace
         g_capturing = false;
     }
 
+#ifdef __ANDROID__
+#include "android_java.inc"
+#endif
 #ifndef CRASH_INSTALLER
 #include "updater.inc"
 #endif
@@ -1431,13 +1476,35 @@ namespace
         ImDrawList* outer = g_draw;
         g_draw = ImGui::GetWindowDrawList();
         float scroll = ImGui::GetScrollY() / g_view.s;
+        // A finger (or the mouse) dragged up / down over the rows scrolls them; a short tap still
+        // picks the row under it (the rows' buttons act on release, and not after a drag).
+        ImGuiIO& io = ImGui::GetIO();
+        float maxScroll = ImGui::GetScrollMaxY();
+        if (ImGui::IsMouseClicked(0) && g_modal == Modal::None && !g_capturing &&
+            ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
+            g_rowDrag = { true, false, io.MousePos, ImGui::GetScrollY() };
+        else if (g_rowDrag.down && ImGui::IsMouseDown(0))
+        {
+            float dx = io.MousePos.x - g_rowDrag.from.x, dy = io.MousePos.y - g_rowDrag.from.y;
+            if (!g_rowDrag.dragging && maxScroll > 0.0f && std::abs(dy) > DRAG_START * g_view.s && std::abs(dy) > std::abs(dx))
+            {
+                g_rowDrag.dragging = true;
+                if (g_rowDrag.stars)
+                    *g_rowDrag.stars = g_rowDrag.starsBefore;  // the stars the drag began on keep their value
+            }
+            if (g_rowDrag.dragging)
+                ImGui::SetScrollY(std::clamp(g_rowDrag.scroll - dy, 0.0f, maxScroll));
+        }
         bool anyHovered = false;
         Item focused = g_selected;
         bool haveFocus = false;
+        float gap = 0.0f;
         for (size_t i = 0; i < tab.items.size(); i++)
         {
             Item item = tab.items[i];
-            float y = ROWS_T + (ROW_PITCH - ROW_SIZE) * 0.5f + i * ROW_PITCH;  // virtual, before scrolling
+            if (item == ROW_ADVANCED)
+                gap += ADVANCED_GAP;
+            float y = ROWS_T + (ROW_PITCH - ROW_SIZE) * 0.5f + i * ROW_PITCH + gap;  // virtual, before scrolling
             float vy = y - scroll;
             ImGui::SetCursorScreenPos(g_view.P(PANEL_L + 20.0f, vy - (ROW_PITCH - ROW_SIZE) * 0.5f));
             if (IsHeader(item))
@@ -1459,9 +1526,10 @@ namespace
                 g_selected = item;
                 g_scrollToSelected = true;
             }
-            bool pressed = ImGui::InvisibleButton("row", ImVec2((PANEL_R - PANEL_L - 40.0f) * g_view.s, ROW_PITCH * g_view.s));
+            bool pressed = ImGui::InvisibleButton("row", ImVec2((PANEL_R - PANEL_L - 40.0f) * g_view.s, ROW_PITCH * g_view.s)) && !g_rowDrag.dragging;
             bool hovered = ImGui::IsItemHovered();
             bool active = ImGui::IsItemActive();
+            bool activated = ImGui::IsItemActivated();
             if (g_scrollToSelected && item == g_selected)
             {
                 ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeY);
@@ -1473,6 +1541,17 @@ namespace
                 focused = item, haveFocus = true;
             anyHovered |= hovered;
             bool selected = item == g_selected && selectable;
+            if (item == ROW_ADVANCED)
+            {
+                // A button centred under the options: (Y) ADVANCED.
+                std::string text = Label(item);
+                float iconSize = ROW_SIZE * 1.05f, w = TextWidth(1, IconText(ma::ICON_Y), iconSize) + 8.0f + TextWidth(1, text, ROW_SIZE);
+                float x = Icon(ma::ICON_Y, (PANEL_L + PANEL_R) * 0.5f - w * 0.5f, vy - 1.0f, iconSize) + 8.0f;
+                Draw(1, text, x, vy, ROW_SIZE, selected ? SELECTED : TITLE);
+                if (pressed)
+                    Activate(item);
+                continue;
+            }
 
             const Style& style = !selectable ? INFO : selected ? SELECTED : NORMAL;
             Draw(0, Label(item), LABEL_RIGHT, vy, ROW_SIZE, style, 1.0f, LABEL_RIGHT - LABEL_LEFT);
@@ -1486,7 +1565,9 @@ namespace
                 Draw(0, Value(item), VALUE_R, vy, ROW_SIZE - 4.0f, style, 1.0f);
                 float starsR = VALUE_X + STARS * STAR_PITCH;
                 // Click / drag on the stars sets the value; keyboard / pad A steps it.
-                if (active && ImGui::IsMouseDown(0) && mx >= VALUE_X - 10.0f && mx <= starsR + 10.0f)
+                if (activated)
+                    g_rowDrag.stars = percent, g_rowDrag.starsBefore = *percent;
+                if (active && ImGui::IsMouseDown(0) && !g_rowDrag.dragging && mx >= VALUE_X - 10.0f && mx <= starsR + 10.0f)
                 {
                     float t = std::clamp((mx - VALUE_X) / (starsR - VALUE_X), 0.0f, 1.0f);
                     *percent = std::clamp(minimum + int(std::lround(t * (maximum - minimum) / step)) * step, minimum, maximum);
@@ -1522,6 +1603,17 @@ namespace
         if (!g_capturing && haveFocus)
             g_selected = focused;
         (void)anyHovered;
+        if (!ImGui::IsMouseDown(0))
+            g_rowDrag = {};
+        // A scroll bar when the rows don't fit: there is more below (or above).
+        if (maxScroll > 0.0f)
+        {
+            float top = ROWS_T + 6.0f, bottom = ROWS_B - 6.0f, x0 = PANEL_R - 52.0f, x1 = x0 + 7.0f;
+            float shown = (ROWS_B - ROWS_T) / ((ROWS_B - ROWS_T) + maxScroll / g_view.s);
+            float h = std::max(36.0f, (bottom - top) * shown), t = top + (bottom - top - h) * std::clamp(ImGui::GetScrollY() / maxScroll, 0.0f, 1.0f);
+            g_draw->AddRectFilled(g_view.P(x0, top), g_view.P(x1, bottom), IM_COL32(236, 222, 190, 45), 3.5f * g_view.s);
+            g_draw->AddRectFilled(g_view.P(x0, t), g_view.P(x1, t + h), g_rowDrag.dragging ? SELECTED.fill : NORMAL.fill, 3.5f * g_view.s);
+        }
         ImGui::EndChild();
         g_draw = outer;
     }
@@ -1542,21 +1634,25 @@ namespace
             Draw(0, line1, cx, HELP_Y, HELP_SIZE, HELP, 0.5f, maxW);
         Draw(0, line2, cx, HELP_Y + HELP_SIZE + 4.0f, HELP_SIZE, HELP, 0.5f, maxW);
 
-        // (Y) ADVANCED / SIMPLE in the corner (Y or F2, or a click), and centred in the room left of
-        // it: (A) CHANGE  LB RB TABS (advanced)  START PLAY  (B) EXIT.
+        // (Y) SIMPLE in the corner of the advanced view (Y or F2, or a click), and centred in the room
+        // left of it: (A) CHANGE  LB RB TABS (advanced)  START PLAY  (B) EXIT.
         float iconSize = FOOTER_SIZE * 1.05f;
-        std::string view = Advanced() ? T({ "SIMPLE", "SIMPLES" }) : T({ "ADVANCED", "AVANÇADO" });
-        float viewR = PANEL_R - 6.0f;
-        float viewL = viewR - TextWidth(1, IconText(ma::ICON_Y), iconSize) - 6.0f - TextWidth(0, view, FOOTER_SIZE);
-        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
-        ImGui::SetCursorScreenPos(g_view.P(viewL - 12.0f, FOOTER_Y - 8.0f));
-        bool toggle = ImGui::InvisibleButton("view", ImVec2((viewR - viewL + 24.0f) * g_view.s, (FOOTER_SIZE + 16.0f) * g_view.s));
-        bool hovered = ImGui::IsItemHovered() && g_modal == Modal::None;
-        ImGui::PopItemFlag();
-        float vx = Icon(ma::ICON_Y, viewL, FOOTER_Y, iconSize) + 6.0f;
-        Draw(0, view, vx, FOOTER_Y + 1.0f, FOOTER_SIZE, hovered ? MENU_SELECTED : TITLE);
-        if (toggle && g_modal == Modal::None)
-            SetAdvanced(!Advanced());
+        float viewL = PANEL_R + 30.0f;  // the simple view has no corner button: its last row is ADVANCED
+        if (Advanced())
+        {
+            std::string view = T({ "SIMPLE", "SIMPLES" });
+            float viewR = PANEL_R - 6.0f;
+            viewL = viewR - TextWidth(1, IconText(ma::ICON_Y), iconSize) - 6.0f - TextWidth(0, view, FOOTER_SIZE);
+            ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+            ImGui::SetCursorScreenPos(g_view.P(viewL - 12.0f, FOOTER_Y - 8.0f));
+            bool toggle = ImGui::InvisibleButton("view", ImVec2((viewR - viewL + 24.0f) * g_view.s, (FOOTER_SIZE + 16.0f) * g_view.s));
+            bool hovered = ImGui::IsItemHovered() && g_modal == Modal::None;
+            ImGui::PopItemFlag();
+            float vx = Icon(ma::ICON_Y, viewL, FOOTER_Y, iconSize) + 6.0f;
+            Draw(0, view, vx, FOOTER_Y + 1.0f, FOOTER_SIZE, hovered ? MENU_SELECTED : TITLE);
+            if (toggle && g_modal == Modal::None)
+                SetAdvanced(false);
+        }
 
         struct Hint { char32_t icon; Text text; };
         std::vector<Hint> hints = { { ma::ICON_A, { "CHANGE", "MUDAR" } } };

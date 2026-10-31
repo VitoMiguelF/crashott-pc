@@ -104,6 +104,15 @@ converts old F5 recordings to the direct boot.
 - Launcher: simple view by default (`[launcher] view = "simple" | "advanced"`, written at once by
   `SetAdvanced` from the saved values, so other edits stay unsaved); its own UP/DOWN and A/Enter handling,
   not ImGui nav (nav lost its focused item, NavId 0, when the window opened behind another one).
+  ADVANCED is the simple view's last row (`ROW_ADVANCED`, a launcher-only `Item` value outside
+  options.h, with `ADVANCED_GAP` above it); SIMPLE stays in the advanced view's corner. Android adds
+  `ROW_SKIP_LAUNCHER` (`[launcher] skip`, see android_port.md).
+- Touch scrolling: the launcher's rows (an ImGui child) scroll by a vertical drag (`g_rowDrag`, 14 virtual
+  px before it counts; the row buttons act on release and not after a drag; stars a drag began on get
+  their value back) and draw a scroll bar when `GetScrollMaxY() > 0`. The game's SETTINGS
+  (`settings_menu.cpp`): on a tab longer than `MAX_ROWS` a press on a row waits for the release
+  (`g_press`); a drag moves `g_first` and keeps the selection among the rows shown (the drawing scrolls
+  to the selection otherwise); a scroll bar right of the panel.
 - `graphics.hd_textures` has no row anywhere (default on); `gpu/hd_textures.cpp` always uses the HD AI
   Remaster mod's pack when `graphics.hd_remaster` is on.
 

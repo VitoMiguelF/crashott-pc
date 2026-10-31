@@ -40,6 +40,8 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Holding the icon: Launcher (SKIP LAUNCHER opens the game itself). -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
         <!-- The game, started by the launcher's PLAY. A task affinity of its own: in the recent
              apps beside the launcher's (the same affinity would drop one of them from the list),
