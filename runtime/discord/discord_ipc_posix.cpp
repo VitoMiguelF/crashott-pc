@@ -13,6 +13,7 @@ namespace discord::ipc
     bool Write(const void*, size_t) { return false; }
     long Available() { return -1; }
     bool Read(void*, size_t) { return false; }
+    void RegisterLaunch(const std::string&) {}
 }
 
 #else
@@ -116,6 +117,9 @@ namespace discord::ipc
         }
         return available;
     }
+
+    // Not on Linux yet (a .desktop entry with the x-scheme-handler and xdg-mime): joining works with the game open.
+    void RegisterLaunch(const std::string&) {}
 
     bool Read(void* data, size_t size)
     {

@@ -197,7 +197,7 @@ if (WIN32)
     enable_language(RC)  # launcher.rc: the icon (launcher/crashrecomp.png -> .ico, tools/make_icon.py)
     target_sources(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/launcher/launcher.rc)
     target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage ${CRASH_XAUDIO2_LIB} winmm version ole32
-        hid setupapi windowscodecs ws2_32 iphlpapi)
+        hid setupapi windowscodecs ws2_32 iphlpapi advapi32)
 elseif (ANDROID)
     target_link_libraries(CrashRecomp PRIVATE CrashPPC XexImage SDL3::SDL3-shared Threads::Threads log android ${CMAKE_DL_LIBS})
     target_include_directories(CrashRecomp PRIVATE ${CMAKE_SOURCE_DIR}/thirdparty/stb)

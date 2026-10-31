@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -142,6 +143,12 @@ namespace mp::menu
         std::atomic<bool> g_hostReachedHub{ false };  // host: back at the main menu after it, the session closes
         std::atomic<bool> g_resumeLobby{ false };  // at the main menu: open the lobby again
         std::atomic<bool> g_resumeOpen{ false };   // the SETTINGS marker opens it at the lobby
+        // A Discord invite (JoinInvite): waiting for the main menu, then the screens open joining its code.
+        constexpr uint64_t INVITE_SETTLE_MS = 2000;  // player 1 needs a moment in a menu (settings/direct_boot.cpp)
+        std::mutex g_inviteMutex;
+        std::string g_inviteCode;
+        std::atomic<bool> g_invitePending{ false }, g_inviteOpen{ false };
+        std::atomic<uint64_t> g_mainMenuSince{ 0 };
         // SKIN AND COLOR: asked (the next frontend condition takes the skin screen), showing (from the host's
         // HUB or a client's wait), its colour box drawn; the host's lobby again at the HUB after it.
         std::atomic<bool> g_pickerRequest{ false }, g_picker{ false }, g_pickerShown{ false }, g_reopenLobby{ false };
@@ -1517,14 +1524,24 @@ namespace mp::menu
                 // The saved name, for the session; the first time (none saved, no CRASH_MP_NAME) the
                 // name screen comes first.
                 lobby::SetLocalName(settings::Get().mpName);
+                std::string invite;
+                if (g_inviteOpen.exchange(false))
+                {
+                    std::lock_guard lock(g_inviteMutex);
+                    invite = g_inviteCode;
+                }
                 if (resume)
                     Go(Screen::Waiting);
+                else if (!invite.empty())
+                    BeginField(Screen::Code, invite);  // FIND GAME > ENTER CODE, typed for the player
                 else if (NameAsked())
                     Go(Screen::Root, ROOT_HOST);
                 else
                     BeginField(Screen::Name, lobby::LocalName());
                 Open();
-                Log("[mp] menu opened%s", resume ? " at the lobby (back from the host's level)" : "");
+                Log("[mp] menu opened%s", resume ? " at the lobby (back from the host's level)" : !invite.empty() ? " for a Discord invite" : "");
+                if (!invite.empty())
+                    Join(g_field, "");
             }
             if (!g_open && g_levelMenuRequested.exchange(false))
             {
@@ -1675,6 +1692,16 @@ namespace mp::menu
 
     bool ReopensLobby() { return g_resumeOpen; }
 
+    void JoinInvite(const std::string& code)
+    {
+        {
+            std::lock_guard lock(g_inviteMutex);
+            g_inviteCode = code;
+        }
+        g_invitePending = true;
+        Log("[mp] Discord invite to %s: joined from the main menu", code.c_str());
+    }
+
     bool BlocksGameInput()
     {
         return g_open || g_releasing || g_requested;
@@ -1713,6 +1740,19 @@ namespace mp::menu
         }
         if (node == NODE_MAIN_MENU)
             g_forceExit = -1;
+        // A Discord invite: the screens over the options screen, as from the MULTIPLAYER item, once the main menu
+        // has had the time to make the controller that pressed START player 1.
+        if (node == NODE_MAIN_MENU && previous != NODE_MAIN_MENU)
+            g_mainMenuSince = plat::TickCountMs();
+        if (node == NODE_MAIN_MENU && exit < 0 && g_invitePending && !g_open && !g_requested &&
+            plat::TickCountMs() - g_mainMenuSince >= INVITE_SETTLE_MS)
+        {
+            g_invitePending = false;
+            g_inviteOpen = true;
+            g_resumeOpen = true;  // the SETTINGS marker opens these screens (Update: not at the lobby, no session)
+            Log("[mp] menu: Discord invite: MULTIPLAYER (exit %d)", EXIT_SETTINGS);
+            return EXIT_SETTINGS;
+        }
         // A hosted new game: from its last screen to the HUB instead of the first level.
         if (node == NODE_NEW_GAME_FADE && exit == EXIT_FIRST_LEVEL && g_hostNewGame.exchange(false) && state == lobby::State::Hosting)
         {
