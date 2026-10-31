@@ -207,6 +207,17 @@ namespace settings
                 ok = ParsePercent(value, values.effectsVolume);
             else if (name == "audio.voice")
                 ok = ParsePercent(value, values.voiceVolume);
+            else if (name == "audio.output")
+            {
+                if (lower == "stereo")
+                    values.audioOutput = AudioOutput::Stereo;
+                else if (lower == "5.1" || lower == "surround")
+                    values.audioOutput = AudioOutput::Surround51;
+                else if (lower == "7.1")
+                    values.audioOutput = AudioOutput::Surround71;
+                else
+                    ok = false;
+            }
             else if (name == "video.window")
             {
                 if (lower == "windowed")
@@ -484,7 +495,8 @@ namespace settings
                    "master = " << v.masterVolume << "     # 0-100, vale na hora\n"
                    "music = " << v.musicVolume << "      # 0-100, musica (vale na hora)\n"
                    "effects = " << v.effectsVolume << "    # 0-100, efeitos e ambiente (vale na hora)\n"
-                   "voice = " << v.voiceVolume << "      # 0-100, dialogos (vale na hora)\n\n"
+                   "voice = " << v.voiceVolume << "      # 0-100, dialogos (vale na hora)\n"
+                   "output = \"" << AudioOutputName(v.audioOutput) << "\"   # stereo | 5.1 | 7.1: surround em PCM multicanal (receiver HDMI, TV com eARC; estereo se o dispositivo nao tiver as caixas), vale na hora\n\n"
                    "[video]\n"
                    "window = \"" << WindowModeName(v.window) << "\"   # windowed | borderless | fullscreen\n"
                    "vsync = " << (v.vsync ? "true" : "false") << "\n"
@@ -671,6 +683,16 @@ namespace settings
         }
     }
 
+    const char* AudioOutputName(AudioOutput output)
+    {
+        switch (output)
+        {
+        case AudioOutput::Surround51: return "5.1";
+        case AudioOutput::Surround71: return "7.1";
+        default: return "stereo";
+        }
+    }
+
     const char* AoQualityName(AoQuality quality)
     {
         switch (quality)
@@ -835,6 +857,7 @@ namespace settings
             values.textureDump ? "on" : "off", values.hdRemaster ? "on" : "off");
         Log("[settings] lighting: ssao %s, gi %s (%d%%), contact shadows %s, soft shadows %s", AoQualityName(values.ssao), values.gi ? "on" : "off",
             values.giIntensity, values.contactShadows ? "on" : "off", values.softShadows ? "on" : "off");
+        Log("[settings] audio output: %s", AudioOutputName(values.audioOutput));
     }
 
     std::string ReadGameFolder(const std::filesystem::path& userDataDir)
@@ -936,6 +959,12 @@ namespace settings
     {
         std::lock_guard lock(g_mutex);
         return float(g_values.masterVolume) / 100.0f;
+    }
+
+    AudioOutput AudioOutputMode()
+    {
+        std::lock_guard lock(g_mutex);
+        return g_values.audioOutput;
     }
 
     const Language& StartupLanguage()

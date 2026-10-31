@@ -659,7 +659,7 @@ Variáveis de ambiente novas:
 | Variável | Efeito |
 |---|---|
 | `CRASH_NOAUDIO=1` | Não abre dispositivo de áudio (para testes automáticos). O relógio fica em tempo real e a decodificação XMA continua |
-| `CRASH_AUDIO_DUMP=<arquivo.wav>` | Grava a mixagem final (estéreo, 16 bits, 48 kHz), por no máximo `CRASH_AUDIO_DUMP_SECONDS` segundos (padrão 60) |
+| `CRASH_AUDIO_DUMP=<arquivo.wav>` | Grava a mixagem final (16 bits, 48 kHz; estéreo, ou 6 / 8 canais com `audio.output` 5.1 / 7.1, veja "Áudio surround"), por no máximo `CRASH_AUDIO_DUMP_SECONDS` segundos (padrão 60). `tools/audio_channels.py` mede cada canal |
 | `CRASH_XMA_DUMP=<pasta>` | Grava cada stream XMA decodificado (`xma_<contexto>_<n>.wav`, na taxa e no número de canais do stream) |
 | `CRASH_XMA_TRACE=1` | Loga cada buffer de entrada enviado a um contexto, com os cabeçalhos dos primeiros pacotes (passo 20) |
 
@@ -2437,6 +2437,50 @@ Pedido: cores mais parecidas com as do PS2, com GAMMA (50-150%) e SATURAÇÃO (0
   `--settings-preview` com `gamma = 130` e `saturation = 250` carrega `gamma 130%, saturation 200%` sem linha
   de erro; o `PRESENT_PS` compila com o DXC do Vulkan SDK (`-spirv`, as opções de `rhi_vulkan_shaders.cpp`) e o
   `spirv-reflect` mostra o cbuffer de 48 bytes.
+
+## Áudio surround e TESTAR ÁUDIO (2026-10-31, branch `audio-surround`) (`audio/audio_output.*`, `audio/audio_device*`, `settings/*`, perfil `audio_surround`)
+
+Pedido: SAÍDA DE SOM na aba ÁUDIO (ESTÉREO / SURROUND 5.1 / SURROUND 7.1, `[audio] output = "stereo" | "5.1" |
+"7.1"`, na hora) e um TESTAR ÁUDIO que toca em cada caixa.
+
+- **O que o jogo entrega**: o driver de render recebe sempre 6 canais planares (FL FR C LFE SL SR), a mixagem
+  inteira do jogo, inclusive o áudio dos vídeos Bink 5.1 (o player Bink do jogo usa o mesmo XAudio). Medido com
+  o dump de 6 canais (`tools/audio_channels.py`): na abertura e no attract (perfil `boot`, 60 s) os 6 canais têm
+  som, C de -20 a -50 dB, LFE ~-16 a -30 dB, surrounds -20 a -45 dB, correlação SL/FL 0,13 e SR/FR 0,18 (não são
+  cópia das frentes); a música do menu é estéreo (só FL/FR). O jogo não precisou de nada: com as flags de áudio
+  do XConfig em 0 ele já mistura em 5.1.
+- **ESTÉREO**: o downmix de antes (ITU, LFE descartado). **5.1**: os 6 canais direto. **7.1**: 8 canais
+  (FL FR C LFE BL BR SL SR), cada surround nas caixas laterais e traseiras a -3 dB (a mesma potência do 5.1).
+- **XAudio2** (`audio_device_win32.cpp`): a mastering voice fica no layout do dispositivo (o que o Windows diz
+  em Som > dispositivo > configuração dos alto-falantes; um receiver HDMI ou TV com eARC configurado como 5.1 /
+  7.1 recebe LPCM multicanal). A source voice usa `WAVEFORMATEXTENSIBLE` float com a máscara do stream, e o
+  `SetOutputMatrix` liga cada canal à caixa de mesma posição pela máscara do dispositivo (no 5.1, o par
+  surround vai para as laterais se houver, senão para as traseiras). Sem FL FR C LFE + um par surround: estéreo,
+  com `[audio] the device has no 5.1 speakers (... mask ...): stereo output`; 7.1 num dispositivo 5.1 cai para
+  5.1. O MinGW não tem a lib do `KSDATAFORMAT_SUBTYPE_IEEE_FLOAT`: o GUID é local.
+- **SDL3** (Linux e Android, `audio_device_sdl.cpp`): abre 6 / 8 canais só se `SDL_GetAudioDeviceFormat` do
+  dispositivo padrão disser que ele tem tantos (a ordem do SDL para 6 e 8 bate por posição); senão estéreo,
+  com a mesma linha no log.
+- **Ao vivo**: a thread do relógio de áudio compara `settings::AudioOutputMode()` a cada quadro de áudio e, se
+  mudou, fecha (`device::Close`) e reabre o dispositivo sob o lock do submit. O valor da linha mostra
+  "(DISPOSITIVO ESTÉREO)" / "(DISPOSITIVO 5.1)" quando o dispositivo tem menos caixas (`audio::OutputChannels`,
+  0 até o dispositivo ser reaberto no layout novo, para não mostrar o do anterior).
+- **TESTAR ÁUDIO**: A (ou setas, ou clique) chama `audio::StartChannelTest`; o próximo quadro zera a mixagem
+  do jogo e toca 1 s por caixa (0,75 s de ruído rosa a -14 dB RMS com rampas de 20 ms; no LFE, 50 Hz) na
+  ordem FL, C, FR, SR, (BR, BL,) SL, LFE, no layout que o dispositivo tocava ao começar. A linha mostra a caixa
+  (`audio::TestedSpeaker`); a tela se redesenha quando ela muda. Não existe no launcher (não tem a saída do
+  jogo).
+- **Dump**: `CRASH_AUDIO_DUMP` grava no layout do `audio.output` do início (2, 6 ou 8 canais, PCM 16 bits),
+  independente do dispositivo; o teste entra no dump quando o layout é o mesmo do dispositivo (sem
+  dispositivo, `audio = false`, o teste toca no layout do dump).
+- **Testes** (2026-10-31, PC): perfil novo `audio_surround` (5.1 por `CRASH_SETTINGS`, sem dispositivo): o dump
+  tem 6 canais e o teste aparece um canal por segundo (FL 16 s, C 16,5, FR 17,5, SR 18,5, SL 19,5, LFE 20,5);
+  também em PT-BR. `boot` com 5.1 e dump (acima). Com o dispositivo deste PC (XAudio2, 8 canais, máscara
+  0x63F): ESTÉREO -> 5.1 -> 7.1 ao vivo, cada um reabre (`stream 5.1/7.1 float`), teste em 7.1, `output =
+  "7.1"` salvo. **Não testado**: a queda para estéreo num dispositivo estéreo de verdade (o caminho só olha a
+  máscara), Linux e Android num aparelho (compilam; o SDL decide pelo número de canais do dispositivo).
+- O menu principal ganhou MULTIPLAYER (SETTINGS é a 5ª linha): o `audio_surround` desce 4 vezes; os perfis
+  antigos que descem 3 (`configuracoes*`, `compilacao_shaders_tela`...) caem em CREDITS no main atual.
 
 ## Multijogador online (protótipo, 2026-10-28, branch `online-coop`) (`online/*`, perfis `mp_*`)
 

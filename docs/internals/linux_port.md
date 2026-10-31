@@ -49,7 +49,7 @@ and `menu` profiles pass at 30 fps and with no frame limit.
 | `runtime/kernel/xinput_types.h`, `runtime/gpu/dxgi_format.h` | The XInput structures and the DXGI_FORMAT values, without the Windows headers |
 | `runtime/gpu/window.h` | The game window (Win32 or SDL3), its Vulkan surface, focus, clipboard, scripted keys |
 | `runtime/kernel/xinput_backend.h` | The "Xbox" pads (XInput or SDL_Gamepad) |
-| `runtime/audio/audio_device.h` | The stereo float output (XAudio2 or SDL_AudioStream) |
+| `runtime/audio/audio_device.h` | The float output, stereo / 5.1 / 7.1 (XAudio2 or SDL_AudioStream) |
 | `runtime/diagnostics_host.h` | Crash handler, host address names, watchdog thread sampling |
 
 CMake picks the files by suffix: `*_win32.cpp` on Windows, `*_posix.cpp` and `*_sdl.cpp`

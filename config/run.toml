@@ -120,6 +120,27 @@ audio_dump_seconds = 25
 input = [["@main_menu"], [2, "SHOT"], [10, "SHOT"]]
 expect = { exit = ["timeout"], events = ["main_menu"], log_absent = ['\[fatal\]', '\[crash\]'] }
 
+[profiles.audio_surround]
+description = "SAÍDA DE SOM em 5.1 (CRASH_SETTINGS): o dump grava 6 canais no menu; SETTINGS > ÁUDIO > TESTAR ÁUDIO toca uma caixa por vez"
+fps_limit = 60
+test = true
+timeout = 30
+audio = false
+userdata_mode = "copy"
+skip_intros = true
+audio_dump = true
+audio_dump_seconds = 30
+env = { CRASH_SETTINGS = "audio.output=5.1" }
+# DOWN x4, A = SETTINGS (com MULTIPLAYER no menu); RB = ÁUDIO; DOWN x5 = TESTAR ÁUDIO (6ª linha); A = toca FL, C,
+# FR, SR, SL, LFE (1 s cada). Sem dispositivo (audio = false) o teste toca no layout do dump. Canais do dump: python tools\audio_channels.py build\runs\<execução>\audio.wav
+input = [
+    ["@main_menu"],
+    [1.5, "DOWN"], [2, "DOWN"], [2.5, "DOWN"], [3, "DOWN"], [4, "A"],
+    [7, "RB"], [7.6, "DOWN"], [7.9, "DOWN"], [8.2, "DOWN"], [8.5, "DOWN"], [8.8, "DOWN"],
+    [9.4, "SHOT"], [10, "A"], [12.2, "SHOT"],
+]
+expect = { exit = ["timeout"], events = ["main_menu"], log_absent = ['\[fatal\]', '\[crash\]'], log_contains = ['\[audio\] writing the 5\.1 mix', '\[settings\] audio test', '\[audio\] audio test: 5\.1', '\[audio\] audio test done'] }
+
 [profiles.menu_loaded]
 description = "LOAD GAME no primeiro slot até o menu do episódio (boot load:1:hub, pelas saídas do próprio frontend)"
 fps_limit = 60

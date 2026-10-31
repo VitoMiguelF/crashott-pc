@@ -3,6 +3,7 @@
 #include "options.h"
 #include "settings.h"
 #include "menu_art.h"
+#include "../audio/audio_output.h"
 #include "../audio/game_volumes.h"
 #include "../diagnostics.h"
 #include "../gpu/gpu.h"
@@ -248,6 +249,8 @@ namespace settings::menu
             context.dlss = gpu::upscaler::Available(Upscaler::Dlss);
             context.fsr = gpu::upscaler::Available(Upscaler::Fsr);
             context.haveSubtitles = subtitles::SoundCount() > 0;
+            context.outputChannels = int(audio::OutputChannels());
+            context.testSpeaker = audio::TestedSpeaker();
             return context;
         }
 
@@ -716,6 +719,12 @@ namespace settings::menu
                 size_t index = size_t(std::find(keys.begin(), keys.end(), chosen) - keys.begin());
                 chosen = keys[(index + keys.size() + direction) % keys.size()];
             }
+            else if (item == Item::AudioTest)
+            {
+                audio::StartChannelTest();
+                Log("[settings] audio test");
+                return;
+            }
             else if (!options::Change(item, g_values, direction, OptionContext()))
                 return;
             if (!(g_values == before))
@@ -1040,8 +1049,13 @@ namespace settings::menu
             }
 
             uint16_t pressed = Pressed(buttons) | Mouse();
-            if (pressed)
+            // The AUDIO TEST row shows the speaker playing; SPEAKERS, what the device took.
+            static int testSpeaker = -1;
+            static uint32_t outputChannels = 0;
+            if (pressed || audio::TestedSpeaker() != testSpeaker || audio::OutputChannels() != outputChannels)
                 g_dirty = true;
+            testSpeaker = audio::TestedSpeaker();
+            outputChannels = audio::OutputChannels();
 
             if (g_restartAt)
             {

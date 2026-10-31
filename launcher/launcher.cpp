@@ -163,7 +163,7 @@ namespace
     // icon opens the game; LauncherActivity.java).
     constexpr Item ROW_ADVANCED = Item(0x7F00), ROW_SKIP_LAUNCHER = Item(0x7F01);
 
-    // ADVANCED: the game's tabs (without its STORAGE row, a note about the main menu's Y; with a
+    // ADVANCED: the game's tabs (without its STORAGE row, a note about the main menu's Y, nor AUDIO TEST; with a
     // heading over the key bindings) and SETUP.
     std::vector<Tab> MakeTabs()
     {
@@ -174,7 +174,7 @@ namespace
             Tab copy{ tab.name, {} };
             for (Item item : tab.items)
             {
-                if (item == Item::Storage)
+                if (item == Item::Storage || item == Item::AudioTest)  // AUDIO TEST plays through the game's output
                     continue;
                 if (IsBinding(item) && (copy.items.empty() || !IsBinding(copy.items.back())))
                     copy.items.push_back(Item::HeaderKeys);
