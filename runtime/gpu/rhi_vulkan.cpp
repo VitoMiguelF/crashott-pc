@@ -394,7 +394,16 @@ namespace gpu::rhi
             bool Resize(uint32_t width, uint32_t height) override;
             Texture* BeginPresent() override;
             void Present(bool vsync) override;
-            void UpdateFullscreen(bool, bool) override {}  // the borderless window is the fullscreen
+            // The borderless window is the fullscreen too; FULLSCREEN only lets the driver make it
+            // exclusive (VK_EXT_full_screen_exclusive), BORDERLESS and WINDOWED forbid it.
+            void UpdateFullscreen(bool wanted, bool) override
+            {
+                if (m_fullScreenExclusive && wanted != m_exclusiveAllowed)
+                {
+                    m_exclusiveAllowed = wanted;
+                    m_swapchainDirty = true;
+                }
+            }
             void LeaveFullscreen() override {}
             bool ReadBack(Texture* texture, std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) override;
             void Probe(Texture* texture, const std::string& tag) override;
@@ -572,6 +581,9 @@ namespace gpu::rhi
             uint32_t m_suboptimalStreak = 0;  // frames in a row with VK_SUBOPTIMAL_KHR (NoteSuboptimal)
             bool m_frameSuboptimal = false;
             bool m_vsync = false;
+            bool m_surfaceCapabilities2 = false;  // instance: VK_KHR_get_surface_capabilities2 (Windows)
+            bool m_fullScreenExclusive = false;   // device: VK_EXT_full_screen_exclusive (Windows)
+            bool m_exclusiveAllowed = false;      // video.window = fullscreen (UpdateFullscreen)
             VkPresentModeKHR m_presentMode = VK_PRESENT_MODE_FIFO_KHR;
             std::vector<VkPresentModeKHR> m_presentModes;
 
@@ -815,6 +827,13 @@ namespace gpu::rhi
                 if (has(VK_EXT_DEBUG_UTILS_EXTENSION_NAME))
                     extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
             }
+#ifdef _WIN32
+            // VK_EXT_full_screen_exclusive needs it: without that extension the drivers may make a
+            // window covering the monitor exclusive fullscreen, borderless or not.
+            m_surfaceCapabilities2 = has(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+            if (m_surfaceCapabilities2)
+                extensions.push_back(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+#endif
             for (const std::string& name : m_extraInstanceExtensions)
                 if (has(name.c_str()) && std::none_of(extensions.begin(), extensions.end(), [&](const char* e) { return name == e; }))
                     extensions.push_back(name.c_str());
@@ -915,6 +934,9 @@ namespace gpu::rhi
                     m_depthBiasControl = has(VK_EXT_DEPTH_BIAS_CONTROL_EXTENSION_NAME);
                     m_maintenance5 = has(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
                     m_memoryBudget = has(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+#ifdef _WIN32
+                    m_fullScreenExclusive = m_surfaceCapabilities2 && has(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME);
+#endif
                     m_gplExtension = has(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME) && has(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
                     m_pushDescriptors = has(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
                     m_blockCompression = true;
@@ -1144,6 +1166,10 @@ namespace gpu::rhi
 
             if (m_memoryBudget)
                 extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);  // the heaps' use in LogStats
+#ifdef _WIN32
+            if (m_fullScreenExclusive)
+                extensions.push_back(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME);
+#endif
 
             float priority = 1.0f;
             VkDeviceQueueCreateInfo queue{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
@@ -1252,6 +1278,15 @@ namespace gpu::rhi
             create.presentMode = m_presentMode;
             create.clipped = VK_TRUE;
             create.oldSwapchain = m_swapchain;
+#ifdef _WIN32
+            VkSurfaceFullScreenExclusiveInfoEXT exclusive{ VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT };
+            if (m_fullScreenExclusive)
+            {
+                exclusive.fullScreenExclusive = m_exclusiveAllowed ? VK_FULL_SCREEN_EXCLUSIVE_ALLOWED_EXT : VK_FULL_SCREEN_EXCLUSIVE_DISALLOWED_EXT;
+                create.pNext = &exclusive;
+                Log("[vulkan] swap chain: exclusive fullscreen %s", m_exclusiveAllowed ? "allowed" : "disallowed");
+            }
+#endif
             VkSwapchainKHR swapchain = VK_NULL_HANDLE;
             if (!Check(vkCreateSwapchainKHR(m_device, &create, nullptr, &swapchain), "vkCreateSwapchainKHR"))
                 return false;
