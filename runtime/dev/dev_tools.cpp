@@ -32,6 +32,7 @@
 
 #include "dev_tools.h"
 #include "dev_console.h"
+#include "cheat_menu.h"
 #include "../kernel/input.h"
 #include "../kernel/kernel.h"
 #include "../kernel/memory.h"
@@ -333,6 +334,7 @@ PPC_FUNC(sub_82230DE0)
     __imp__sub_82230DE0(ctx, base);
     dev::RunPendingLua(saved, base);
     dev::console::RunPending(saved, base);
+    dev::cheat_menu::RunPending(saved, base);
 }
 
 // fputs(text, stream): the guest's stdout/stderr (Lua print) to the log.

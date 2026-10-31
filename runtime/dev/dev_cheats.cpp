@@ -31,6 +31,7 @@ PPC_EXTERN_FUNC(sub_822EE2B0);             // drawable: joint index by hash
 PPC_EXTERN_FUNC(sub_821FB4F0);             // the managers object
 PPC_EXTERN_FUNC(sub_821FA440);             // managers: subsystem n (16 = CStatsManager)
 PPC_EXTERN_FUNC(sub_82248F88);             // CStatsManager::IncrementValueInt(stat, unsigned amount)
+PPC_EXTERN_FUNC(sub_82247FB8);             // CStatsManager::SetValueInt(class, stat, unsigned value)
 
 namespace
 {
@@ -150,7 +151,7 @@ namespace dev
     namespace
     {
         constexpr uint32_t STATS_MANAGER = 16;
-        constexpr uint32_t STAT_MOJO = 21;  // EStatInt_MojoCount
+        constexpr uint32_t STAT_MOJO = 21, STAT_LIVES = 81;  // EStatInt_MojoCount, EStatInt_LifeCount
 
         uint32_t StatsManager(PPCContext& ctx, uint8_t* base)
         {
@@ -194,6 +195,98 @@ namespace dev
         Log("[dev] mojo %+lld (asked %+lld) -> %u", (long long)delta, (long long)amount, result.total);
         return result;
     }
+
+    // Lives are class 1 (what a 1UP and a death set with SetValueInt). The game has no maximum;
+    // the HUD's counter has room for two digits.
+    int AddLife(PPCContext& ctx, uint8_t* base)
+    {
+        constexpr uint32_t LIVES_MAX = 99;
+        uint32_t stats = StatsManager(ctx, base);
+        if (!stats)
+            return -1;
+        uint32_t lives = LoadBE32(StatAddress(stats, 1, STAT_LIVES));
+        if (lives < LIVES_MAX)
+        {
+            PPCContext call = ctx;
+            call.r3.u64 = stats;
+            call.r4.u64 = 1;
+            call.r5.u64 = STAT_LIVES;
+            call.r6.u64 = ++lives;
+            sub_82247FB8(call, base);
+        }
+        Log("[dev] lives -> %u", lives);
+        return int(lives);
+    }
+
+    int Lives(PPCContext& ctx, uint8_t* base)
+    {
+        uint32_t stats = StatsManager(ctx, base);
+        return stats ? int(LoadBE32(StatAddress(stats, 1, STAT_LIVES))) : -1;
+    }
+
+    namespace
+    {
+        std::atomic<bool> g_oneHitTitans{ false }, g_aiDisabled{ false };
+    }
+
+    void SetOneHitTitans(bool on)
+    {
+        g_oneHitTitans = on;
+        Log("[dev] one hit titans %s", on ? "on" : "off");
+    }
+
+    bool OneHitTitans() { return g_oneHitTitans; }
+
+    void SetAiDisabled(bool on)
+    {
+        g_aiDisabled = on;
+        Log("[dev] AI %s", on ? "disabled" : "enabled");
+    }
+
+    bool AiDisabled() { return g_aiDisabled; }
+}
+
+// CJackingBehaviour's stamina (the titans' stun meter; sub_8211FD78(this, f1 = delta)): current at
+// *(this+40), maximum at *(this+44), state at +1116 (2 = stunned, set when the stamina reaches 0).
+// Hits come from its message handler (vf09, f1 = -damage); ResetStun and the recovery add to it.
+// One hit titans: any loss drains it all, so the first hit stuns. Not ResetStun's (sub_82120880, the
+// scripts' "stamina to this fraction of the maximum"), which may lower it too.
+static thread_local bool t_resetStun = false;
+extern "C" PPC_FUNC(__imp__sub_8211FD78);
+PPC_FUNC(sub_8211FD78)
+{
+    if (dev::OneHitTitans() && ctx.f1.f64 < 0.0 && !t_resetStun)
+        ctx.f1.f64 = -1.0e9;
+    __imp__sub_8211FD78(ctx, base);
+}
+
+extern "C" PPC_FUNC(__imp__sub_82120880);
+PPC_FUNC(sub_82120880)
+{
+    t_resetStun = true;
+    __imp__sub_82120880(ctx, base);
+    t_resetStun = false;
+}
+
+// CAIManager::vf10 (sub_82099058, hooked in online/mp_net.cpp) runs these three every frame: the
+// enemies' decision trees and tasks. Disabled AI skips them, as a multiplayer client does.
+extern "C" PPC_FUNC(__imp__sub_82098DB8);
+extern "C" PPC_FUNC(__imp__sub_820985E0);
+extern "C" PPC_FUNC(__imp__sub_82097E68);
+PPC_FUNC(sub_82098DB8)
+{
+    if (!dev::AiDisabled())
+        __imp__sub_82098DB8(ctx, base);
+}
+PPC_FUNC(sub_820985E0)
+{
+    if (!dev::AiDisabled())
+        __imp__sub_820985E0(ctx, base);
+}
+PPC_FUNC(sub_82097E68)
+{
+    if (!dev::AiDisabled())
+        __imp__sub_82097E68(ctx, base);
 }
 
 PPC_FUNC(sub_82110448)

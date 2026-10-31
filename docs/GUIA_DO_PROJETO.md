@@ -372,6 +372,18 @@ Nos perfis, `dev_console = [["@gameplay_ready+1", "!toggle"], ["@gameplay_ready+
 
 **Ler os scripts do jogo** (`tools/luadec.py`): os `.lua`/`.blua` de `default.rcf` (objetivos, IA, HUD, árvores de luta, fases) são bytecode do "Lua 5.1 (work)" da Radical, que na prática é o formato do Lua 5.0 (números `float`, line info em u16) com o `FORPREP` e os laços `for` do 5.1. `python tools\luadec.py dec private\assets\raw\default\script\util.lua` mostra o script reconstruído em pseudo-Lua (`if/elseif`, `while`, `for`, `and/or`, tabelas, métodos, closures, `do ... end`), `dis` mostra funções, constantes, locais e instruções, e `python tools\luadec.py all` faz os 723 scripts compilados de uma vez em `private\scripts_dec\` (`*.dec.lua` e `*.dis.txt`; os 42 que já são texto ficam de fora). A saída usa os nomes de locais e parâmetros que vêm no bytecode e serve para ler e como base de mods (copie o trecho para um `dev_lua_file`); não é idêntica ao fonte original. Para conferir: `python tools\luadec.py check`, depois `python tools\run_game.py dev_luadec` e `python tools\luadec.py check --log build\runs\<pasta>\run.log`, que compila cada script reconstruído com o compilador do próprio jogo (`loadstring`, sem rodar) e lista os que não compilam (hoje: nenhum). Comparar o bytecode dentro do jogo não dá: o `string.dump` do retail derruba o jogo.
 
+#### Menu de trapaças (pausa + código)
+
+Na pausa, como os cheats originais do jogo (segura RT, X X Y A = Big Head): **segure RT e aperte Y Y X X**; no
+teclado, segure Shift e aperte Tab Tab Backspace Backspace (o Y e o X dos menus); na tela de toque ou com o mouse,
+toque nos cantos de cima esquerdo, direito, esquerdo, direito (até 5 s). Não abre numa sessão online. Itens:
+INVENCIBILIDADE, TITÃ EM 1 GOLPE e DESATIVAR IA (liga/desliga, valem até fechar o jogo), +1 VIDA (até 99) e
+DESBLOQUEAR TODOS OS GOLPES / TODAS AS SKINS (as 20 + Crash Hulk) / TODOS OS EPISÓDIOS / TUDO. Os desbloqueios são os
+objetivos do próprio jogo e ficam no save quando o jogo salvar: por isso pedem um segundo A ("A CONFIRMAR") e a
+nota no rodapé avisa. Textos em inglês, português, francês, alemão, espanhol, italiano e holandês (o idioma do
+jogo). `CrashRecomp.exe --cheats-preview <pasta>` desenha o menu em PNG em todos os idiomas sem iniciar o jogo.
+Código em `runtime/dev/cheat_menu.*`; como cada cheat funciona por dentro: [docs/dev_features.md](docs/dev_features.md).
+
 ### Overlay de desempenho, marcas e gravação de perfis
 
 O overlay tem quatro modos: **desligado**, **só FPS**, **FPS + frame time** (com o gráfico) e **completo**. O modo fica em `userdata\settings.toml` (`overlay = "off" | "fps" | "frametime" | "full"`) e muda pela tela SETTINGS ou pelo **F1**, que passa para o próximo modo e grava a escolha. Nos perfis, `overlay` em `run.toml` decide o modo daquela execução: `true` = completo (o padrão), `false` = o do `settings.toml`, ou o nome do modo (`"fps"`, `"frametime"`, `"full"`, `"off"`; também `"completo"` e `"desligado"`). Capturas de cada modo: `docs\capturas\antigas\overlay_modos\` (`off.jpg`, `fps.jpg`, `frametime.jpg`, `full.jpg`, `full_1080p.jpg` e `settings_tela.jpg`).

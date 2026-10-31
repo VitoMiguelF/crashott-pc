@@ -57,10 +57,10 @@ namespace gpu::overlay
     // caller, BITMAP_CHANNELS of them: the subtitles, the settings screen, the save screens'
     // keyboard and delete prompt, the cutscenes' skip prompt, the skin challenges' counters, the
     // console, the touch controls'
-    // stick, buttons and top row, the MULTIPLAYER screens) has its own upload buffer.
+    // stick, buttons and top row, the MULTIPLAYER screens, the cheat menu) has its own upload buffer.
     enum BitmapChannel { BITMAP_SUBTITLES, BITMAP_SETTINGS, BITMAP_SAVE_SCREENS, BITMAP_SKIP_PROMPT, BITMAP_CHALLENGES, BITMAP_CONSOLE,
                          BITMAP_TOUCH_STICK, BITMAP_TOUCH_KNOB, BITMAP_TOUCH_BUTTONS, BITMAP_TOUCH_TOP, BITMAP_MULTIPLAYER,
-                         BITMAP_CHANNELS };
+                         BITMAP_CHEATS, BITMAP_CHANNELS };
     void DrawBitmap(uint32_t width, uint32_t height, const uint32_t* pixels, int imageWidth, int imageHeight, int x, int y, uint64_t version,
                     BitmapChannel channel = BITMAP_SUBTITLES);
 }

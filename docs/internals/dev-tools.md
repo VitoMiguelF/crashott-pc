@@ -35,7 +35,14 @@ desenvolvedor". Code: `runtime/dev/`. Profiles `dev_*`, `console_*`.
   `*(this + 4*(93*class + stat + 114))`; IncrementValueInt sub_82248F88 adds an unsigned 32-bit amount to classes 0
   and 1 unchecked; SetValueInt sub_82247FB8. Stat 21 = MojoCount (enum registration: `li r4,21` before the name
   string at 0x82026C64). Lua numbers are float: pass big values natively. Console `mojo` keeps the total in
-  0..2^31-1.
+  0..2^31-1. Stat 81 = LifeCount (class 1; what a 1UP / a death set with SetValueInt).
+- Cheat menu (`dev/cheat_menu.*`): pause (nodes 1081 / 1109 / 1134) + RT held + Y Y X X (Shift + Tab Tab Backspace
+  Backspace; taps top-left/right/left/right), read on controller 0 in `xam_input_imports.cpp` (the game's checker
+  sub_821DB680 is hooked by `online/mp_menu.cpp`). Drawn on `BITMAP_CHEATS`; actions on the game thread from the
+  `CScriptManager::vf10` hook. `--cheats-preview <dir>` writes PNGs.
+- Titan stun = CJackingBehaviour stamina: sub_8211FD78(this, f1 delta), current `*(this+40)`, max `*(this+44)`,
+  +1116 = 2 stunned; ResetStun sub_82120880 goes through it too (may lower it). AI = CAIManager::vf10 sub_82099058
+  (hooked by mp_net.cpp) -> sub_82098DB8, sub_820985E0, sub_82097E68 (the cheat skips those).
 
 ## Developer console
 

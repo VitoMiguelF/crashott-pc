@@ -17,6 +17,7 @@
 #include "../settings/touch_controls.h"
 #include "../settings/settings_menu.h"
 #include "../dev/dev_console.h"
+#include "../dev/cheat_menu.h"
 #include "../online/mp.h"
 #include "../online/mp_menu.h"
 #include "../platform/platform.h"
@@ -419,7 +420,8 @@ namespace
             if (mp::RemotePad(user, &state.Gamepad))
                 connected = true;
             // The settings screen and the console hide every controller from the game, not only player 1's.
-            if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput() || mp::menu::BlocksGameInput())
+            if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput() || mp::menu::BlocksGameInput() ||
+                dev::cheat_menu::BlocksGameInput())
                 state.Gamepad = {};
         }
         if (user == playerOne)
@@ -455,6 +457,8 @@ namespace
             settings::save_screens::FilterGameInput(state.Gamepad, poll);
             // Hold to skip a cutscene or a video (skip_cinematics.h).
             cutscenes::FilterGameInput(state.Gamepad, poll);
+            // The cheat menu's code in the pause, and the menu (dev/cheat_menu.h).
+            dev::cheat_menu::FilterGameInput(state.Gamepad, poll);
             if (settings::menu::BlocksGameInput() || dev::console::BlocksGameInput() || mp::menu::BlocksGameInput())
                 state.Gamepad = {};
             state.Gamepad.wButtons &= ~mp::menu::HiddenButtons();  // BACK opens the lobby at the HUB

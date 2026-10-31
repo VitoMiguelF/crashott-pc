@@ -234,6 +234,11 @@ Remaster). Nothing depends on where the project is. Shortcuts in game: F1 overla
 Alt+Enter fullscreen, F8 lighting remaster on/off, and with **DEFINITIVE EDITION > DEVELOPER CONSOLE** on
 (off by default, or `--dev-console`), the key left of 1 or F10 opens the developer console (`help`).
 
+**Cheats**: in the pause, hold RT and press Y Y X X (keyboard: hold Shift, then Tab Tab Backspace Backspace;
+touch screen or mouse: tap the top-left, top-right, top-left and top-right corners) for the cheat menu:
+invincibility, +1 life, 1 hit titan, disable AI, and unlock all moves / skins / episodes / everything. The
+unlocks are permanent (the game writes them to your save); the rest lasts until you quit the game.
+
 Default settings are the original experience (1280x720, 30 fps, no upscaler, extras off). Turn things on
 in **SETTINGS** (main menu or pause > OPTIONS) or in the launcher; for the HD AI Remaster, install it and
 then switch **DEFINITIVE EDITION > HD AI REMASTER** on. The launcher opens on its simple view: **LIGHTING
@@ -516,6 +521,11 @@ Detalhes para desenvolvedores: [docs/internals/linux_port.md](docs/internals/lin
 Remaster). Nada depende de onde o projeto está. Atalhos no jogo: F1 overlay, F12 captura, Alt+Enter tela
 cheia, F8 liga/desliga o remaster da iluminação e, com **DEFINITIVE EDITION > CONSOLE DE DESENVOLVEDOR** ligado
 (desligado por padrão, ou `--dev-console`), a tecla antes do 1 ou F10 abre o console de desenvolvedor (`help`).
+
+**Trapaças**: na pausa, segure RT e aperte Y Y X X (teclado: segure Shift e aperte Tab Tab Backspace Backspace;
+tela de toque ou mouse: toque nos cantos de cima esquerdo, direito, esquerdo e direito) para o menu de trapaças:
+invencibilidade, +1 vida, titã em 1 golpe, desativar IA e desbloquear todos os golpes / skins / episódios /
+tudo. Os desbloqueios são permanentes (o jogo os grava no save); o resto vale até fechar o jogo.
 
 As opções padrão são a experiência original (1280x720, 30 fps, sem upscaler, extras desligados). Ligue o
 que quiser em **SETTINGS** (menu principal ou pausa > OPÇÕES) ou no launcher. Para o HD AI Remaster,
