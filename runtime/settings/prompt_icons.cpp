@@ -322,28 +322,33 @@ namespace settings::prompts
             return image;
         }
 
-        // PlayStation face button: dark disc, coloured symbol.
+        // PlayStation face button, in the look of the game's PS2 version (its icons were only a
+        // reference, nothing is copied): black disc, grey rim thicker on top, a faint gloss, the
+        // symbol bold and saturated.
         void FaceButton(Canvas& c, char32_t icon, float cx, float cy, float r)
         {
-            c.Shape(Rgb(0x0E0E10), [&](float x, float y) { return Circle(x, y, cx, cy, r); });
-            c.Shape(Rgb(0x3A3B40), [&](float x, float y) { return Circle(x, y, cx, cy, r * 0.90f); });
-            c.Shape(Rgb(0x26272B), [&](float x, float y) { return Circle(x, y, cx, cy - r * 0.04f, r * 0.80f); });
-            float s = r * 0.42f, t = std::max(1.2f, r * 0.11f);
+            c.Shape(Rgb(0x050506), [&](float x, float y) { return Circle(x, y, cx, cy, r); });
+            c.Shape(Rgb(0x6A6C73), [&](float x, float y) { return Circle(x, y, cx, cy, r * 0.92f); });
+            c.Shape(Rgb(0x121214), [&](float x, float y) { return Circle(x, y, cx, cy + r * 0.04f, r * 0.84f); });
+            c.Shape(Rgb(0xFFFFFF, 0.09f), [&](float x, float y) {
+                return std::max(Circle(x, y, cx, cy + r * 0.04f, r * 0.84f), -Circle(x, y, cx + r * 0.16f, cy + r * 0.26f, r * 0.84f));
+            });
+            float s = r * 0.44f, t = std::max(1.3f, r * 0.13f);
             switch (icon)
             {
             case 0xB1:  // Cross
-                c.Shape(Rgb(0x8FB8EE), [&](float x, float y) {
+                c.Shape(Rgb(0x6F8DFF), [&](float x, float y) {
                     return std::min(Segment(x, y, cx - s, cy - s, cx + s, cy + s, t), Segment(x, y, cx - s, cy + s, cx + s, cy - s, t));
                 });
                 break;
             case 0xB2:  // Circle
-                c.Shape(Rgb(0xF0717A), [&](float x, float y) { return std::abs(Circle(x, y, cx, cy, s * 1.05f)) - t; });
+                c.Shape(Rgb(0xFF3B3B), [&](float x, float y) { return std::abs(Circle(x, y, cx, cy, s * 1.02f)) - t; });
                 break;
             case 0xB3:  // Square
-                c.Shape(Rgb(0xE79BD6), [&](float x, float y) { return std::abs(RoundRect(x, y, cx, cy, s * 0.92f, s * 0.92f, t * 0.6f)) - t; });
+                c.Shape(Rgb(0xF55AE8), [&](float x, float y) { return std::abs(RoundRect(x, y, cx, cy, s * 0.9f, s * 0.9f, t * 0.4f)) - t; });
                 break;
             case 0xB4:  // Triangle
-                c.Shape(Rgb(0x5FD3B4), [&](float x, float y) {
+                c.Shape(Rgb(0x30E07A), [&](float x, float y) {
                     float ax = cx, ay = cy - s * 1.05f, bx = cx - s * 1.08f, by = cy + s * 0.75f, dx = cx + s * 1.08f, dy = by;
                     return std::min({ Segment(x, y, ax, ay, bx, by, t), Segment(x, y, bx, by, dx, dy, t), Segment(x, y, dx, dy, ax, ay, t) });
                 });
@@ -359,6 +364,16 @@ namespace settings::prompts
             c.Shape(Rgb(0x141414), [&](float x, float y) { return RoundRect(x, y, cx, cy, hw, hh, radius); });
             c.Shape(Rgb(0x8C8C8C), [&](float x, float y) { return RoundRect(x, y, cx, cy, hw - edge, hh - edge, radius * 0.8f); });
             c.Shape(Rgb(0xEDEDED), [&](float x, float y) { return RoundRect(x, y, cx, cy - edge * 0.6f, hw - edge * 1.6f, hh - edge * 2.0f, radius * 0.7f); });
+        }
+
+        // A dark key with a grey bevel (PlayStation shoulder / system buttons, PS2 look): light text on it.
+        void DarkKey(Canvas& c, float x0, float y0, float x1, float y1, float radius)
+        {
+            float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f, hw = (x1 - x0) * 0.5f, hh = (y1 - y0) * 0.5f;
+            float edge = std::max(1.0f, std::min(hw, hh) * 0.11f);
+            c.Shape(Rgb(0x050506), [&](float x, float y) { return RoundRect(x, y, cx, cy, hw, hh, radius); });
+            c.Shape(Rgb(0x6A6C73), [&](float x, float y) { return RoundRect(x, y, cx, cy, hw - edge, hh - edge, radius * 0.85f); });
+            c.Shape(Rgb(0x1B1C20), [&](float x, float y) { return RoundRect(x, y, cx, cy + edge * 0.4f, hw - edge * 1.8f, hh - edge * 2.0f, radius * 0.7f); });
         }
 
         // A mouse with button `button` (1 left, 2 right, 3 middle) lit.
@@ -604,16 +619,16 @@ namespace settings::prompts
             case 0xB6:  // START = Options
             {
                 float hh = std::min(bh, bw * 0.6f) * 0.5f;
-                Key(shapes, x0, cy - hh, x1, cy + hh, hh * 0.9f);
+                DarkKey(shapes, x0, cy - hh, x1, cy + hh, hh * 0.9f);
                 float line = std::max(1.0f, hh * 0.13f);
                 if (icon == 0xB6)
                     for (int i = -1; i <= 1; i++)
-                        shapes.Shape(Rgb(0x1A1A1C), [&](float x, float y) {
-                            return Segment(x, y, cx - bw * 0.18f, cy - line * 0.6f + i * hh * 0.34f, cx + bw * 0.18f, cy - line * 0.6f + i * hh * 0.34f, line * 0.6f);
+                        shapes.Shape(Rgb(0xD2D3D8), [&](float x, float y) {
+                            return Segment(x, y, cx - bw * 0.18f, cy + line * 0.3f + i * hh * 0.34f, cx + bw * 0.18f, cy + line * 0.3f + i * hh * 0.34f, line * 0.6f);
                         });
                 else
-                    shapes.Shape(Rgb(0x1A1A1C), [&](float x, float y) {
-                        return std::abs(RoundRect(x, y, cx, cy - line * 0.6f, bw * 0.22f, hh * 0.42f, hh * 0.12f)) - line * 0.55f;
+                    shapes.Shape(Rgb(0xD2D3D8), [&](float x, float y) {
+                        return std::abs(RoundRect(x, y, cx, cy + line * 0.3f, bw * 0.22f, hh * 0.42f, hh * 0.12f)) - line * 0.55f;
                     });
                 break;
             }
@@ -622,11 +637,12 @@ namespace settings::prompts
                 bool trigger = icon == 0xB7 || icon == 0xBD;
                 // Triggers stand up (like the game's RT / LT), bumpers lie down.
                 float kw = trigger ? std::min(bw, bh * 0.62f) : bw, kh = trigger ? bh : std::min(bh, bw * 0.55f);
-                Key(shapes, cx - kw * 0.5f, cy - kh * 0.5f, cx + kw * 0.5f, cy + kh * 0.5f, std::min(kw, kh) * 0.35f);
+                DarkKey(shapes, cx - kw * 0.5f, cy - kh * 0.5f, cx + kw * 0.5f, cy + kh * 0.5f, std::min(kw, kh) * 0.3f);
                 text = icon == 0xB7 ? "R2" : icon == 0xB8 ? "R1" : icon == 0xBD ? "L2" : "L1";
-                textHeight = std::min(kw, kh) * 0.42f;
-                textWidth = kw * 0.78f;
-                textY = trigger ? cy + kh * 0.18f : cy;
+                textColor = { 226, 227, 232, 255 };
+                textHeight = std::min(kw, kh) * 0.46f;
+                textWidth = kw * 0.74f;
+                textY = trigger ? cy + kh * 0.2f : cy + kh * 0.03f;
                 break;
             }
             default:
