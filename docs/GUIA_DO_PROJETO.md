@@ -356,7 +356,7 @@ Enter roda a linha; setas para cima/baixo andam no histórico (guardado em `user
 | `unlock all` | as 20 skins do jogo, fases e golpes (os objetivos do próprio jogo; o jogo grava no save quando salvar) + a Crash_Hulk no menu de skins |
 | `unlock levels` | só as fases (todos os episódios no HUB, trocados com LB/RB); skins e golpes ficam como estão, então os bonecos trancados continuam mostrando o desafio com o contador ("DERROTE 87/200 RATECNICOS") |
 | `unlock skin <nome>` | uma skin (`hulk` não ocupa vaga da lista de 20 do jogo: fica em `[dev] hulk_skin`) |
-| `mojo <n>` | +n de mojo (o HUD acompanha) |
+| `mojo <n>` | +n de mojo (negativo tira; o total fica entre 0 e 2 147 483 647; o HUD acompanha) |
 | `god [on\|off]` | invencibilidade (o HP não desce; poços ainda matam) |
 | `tp <x> <y> <z>` / `pos` | teleporta o jogador 1 / mostra a posição (y = altura) |
 | `shadow [on\|off]` / `bighead [on\|off]` | os cheats Shadow Crash e Big Head do jogo |
@@ -371,6 +371,18 @@ Skins: `crash`, `hulk` (a Crash_Hulk verde, que o jogo nunca usou), `chiratta`, 
 Nos perfis, `dev_console = [["@gameplay_ready+1", "!toggle"], ["@gameplay_ready+1.5", "god on"]]` digita cada entrada na janela (pelas mesmas mensagens de teclado de uma tecla de verdade; `!toggle`, `!esc`, `!tab`, `!up`, `!down`, `!enter`, `!type:<texto>` sem Enter) e liga o console; eventos `console_<n>`, `console_open`, `console_close` e `console_cmd`. Perfis (`test = true`): `console_dev` (abre, help, unlock all, mojo 500, god on, erro de Lua, Tab, `skin hulk now`, bighead, pos, `skin ratcicle now`, `level L1_E2`), `console_hulk` (a Crash_Hulk no chão e andando), `console_skin_menu` (a Crash_Hulk no menu de skins do jogo: HUB → RATNICIAN SKIN → direita → CRASH HULK → VESTIR → CONTINUE STORY) e `console_level_hub` (`level` a partir do HUB). Capturas em `build\console\`. Como a troca de skin e a Crash_Hulk funcionam por dentro: [docs/dev_features.md](docs/dev_features.md), "Skins".
 
 **Ler os scripts do jogo** (`tools/luadec.py`): os `.lua`/`.blua` de `default.rcf` (objetivos, IA, HUD, árvores de luta, fases) são bytecode do "Lua 5.1 (work)" da Radical, que na prática é o formato do Lua 5.0 (números `float`, line info em u16) com o `FORPREP` e os laços `for` do 5.1. `python tools\luadec.py dec private\assets\raw\default\script\util.lua` mostra o script reconstruído em pseudo-Lua (`if/elseif`, `while`, `for`, `and/or`, tabelas, métodos, closures, `do ... end`), `dis` mostra funções, constantes, locais e instruções, e `python tools\luadec.py all` faz os 723 scripts compilados de uma vez em `private\scripts_dec\` (`*.dec.lua` e `*.dis.txt`; os 42 que já são texto ficam de fora). A saída usa os nomes de locais e parâmetros que vêm no bytecode e serve para ler e como base de mods (copie o trecho para um `dev_lua_file`); não é idêntica ao fonte original. Para conferir: `python tools\luadec.py check`, depois `python tools\run_game.py dev_luadec` e `python tools\luadec.py check --log build\runs\<pasta>\run.log`, que compila cada script reconstruído com o compilador do próprio jogo (`loadstring`, sem rodar) e lista os que não compilam (hoje: nenhum). Comparar o bytecode dentro do jogo não dá: o `string.dump` do retail derruba o jogo.
+
+#### Menu de trapaças (pausa + código)
+
+Na pausa, como os cheats originais do jogo (segura RT, X X Y A = Big Head): **segure RT e aperte Y Y X X**; no
+teclado, segure Shift e aperte Tab Tab Backspace Backspace (o Y e o X dos menus); na tela de toque ou com o mouse,
+toque nos cantos de cima esquerdo, direito, esquerdo, direito (até 5 s). Não abre numa sessão online. Itens:
+INVENCIBILIDADE, TITÃ EM 1 GOLPE e DESATIVAR IA (liga/desliga, valem até fechar o jogo), +1 VIDA (até 99) e
+DESBLOQUEAR TODOS OS GOLPES / TODAS AS SKINS (as 20 + Crash Hulk) / TODOS OS EPISÓDIOS / TUDO. Os desbloqueios são os
+objetivos do próprio jogo e ficam no save quando o jogo salvar: por isso pedem um segundo A ("A CONFIRMAR") e a
+nota no rodapé avisa. Textos em inglês, português, francês, alemão, espanhol, italiano e holandês (o idioma do
+jogo). `CrashRecomp.exe --cheats-preview <pasta>` desenha o menu em PNG em todos os idiomas sem iniciar o jogo.
+Código em `runtime/dev/cheat_menu.*`; como cada cheat funciona por dentro: [docs/dev_features.md](docs/dev_features.md).
 
 ### Overlay de desempenho, marcas e gravação de perfis
 

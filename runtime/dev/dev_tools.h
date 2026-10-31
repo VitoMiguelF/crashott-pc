@@ -45,6 +45,24 @@ namespace dev
     // The game's Big Head cheat (SettingsDatabase m_CheatBigHeadCrash + the head scale of the
     // players, as its cheat code does). Returns how many players got it.
     int SetBigHead(PPCContext& ctx, uint8_t* base, bool on);
+    // Mojo (EStatInt_MojoCount) + `amount` (negative takes it away), kept in 0..MOJO_MAX. Game thread.
+    constexpr int64_t MOJO_MAX = 2147483647;
+    struct MojoResult
+    {
+        bool ok = false;       // the stats manager exists (a game is loaded)
+        bool clamped = false;  // `amount` went past 0 or MOJO_MAX
+        int64_t added = 0;
+        uint32_t total = 0;
+    };
+    MojoResult GiveMojo(PPCContext& ctx, uint8_t* base, int64_t amount);
+    // One more life (EStatInt_LifeCount, up to 99); the lives now, -1 without a game. Game thread.
+    int AddLife(PPCContext& ctx, uint8_t* base);
+    int Lives(PPCContext& ctx, uint8_t* base);
+    // Any hit stuns a titan (its stamina meter empties); the enemies' AI stands still.
+    void SetOneHitTitans(bool on);
+    bool OneHitTitans();
+    void SetAiDisabled(bool on);
+    bool AiDisabled();
 
     // The game's level list (the managers object), e.g. "L1_E1"; empty before it is loaded.
     std::vector<std::string> Levels();

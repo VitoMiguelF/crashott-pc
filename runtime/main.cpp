@@ -13,6 +13,7 @@
 //   --xex       default.xex (default: <game>\default.xex); --image a decrypted image.bin instead of
 //               decrypting the XEX at startup (xex_image/)
 //   --settings-preview <folder>  draws the settings screen to PNG files and exits (settings_menu.h)
+//   --cheats-preview <folder>  draws the cheat menu to PNG files and exits (dev/cheat_menu.h)
 //   --hid-selftest  checks the PlayStation pad report parsing (kernel/hid_pads.h) and exits
 //   --hid-monitor [seconds]  lists the PlayStation pads and prints their input (kernel/hid_pads.h)
 //   --pads-selftest  checks which player each controller gets (local co-op, kernel/pad_slots.h) and exits
@@ -28,6 +29,7 @@
 #include "audio/game_volumes.h"
 #include "cpu/guest_thread.h"
 #include "dev/dev_console.h"
+#include "dev/cheat_menu.h"
 #include "diagnostics.h"
 #include "fs/vfs.h"
 #include "gpu/gpu.h"
@@ -151,6 +153,8 @@ int main(int argc, char** argv)
             return gpu::renderer::TestShaders(argv[i + 1]) ? 2 : 0;
         if (strcmp(argv[i], "--settings-preview") == 0)
             return settings::menu::Preview(argv[i + 1]);
+        if (strcmp(argv[i], "--cheats-preview") == 0)
+            return dev::cheat_menu::Preview(argv[i + 1]);
         if (strcmp(argv[i], "--prompt-preview") == 0)
             return settings::prompts::Preview(argv[i + 1]);
     }

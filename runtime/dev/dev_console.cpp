@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -293,6 +294,12 @@ namespace dev::console
                                   "CONSOLA DE DESARROLLADOR  -  help: comandos   Tab: completar   ↑↓: historial   Esc/F10: cerrar",
                                   "CONSOLE SVILUPPATORE  -  help: comandi   Tab: completa   ↑↓: cronologia   Esc/F10: chiudi",
                                   "ONTWIKKELAARSCONSOLE  -  help: opdrachten   Tab: aanvullen   ↑↓: geschiedenis   Esc/F10: sluiten" };
+        const UiText T_NO_GAME = { "error: no game loaded", "erro: nenhum jogo carregado", "erreur : aucune partie chargée",
+                                   "Fehler: kein Spiel geladen", "error: ningún juego cargado", "errore: nessuna partita caricata",
+                                   "fout: geen spel geladen" };
+        // "mojo +n -> total (limit: 0 to %s)": the total was clamped to the range of the game's counter.
+        const UiText T_MOJO_LIMIT = { " (limit: 0 to %s)", " (limite: 0 a %s)", " (limite : 0 à %s)", " (Grenze: 0 bis %s)",
+                                      " (límite: 0 a %s)", " (limite: da 0 a %s)", " (grens: 0 tot %s)" };
         // "[+12 lines]": the output is scrolled up that many lines.
         const UiText T_SCROLLED = { "lines", "linhas", "lignes", "Zeilen", "líneas", "righe", "regels" };
 
@@ -331,8 +338,13 @@ namespace dev::console
                 "sblocca tutto (20 skin + Crash_Hulk, livelli, mosse), solo i livelli (le skin restano bloccate) o una skin",
                 "ontgrendelt alles (20 skins + Crash_Hulk, levels, aanvallen), alleen de levels (de skins blijven op slot) of één skin" } },
             { "mojo", { "mojo <n>", "mojo <n>", "mojo <n>", "mojo <n>", "mojo <n>", "mojo <n>", "mojo <n>" },
-              { "gives n mojo (the HUD follows)", "dá n de mojo (o HUD acompanha)", "donne n de mojo (le HUD suit)", "gibt n Mojo (das HUD zieht mit)",
-                "da n de mojo (el HUD se actualiza)", "dà n di mojo (l'HUD si aggiorna)", "geeft n mojo (de HUD volgt)" } },
+              { "gives n mojo (negative takes; total from 0 to 2147483647; the HUD follows)",
+                "dá n de mojo (negativo tira; total de 0 a 2147483647; o HUD acompanha)",
+                "donne n de mojo (négatif en retire ; total de 0 à 2147483647 ; le HUD suit)",
+                "gibt n Mojo (negativ zieht ab; Summe von 0 bis 2147483647; das HUD zieht mit)",
+                "da n de mojo (negativo quita; total de 0 a 2147483647; el HUD se actualiza)",
+                "dà n di mojo (negativo toglie; totale da 0 a 2147483647; l'HUD si aggiorna)",
+                "geeft n mojo (negatief neemt af; totaal van 0 tot 2147483647; de HUD volgt)" } },
             { "god", { "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]", "god [on|off]" },
               { "invincibility (HP doesn't go down; pits still kill)", "invencibilidade (o HP não desce; poços ainda matam)",
                 "invincibilité (les PV ne baissent pas ; les gouffres tuent toujours)", "Unverwundbarkeit (die HP sinken nicht; Abgründe töten trotzdem)",
@@ -697,10 +709,14 @@ namespace dev::console
             else if (command == "mojo")
             {
                 double amount;
-                if (words.size() < 2 || !ParseNumber(words[1], amount) || amount != double(int64_t(amount)) || amount < -100000 || amount > 100000)
+                if (words.size() < 2 || !ParseNumber(words[1], amount) || !(std::fabs(amount) < 1e15) || amount != double(int64_t(amount)))
                     usage("mojo");
+                else if (MojoResult mojo = GiveMojo(ctx, base, int64_t(amount)); !mojo.ok)
+                    Reply(Tr(T_NO_GAME), Tone::Error);
                 else
-                    ConsoleLua(ctx, base, "dev.give_mojo(" + std::to_string(int64_t(amount)) + ")");
+                    Reply("mojo " + std::string(mojo.added < 0 ? "" : "+") + std::to_string(mojo.added) + " -> " + std::to_string(mojo.total) +
+                              (mojo.clamped ? Fill(Tr(T_MOJO_LIMIT), std::to_string(MOJO_MAX)) : ""),
+                          Tone::Ok);
             }
             else if (command == "god")
             {

@@ -128,6 +128,31 @@ O verificador de cheats (`sub_821DB680`) roda no update do `CFrontendManager` co
 LEFT → Shadow, ACCEPT + RIGHT → Big Head. Nenhum outro evento é lido; `GOD_MODE` (42) e `RESURRECT` (32) estão
 no enum sem código.
 
+### Menu de trapaças (issue #20, `runtime/dev/cheat_menu.*`)
+
+Um código novo no estilo dos originais (pausa, segura RT, **Y Y X X**; Shift + Tab Tab Backspace Backspace no
+teclado; toques nos cantos de cima esquerdo/direito/esquerdo/direito na tela de toque ou com o mouse) abre um menu
+desenhado pelo runtime por cima da pausa (nós 1081 / 1109 / 1134), no estilo da caixa de mensagem do jogo. O
+verificador do jogo (`sub_821DB680`) já tem hook em `online/mp_menu.cpp` e só conhece as sequências do mapa
+`EInputMapType_CHEAT`, então o código novo é lido no controle 0 em `kernel/xam_input_imports.cpp`, antes de o jogo
+vê-lo. Não abre numa sessão online.
+
+| Item | Como |
+|---|---|
+| Invencibilidade | `dev::SetInvincible` (o hook do `AdjustHitpoints` acima) |
+| +1 vida | `EStatInt_LifeCount` = stat 81, classe 1 (o que o 1UP e a morte gravam com `SetValueInt` `sub_82247FB8`); até 99 (o jogo não tem máximo) |
+| Titã em 1 golpe | `CJackingBehaviour` (a estamina dos titãs): `sub_8211FD78(this, f1 = delta)` soma em `*(this+40)` (máximo `*(this+44)`) e em <= 0 grava o estado 2 (atordoado) em `+1116`. Com o cheat, qualquer perda vira -1e9. O `ResetStun` (`sub_82120880`, "estamina = fração do máximo") fica de fora |
+| Desativar IA | os três passos do `CAIManager::vf10` (`sub_82098DB8`, `sub_820985E0`, `sub_82097E68`: árvores de decisão e tarefas) deixam de rodar, como num cliente do multiplayer (que pula o `vf10` inteiro) |
+| Desbloqueios | `dev.unlock_moves()` / `dev.unlock_skins()` (+ `[dev] hulk_skin`) / `dev.unlock_levels()` / `dev.unlock_all()`: objetivos do jogo, gravados no save quando ele salvar; por isso cada um pede um segundo A |
+
+### Mojo sem o limite de 100 000 (issue #13)
+
+`mojo <n>` do console soma pelo nativo, `CStatsManager::IncrementValueInt` (`sub_82248F88`, stat 21 =
+`EStatInt_MojoCount`), sem passar o número pelo Lua (os números do Lua do jogo são `float`: inteiros só são exatos
+até 2^24). O mojo é um `unsigned int` somado sem checagem nas classes 0 e 1 (`GetValueInt(classe, stat)` =
+`*(this + 4 * (93 * classe + stat + 114))`); o comando mantém o total entre 0 e 2^31 - 1 (2 147 483 647), para
+nenhum código que o leia com sinal vê-lo negativo.
+
 ## 5. Skins
 
 O enum `ESkin` tem 25 valores. O jogo desbloqueia 20 (lista em `0x824A8218`, exatamente 20 posições): o Crash

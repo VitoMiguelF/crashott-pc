@@ -2703,3 +2703,15 @@ tabela de variáveis em `docs/internals/multiplayer.md`.
   chama "modelo_x_y_z_mpN" (lugar arredondado + contagem na fase; `CRASH_MP_SPAWN_NAMES=0` desliga). O id dos
   inimigos dos `DO_SpawnEnemy` (actor +8) não vem desse nome (igual com nomes trocados: o jogo os pré-cria,
   `DO_PreSpawnActor`, e dá o id por conta própria); os acessórios, mojos, vidas e drops sim.
+
+## Mojo sem o limite de 100 000 (issue #13, 2026-10-31, branch `mojo-no-limit`) (`dev/dev_cheats.cpp`, `dev/dev_console.cpp`)
+
+O limite de ±100 000 do `mojo <n>` caiu. O mojo é o stat 21 (`EStatInt_MojoCount`, número achado no registro do enum: `li r4,21` antes da string em `0x82026C64`), um `unsigned int` que `CStatsManager::IncrementValueInt` (`sub_82248F88`) soma sem checagem nas classes 0 e 1. O comando agora chama essa função direto (gerente 16 do `sub_821FB4F0`/`sub_821FA440`), sem passar pelo Lua (o `lua_Number` do jogo é `float`: acima de 2^24 o valor chegaria arredondado), e prende o total em 0..2^31 - 1 para nada que o leia com sinal vê-lo negativo. Verificado sem abrir o jogo: build do PC e do Android. Falta no jogo: `mojo 2000000000` (o HUD com 10 dígitos; o objetivo `IncrementPlayerLife`, uma vida a cada 25 000) e `mojo -999999999999` (zera).
+
+## Menu de trapaças (issue #20, 2026-10-31, branch `cheat-menu`) (`dev/cheat_menu.*`, `dev/dev_cheats.cpp`, `dev/dev_library.lua.inc`, `kernel/xam_input_imports.cpp`)
+
+- **Código**: o verificador de cheats do jogo (`sub_821DB680`) já tem hook no multiplayer e só conhece as sequências do mapa `EInputMapType_CHEAT`, então o código novo (pausa + RT + Y Y X X; Shift + Tab Tab Backspace Backspace; toques nos cantos de cima) é lido no controle 0 em `xam_input_imports.cpp`, como as telas de save. As ações que chamam o jogo (vida, desbloqueios, sons do menu) rodam no hook do `CScriptManager::vf10`.
+- **Vidas**: stat 81, classe 1, gravado com `SetValueInt` (`sub_82247FB8`) pelo 1UP (`+1152` = classe 1, stat 81), pela morte (-1) e pelo começo (3). Sem máximo no jogo; o cheat para em 99.
+- **Titã em 1 golpe**: o atordoamento é a estamina do `CJackingBehaviour` (`sub_8211FD78`, delta em f1; em <= 0 o estado `+1116` vira 2). Os golpes chegam pelo `vf09` com `-dano`; o cheat troca qualquer perda por -1e9, menos dentro do `ResetStun` (`sub_82120880`).
+- **IA**: o `CAIManager::vf10` (`sub_82099058`, hook do `mp_net.cpp`, que o pula inteiro no cliente) chama `sub_82098DB8`, `sub_820985E0` e `sub_82097E68`; o cheat pula os três.
+- Verificado sem abrir o jogo: build do PC e do Android, e `--cheats-preview` (84 PNGs: 7 idiomas, 3 tamanhos, 4 estados). Falta testar no jogo: o código nos três jeitos, o HUD de vidas, os titãs, os inimigos parados e os desbloqueios no save, e se o `vf10` dos scripts roda com a pausa aberta (os sons e o +1 vida dependem dele).

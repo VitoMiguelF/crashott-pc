@@ -119,4 +119,18 @@ function dev.unlock_levels()
   devprint("dev.unlock_levels queued")
 end
 
+-- Only the moves / upgrades (the cheat menu's UNLOCK ALL MOVES).
+function dev.unlock_moves()
+  local i
+  dev.objective("dev_unlock_moves", function(o) for i = 0, 26 do o:DO_UnlockMove(i) end end)
+  devprint("dev.unlock_moves queued")
+end
+
+-- Only the 20 retail skins (the cheat menu's UNLOCK ALL SKINS; Crash_Hulk is [dev] hulk_skin).
+function dev.unlock_skins()
+  local i
+  dev.objective("dev_unlock_skins", function(o) for i = 1, table.getn(dev.retail_skins) do o:DO_UnlockSkin(dev.retail_skins[i]) end end)
+  devprint("dev.unlock_skins queued")
+end
+
 )lua"
