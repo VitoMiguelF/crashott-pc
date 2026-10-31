@@ -6,11 +6,17 @@
 // (installer.inc). The launcher closes and the installer installs over this version: the saves,
 // settings, mods and the copy of the game in game\ stay, the new version is built from that copy,
 // and its last screen has PLAY.
+//
+// On Android the check is Updates.java's (GitHub's latest release against the APK's version tag,
+// through LauncherActivity's update* methods), and UPDATE opens the release's new APK in the
+// browser, whose download Android's installer puts over this one.
 // Included inside launcher.cpp's anonymous namespace (not in CRASH_INSTALLER).
 
+#if defined(_WIN32) || defined(__ANDROID__)
 #ifdef _WIN32
 const wchar_t* LATEST_RELEASE = L"https://api.github.com/repos/VitoMiguelF/crashott-pc/releases/latest";
 const wchar_t* SHORTCUT_NAME = L"Crash of the Titans - Definitive Edition.lnk";  // installer.inc's
+#endif
 
 enum class UpdateState { Idle, Checking, UpToDate, Available, CheckFailed, Downloading, Downloaded, DownloadFailed, Started };
 
@@ -27,6 +33,7 @@ struct Updater
 };
 Updater g_update;
 
+#ifdef _WIN32
 std::string NetworkError(DWORD code)
 {
     switch (code)
@@ -269,19 +276,58 @@ void StopUpdater()
     if (g_update.thread.joinable())
         g_update.thread.detach();  // a request may wait for its timeout: the process ends anyway
 }
+#else
+// Updates.java's state (its numbers are UpdateState's), while it may change.
+void SyncUpdate()
+{
+    LauncherJava java;
+    if (!java)
+        return;
+    g_update.state = UpdateState(java.Int("updateState"));
+    g_update.latest = java.String("updateLatest");
+    g_update.error = java.String("updateError");
+}
+
+void CheckOnPhone()
+{
+    LauncherJava java;
+    if (java && java.Void("checkForUpdate"))
+        g_update.state = UpdateState::Checking;
+}
+
+// At startup: this APK's tag, and GitHub's latest release on Updates.java's thread.
+void StartUpdateCheck()
+{
+    {
+        LauncherJava java;
+        if (java)
+            g_update.installed = java.String("updateInstalled");
+    }
+    if (!g_update.installed.empty())
+        CheckOnPhone();
+}
+
+void StopUpdater() {}
+#endif
 
 bool UpdateOffered() { return !g_update.installed.empty(); }
 
 // UPDATE in the menu: the window with the state (a check that failed is tried again).
 void OpenUpdate()
 {
+#ifdef _WIN32
     if (g_update.state == UpdateState::CheckFailed || g_update.state == UpdateState::Idle)
         RunUpdateThread(CheckForUpdate, UpdateState::Checking);
     else if (g_update.state == UpdateState::DownloadFailed)
         g_update.state = UpdateState::Available;
+#else
+    if (g_update.state == UpdateState::CheckFailed || g_update.state == UpdateState::Idle)
+        CheckOnPhone();
+#endif
     g_modal = Modal::Update;
 }
 
+#ifdef _WIN32
 // The downloaded installer, on this install folder, with the extras this install has; then the
 // launcher closes (the installer replaces its exe).
 void StartInstaller()
@@ -326,6 +372,14 @@ void PollUpdate()
     if (g_update.state == UpdateState::Downloaded)
         StartInstaller();
 }
+#else
+// Each frame while GitHub is asked: Updates.java's answer.
+void PollUpdate()
+{
+    if (g_update.state == UpdateState::Checking)
+        SyncUpdate();
+}
+#endif
 
 // The menu item: UPDATE, or UPDATE (v1.06) in gold when there is one.
 std::string UpdateLabel(bool& available)
@@ -411,7 +465,16 @@ void DrawUpdateModal(float l, float t, float r, float cx)
     case UpdateState::Available:
         clicked = DrawButtons({ { ma::ICON_A, { "UPDATE", "ATUALIZAR" } }, { ma::ICON_B, { "LATER", "DEPOIS" } } }, cx, buttonsY);
         if (clicked == 0 || ok)
+        {
+#ifdef _WIN32
             RunUpdateThread(DownloadUpdate, UpdateState::Downloading);
+#else
+            LauncherJava java;  // the new APK in the browser
+            if (java)
+                java.Void("openUpdate");
+            g_modal = Modal::None;
+#endif
+        }
         else if (clicked == 1 || back)
             g_modal = Modal::None;
         break;

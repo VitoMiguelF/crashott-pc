@@ -305,6 +305,18 @@ def keystore():
     return password_file.read_text(encoding="ascii").strip()
 
 
+def version_tag():
+    """The project's version this build is: the newest v* tag of its commit ("" without git or tags).
+    The launcher's UPDATE and the game with SKIP LAUNCHER compare GitHub's latest release with it
+    (Updates.java: assets/version.txt)."""
+    try:
+        result = subprocess.run(["git", "-C", ROOT, "describe", "--tags", "--abbrev=0", "--match", "v*"],
+                                capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def apk(debuggable=False):
     """The single APK: no game code. The launcher, SDL3 and the libraries the game loads, plus what
     builds the game on the phone from the player's dump (the `toolchain` step's ondevice.zip in
@@ -364,6 +376,10 @@ def apk(debuggable=False):
         z.write(ONDEVICE_ZIP, "assets/ondevice.zip", compress_type=zipfile.ZIP_STORED)
         with zipfile.ZipFile(ONDEVICE_ZIP) as bundle:
             z.writestr("assets/ondevice.stamp", bundle.read("ondevice.stamp"), compress_type=zipfile.ZIP_STORED)
+        tag = version_tag()
+        if tag:
+            z.writestr("assets/version.txt", tag + "\n", compress_type=zipfile.ZIP_DEFLATED)
+            say(f"version {tag} (the update check compares GitHub's latest release with it)")
         say("with the on-device toolchain (clang, lld, XenonRecomp, runtime): the game is built on the phone")
         # The language packs, copied into the files folder by LauncherActivity (the PC's
         # make_dist.py puts them next to the exe); the subtitles of a pack come with the

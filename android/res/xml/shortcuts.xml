@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The icon's shortcut (hold the app's icon): the launcher, also with SKIP LAUNCHER on
+     (LauncherActivity.SHOW_LAUNCHER). -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="launcher"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_launcher">
+        <intent
+            android:action="io.github.vitomiguelf.crashottde.SHOW_LAUNCHER"
+            android:targetPackage="io.github.vitomiguelf.crashottde"
+            android:targetClass="io.github.vitomiguelf.crashottde.LauncherActivity" />
+    </shortcut>
+</shortcuts>

@@ -432,6 +432,8 @@ namespace settings
                 if (ok)
                     values.launcherAdvanced = lower == "advanced";
             }
+            else if (name == "launcher.skip")
+                ok = ParseBool(lower, values.launcherSkip);
             else
             {
                 Log("[settings] %s:%d: unknown setting %s (ignored)", g_path.filename().string().c_str(), line, name.c_str());
@@ -511,7 +513,8 @@ namespace settings
             out << "\n[multiplayer]\n"
                 << "name = \"" << v.mpName << "\"   # o nome do jogador online (A-Z 0-9, ate 12 letras), digitado na tela MULTIPLAYER; vazio: CRASH_MP_NAME ou o usuario do sistema\n";
             out << "\n[launcher]\n"
-                << "view = \"" << (v.launcherAdvanced ? "advanced" : "simple") << "\"   # simple (as opcoes principais) | advanced (todas as abas): a ultima vista do CrashLauncher\n";
+                << "view = \"" << (v.launcherAdvanced ? "advanced" : "simple") << "\"   # simple (as opcoes principais) | advanced (todas as abas): a ultima vista do CrashLauncher\n"
+                << "skip = " << (v.launcherSkip ? "true" : "false") << "   # Android: o app abre direto o jogo, sem o launcher (segure o icone > Launcher para voltar)\n";
             return out.str();
         }
     }

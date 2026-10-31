@@ -168,6 +168,16 @@ namespace settings::menu
         std::vector<HitZone> g_zones;
         uint32_t g_mouseMoves = 0, g_mouseClicks = 0;  // pc_input counters already seen
         int g_dragRow = -1;  // the stars being dragged (row), or -1
+        // A press on a row of a long tab (CONTROLS): it acts on its release, unless the finger (or
+        // the mouse) dragged the rows up / down first, which scrolls them as a phone's list.
+        struct RowPress
+        {
+            bool active = false, dragging = false;
+            HitZone zone{};
+            float y = 0.0f;
+            int first = 0;
+        } g_press;
+        constexpr float DRAG_START = 14.0f;  // virtual pixels of vertical motion before a press is a drag
 
         // Texts -----------------------------------------------------------------------------------
 
@@ -649,6 +659,15 @@ namespace settings::menu
                 // The whole row last: the arrows and the stars win over it (ZoneAt takes the first).
                 g_zones.push_back({ PANEL_L, rowT, PANEL_R, rowB, Zone::Row, int(row) });
             }
+            // A scroll bar beside a long tab's rows: there are more below (or above).
+            if (tab.items.size() > shown)
+            {
+                float top = rowsY, bottom = rowsY + shown * pitch, x0 = PANEL_R + 8.0f, x1 = x0 + 6.0f;
+                float h = std::max(30.0f, (bottom - top) * shown / float(tab.items.size()));
+                float y = top + (bottom - top - h) * first / float(tab.items.size() - shown);
+                g_canvas.Fill(v.IX(x0), v.IY(top), v.IX(x1), v.IY(bottom), pal.starEmpty);
+                g_canvas.Fill(v.IX(x0), v.IY(y), v.IX(x1), v.IY(y + h), g_press.dragging ? pal.selected.fill : pal.divider);
+            }
 
             // Help, in one of the game's message boxes.
             DrawFrame(v, PANEL_L, HELP_Y, PANEL_R, HELP_Y + HELP_H);
@@ -861,6 +880,7 @@ namespace settings::menu
             float x = (u * g_drawnW - (g_drawnW - VIRTUAL_W * s) * 0.5f) / s, y = (v * g_drawnH - (g_drawnH - VIRTUAL_H * s) * 0.5f) / s;
             const HitZone* zone = ZoneAt(x, y);
             const std::vector<Item>& items = TABS[g_tab].items;
+            size_t shown = std::min(items.size(), MAX_ROWS);
             auto selectRow = [&](int row) {
                 if (row < 0 || row >= int(items.size()) || row == g_row[g_tab] || !Selectable(items[size_t(row)]))
                     return;
@@ -870,7 +890,38 @@ namespace settings::menu
             };
             bool onRow = zone && !g_confirm &&
                          (zone->zone == Zone::Row || zone->zone == Zone::ArrowLeft || zone->zone == Zone::ArrowRight || zone->zone == Zone::Stars);
-            if (moved && onRow && g_dragRow < 0)
+            if (clicked && onRow && items.size() > shown && zone->zone != Zone::Stars)
+            {
+                g_press = { true, false, *zone, y, g_first[g_tab] };
+                clicked = false;  // on the release
+            }
+            if (g_press.active && held && !g_confirm)
+            {
+                float dy = y - g_press.y, pitch = std::min(ROW_PITCH, (ROWS_BOTTOM - ROWS_TOP) / float(shown));
+                g_press.dragging |= std::abs(dy) > DRAG_START;
+                int first = std::clamp(g_press.first - int(std::lround(dy / pitch)), 0, int(items.size() - shown));
+                if (g_press.dragging && first != g_first[g_tab])
+                {
+                    // The selection stays among the rows shown (the drawing scrolls to it otherwise).
+                    int last = first + int(shown) - 1, &row = g_row[g_tab];
+                    if (row < first)
+                        for (row = first; row < last && !Selectable(items[size_t(row)]);)
+                            row++;
+                    else if (row > last)
+                        for (row = last; row > first && !Selectable(items[size_t(row)]);)
+                            row--;
+                    g_first[g_tab] = first;
+                    g_dirty = true;
+                }
+            }
+            HitZone tapped{};
+            if (g_press.active && !(held && !g_confirm))
+            {
+                if (!g_press.dragging && !g_confirm)
+                    tapped = g_press.zone, zone = &tapped, onRow = clicked = true;  // a tap: the click, on the row it began on
+                g_press = {};
+            }
+            if (moved && onRow && g_dragRow < 0 && !g_press.dragging)
                 selectRow(zone->index);
             if (moved && held && g_dragRow >= 0 && g_dragRow == g_row[g_tab])
             {
@@ -925,6 +976,7 @@ namespace settings::menu
         {
             g_tab = 0;
             g_dragRow = -1;
+            g_press = {};
             g_mouseMoves = input::pc::CursorMoves(), g_mouseClicks = input::pc::LeftClicks();
             input::pc::TakeSettingsWheel();
             for (int tab = 0; tab < TAB_COUNT; tab++)

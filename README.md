@@ -238,8 +238,9 @@ Default settings are the original experience (1280x720, 30 fps, no upscaler, ext
 in **SETTINGS** (main menu or pause > OPTIONS) or in the launcher; for the HD AI Remaster, install it and
 then switch **DEFINITIVE EDITION > HD AI REMASTER** on. The launcher opens on its simple view: **LIGHTING
 REMASTER** turns on the whole lighting remaster (SSAO high, indirect light, contact and soft shadows),
-ORIGINAL turns it off, and CUSTOM means a mix set one by one; **ADVANCED** (bottom-right corner, or Y / F2)
-shows every option, and the launcher remembers the last view. Mods' HD texture packs need no option: they
+ORIGINAL turns it off, and CUSTOM means a mix set one by one; **ADVANCED** (the simple view's last item, or Y / F2)
+shows every option, and the launcher remembers the last view. Lists longer than the box (CONTROLS) show a
+scroll bar and scroll with the wheel or by dragging them (a finger on a phone). Mods' HD texture packs need no option: they
 load from `mods\` by themselves (`[graphics] hd_textures = false` in `settings.toml` turns them off).
 
 ## Mods and exporting the game's assets
