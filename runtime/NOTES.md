@@ -1028,7 +1028,7 @@ Para escolher em que quadro tirar um print, montar perfis do `config/run.toml` e
 - `QUADRO N`: o `g_stats.swaps` do renderer naquele `Swap`, exatamente o número que `CRASH_SCREENSHOTS` compara e que vai no nome `screenshot_NNNNN.png`. (O `VdSwap #N` do log é contado no `VdSwap` da CPU e pode estar alguns quadros à frente, porque o CP executa o swap depois.)
 - `INPUT t S`: segundos desde a primeira leitura do controle 0, com uma casa decimal. É o zero do `CRASH_INPUT_SCRIPT`; antes da primeira leitura aparece `--`. O relógio agora existe mesmo sem script (`g_clockStart`, marcado na primeira chamada de `ReadController(0)`, que é onde o script já começava a contar). Usa `GetTickCount64`, como o script.
 - `FPS`: swaps por segundo no último segundo, atualizado duas vezes por segundo. `FRAME`: tempo do último quadro (QPC entre dois `Swap`, a mesma medida do `[gpu] present pacing`).
-- `MED / MAX / 1%LOW`: frame time médio, máximo e percentil 99 (ms) dos últimos 240 quadros.
+- `MED / MAX / 1%LOW`: frame time médio, máximo e percentil 99 (ms) dos últimos 240 quadros. (Depois: `MIN / MED / MAX / 1%LOW` em FPS, o mínimo vindo do maior frame time, e os textos no idioma do jogo, `settings/ui_text.h`; a fonte do overlay só tem ASCII maiúsculo, então as traduções vão sem acento.)
 - Gráfico com um quadro por coluna (os últimos 204), escala de 0 a 66,7 ms, guias tracejadas em 16,7 e 33,3 ms. Verde até 34,5 ms, amarelo até 50 ms, vermelho acima.
 - Linha de status: as teclas, `MARCA n: QUADRO N` / `PRINT: QUADRO N` por 2,5 s depois de F2/F12 e `REC` em vermelho quando a gravação está ligada.
 

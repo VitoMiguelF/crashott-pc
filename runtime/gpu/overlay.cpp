@@ -5,6 +5,7 @@
 #include "../diagnostics.h"
 #include "../kernel/input.h"
 #include "../settings/settings.h"
+#include "../settings/ui_text.h"
 #include "../platform/platform.h"
 #include "../platform/crt.h"
 
@@ -25,7 +26,7 @@ namespace gpu::overlay
         constexpr int PAD = 4;
         constexpr int CELL_W = overlay_font::WIDTH + 1;
         constexpr int LINE_H = overlay_font::HEIGHT + 3;
-        constexpr int COLUMNS = 40;           // the widest line (the image is as wide as its text)
+        constexpr int COLUMNS = 48;           // the widest line (the image is as wide as its text)
         constexpr int MIN_GRAPH_COLUMNS = 34; // the graph is at least this wide
         constexpr int TEXT_LINES = 10;        // the most lines (full mode in a profile run, upscaler, replay, recording)
         constexpr int GRAPH_H = 40;
@@ -33,7 +34,7 @@ namespace gpu::overlay
         constexpr int IMAGE_H = PAD * 2 + TEXT_LINES * LINE_H + 2 + GRAPH_H;
         constexpr int GRAPH_W = IMAGE_W - PAD * 2; // frame-time history kept (one column per frame)
         constexpr double GRAPH_MAX_MS = 66.7;
-        constexpr int STATS_WINDOW = 240; // frames for average / max / 1% low
+        constexpr int STATS_WINDOW = 240; // frames for min / average / max / 1% low FPS
         constexpr uint32_t UPLOAD_SLICES = 4; // > frames in flight (Swap keeps at most 2 queued)
         constexpr uint64_t UPLOAD_SLICE_SIZE = (uint64_t(IMAGE_W) * IMAGE_H * 4 + 255) & ~uint64_t(255);
         constexpr double TOAST_SECONDS = 2.5;
@@ -110,7 +111,9 @@ float4 main(float4 position : SV_Position) : SV_Target
         std::deque<int64_t> g_swapTimes;  // swaps in the last second, for FPS
         double g_fps = 0.0;
         int64_t g_fpsUpdated{};
-        double g_averageMs = 0.0, g_maxMs = 0.0, g_lowMs = 0.0;
+        // FPS over the stats window: the lowest comes from the longest frame time.
+        double g_minFps = 0.0, g_averageFps = 0.0, g_maxFps = 0.0, g_lowFps = 0.0;
+        settings::UiLanguage g_language = settings::UiLanguage::English;  // game.language, read with the stats
         uint32_t g_marks = 0;
         std::string g_toast;
         int64_t g_toastTime{};
@@ -154,12 +157,15 @@ float4 main(float4 position : SV_Position) : SV_Target
             double sum = 0.0;
             for (double ms : window)
                 sum += ms;
-            g_averageMs = sum / double(count);
-            g_maxMs = *std::max_element(window.begin(), window.end());
-            // 1% low: the frame time 99% of the frames stay under.
+            auto fps = [](double ms) { return ms > 0.0 ? 1000.0 / ms : 0.0; };
+            auto [shortest, longest] = std::minmax_element(window.begin(), window.end());
+            g_minFps = fps(*longest);
+            g_maxFps = fps(*shortest);
+            g_averageFps = fps(sum / double(count));  // frames over the time they took
+            // 1% low: the FPS of the frame time 99% of the frames stay under.
             size_t index = std::min(count - 1, size_t(std::ceil(double(count) * 0.99)) - 1);
             std::nth_element(window.begin(), window.begin() + index, window.end());
-            g_lowMs = window[index];
+            g_lowFps = fps(window[index]);
         }
 
         // Rasterization ---------------------------------------------------------------------
@@ -216,13 +222,60 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
         }
 
+        // Texts in game.language (settings/ui_text.h), upper case ASCII for overlay_font.h. The
+        // formats take the same arguments in every language.
+        using settings::UiText;
+        const UiText T_FRAME = { "FRAME", "QUADRO", "IMAGE", "BILD", "CUADRO", "FRAME", "BEELD" };
+        const UiText T_INPUT = { "INPUT", "ENTRADA", "ENTREE", "EINGABE", "ENTRADA", "INPUT", "INVOER" };
+        const UiText T_AVERAGE = { "AVG", "MED", "MOY", "MITTEL", "MED", "MED", "GEM" };
+        const UiText T_LOW = { "1%LOW", "1%BAIXO", "1%BAS", "1%TIEF", "1%BAJO", "1%BASSO", "1%LAAG" };
+        const UiText T_STOP = { "F5 STOP", "F5 PARA", "F5 ARRET", "F5 STOPP", "F5 PARAR", "F5 FERMA", "F5 STOP" };
+        const UiText T_RENDER = { "RENDER", "RENDER", "RENDU", "RENDER", "RENDER", "RENDER", "RENDER" };
+        const UiText T_SCENE = { "SCENE", "CENA", "SCENE", "SZENE", "ESCENA", "SCENA", "SCENE" };
+        const UiText T_PROFILE = { "PROFILE", "PERFIL", "PROFIL", "PROFIL", "PERFIL", "PROFILO", "PROFIEL" };
+        const UiText T_BUTTON = { "BUTTON", "BOTAO", "BOUTON", "TASTE", "BOTON", "TASTO", "KNOP" };
+        const UiText T_FRAME_LETTER = { "F", "Q", "I", "B", "C", "F", "B" };  // "BUTTON A @ 1.00 S F60"
+        const UiText T_PLAYER = { "PLAYER", "JOGADOR", "JOUEUR", "SPIELER", "JUGADOR", "GIOCATORE", "SPELER" };
+        const UiText T_WAITING = { "WAITING", "ESPERANDO", "ATTENTE", "WARTET", "ESPERANDO", "ATTESA", "WACHT" };
+        const UiText T_KEYS = { "F1 MODE F2 MARK F5 RECORD F12 SHOT", "F1 MODO F2 MARCA F5 GRAVA F12 PRINT",
+                                "F1 MODE F2 REPERE F5 ENREG. F12 CAPTURE", "F1 MODUS F2 MARKE F5 AUFNAHME F12 BILD",
+                                "F1 MODO F2 MARCA F5 GRABAR F12 CAPTURA", "F1 MODO F2 SEGNA F5 REGISTRA F12 FOTO",
+                                "F1 MODUS F2 MARKEER F5 OPNEMEN F12 FOTO" };
+        const UiText T_MARK = { "MARK %u: FRAME %llu", "MARCA %u: QUADRO %llu", "REPERE %u: IMAGE %llu", "MARKE %u: BILD %llu",
+                                "MARCA %u: CUADRO %llu", "SEGNO %u: FRAME %llu", "MARKERING %u: BEELD %llu" };
+        const UiText T_QUALITY[] = {  // settings::UpscalerQuality
+            { "NATIVE", "NATIVO", "NATIF", "NATIV", "NATIVO", "NATIVO", "NATIEF" },
+            { "QUALITY", "QUALIDADE", "QUALITE", "QUALITAET", "CALIDAD", "QUALITA", "KWALITEIT" },
+            { "BALANCED", "EQUILIBRADO", "EQUILIBRE", "AUSGEWOGEN", "EQUILIBRADO", "BILANCIATO", "GEBALANCEERD" },
+            { "PERFORMANCE", "DESEMPENHO", "PERFORMANCE", "LEISTUNG", "RENDIMIENTO", "PRESTAZIONI", "PRESTATIES" },
+            { "ULTRA PERFORMANCE", "ULTRA DESEMPENHO", "ULTRA PERFORMANCE", "ULTRA LEISTUNG", "ULTRA RENDIMIENTO", "ULTRA PRESTAZIONI",
+              "ULTRA PRESTATIES" },
+        };
+        const UiText T_SHOT = { "SCREENSHOT: FRAME %llu", "PRINT: QUADRO %llu", "CAPTURE: IMAGE %llu", "BILDSCHIRMFOTO: BILD %llu",
+                                "CAPTURA: CUADRO %llu", "FOTO: FRAME %llu", "SCHERMAFBEELDING: BEELD %llu" };
+
+        // An FPS figure: one decimal below 100, whole numbers above (the line stays short at 500 FPS).
+        std::string FpsText(double fps)
+        {
+            char text[32];
+            snprintf(text, sizeof(text), fps < 99.95 ? "%.1f" : "%.0f", fps);
+            return text;
+        }
+
+        // "MIN 58.1 AVG 60.0 MAX 61.2 1%LOW 57.3": FPS over the last STATS_WINDOW frames.
+        std::string FpsStatsText(settings::UiLanguage language)
+        {
+            return "MIN " + FpsText(g_minFps) + " " + settings::Tr(T_AVERAGE, language) + " " + FpsText(g_averageFps) + " MAX " +
+                   FpsText(g_maxFps) + " " + settings::Tr(T_LOW, language) + " " + FpsText(g_lowFps);
+        }
+
         // "RENDER 2560X1440 (2X) -> 1920X1080": the internal resolution and the window's.
-        std::string ResolutionText(uint32_t width, uint32_t height)
+        std::string ResolutionText(uint32_t width, uint32_t height, settings::UiLanguage language)
         {
             const settings::Resolution& render = settings::ResolutionOf(settings::AtStartup().aspect, settings::AtStartup().renderHeight);
             char text[64];
             float scale = float(render.height) / 720.0f;
-            snprintf(text, sizeof(text), "RENDER %s (%gX) -> %ux%u", render.name, double(scale), width, height);
+            snprintf(text, sizeof(text), "%s %s (%gX) -> %ux%u", settings::Tr(T_RENDER, language), render.name, double(scale), width, height);
             return text;
         }
 
@@ -230,6 +283,8 @@ float4 main(float4 position : SV_Position) : SV_Target
         {
             char line[128];
             std::vector<std::pair<std::string, uint32_t>> lines;
+            settings::UiLanguage language = g_language;
+            auto tr = [&](const UiText& text) { return settings::Tr(text, language); };
             bool graph = false;
             int columns = 0;
             // "(dot) REC 01:23" in every mode while recording (F5), even with the overlay off.
@@ -238,7 +293,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             if (record.recording)
             {
                 int seconds = int(record.recordSeconds);
-                snprintf(line, sizeof(line), "\x01 REC %02d:%02d  F5 PARA", seconds / 60, seconds % 60);
+                snprintf(line, sizeof(line), "\x01 REC %02d:%02d  %s", seconds / 60, seconds % 60, tr(T_STOP));
                 recordLine = line;
             }
             int64_t noticeNow = int64_t(plat::PerfCounter());
@@ -257,10 +312,9 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
             else if (g_mode == settings::OverlayMode::FrameTime)
             {
-                snprintf(line, sizeof(line), "FPS %5.1f  FRAME %5.1f MS", g_fps, g_lastMs);
+                snprintf(line, sizeof(line), "FPS %5.1f  %s %5.1f MS", g_fps, tr(T_FRAME), g_lastMs);
                 lines.push_back({ line, TEXT });
-                snprintf(line, sizeof(line), "MED %5.1f MAX %5.1f 1%%LOW %5.1f", g_averageMs, g_maxMs, g_lowMs);
-                lines.push_back({ line, TEXT });
+                lines.push_back({ FpsStatsText(language), TEXT });
                 if (record.recording)
                     lines.push_back({ recordLine, RECORDING });
                 graph = true;
@@ -268,42 +322,43 @@ float4 main(float4 position : SV_Position) : SV_Target
             else
             {
                 std::string clock = ClockText();
-                snprintf(line, sizeof(line), "QUADRO %-7llu INPUT %s%s", (unsigned long long)g_frame, clock.c_str(), clock == "--" ? "" : " S");
+                snprintf(line, sizeof(line), "%s %-7llu %s %s%s", tr(T_FRAME), (unsigned long long)g_frame, tr(T_INPUT), clock.c_str(),
+                         clock == "--" ? "" : " S");
                 lines.push_back({ line, TEXT });
-                snprintf(line, sizeof(line), "FPS %5.1f       FRAME %5.1f MS", g_fps, g_lastMs);
+                snprintf(line, sizeof(line), "FPS %5.1f       %s %5.1f MS", g_fps, tr(T_FRAME), g_lastMs);
                 lines.push_back({ line, TEXT });
-                snprintf(line, sizeof(line), "MED %5.1f MAX %5.1f 1%%LOW %5.1f", g_averageMs, g_maxMs, g_lowMs);
-                lines.push_back({ line, TEXT });
-                lines.push_back({ ResolutionText(outputWidth, outputHeight), TEXT });
+                lines.push_back({ FpsStatsText(language), TEXT });
+                lines.push_back({ ResolutionText(outputWidth, outputHeight, language), TEXT });
                 if (upscaler::Active() != settings::Upscaler::Off)
                 {
-                    // "DLSS 310.9.16 QUALITY: CENA 1707X960": the upscaler and the 3D scene's size.
+                    // "DLSS 310.9.16 QUALITY: SCENE 1707X960": the upscaler and the 3D scene's size.
                     float scene = settings::SceneScale();
-                    snprintf(line, sizeof(line), "%s %s: CENA %ux%u", upscaler::ActiveName().c_str(),
-                             settings::UpscalerQualityName(settings::AtStartup().upscalerQuality), unsigned(ceilf(1280.0f * scene)), unsigned(ceilf(720.0f * scene)));
+                    size_t quality = std::min(size_t(settings::AtStartup().upscalerQuality), std::size(T_QUALITY) - 1);
+                    snprintf(line, sizeof(line), "%s %s: %s %ux%u", upscaler::ActiveName().c_str(), tr(T_QUALITY[quality]), tr(T_SCENE),
+                             unsigned(ceilf(1280.0f * scene)), unsigned(ceilf(720.0f * scene)));
                     lines.push_back({ line, TEXT });
                 }
                 // Runs started by tools/run_game.py with a profile.
                 if (!g_profile.empty())
                 {
-                    lines.push_back({ "PERFIL " + g_profile, PROFILE });
+                    lines.push_back({ std::string(tr(T_PROFILE)) + " " + g_profile, PROFILE });
                     input::Press press;
                     if (input::LastPress(press))
                     {
-                        snprintf(line, sizeof(line), "BOTAO %s @ %.2f S Q%llu %s", press.button, double(press.clockMs) / 1000.0,
-                                 (unsigned long long)press.frame, press.scripted ? "SCRIPT" : "JOGADOR");
+                        snprintf(line, sizeof(line), "%s %s @ %.2f S %s%llu %s", tr(T_BUTTON), press.button, double(press.clockMs) / 1000.0,
+                                 tr(T_FRAME_LETTER), (unsigned long long)press.frame, press.scripted ? "SCRIPT" : tr(T_PLAYER));
                         lines.push_back({ line, PROFILE });
                     }
                     else
                     {
-                        lines.push_back({ "BOTAO --", PROFILE });
+                        lines.push_back({ std::string(tr(T_BUTTON)) + " --", PROFILE });
                     }
                 }
                 // Replay (CRASH_REPLAY): its timeline, and how far SYNC/WAIT moved it.
                 if (record.replaying)
                 {
                     if (record.waiting)
-                        snprintf(line, sizeof(line), "REPLAY %.1f S  ESPERANDO %s", record.replaySeconds, record.waiting);
+                        snprintf(line, sizeof(line), "REPLAY %.1f S  %s %s", record.replaySeconds, tr(T_WAITING), record.waiting);
                     else
                         snprintf(line, sizeof(line), "REPLAY %.1f S  SYNC %+.1f S", record.replaySeconds, record.shiftSeconds);
                     lines.push_back({ line, PROFILE });
@@ -314,7 +369,7 @@ float4 main(float4 position : SV_Position) : SV_Target
                 if (!g_toast.empty() && Seconds(g_toastTime, now) < TOAST_SECONDS)
                     lines.push_back({ g_toast, TOAST });
                 else
-                    lines.push_back({ "F1 MODO F2 MARCA F5 GRAVA F12 PRINT", GUIDE });
+                    lines.push_back({ tr(T_KEYS), GUIDE });
                 graph = true;
             }
             if (notice)
@@ -381,6 +436,7 @@ float4 main(float4 position : SV_Position) : SV_Target
         // CRASH_OVERLAY (run.toml `overlay`) wins over settings.toml for that run: 1/true = full,
         // or a mode name (off, fps, frametime, full).
         g_mode = settings::Get().overlay;
+        g_language = settings::CurrentUiLanguage();
         if (const char* mode = getenv("CRASH_OVERLAY"); mode && *mode && !settings::ParseOverlayMode(mode, g_mode))
             Log("[overlay] CRASH_OVERLAY=%s is not a mode (off, fps, frametime, full)", mode);
         if (const char* profile = getenv("CRASH_PROFILE"))
@@ -448,6 +504,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             g_fps = g_swapTimes.size() > 1 && span > 0.0 ? double(g_swapTimes.size() - 1) / span : 0.0;
             g_fpsUpdated = now;
             UpdateWindowStats();
+            g_language = settings::CurrentUiLanguage();
         }
 
         if (uint32_t presses = window::ConsumeOverlayToggles())
@@ -472,7 +529,7 @@ float4 main(float4 position : SV_Position) : SV_Target
             }
             input::RecordMark(frame);
             char text[64];
-            snprintf(text, sizeof(text), "MARCA %u: QUADRO %llu", g_marks, (unsigned long long)frame);
+            snprintf(text, sizeof(text), settings::Tr(T_MARK, g_language), g_marks, (unsigned long long)frame);
             Toast(text);
         }
         // F5: start/stop recording (kernel/input_record.cpp logs and writes the profile).
@@ -506,7 +563,7 @@ float4 main(float4 position : SV_Position) : SV_Target
     void NoteScreenshot(uint64_t frame)
     {
         char text[64];
-        snprintf(text, sizeof(text), "PRINT: QUADRO %llu", (unsigned long long)frame);
+        snprintf(text, sizeof(text), settings::Tr(T_SHOT, g_language), (unsigned long long)frame);
         Toast(text);
     }
 
