@@ -24,7 +24,8 @@
 //             subtitle_size = 50..200 (%), subtitle_background = 0..100 (%) (subtitles/subtitles.h),
 //             coop_mode = "leapfrog" | "piggyback", invert_axis = true|false, autosave = true|false
 //             (the game's own options, game_options.cpp), skip_cutscenes = true|false (hold to
-//             skip a cutscene, skip_cinematics.h)
+//             skip a cutscene, skip_cinematics.h), discord = true|false (Discord Rich Presence,
+//             discord/discord_presence.h)
 //   [controls] keyboard / mouse bindings and options (controls.h)
 //   [lighting] the lighting remaster (gpu/lighting.h), all off by default: ssao = "off" | "low" |
 //             "high", gi = true|false, gi_intensity = 0..200 (%), contact_shadows = true|false,
@@ -171,6 +172,9 @@ namespace settings
         // skip_cutscenes: "hold to skip" over the cutscenes and the intro videos, with a prompt in
         // a corner (skip_cinematics.h), live
         bool skipCutscenes = true;
+        // discord: Discord Rich Presence (the game, the episode, the time played on the player's Discord
+        // profile; discord/discord_presence.h), live. Not on Android.
+        bool discord = true;
         Controls controls;          // [controls]: keyboard and mouse bindings (controls.h, kernel/pc_input.cpp), live
         // [camera]: the free third-person camera (camera/free_camera.h), experimental, live
         bool freeCamera = false;      // free_camera: orbit camera around the player instead of the game's

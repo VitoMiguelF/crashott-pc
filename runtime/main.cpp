@@ -31,6 +31,7 @@
 #include "dev/dev_console.h"
 #include "dev/cheat_menu.h"
 #include "diagnostics.h"
+#include "discord/discord_presence.h"
 #include "fs/vfs.h"
 #include "gpu/gpu.h"
 #include "gpu/renderer.h"
@@ -130,6 +131,7 @@ int main(int argc, char** argv)
     settings::RegisterSnipePatches();
     settings::RegisterLanguagePack();
     mp::menu::Init();  // after the language pack: the episode titles as the game shows them
+    discord::Init();   // Discord Rich Presence (game.discord), with those titles
     // Subtitles of that language (<data>/subtitles, languages\<id>\subtitles.txt), if any.
     subtitles::Init();
     // The game's fonts and frames for the settings screen, read from default.rcf on a thread.

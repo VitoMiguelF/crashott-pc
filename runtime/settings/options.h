@@ -21,7 +21,7 @@ namespace settings::options
         Master, Music, Effects, Voice,
         Window, Resolution, FpsLimit, VSync, AntiAliasing, Overlay, Aspect, Gamma, Saturation,
         Upscaler, UpscalerQuality, Sharpness, MotionBlur, DepthOfField, Anisotropy, ShadowSoftness, ShaderCompilation, HdRemaster,
-        Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Storage,
+        Language, MojoColors, CoopMode, InvertAxis, Autosave, SkipCutscenes, Discord, Storage,
         Subtitles, SubtitleSize, SubtitleBackground,
         FreeCamera, CameraSensitivity, CameraInvertY,
         LightSsao, LightGi, LightGiIntensity, LightContactShadows, LightSoftShadows,

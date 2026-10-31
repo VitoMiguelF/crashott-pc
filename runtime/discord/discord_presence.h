@@ -1,0 +1,22 @@
+#pragma once
+
+// Discord Rich Presence (docs/GUIA_DO_PROJETO.md "Discord"): the player's Discord profile shows the
+// game, where the player is (main menu, the HUB, the episode by its name, an online MULTIPLAYER
+// session with its player count) and the time played since the game started. No SDK: the local IPC of
+// the Discord client (discord_ipc.h), its handshake and SET_ACTIVITY frames in JSON, on a thread of its
+// own. Without a Discord client running it does nothing (it looks again every 15 s); off with
+// SETTINGS > GAME > DISCORD (game.discord = false), live. Not on Android (no IPC in the mobile app).
+//
+//   CRASH_DISCORD_APP_ID=<id>   another Discord application's id (discord.com/developers) than
+//                               APPLICATION_ID in discord_presence.cpp
+//   CRASH_DISCORD_ASSET=<name>  the application's art asset shown as the large image ("crash_icon")
+
+#include <cstdint>
+
+namespace discord
+{
+    // Starts the presence thread (main.cpp, after the language pack: the episode titles).
+    void Init();
+    // The Frontend tree node shown now (settings/frontend_hooks.cpp, game thread): the main menu / the HUB.
+    void NoteFrontendNode(uint32_t node);
+}
