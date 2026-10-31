@@ -279,6 +279,8 @@ namespace settings
             ;  // removed options: walking is always at WALK_SPEED, the menus always follow the mouse
         else if (key == "vibration")
             valid = ParseBool(lower, controls.vibration);
+        else if (key == "lightbar")
+            valid = ParseBool(lower, controls.lightbar);
         else if (key == "player1" || key == "player2")
         {
             valid = ValidPlayerDevice(lower);
@@ -342,6 +344,7 @@ namespace settings
             << "mouse_sensitivity = " << c.mouseSensitivity << "   # 10-400 %, mouse -> camera\n"
             << "invert_y = " << (c.invertY ? "true" : "false") << "   # inverte o eixo vertical da camera (mouse e teclas)\n"
             << "vibration = " << (c.vibration ? "true" : "false") << "   # vibracao dos controles (XInput, DualSense e os do SDL), vale na hora\n"
+            << "lightbar = " << (c.lightbar ? "true" : "false") << "   # barra de luz do DualSense / DualShock 4 com a cor do jogador ou do tita, vale na hora\n"
             << "prompts = \"" << PromptStyleName(c.prompts) << "\"   # icones dos botoes: auto (o ultimo usado) | xbox | playstation | keyboard\n"
             << "player1 = \"" << c.players[0] << "\"   # co-op local, controle do jogador 1: auto | keyboard | xbox1..xbox4 (XInput) | playstation1..playstation4\n"
             << "player2 = \"" << c.players[1] << "\"   # controle do jogador 2 (com um controle so, ele e o jogador 1, junto com o teclado; keyboard: o teclado e so dele)\n"

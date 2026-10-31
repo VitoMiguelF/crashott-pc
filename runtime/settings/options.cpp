@@ -25,7 +25,7 @@ namespace settings::options
 
         std::vector<Item> ControlItems()
         {
-            std::vector<Item> items = { Item::Player1, Item::Player2, Item::Prompts, Item::ControllerLayout, Item::Vibration, Item::MouseCamera,
+            std::vector<Item> items = { Item::Player1, Item::Player2, Item::Prompts, Item::ControllerLayout, Item::Vibration, Item::Lightbar, Item::MouseCamera,
                                         Item::MouseSensitivity, Item::MouseInvertY };
             for (int i = 0; i < int(ACTION_COUNT); i++)
                 items.push_back(BindingItem(Action(i)));
@@ -153,6 +153,7 @@ namespace settings::options
         case Item::MouseSensitivity: return "controls.mouse_sensitivity";
         case Item::MouseInvertY: return "controls.invert_y";
         case Item::Vibration: return "controls.vibration";
+        case Item::Lightbar: return "controls.lightbar";
         default: break;
         }
         return "";
@@ -214,6 +215,7 @@ namespace settings::options
         case Item::MouseSensitivity: return t({ "MOUSE SENSITIVITY", "SENSIBILIDADE DO MOUSE" });
         case Item::MouseInvertY: return t({ "INVERT MOUSE Y", "INVERTER Y DO MOUSE" });
         case Item::Vibration: return t({ "VIBRATION", "VIBRAÇÃO" });
+        case Item::Lightbar: return t({ "LIGHT BAR", "BARRA DE LUZ" });
         case Item::GameFolder: return t({ "GAME FOLDER", "PASTA DO JOGO" });
         case Item::ModsFolder: return "MODS";
         case Item::SavesFolder: return t({ "SAVES AND OPTIONS", "SAVES E OPÇÕES" });
@@ -353,6 +355,7 @@ namespace settings::options
         case Item::MouseCamera: return OnOff(pt, values.controls.mouseCamera);
         case Item::MouseInvertY: return OnOff(pt, values.controls.invertY);
         case Item::Vibration: return OnOff(pt, values.controls.vibration);
+        case Item::Lightbar: return OnOff(pt, values.controls.lightbar);
         default: return "";
         }
     }
@@ -538,6 +541,9 @@ namespace settings::options
         case Item::MouseInvertY: return { t({ "Mouse / camera keys: up looks down.", "Mouse / teclas da câmera: para cima olha para baixo." }), "" };
         case Item::Vibration:
             return { t({ "The controllers' rumble (Xbox, PlayStation and others).", "A vibração dos controles (Xbox, PlayStation e outros)." }), live };
+        case Item::Lightbar:
+            return { t({ "DualSense / DualShock 4: the player's colour, or the", "DualSense / DualShock 4: a cor do jogador, ou a do" }),
+                     t({ "titan's when riding one. Not with DSX / DS4Windows open.", "titã montado. Não com o DSX / DS4Windows abertos." }) };
         default: break;
         }
         return {};
@@ -688,6 +694,7 @@ namespace settings::options
         case Item::MouseCamera: values.controls.mouseCamera = !values.controls.mouseCamera; break;
         case Item::MouseInvertY: values.controls.invertY = !values.controls.invertY; break;
         case Item::Vibration: values.controls.vibration = !values.controls.vibration; break;
+        case Item::Lightbar: values.controls.lightbar = !values.controls.lightbar; break;
         default: return false;
         }
         return true;

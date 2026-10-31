@@ -226,7 +226,8 @@ namespace dev
 
     namespace
     {
-        std::atomic<bool> g_oneHitTitans{ false }, g_aiDisabled{ false };
+        // CRASH_DEV_ONE_HIT_TITANS=1 / CRASH_DEV_NO_AI=1: on from the start (tests: barra_de_luz).
+        std::atomic<bool> g_oneHitTitans{ Enabled("CRASH_DEV_ONE_HIT_TITANS") }, g_aiDisabled{ Enabled("CRASH_DEV_NO_AI") };
     }
 
     void SetOneHitTitans(bool on)

@@ -16,6 +16,7 @@
 //   player2 = "auto"            # auto | xbox1..xbox4 (XInput) | playstation1..playstation4
 //   pad_layout = "xbox360"      # controller mapping: xbox360 (the game's) | ps2
 //   vibration = true            # the controllers' rumble (every kind of pad)
+//   lightbar = true             # PlayStation pads: the light bar follows the player (kernel/pad_lights.h)
 //
 // The game's own controls (scripts\mixins\inputmap_methods.lua, Crash.bfig/Crashlua.blua; see
 // runtime/NOTES.md "Controles de PC"): A jump, X light attack, Y heavy attack, B action/jack/
@@ -85,6 +86,7 @@ namespace settings
         bool invertY = false;        // mouse / camera keys up = down
         PromptStyle prompts = PromptStyle::Auto;
         bool vibration = true;       // the controllers' rumble (kernel/pad_slots.cpp SetVibration), live
+        bool lightbar = true;        // DualSense / DualShock 4 light bar by what the player controls (kernel/pad_lights.h), live
         // Local co-op: the controller of player 1 / player 2 (PlayerDeviceKey; "auto" = connection
         // order, and START on the title screen picks player 1). A single pad is always player 1.
         std::array<std::string, 2> players{ "auto", "auto" };

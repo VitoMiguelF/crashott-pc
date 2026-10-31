@@ -35,6 +35,10 @@ namespace input::hid
     // Rumble for pad `id` (XamInputSetState's motors, 0..65535). Not used for a pad that
     // DS4Windows/DSX also present as a virtual Xbox pad (they forward that pad's rumble).
     void SetPadVibration(uint32_t id, uint16_t left, uint16_t right);
+    // The light bar of pad `id` (0xRRGGBB) and, on a DualSense, its player number LEDs (1-8; 0 =
+    // all off), for pad_lights.h. Sent on change only, and never while DSX or DS4Windows runs (the
+    // lights are theirs then).
+    void SetPadLight(uint32_t id, uint32_t rgb, uint8_t player);
     // A PlayStation pad had input in the last second.
     bool RecentlyActive();
     // A PlayStation pad is present but another program holds it (DSX, DS4Windows, HidHide) and

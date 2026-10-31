@@ -511,7 +511,7 @@ Capturas da organização atual das abas em `docs\capturas\settings_abas\`: cada
 | Profundidade de campo | 0–100%: o desfoque de distância das cenas; 0% desliga | na hora (`docs\capturas\antigas\graficos\profundidade_de_campo_100_vs_0.jpg`) |
 | Filtro anisotrópico | desligado, 2x, 4x, 8x, 16x (o jogo já pede 16x na maioria das texturas da fase; a opção vale como mínimo) | na hora (`docs\capturas\antigas\graficos\mipmaps_antes_depois.jpg`) |
 | Suavidade das sombras | 0–200%: raio do filtro da borda das sombras (0% = borda dura). Não há resolução de sombra para ajustar (veja abaixo) | na hora (`docs\capturas\antigas\graficos\sombra_suavidade_100_vs_0.jpg`) |
-| **Controles** | jogadores, ícones dos botões, mapeamento do controle, vibração (ligada por padrão; vale para Xbox/XInput, DualSense/DualShock e os controles do SDL no Linux/Android), câmera e sensibilidade do mouse e as teclas de cada ação (veja "Controles de PC") | na hora |
+| **Controles** | jogadores, ícones dos botões, mapeamento do controle, vibração (ligada por padrão; vale para Xbox/XInput, DualSense/DualShock e os controles do SDL no Linux/Android), barra de luz (ligada por padrão: DualSense/DualShock 4 na cor do jogador ou do titã montado), câmera e sensibilidade do mouse e as teclas de cada ação (veja "Controles de PC") | na hora |
 | **Definitive Edition** | os extras deste port | |
 | Cores do mojo `*` | PS2 (padrão: mojo grande azul bem claro e mais brilhante, extra grande roxo lilás) / Xbox 360 (todos azuis, como no original) (veja "Cores do mojo") | reinicia o jogo (`docs\capturas\antigas\mojo\`) |
 | HD AI Remaster `*` | desligado (padrão) / ligado: texturas e modelos remasterizados por IA do jogo todo (`data\remaster_full`), ou só da fase 1 (`data\remaster_l1`) se o completo não existir (veja "HD AI Remaster"). Sem esses arquivos no PC aparece **INDISPONÍVEL** e não muda | reinicia o jogo (`docs\capturas\hd_remaster\`) |
@@ -849,6 +849,7 @@ mouse_sensitivity = 100        # 10-400 %
 mouse_camera = true
 invert_y = false
 vibration = true               # vibração dos controles (XInput, DualSense e os do SDL)
+lightbar = true                # barra de luz do DualSense / DualShock 4 com a cor do jogador ou do titã
 prompts = "auto"               # auto | xbox | playstation | keyboard
 ```
 
@@ -878,7 +879,9 @@ O jogo desenha os botões com 14 ícones (A B X Y BACK START RT RB analógico < 
 
 DualSense (inclusive Edge) e DualShock 4, por USB ou Bluetooth, são lidos direto pelo HID do Windows: ✕ = A, ○ = B, □ = X, △ = Y, L1/R1 = LB/RB, L2/R2 = LT/RT, Options = START, Create/Share e o clique do touchpad = BACK, L3/R3. Ligar e desligar com o jogo aberto funciona (o runtime procura de novo quando o Windows avisa e a cada 2 s). Cada um é um jogador (veja "Co-op local"). A **vibração** do jogo vai para o DualSense/DualShock do jogador, ou para o Xbox virtual quando o DSX/DS4Windows mostra o mesmo controle. SETTINGS > CONTROLES > VIBRAÇÃO (`[controls] vibration`) a desliga para todos os controles (`input::slots::SetVibration` manda os motores a 0). Se outro programa estiver com o controle (DSX/DS4Windows), o runtime usa o Xbox virtual dele e mostra ícones de PlayStation.
 
-- `CrashRecomp.exe --hid-monitor 30`: lista os controles PlayStation e mostra cada botão/analógico por 30 s (✕ segurado faz vibrar); `--hid-selftest` confere os formatos de relatório. `CRASH_HID_TRACE=1` registra os relatórios crus; `CRASH_NO_HID=1` desliga a leitura HID.
+**Barra de luz** (SETTINGS > CONTROLES > BARRA DE LUZ, `[controls] lightbar`, ligada por padrão; `kernel/pad_lights.cpp`): o DualSense/DualShock 4 de cada jogador acende na cor dele: laranja do Crash a pé (ou a cor da skin; no co-op e no online, a cor de cada jogador, a do MULTIPLAYER), a cor do titã montado (Ratcicle azul-gelo, Espeto verde, Shellephant cinza-roxo, Magmadon lava, Snipe rosa, Stench roxo, Ee-lectric amarelo... tabela `TITANS`), vermelho piscando no nocaute e a cor "respirando" com o jogo pausado. Os LEDs de jogador do DualSense mostram o número do jogador (no online, a vaga da sessão). Por USB e Bluetooth no Windows (relatórios próprios, com CRC-32 no Bluetooth) e pelo SDL no Linux/Android. Com o DSX ou o DS4Windows abertos o runtime não manda nada (a barra é deles); desligar a opção devolve o azul do PlayStation.
+
+- `CrashRecomp.exe --hid-monitor 30`: lista os controles PlayStation e mostra cada botão/analógico por 30 s (✕ segurado faz vibrar, ○ segurado deixa a barra vermelha e os LEDs no jogador 2); `--hid-selftest` confere os formatos de relatório. `CRASH_HID_TRACE=1` registra os relatórios crus; `CRASH_NO_HID=1` desliga a leitura HID.
 - **Conferido** com um DualSense de verdade por USB: os 14 botões, L2/R2 até o fim e os dois analógicos no curso todo (`docs\capturas\controles\hid_monitor_dualsense.txt`). Por Bluetooth, o DualSense desta máquina estava com o DSX (acesso negado, reconhecido como "em uso por outro programa").
 
 ### Capturas e testes

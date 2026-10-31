@@ -67,6 +67,7 @@ mouse_camera = true   # o mouse gira a camera na gameplay
 mouse_sensitivity = 100   # 10-400 %, mouse -> camera
 invert_y = false   # inverte o eixo vertical da camera (mouse e teclas)
 vibration = true   # vibracao dos controles (XInput, DualSense e os do SDL), vale na hora
+lightbar = true   # barra de luz do DualSense / DualShock 4 com a cor do jogador ou do tita, vale na hora
 prompts = "auto"   # icones dos botoes: auto (o ultimo usado) | xbox | playstation | keyboard
 
 [camera]

@@ -33,6 +33,9 @@ namespace mp::colors
     const Colour& Get(uint32_t index);  // index < Count()
     int Find(const std::string& id);     // -1 if unknown
     void Swatch(uint32_t index, uint8_t rgb[3]);  // the fur's mid tone (the menus' sample)
+    // A character drawable's skin (its palette this frame is a known skin's): the costume's main colour,
+    // full value (white for a costume without one). False for the normal Crash or an unknown palette.
+    bool SkinSwatch(uint32_t drawable, uint8_t rgb[3]);
 
     // This machine's player's colour: settings.toml [multiplayer] color (or CRASH_MP_COLOR).
     uint32_t Mine();
