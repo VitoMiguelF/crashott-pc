@@ -64,9 +64,26 @@ namespace
     }
 }
 
+namespace
+{
+    // fseek with 64-bit offsets: _fseeki64 on Windows, fseeko elsewhere.
+    int SeekFile(FILE* file, int64_t offset, int whence)
+    {
+#ifdef _WIN32
+        return _fseeki64(file, offset, whence);
+#else
+        return fseeko(file, static_cast<off_t>(offset), whence);
+#endif
+    }
+}
+
 bool Mp4Writer::Open(const std::filesystem::path& path)
 {
+#ifdef _WIN32
     m_file = _wfopen(path.c_str(), L"wb");
+#else
+    m_file = fopen(path.c_str(), "wb");
+#endif
     if (!m_file)
         return false;
     Box ftyp;
@@ -107,12 +124,12 @@ bool Mp4Writer::Close()
     if (!m_file)
         return false;
     uint64_t mdatSize = m_position - m_mdatStart;
-    _fseeki64(m_file, int64_t(m_mdatStart + 8), SEEK_SET);
+    SeekFile(m_file, int64_t(m_mdatStart + 8), SEEK_SET);
     uint8_t size[8];
     for (int i = 0; i < 8; i++)
         size[i] = uint8_t(mdatSize >> (56 - 8 * i));
     fwrite(size, 1, 8, m_file);
-    _fseeki64(m_file, 0, SEEK_END);
+    SeekFile(m_file, 0, SEEK_END);
 
     const uint32_t movieTimescale = 1000;
     uint64_t movieDuration = 0;

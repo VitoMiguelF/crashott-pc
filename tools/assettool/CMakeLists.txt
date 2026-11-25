@@ -21,6 +21,10 @@ target_compile_definitions(crash_assettool PRIVATE ASSETTOOL_ROOT_DIR="${CRASH_R
                            _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
 if (MINGW)
     target_link_options(crash_assettool PRIVATE -municode -static)
-else()
+elseif (MSVC)
     target_link_options(crash_assettool PRIVATE /ENTRY:wmainCRTStartup)
+else()
+    # Linux: plain main(), FFmpeg's .so files are opened with dlopen (ffmpeg_api.cpp).
+    find_package(Threads REQUIRED)
+    target_link_libraries(crash_assettool PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 endif()
