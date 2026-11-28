@@ -144,6 +144,9 @@ def main():
     p.add_argument("tag")
     p.add_argument("--out", help="o AppImage de saída (padrão: release/<tag>/CrashSetup-<tag>-x86_64.AppImage)")
     p.add_argument("--worktree", action="store_true", help="leva a árvore de trabalho (arquivos não ignorados) em vez do HEAD: testes")
+    p.add_argument("--steam-sdl3", action="store_true",
+                   help="leva o SDL3 do Steam Runtime (thirdparty/sdl3 do setup.py) em vez do portátil (tools/linux_sdl3.py): "
+                        "para teste local sem clang/lld; o AppImage de release usa o portátil")
     args = p.parse_args()
     out = Path(args.out) if args.out else ROOT / "release" / args.tag / f"CrashSetup-{args.tag}-x86_64.AppImage"
     start = time.monotonic()
@@ -165,7 +168,9 @@ def main():
     if not setup_exe.is_file():
         raise SystemExit("build/CrashSetup não existe: rode python3 tools/setup.py --installer-only")
     if not (ROOT / "thirdparty" / "sdl3" / ".portable").is_file():
-        raise SystemExit("thirdparty/sdl3 não é o SDL3 portátil: rode python3 tools/linux_sdl3.py")
+        if not args.steam_sdl3:
+            raise SystemExit("thirdparty/sdl3 não é o SDL3 portátil: rode python3 tools/linux_sdl3.py (ou --steam-sdl3 para teste)")
+        print("aviso: SDL3 do Steam Runtime (não o portátil): o AppImage depende das bibliotecas de janela do seu desktop", flush=True)
     (appdir / "usr" / "bin").mkdir(parents=True)
     (appdir / "usr" / "lib").mkdir(parents=True)
     shutil.copy2(setup_exe, appdir / "usr" / "bin" / "CrashSetup")

@@ -44,11 +44,12 @@ TYPES = {
 }
 
 
-ASSETTOOL_EXE = ROOT / "build" / "assettool" / "crash_assettool.exe"
+ASSETTOOL_EXE = ROOT / "build" / "assettool" / ("crash_assettool.exe" if buildenv.WINDOWS else "crash_assettool")
 
 
 def build_assettool(force=False):
-    """Configures/builds tools/assettool (C++, FFmpeg) with the toolchain of tools/buildenv.py."""
+    """Configures/builds tools/assettool (C++, FFmpeg) with the toolchain of tools/buildenv.py: on Windows
+    through a .cmd script run by cmd; on Linux the same cmake commands run directly (there is no cmd)."""
     import subprocess
     sources = list((ROOT / "tools" / "assettool").glob("*.*"))
     if not force and ASSETTOOL_EXE.exists() and \
@@ -57,10 +58,18 @@ def build_assettool(force=False):
     out = ASSETTOOL_EXE.parent
     out.mkdir(parents=True, exist_ok=True)
     src = ROOT / "tools" / "assettool"
-    script = out / "build.cmd"
-    buildenv.write_cmd(script, [*buildenv.cmd_prelude(), *buildenv.build_lines(src, out)])
-    result = subprocess.run(["cmd", "/d", "/c", str(script)], capture_output=True, text=True, encoding="utf-8",
-                            errors="replace")
+    if buildenv.WINDOWS:
+        script = out / "build.cmd"
+        buildenv.write_cmd(script, [*buildenv.cmd_prelude(), *buildenv.build_lines(src, out)])
+        result = subprocess.run(["cmd", "/d", "/c", str(script)], capture_output=True, text=True, encoding="utf-8",
+                                errors="replace")
+    else:
+        env = buildenv.build_env()
+        for command in buildenv.build_commands(src, out):
+            result = subprocess.run(command, env=env, capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace")
+            if result.returncode != 0:
+                break
     if result.returncode != 0:
         print(result.stdout[-4000:], result.stderr[-2000:])
         raise SystemExit("falha ao compilar tools/assettool")

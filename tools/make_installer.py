@@ -163,6 +163,9 @@ def collect(worktree=False, thirdparty=None):
             entries.append((component(f"toolchain/{rel.as_posix()}"), f"toolchain/{rel.as_posix()}", f))
     for part, target, source in THIRDPARTY if thirdparty is None else thirdparty:
         if not source.exists():
+            if part == "dlss":  # optional: without it the installer just offers no DLSS
+                print(f"aviso: {source} não existe; o instalador vai sem DLSS", flush=True)
+                continue
             raise SystemExit(f"falta {source}: rode tools\\setup.py (FFmpeg, DXC, FSR, DLSS) e compile o CrashDlss "
                              "(cmake --build build --target CrashDlss)")
         if source.is_file():

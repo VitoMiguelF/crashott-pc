@@ -11,10 +11,9 @@
 #include "assettool.h"
 #include "ffmpeg_api.h"
 
-#include <windows.h>
-
 #include <atomic>
 #include <cstdio>
+#include <cwchar>
 #include <cstring>
 #include <fstream>
 #include <mutex>
@@ -148,9 +147,17 @@ namespace
     }
 }
 
-int wmain(int argc, wchar_t** argv)
+namespace
 {
-    std::vector<std::wstring> args(argv + 1, argv + argc);
+    int ToInt(const std::wstring& text)
+    {
+        return int(std::wcstol(text.c_str(), nullptr, 10));
+    }
+}
+
+// The command line as wide strings (UTF-16 on Windows, UTF-32 on Linux).
+int Run(const std::vector<std::wstring>& args)
+{
     if (args.empty())
         return Usage();
     setvbuf(stdout, nullptr, _IOFBF, 1 << 16);
@@ -160,7 +167,7 @@ int wmain(int argc, wchar_t** argv)
         unsigned threads = std::max(1u, std::thread::hardware_concurrency());
         for (size_t i = 3; i + 1 < args.size(); i++)
             if (args[i] == L"--threads")
-                threads = std::max(1, _wtoi(args[i + 1].c_str()));
+                threads = std::max(1, ToInt(args[i + 1]));
         return Batch(args[2], threads);
     }
     if (args[0] == L"rsd2wav" && args.size() == 3)
@@ -181,8 +188,23 @@ int wmain(int argc, wchar_t** argv)
         int kbps = 8000;
         for (size_t i = 3; i + 1 < args.size(); i++)
             if (args[i] == L"--kbps")
-                kbps = _wtoi(args[i + 1].c_str());
+                kbps = ToInt(args[i + 1]);
         return ConvertBink(args[1], args[2], kbps);
     }
     return Usage();
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv)
+{
+    return Run(std::vector<std::wstring>(argv + 1, argv + argc));
+}
+#else
+int main(int argc, char** argv)
+{
+    std::vector<std::wstring> args;
+    for (int i = 1; i < argc; i++)
+        args.push_back(fs::path(argv[i]).wstring());  // the command line is UTF-8 on Linux
+    return Run(args);
+}
+#endif

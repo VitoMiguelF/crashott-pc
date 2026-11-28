@@ -258,7 +258,12 @@ def main():
             print(f"aviso: {launcher} não existe (cmake --build build --target CrashLauncher)")
     else:
         launcher = exe.parent / "CrashLauncher"
-        files = [exe, *([launcher] if launcher.is_file() else []), *sorted(f for f in exe.parent.glob("*.so*") if f.is_file())]
+        # SDL3 comes from thirdparty/sdl3 (setup.py) when the build didn't put its own copy next to the exe.
+        sdl3 = ROOT / "thirdparty" / "sdl3" / "lib" / "libSDL3.so.0"
+        libs = {f.name: f for f in exe.parent.glob("*.so*") if f.is_file()}
+        if "libSDL3.so.0" not in libs and sdl3.is_file():
+            libs["libSDL3.so.0"] = sdl3
+        files = [exe, *([launcher] if launcher.is_file() else []), *(libs[name] for name in sorted(libs))]
         if not launcher.is_file():
             print(f"aviso: {launcher} não existe (cmake --build build --target CrashLauncher)")
     changed = [f.name for f in files if copy_if_newer(f, game_exe if f == exe else out / f.name)]
