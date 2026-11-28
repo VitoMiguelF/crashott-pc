@@ -150,6 +150,21 @@ Edition`), then right click the launcher in the applications menu: **Add to Stea
 
 Details for developers: [docs/internals/linux_port.md](docs/internals/linux_port.md).
 
+### Building (developers)
+
+From a checkout, with your own extracted copy of the game (the folder with `default.xex`, the `.rcf` files
+and `shaders/`, not the `.iso`):
+
+```bash
+python3 tools/setup.py --check --game ~/path/to/game   # only lists the missing prerequisites
+python3 tools/setup.py --game ~/path/to/game           # downloads the toolchain and libraries, builds into dist/
+python3 tools/run_game.py boot                         # a short test run: boots the game and checks the log
+```
+
+`setup.py` downloads zig, CMake, Ninja and Python into `toolchain/`, and FFmpeg, DXC, FreeType and SDL3
+into `thirdparty/` (checked by SHA-256). Nothing is installed on the system. To run the game by hand,
+start `dist/CrashRecomp`. The build tested so far is the `boot` profile on Debian 13 (Wayland).
+
 ## Install
 
 1. Download **`CrashSetup-v1.07.exe`** (the latest, ~210 MB, one file) from the
@@ -446,6 +461,21 @@ clique com o botão direito no launcher no menu de aplicativos: **Adicionar à S
 - Precisa da **glibc 2.38 ou mais nova**: SteamOS 3.8, Arch, Fedora 39, Ubuntu 24.04 ou mais recentes.
 
 Detalhes para desenvolvedores: [docs/internals/linux_port.md](docs/internals/linux_port.md).
+
+### Compilar (desenvolvedores)
+
+No clone do repositório, com a sua cópia extraída do jogo (a pasta com `default.xex`, os `.rcf` e
+`shaders/`, não o `.iso`):
+
+```bash
+python3 tools/setup.py --check --game ~/caminho/do/jogo   # só lista o que falta
+python3 tools/setup.py --game ~/caminho/do/jogo           # baixa o toolchain e as bibliotecas e compila em dist/
+python3 tools/run_game.py boot                             # um teste curto: abre o jogo e confere o log
+```
+
+O `setup.py` baixa zig, CMake, Ninja e Python para `toolchain/`, e FFmpeg, DXC, FreeType e SDL3 para
+`thirdparty/` (conferidos por SHA-256). Nada é instalado no sistema. Para jogar à mão, abra
+`dist/CrashRecomp`. Até agora o teste feito foi o perfil `boot`, no Debian 13 (Wayland).
 
 ## Instalação
 

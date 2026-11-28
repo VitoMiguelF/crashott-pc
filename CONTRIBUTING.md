@@ -32,6 +32,21 @@ You need your own legally obtained copy of Crash of the Titans for Xbox 360 (`de
 Read `docs/GUIA_DO_PROJETO.md` (the full guide) and `docs/internals/` (English cheat sheets) before changing
 an area.
 
+## Building
+
+Same commands on Windows and Linux, from the repository root:
+
+```bash
+python tools/build.py check                 # what is there and what is missing
+python tools/build.py game <game folder>    # compiles the game into dist/ (your own copy)
+python tools/build.py package [TAG]         # the installer: release/<TAG>/ (no game file needed)
+python tools/build.py test                  # boot test on dist/ (after game)
+```
+
+`package` packs the working tree, uncommitted changes included. Windows gives `CrashSetup-<TAG>.exe`, Linux gives
+`CrashSetup-<TAG>-x86_64.AppImage`. The official builds (`v*` tags) run in GitHub Actions
+(`.github/workflows/appimage.yml`). macOS is not supported yet.
+
 ## 2. Branches and pull requests
 
 - Never push to `main`. Create a branch per change: `git switch -c fix/menu-mouse-hover`.
@@ -119,6 +134,21 @@ Nada do jogo está neste repositório, e nada dele pode ser adicionado.
 
 Leia o `docs/GUIA_DO_PROJETO.md` (o guia completo) e `docs/internals/` (resumos em inglês) antes de mexer
 numa parte.
+
+## Compilar
+
+Os mesmos comandos no Windows e no Linux, na raiz do repositório:
+
+```bash
+python tools/build.py check                 # o que existe e o que falta
+python tools/build.py game <pasta do jogo>  # compila o jogo em dist/ (a sua cópia)
+python tools/build.py package [TAG]         # o instalador: release/<TAG>/ (não precisa do jogo)
+python tools/build.py test                  # teste de boot em dist/ (depois de game)
+```
+
+O `package` leva a árvore de trabalho, com as mudanças não commitadas. No Windows sai `CrashSetup-<TAG>.exe`; no Linux,
+`CrashSetup-<TAG>-x86_64.AppImage`. As versões oficiais (tags `v*`) são feitas no GitHub Actions
+(`.github/workflows/appimage.yml`). macOS ainda não é suportado.
 
 ## 2. Branches e pull requests
 
